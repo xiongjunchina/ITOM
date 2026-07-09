@@ -11,7 +11,7 @@
 
 ```bash
 cd deploy && docker compose up --build
-# 前端 http://localhost:8080  后端 API http://localhost:8080/api/docs
+# 前端 http://localhost:8180  后端 API http://localhost:8180/api/docs
 # 初始管理员：admin / 见 deploy/.env 的 ADMIN_INIT_PASSWORD
 ```
 

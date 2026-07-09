@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aom
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-aom}
+      POSTGRES_DB: new_aom
+      TZ: Asia/Shanghai
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aom -d new_aom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://aom:${DB_PASSWORD:-aom}@db:5432/new_aom
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
+      ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-admin123}
+      UPLOAD_DIR: /data/uploads
+      TZ: Asia/Shanghai
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+    ports:
+      - "${WEB_PORT:-8180}:80"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+  uploads:
