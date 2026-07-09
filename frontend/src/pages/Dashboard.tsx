@@ -54,17 +54,25 @@ export default function Dashboard() {
           }
         >
           <Row gutter={16}>
-            <Col span={6}>
+            <Col span={8}>
               <Statistic title="未关闭工单" value={service?.open_tickets ?? 0} />
+              {service?.open_by_priority && (
+                <Typography.Text style={{ fontSize: 12 }}>
+                  <span style={{ color: '#cf1322', fontWeight: 600 }}>
+                    P1 {service.open_by_priority.P1} · P2 {service.open_by_priority.P2}
+                  </span>
+                  <span style={{ color: 'rgba(0,0,0,0.45)' }}>
+                    {' '}
+                    · P3 {service.open_by_priority.P3} · P4 {service.open_by_priority.P4}
+                  </span>
+                </Typography.Text>
+              )}
             </Col>
-            <Col span={6}>
-              <Statistic title="SLA 达标率" value={service?.sla_rate ?? 0} suffix="%" />
+            <Col span={8}>
+              <Statistic title="SLA 达成率" value={service?.sla_rate ?? 0} suffix="%" />
             </Col>
-            <Col span={6}>
+            <Col span={8}>
               <Statistic title="变更成功率" value={service?.change_success_rate ?? 0} suffix="%" />
-            </Col>
-            <Col span={6}>
-              <Statistic title="问题关闭率" value={service?.problem_close_rate ?? 0} suffix="%" />
             </Col>
           </Row>
         </Card>

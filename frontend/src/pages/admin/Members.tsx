@@ -22,7 +22,7 @@ interface MemberForm {
   name: string;
   dept?: string;
   team?: string;
-  position_id?: number | null;
+  position_id?: string | null;
   status?: '在岗' | '离职';
   hire_date?: Dayjs | null;
   email?: string;
@@ -73,7 +73,7 @@ export default function Members() {
   }, []);
 
   const positionName = useMemo(() => {
-    const map = new Map<number, string>();
+    const map = new Map<string, string>();
     positions.forEach((p) => map.set(p.id, p.name));
     return map;
   }, [positions]);
@@ -133,7 +133,7 @@ export default function Members() {
       title: '岗位',
       dataIndex: 'position_id',
       width: 130,
-      render: (id: number | null) => (id != null ? positionName.get(id) ?? `#${id}` : '-'),
+      render: (id: string | null) => (id != null ? positionName.get(id) ?? id : '-'),
     },
     {
       title: '状态',

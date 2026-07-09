@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,8 +8,21 @@ from fastapi.responses import JSONResponse
 
 from app.core.errors import AppError
 from app.db import Base, SessionLocal, engine
-from app.routers import admin_misc, admin_users, attachments, auth, dashboard, members, notifications
+from app.routers import (
+    admin_misc,
+    admin_users,
+    attachments,
+    auth,
+    dashboard,
+    itsm_catalog,
+    members,
+    notifications,
+    process,
+    tickets,
+)
+from app.services import scheduler
 from app.services.seed import run_seed
+from app.services.seed_itsm import run_seed_itsm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -18,10 +32,13 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
         run_seed(db)
+        run_seed_itsm(db)
+    task = asyncio.create_task(scheduler.run_forever())
     yield
+    task.cancel()
 
 
-app = FastAPI(title="New_AOM API", version="0.1.0-m1", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="New_AOM API", version="0.2.0-m2", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
@@ -45,7 +62,7 @@ async def validation_handler(_: Request, exc: RequestValidationError):
     )
 
 
-for r in (auth, admin_users, members, admin_misc, notifications, attachments, dashboard):
+for r in (auth, admin_users, members, admin_misc, notifications, attachments, dashboard, itsm_catalog, tickets, process):
     app.include_router(r.router)
 
 

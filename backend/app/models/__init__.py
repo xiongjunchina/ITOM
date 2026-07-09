@@ -1,3 +1,5 @@
+from app.models.itsm import ServiceCatalog, ServiceItem, SlaPolicy, Ticket
+from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.support import (
     Attachment,
     AuditLog,
@@ -20,6 +22,14 @@ __all__ = [
     "NotificationOutbox",
     "OrgMember",
     "Position",
+    "ProcessDefinition",
+    "ProcessInstance",
+    "ProcessStep",
+    "ProcessTask",
+    "ServiceCatalog",
+    "ServiceItem",
+    "SlaPolicy",
+    "Ticket",
     "WorkflowStatus",
     "WorkflowTransition",
 ]

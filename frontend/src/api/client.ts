@@ -72,4 +72,8 @@ export const api = {
     const env = await request<T>({ method: 'patch', url, data });
     return env.data;
   },
+  async put<T>(url: string, data?: unknown): Promise<T> {
+    const env = await request<T>({ method: 'put', url, data });
+    return env.data;
+  },
 };

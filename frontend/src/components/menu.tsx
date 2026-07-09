@@ -33,6 +33,7 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/itsm/tickets', path: '/itsm/tickets', label: '工单' },
       { key: '/itsm/catalog', path: '/itsm/catalog', label: '服务目录', roles: STAFF },
       { key: '/itsm/cmdb', path: '/itsm/cmdb', label: 'CMDB', roles: STAFF },
+      { key: '/itsm/sla', path: '/itsm/sla', label: 'SLA 看板', roles: STAFF },
       { key: '/itsm/problems', path: '/itsm/problems', label: '问题', roles: STAFF },
       { key: '/itsm/vendors', path: '/itsm/vendors', label: '供应商', roles: STAFF },
       { key: '/itsm/contracts', path: '/itsm/contracts', label: '合同', roles: STAFF },

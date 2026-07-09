@@ -23,7 +23,7 @@ interface UserForm {
   username: string;
   password?: string;
   roles: Role[];
-  person_id?: number | null;
+  person_id?: string | null;
 }
 
 const ROLE_OPTIONS = ALL_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
@@ -75,7 +75,7 @@ export default function Users() {
   }, []);
 
   const memberName = useMemo(() => {
-    const map = new Map<number, string>();
+    const map = new Map<string, string>();
     members.forEach((m) => map.set(m.id, m.name));
     return map;
   }, [members]);
@@ -166,7 +166,7 @@ export default function Users() {
       title: '关联人员',
       dataIndex: 'person_id',
       width: 140,
-      render: (id: number | null) => (id != null ? memberName.get(id) ?? `#${id}` : '-'),
+      render: (id: string | null) => (id != null ? memberName.get(id) ?? id : "-"),
     },
     {
       title: '状态',
