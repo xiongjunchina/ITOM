@@ -21,7 +21,7 @@ export interface MenuNode {
 }
 
 /** 除业务用户(requester)之外的内部角色 */
-const STAFF: Role[] = ['admin', 'manager', 'it_pm', 'it_dev', 'it_ops'];
+const STAFF: Role[] = ['admin', 'manager', 'it_pm', 'it_pjm', 'it_dev', 'it_ops', 'is_mgr'];
 
 export const MENU_TREE: MenuNode[] = [
   { key: '/dashboard', path: '/dashboard', label: '总览', icon: <DashboardOutlined /> },
@@ -69,12 +69,12 @@ export const MENU_TREE: MenuNode[] = [
     key: 'admin',
     label: '系统管理',
     icon: <SettingOutlined />,
-    roles: ['admin'],
+    roles: ['admin', 'is_mgr'],
     children: [
-      { key: '/admin/users', path: '/admin/users', label: '用户管理' },
-      { key: '/admin/members', path: '/admin/members', label: '人员主数据' },
-      { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典' },
-      { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志' },
+      { key: '/admin/users', path: '/admin/users', label: '用户管理', roles: ['admin'] },
+      { key: '/admin/members', path: '/admin/members', label: '人员主数据', roles: ['admin'] },
+      { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典', roles: ['admin'] },
+      { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', roles: ['admin', 'is_mgr'] },
     ],
   },
 ];

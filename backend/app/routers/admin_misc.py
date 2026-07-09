@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.rbac import IS_MGR
 from app.db import get_db
 from app.deps import get_current_user, require_roles
 from app.models import AuditLog, AuthUser, MasterData, WorkflowStatus, WorkflowTransition
@@ -110,7 +111,7 @@ def list_audit_logs(
     page_size: int = 20,
     entity_type: str = "",
     db: Session = Depends(get_db),
-    _=Depends(require_roles()),
+    _=Depends(require_roles(IS_MGR)),  # 信息安全管理员可查审计
 ):
     query = db.query(AuditLog)
     if entity_type:

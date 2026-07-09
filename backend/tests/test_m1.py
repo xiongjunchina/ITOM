@@ -80,6 +80,18 @@ def test_invalid_role_rejected(client, admin_headers):
     assert resp.json()["error"]["code"] == "INVALID_ROLE"
 
 
+def test_is_mgr_can_read_audit_but_not_users(client, admin_headers):
+    client.post(
+        "/api/admin/users",
+        json={"username": "sec01", "password": "pass123", "roles": ["is_mgr"]},
+        headers=admin_headers,
+    )
+    resp = client.post("/api/auth/login", json={"username": "sec01", "password": "pass123"})
+    sec_headers = {"Authorization": f"Bearer {resp.json()['data']['token']}"}
+    assert client.get("/api/admin/audit-logs", headers=sec_headers).status_code == 200
+    assert client.get("/api/admin/users", headers=sec_headers).status_code == 403
+
+
 def test_master_data_seeded_and_audit(client, admin_headers):
     resp = client.get("/api/admin/master-data?category=closure_code", headers=admin_headers)
     assert resp.json()["total"] == 5
