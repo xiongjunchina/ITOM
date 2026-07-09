@@ -21,7 +21,7 @@ export interface MenuNode {
 }
 
 /** 除业务用户(requester)之外的内部角色 */
-const STAFF: Role[] = ['admin', 'manager', 'it_pm', 'it_pjm', 'it_dev', 'it_ops', 'is_mgr'];
+const STAFF: Role[] = ['admin', 'manager', 'it_pdm', 'it_pm', 'it_dev', 'it_ops', 'is_mgr', 'it_bp'];
 
 export const MENU_TREE: MenuNode[] = [
   { key: '/dashboard', path: '/dashboard', label: '总览', icon: <DashboardOutlined /> },

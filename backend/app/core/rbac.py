@@ -2,12 +2,13 @@
 
 ADMIN = "admin"
 MANAGER = "manager"
-IT_PM = "it_pm"        # IT 产品经理
-IT_PJM = "it_pjm"      # IT 项目经理
+IT_PDM = "it_pdm"      # IT 产品经理
+IT_PM = "it_pm"        # IT 项目经理
 IT_DEV = "it_dev"
 IT_OPS = "it_ops"
 IS_MGR = "is_mgr"      # 信息安全管理员
+IT_BP = "it_bp"        # IT 业务合作伙伴
 REQUESTER = "requester"
 
-ALL_ROLES = [ADMIN, MANAGER, IT_PM, IT_PJM, IT_DEV, IT_OPS, IS_MGR, REQUESTER]
-TEAM_ROLES = [MANAGER, IT_PM, IT_PJM, IT_DEV, IT_OPS, IS_MGR]  # 内部团队成员
+ALL_ROLES = [ADMIN, MANAGER, IT_PDM, IT_PM, IT_DEV, IT_OPS, IS_MGR, IT_BP, REQUESTER]
+TEAM_ROLES = [MANAGER, IT_PDM, IT_PM, IT_DEV, IT_OPS, IS_MGR, IT_BP]  # 内部团队成员

@@ -8,16 +8,26 @@ export interface Envelope<T = unknown> {
 }
 
 /** 系统角色 */
-export type Role = 'admin' | 'manager' | 'it_pm' | 'it_pjm' | 'it_dev' | 'it_ops' | 'is_mgr' | 'requester';
+export type Role =
+  | 'admin'
+  | 'manager'
+  | 'it_pdm'
+  | 'it_pm'
+  | 'it_dev'
+  | 'it_ops'
+  | 'is_mgr'
+  | 'it_bp'
+  | 'requester';
 
 export const ROLE_LABELS: Record<Role, string> = {
   admin: '系统管理员',
   manager: '团队负责人',
-  it_pm: 'IT产品经理',
-  it_pjm: 'IT项目经理',
+  it_pdm: 'IT产品经理',
+  it_pm: 'IT项目经理',
   it_dev: 'IT开发',
   it_ops: 'IT运维',
   is_mgr: '信息安全管理员',
+  it_bp: 'IT业务合作伙伴',
   requester: '业务用户',
 };
 
