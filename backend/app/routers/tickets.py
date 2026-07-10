@@ -152,3 +152,66 @@ def rate(ticket_id: str, body: SatisfactionIn, db: Session = Depends(get_db), us
     t = _get_ticket(db, ticket_id, user)
     svc.rate_satisfaction(db, t, body.score, user)
     return ok({"id": t.id, "satisfaction": t.satisfaction})
+
+
+@router.post("/{ticket_id}/escalate-problem")
+def escalate_problem(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """一键升级为问题：自动带工单上下文并双向关联。"""
+    t = _get_ticket(db, ticket_id, user)
+    if t.problem_id:
+        raise AppError("ALREADY_ESCALATED", "该工单已关联问题")
+    from app.routers.problems import _create_problem
+
+    problem = _create_problem(
+        db,
+        {
+            "title": t.title,
+            "description": f"[由工单 {t.ticket_code} 升级]\n\n{t.description}",
+            "priority": t.priority,
+            "service_item_id": t.service_item_id,
+            "owner": t.assignee,
+        },
+        user,
+        source_ticket=t,
+    )
+    db.commit()
+    return ok({"problem_id": problem.id, "problem_code": problem.problem_code})
+
+
+@router.post("/{ticket_id}/to-knowledge")
+def to_knowledge(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """一键沉淀为知识草稿：带出工单上下文，作者进知识库编辑后发布。"""
+    t = _get_ticket(db, ticket_id, user)
+    from app.models import KnowledgeArticle, OrgMember
+    from app.services.codes import gen_code
+
+    person = db.get(OrgMember, user.person_id) if user.person_id else None
+    content = f"""## 问题现象
+
+{t.description}
+
+## 解决方案
+
+{t.solution or '（待补充）'}
+
+## 根因
+
+{t.root_cause or '（待补充）'}
+
+> 来源工单：{t.ticket_code} {t.title}
+"""
+    article = KnowledgeArticle(
+        article_code=gen_code(db, KnowledgeArticle, "article_code", "KB"),
+        title=t.title,
+        content=content,
+        tags=[t.service_line] if t.service_line else [],
+        status="draft",
+        author=user.id,
+        author_name=person.name if person else user.username,
+        linked_ticket_ids=[t.id],
+    )
+    db.add(article)
+    db.flush()
+    audit(db, "knowledge_article", article.id, "create_from_ticket", user, {"ticket": t.ticket_code})
+    db.commit()
+    return ok({"article_id": article.id, "article_code": article.article_code})

@@ -49,7 +49,44 @@ def scan_sla_warnings():
         db.commit()
 
 
-SCANNERS = [scan_sla_warnings]
+def scan_contract_expiry():
+    """合同到期前 90 天预警（每合同一次，续签改日期后重置）。"""
+    from datetime import date, timedelta
+
+    from app.models import Contract
+
+    with SessionLocal() as db:
+        threshold = date.today() + timedelta(days=90)
+        expiring = (
+            db.query(Contract)
+            .filter(
+                Contract.end_date <= threshold,
+                Contract.end_date >= date.today(),
+                Contract.expiry_warned.is_(False),
+                Contract.is_deleted.is_(False),
+            )
+            .all()
+        )
+        managers = [
+            u.person_id
+            for u in db.query(AuthUser).filter(AuthUser.is_active.is_(True)).all()
+            if u.person_id and MANAGER in (u.roles or [])
+        ]
+        for c in expiring:
+            c.expiry_warned = True
+            recipients = [r for r in {c.owner, *managers} if r]
+            if recipients:
+                days = (c.end_date - date.today()).days
+                notifier.notify(
+                    db, "contract.expiring", "contract", c.id,
+                    recipients,
+                    f"合同临期提醒：{c.name}（{days} 天后到期，{c.end_date}）",
+                    link="/itsm/contracts",
+                )
+        db.commit()
+
+
+SCANNERS = [scan_sla_warnings, scan_contract_expiry]
 
 
 async def run_forever():

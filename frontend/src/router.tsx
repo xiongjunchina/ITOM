@@ -16,6 +16,14 @@ import Tickets from './pages/itsm/Tickets';
 import TicketDetail from './pages/itsm/TicketDetail';
 import CatalogPage from './pages/itsm/CatalogPage';
 import SlaBoard from './pages/itsm/SlaBoard';
+import Cmdb from './pages/itsm/Cmdb';
+import Problems from './pages/itsm/Problems';
+import ProblemDetail from './pages/itsm/ProblemDetail';
+import Vendors from './pages/itsm/Vendors';
+import Contracts from './pages/itsm/Contracts';
+import Knowledge from './pages/itsm/Knowledge';
+import KnowledgeDetail from './pages/itsm/KnowledgeDetail';
+import KnowledgeEdit from './pages/itsm/KnowledgeEdit';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -31,11 +39,15 @@ export const router = createBrowserRouter([
       { path: 'itsm/tickets/:id', element: <TicketDetail /> },
       { path: 'itsm/catalog', element: <CatalogPage /> },
       { path: 'itsm/sla', element: <SlaBoard /> },
-      { path: 'itsm/cmdb', element: <PlaceholderPage title="CMDB" /> },
-      { path: 'itsm/problems', element: <PlaceholderPage title="问题" /> },
-      { path: 'itsm/vendors', element: <PlaceholderPage title="供应商" /> },
-      { path: 'itsm/contracts', element: <PlaceholderPage title="合同" /> },
-      { path: 'itsm/knowledge', element: <PlaceholderPage title="知识库" /> },
+      { path: 'itsm/cmdb', element: <Cmdb /> },
+      { path: 'itsm/problems', element: <Problems /> },
+      { path: 'itsm/problems/:id', element: <ProblemDetail /> },
+      { path: 'itsm/vendors', element: <Vendors /> },
+      { path: 'itsm/contracts', element: <Contracts /> },
+      { path: 'itsm/knowledge', element: <Knowledge /> },
+      { path: 'itsm/knowledge/new', element: <KnowledgeEdit /> },
+      { path: 'itsm/knowledge/:id', element: <KnowledgeDetail /> },
+      { path: 'itsm/knowledge/:id/edit', element: <KnowledgeEdit /> },
 
       { path: 'projects', element: <PlaceholderPage title="项目管理" /> },
       { path: 'requirements', element: <PlaceholderPage title="需求管理" /> },

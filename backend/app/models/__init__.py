@@ -1,4 +1,14 @@
 from app.models.itsm import ServiceCatalog, ServiceItem, SlaPolicy, Ticket
+from app.models.itsm_assets import (
+    Ci,
+    CiRelationship,
+    Contract,
+    KnowledgeArticle,
+    KnowledgeVote,
+    Problem,
+    ProblemTicket,
+    Vendor,
+)
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.support import (
     Attachment,
@@ -19,6 +29,14 @@ from app.models.support import (
 __all__ = [
     "Attachment",
     "AuditLog",
+    "Ci",
+    "CiRelationship",
+    "Contract",
+    "KnowledgeArticle",
+    "KnowledgeVote",
+    "Problem",
+    "ProblemTicket",
+    "Vendor",
     "AuthUser",
     "InAppNotification",
     "MasterData",

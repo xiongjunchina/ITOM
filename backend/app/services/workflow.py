@@ -21,6 +21,10 @@ STAGE_FIELDS: dict[str, dict[tuple, list[str]]] = {
         ("*", "resolved"): ["solution"],
         ("resolved", "closed"): ["closure_code"],
     },
+    "problem": {
+        ("*", "known_error"): ["root_cause"],
+        ("*", "resolved"): ["root_cause"],
+    },
 }
 
 

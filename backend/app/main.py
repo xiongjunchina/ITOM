@@ -14,12 +14,16 @@ from app.routers import (
     admin_users,
     attachments,
     auth,
+    cmdb,
     dashboard,
     itsm_catalog,
+    knowledge,
     members,
     notifications,
+    problems,
     process,
     tickets,
+    vendors_contracts,
 )
 from app.services import scheduler
 from app.services.seed import run_seed
@@ -39,7 +43,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="New_AOM API", version="0.2.5-m2.5", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="New_AOM API", version="0.3.0-m3", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
@@ -63,7 +67,8 @@ async def validation_handler(_: Request, exc: RequestValidationError):
     )
 
 
-for r in (auth, admin_users, admin_rbac, members, admin_misc, notifications, attachments, dashboard, itsm_catalog, tickets, process):
+for r in (auth, admin_users, admin_rbac, members, admin_misc, notifications, attachments, dashboard,
+          itsm_catalog, tickets, process, problems, cmdb, vendors_contracts, knowledge):
     app.include_router(r.router)
 
 

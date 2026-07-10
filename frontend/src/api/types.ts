@@ -393,6 +393,194 @@ export interface SlaPolicy {
   active: boolean;
 }
 
+// ============ M3 问题管理 ============
+
+export type ProblemStatus = 'new' | 'analyzing' | 'known_error' | 'resolved' | 'closed';
+
+export const PROBLEM_STATUS_LABELS: Record<ProblemStatus, string> = {
+  new: '新建',
+  analyzing: '分析中',
+  known_error: '已知错误',
+  resolved: '已解决',
+  closed: '已关闭',
+};
+
+/** 问题列表行 */
+export interface ProblemRow {
+  id: string;
+  problem_code: string;
+  title: string;
+  priority: TicketPriority;
+  status: string;
+  status_name: string;
+  service_item_id: string | null;
+  service_item_name: string | null;
+  owner: string | null;
+  owner_name: string | null;
+  linked_ticket_count: number;
+  created_at: string;
+}
+
+/** 关联工单摘要 */
+export interface LinkedTicketBrief {
+  id: string;
+  ticket_code: string;
+  title: string;
+  status?: string;
+}
+
+/** 问题详情 */
+export interface ProblemDetail extends ProblemRow {
+  description: string;
+  root_cause?: string | null;
+  workaround?: string | null;
+  source_ticket_id?: string | null;
+  linked_tickets: LinkedTicketBrief[];
+  allowed_transitions: AllowedTransition[];
+  process?: TicketProcess | null;
+}
+
+// ============ M3 CMDB ============
+
+export const CI_STATUS_OPTIONS = ['运行中', '维护中', '已下线'] as const;
+export const CI_ENV_OPTIONS = ['生产', '测试', '开发'] as const;
+export const CI_RELATION_TYPES = ['运行于', '依赖', '连接'] as const;
+
+export const CI_STATUS_COLORS: Record<string, string> = {
+  运行中: 'green',
+  维护中: 'orange',
+  已下线: 'default',
+};
+
+/** 配置项 */
+export interface CiRow {
+  id: string;
+  ci_code: string;
+  name: string;
+  category: string;
+  status: string;
+  owner: string | null;
+  owner_name: string | null;
+  environment: string | null;
+  business_owner: string | null;
+  vendor_id: string | null;
+  vendor_name: string | null;
+  description: string | null;
+  launch_date: string | null;
+  attrs: Record<string, unknown>;
+  remarks: string | null;
+}
+
+/** CI 摘要（影响分析中的关联方） */
+export interface CiBrief {
+  id: string;
+  name: string;
+  category: string | null;
+  status: string | null;
+}
+
+/** CI 关系条目 */
+export interface CiRelationEntry {
+  relation_id: string;
+  relation_type: string;
+  ci: CiBrief;
+}
+
+/** 影响分析结果 */
+export interface CiImpact {
+  ci: CiRow;
+  upstream: CiRelationEntry[];
+  downstream: CiRelationEntry[];
+  tickets: {
+    id: string;
+    ticket_code: string;
+    title: string;
+    status: string;
+    priority: TicketPriority;
+    submitted_at: string;
+  }[];
+}
+
+// ============ M3 供应商 / 合同 ============
+
+export type VendorRating = 'A' | 'B' | 'C' | 'D';
+
+export const VENDOR_RATING_COLORS: Record<VendorRating, string> = {
+  A: 'green',
+  B: 'blue',
+  C: 'orange',
+  D: 'red',
+};
+
+/** 供应商 */
+export interface Vendor {
+  id: string;
+  code: string;
+  name: string;
+  contact: string | null;
+  phone: string | null;
+  email: string | null;
+  service_scope: string | null;
+  rating: VendorRating | null;
+  status: '合作中' | '已终止';
+  remarks: string | null;
+  contract_count: number;
+  ci_count: number;
+}
+
+export type ContractStatus = '未生效' | '生效' | '临期' | '已过期';
+
+export const CONTRACT_STATUS_COLORS: Record<ContractStatus, string> = {
+  未生效: 'default',
+  生效: 'green',
+  临期: 'orange',
+  已过期: 'red',
+};
+
+/** 合同（status/days_to_expiry 为后端计算态） */
+export interface Contract {
+  id: string;
+  code: string;
+  name: string;
+  vendor_id: string;
+  vendor_name: string | null;
+  amount_10k: number | null;
+  start_date: string;
+  end_date: string;
+  owner: string | null;
+  owner_name: string | null;
+  status: ContractStatus;
+  remarks: string | null;
+  days_to_expiry: number | null;
+}
+
+// ============ M3 知识库 ============
+
+export type KnowledgeStatus = 'draft' | 'published';
+
+/** 知识文章列表行 */
+export interface KnowledgeRow {
+  id: string;
+  article_code: string;
+  title: string;
+  tags: string[];
+  status: KnowledgeStatus;
+  author_name: string | null;
+  view_count: number;
+  helpful_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** 知识文章详情 */
+export interface KnowledgeDetail extends KnowledgeRow {
+  content: string;
+  /** 作者 auth_user.id，用于编辑权判断 */
+  author?: string | null;
+  linked_tickets: LinkedTicketBrief[];
+  voted: boolean;
+}
+
 /** SLA 看板 */
 export interface SlaDashboard {
   month: string;

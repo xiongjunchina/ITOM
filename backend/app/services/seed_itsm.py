@@ -14,6 +14,35 @@ from app.models import (
 
 # ---- 状态机（PRD §5.1）----
 
+PROBLEM_STATUSES = [
+    ("problem", "new", "新建", True, False, 1),
+    ("problem", "analyzing", "分析中", False, False, 2),
+    ("problem", "known_error", "已知错误", False, False, 3),
+    ("problem", "resolved", "已解决", False, False, 4),
+    ("problem", "closed", "已关闭", False, True, 5),
+]
+
+PROBLEM_TRANSITIONS = [
+    ("problem", "new", "analyzing", []),
+    ("problem", "analyzing", "known_error", []),
+    ("problem", "known_error", "resolved", []),
+    ("problem", "analyzing", "resolved", []),
+    ("problem", "resolved", "closed", []),
+    ("problem", "resolved", "analyzing", []),  # 复发重开
+]
+
+CI_CATEGORIES = [
+    ("ci_category", "app", "应用", 1),
+    ("ci_category", "server", "服务器", 2),
+    ("ci_category", "cloud", "云资源", 3),
+    ("ci_category", "network", "网络", 4),
+    ("ci_category", "security", "安全", 5),
+    ("ci_category", "collab", "协作", 6),
+    ("ci_category", "euc", "终端", 7),
+    ("ci_category", "infra", "基础设施", 8),
+    ("ci_category", "consulting", "咨询服务", 9),
+]
+
 TICKET_STATUSES = [
     # (entity_type, code, name, initial, terminal, sort)
     ("ticket", "new", "新建", True, False, 1),
@@ -84,14 +113,29 @@ PROCESS_DEFS = [
             ("关闭复盘", IT_OPS, "L2", 48),
         ],
     },
+    {
+        "code": "problem_flow", "name": "问题分析流程", "entity_type": "problem",
+        "trigger": None,
+        "steps": [
+            ("问题确认", IT_OPS, "L3", 24),
+            ("根因分析", IT_OPS, "L3", None),
+            ("解决与验证", IT_OPS, "L3", None),
+            ("关闭复盘", IT_OPS, "L2", 48),
+        ],
+    },
 ]
 
 
 def run_seed_itsm(db: Session):
-    for etype, code, name, initial, terminal, sort in TICKET_STATUSES:
+    from app.models import MasterData
+
+    for category, code, name, sort in CI_CATEGORIES:
+        if not db.query(MasterData).filter_by(category=category, code=code).first():
+            db.add(MasterData(category=category, code=code, name=name, sort=sort))
+    for etype, code, name, initial, terminal, sort in PROBLEM_STATUSES + TICKET_STATUSES:
         if not db.query(WorkflowStatus).filter_by(entity_type=etype, code=code).first():
             db.add(WorkflowStatus(entity_type=etype, code=code, name=name, is_initial=initial, is_terminal=terminal, sort=sort))
-    for etype, frm, to, roles in TICKET_TRANSITIONS:
+    for etype, frm, to, roles in PROBLEM_TRANSITIONS + TICKET_TRANSITIONS:
         if not db.query(WorkflowTransition).filter_by(entity_type=etype, from_code=frm, to_code=to).first():
             db.add(WorkflowTransition(entity_type=etype, from_code=frm, to_code=to, allowed_roles=roles))
     for priority, resp, reso in SLA_POLICIES:

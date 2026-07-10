@@ -76,6 +76,10 @@ export default function TicketDetail() {
   const [rating, setRating] = useState(0);
   const [ratingSaving, setRatingSaving] = useState(false);
 
+  // M3：升级为问题 / 沉淀为知识
+  const [escalating, setEscalating] = useState(false);
+  const [toKnowledgeSaving, setToKnowledgeSaving] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -188,6 +192,36 @@ export default function TicketDetail() {
     }
   };
 
+  const escalateProblem = async () => {
+    setEscalating(true);
+    try {
+      const res = await api.post<{ problem_id: string; problem_code: string }>(
+        `/tickets/${id}/escalate-problem`,
+      );
+      message.success(`已升级为问题 ${res.problem_code}`);
+      navigate(`/itsm/problems/${res.problem_id}`);
+    } catch {
+      // 已统一提示（含 ALREADY_ESCALATED）
+    } finally {
+      setEscalating(false);
+    }
+  };
+
+  const toKnowledge = async () => {
+    setToKnowledgeSaving(true);
+    try {
+      const res = await api.post<{ article_id: string; article_code: string }>(
+        `/tickets/${id}/to-knowledge`,
+      );
+      message.success(`已生成知识草稿 ${res.article_code ?? ''}`);
+      navigate(`/itsm/knowledge/${res.article_id}`);
+    } catch {
+      // 已统一提示
+    } finally {
+      setToKnowledgeSaving(false);
+    }
+  };
+
   const submitRating = async () => {
     if (!rating) {
       message.warning('请先选择评分');
@@ -224,6 +258,10 @@ export default function TicketDetail() {
   const isSubmitter = !!user && !!detail.submitter && detail.submitter === user.id;
   const canRate = detail.status === 'closed' && isSubmitter && detail.satisfaction == null;
   const process = detail.process;
+  // M3：非 requester（拥有任一内部角色）可升级为问题
+  const isStaff = !!user && user.roles.some((r) => r !== 'requester');
+  const canEscalate = isStaff && detail.status !== 'new' && detail.status !== 'closed';
+  const canToKnowledge = detail.status === 'resolved' || detail.status === 'closed';
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -243,6 +281,16 @@ export default function TicketDetail() {
             </Tag>
           </Space>
           <Space wrap>
+            {canEscalate && (
+              <Button loading={escalating} onClick={() => void escalateProblem()}>
+                升级为问题
+              </Button>
+            )}
+            {canToKnowledge && (
+              <Button loading={toKnowledgeSaving} onClick={() => void toKnowledge()}>
+                沉淀为知识
+              </Button>
+            )}
             {(detail.allowed_transitions ?? []).map((t) => (
               <Button
                 key={t.to}
