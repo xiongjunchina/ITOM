@@ -16,17 +16,16 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
-import { ALL_ROLES, ROLE_LABELS } from '../../api/types';
-import type { AdminUser, Member, Role } from '../../api/types';
+import { ROLE_LABELS } from '../../api/types';
+import type { AdminUser, Member, Role, RoleDef, UserGroup } from '../../api/types';
 
 interface UserForm {
   username: string;
   password?: string;
   roles: Role[];
   person_id?: string | null;
+  group_ids?: string[];
 }
-
-const ROLE_OPTIONS = ALL_ROLES.map((r) => ({ value: r, label: ROLE_LABELS[r] }));
 
 export default function Users() {
   const [items, setItems] = useState<AdminUser[]>([]);
@@ -67,18 +66,59 @@ export default function Users() {
     void load();
   }, [load]);
 
+  const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
+
+  const loadGroups = useCallback(() => {
+    api
+      .getList<UserGroup>('/admin/groups')
+      .then((res) => setGroups(res.items))
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     api
       .getList<Member>('/members', { page: 1, page_size: 999 })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
-  }, []);
+    api
+      .getList<RoleDef>('/admin/roles')
+      .then((res) => setRoleDefs(res.items))
+      .catch(() => undefined);
+    loadGroups();
+  }, [loadGroups]);
 
   const memberName = useMemo(() => {
     const map = new Map<string, string>();
     members.forEach((m) => map.set(m.id, m.name));
     return map;
   }, [members]);
+
+  /** 人员 → 所属组名列表（由组成员数据反推，用于列表列展示） */
+  const personGroups = useMemo(() => {
+    const map = new Map<string, string[]>();
+    groups.forEach((g) => {
+      g.members.forEach((m) => {
+        map.set(m.id, [...(map.get(m.id) ?? []), g.name]);
+      });
+    });
+    return map;
+  }, [groups]);
+
+  const roleOptions = useMemo(
+    () =>
+      roleDefs.map((r) => ({
+        value: r.code,
+        label: r.is_builtin ? r.name : `${r.name}（自定义）`,
+      })),
+    [roleDefs],
+  );
+
+  const roleName = useMemo(() => {
+    const map = new Map<string, string>();
+    roleDefs.forEach((r) => map.set(r.code, r.name));
+    return map;
+  }, [roleDefs]);
 
   const openCreate = () => {
     setEditing(null);
@@ -92,6 +132,9 @@ export default function Users() {
       username: record.username,
       roles: record.roles,
       person_id: record.person_id ?? undefined,
+      group_ids: record.person_id
+        ? groups.filter((g) => g.members.some((m) => m.id === record.person_id)).map((g) => g.id)
+        : [],
     });
     setModalOpen(true);
   };
@@ -106,12 +149,22 @@ export default function Users() {
           roles: values.roles,
           person_id: values.person_id ?? null,
         });
-        message.success('用户已更新');
       } else {
-        await api.post('/admin/users', { ...values, person_id: values.person_id ?? null });
-        message.success('用户已创建');
+        await api.post('/admin/users', {
+          username: values.username,
+          password: values.password,
+          roles: values.roles,
+          person_id: values.person_id ?? null,
+        });
       }
+      if (values.person_id) {
+        await api.put(`/admin/members/${values.person_id}/groups`, {
+          group_ids: values.group_ids ?? [],
+        });
+      }
+      message.success(editing ? '用户已更新' : '用户已创建');
       setModalOpen(false);
+      loadGroups();
       void load();
     } catch {
       // 已统一提示
@@ -156,7 +209,7 @@ export default function Users() {
         <>
           {(roles ?? []).map((r) => (
             <Tag key={r} color="blue">
-              {ROLE_LABELS[r] ?? r}
+              {roleName.get(r) ?? ROLE_LABELS[r] ?? r}
             </Tag>
           ))}
         </>
@@ -167,6 +220,23 @@ export default function Users() {
       dataIndex: 'person_id',
       width: 140,
       render: (id: string | null) => (id != null ? memberName.get(id) ?? id : "-"),
+    },
+    {
+      title: '用户组',
+      key: 'groups',
+      width: 180,
+      render: (_, record) =>
+        record.person_id && personGroups.get(record.person_id)?.length ? (
+          <>
+            {personGroups.get(record.person_id)!.map((name) => (
+              <Tag key={name} color="purple">
+                {name}
+              </Tag>
+            ))}
+          </>
+        ) : (
+          '-'
+        ),
     },
     {
       title: '状态',
@@ -280,7 +350,7 @@ export default function Users() {
             label="角色"
             rules={[{ required: true, message: '请选择至少一个角色' }]}
           >
-            <Select mode="multiple" options={ROLE_OPTIONS} placeholder="可多选" />
+            <Select mode="multiple" options={roleOptions} placeholder="可多选（含自定义角色）" />
           </Form.Item>
           <Form.Item name="person_id" label="关联人员">
             <Select
@@ -290,6 +360,27 @@ export default function Users() {
               placeholder="从人员主数据中选择"
               options={members.map((m) => ({ value: m.id, label: m.name }))}
             />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.person_id !== cur.person_id}>
+            {({ getFieldValue }) => (
+              <Form.Item
+                name="group_ids"
+                label="所属用户组"
+                extra={
+                  getFieldValue('person_id')
+                    ? '用户组随关联人员保存，可用于流程指派与状态机授权'
+                    : '需先选择关联人员后才能分配用户组'
+                }
+              >
+                <Select
+                  mode="multiple"
+                  allowClear
+                  disabled={!getFieldValue('person_id')}
+                  placeholder="可多选"
+                  options={groups.map((g) => ({ value: g.id, label: g.name }))}
+                />
+              </Form.Item>
+            )}
           </Form.Item>
         </Form>
       </Modal>

@@ -207,6 +207,44 @@ def set_group_members(group_id: str, body: GroupMembersIn, db: Session = Depends
     return ok(_group_row(group, db))
 
 
+@router.get("/members/{person_id}/groups")
+def get_person_groups(person_id: str, db: Session = Depends(get_db), _=Depends(require_roles())):
+    rows = (
+        db.query(UserGroup)
+        .join(UserGroupMember, UserGroupMember.group_id == UserGroup.id)
+        .filter(
+            UserGroupMember.person_id == person_id,
+            UserGroupMember.is_deleted.is_(False),
+            UserGroup.is_deleted.is_(False),
+        )
+        .all()
+    )
+    return ok([{"id": g.id, "code": g.code, "name": g.name} for g in rows])
+
+
+class PersonGroupsIn(BaseModel):
+    group_ids: list[str]
+
+
+@router.put("/members/{person_id}/groups")
+def set_person_groups(person_id: str, body: PersonGroupsIn, db: Session = Depends(get_db), actor=Depends(require_roles())):
+    """按人设置所属用户组（与按组设置成员等价，双向入口）。"""
+    if not db.get(OrgMember, person_id):
+        raise AppError("NOT_FOUND", "人员不存在", 404)
+    valid = {
+        g.id for g in db.query(UserGroup).filter(UserGroup.id.in_(body.group_ids or ["-"]), UserGroup.is_deleted.is_(False))
+    }
+    bad = set(body.group_ids) - valid
+    if bad:
+        raise AppError("INVALID_GROUP", "包含不存在的用户组")
+    db.query(UserGroupMember).filter(UserGroupMember.person_id == person_id).delete()
+    for gid in body.group_ids:
+        db.add(UserGroupMember(group_id=gid, person_id=person_id))
+    audit(db, "org_member", person_id, "set_groups", actor, {"count": len(body.group_ids)})
+    db.commit()
+    return ok({"person_id": person_id, "group_ids": body.group_ids})
+
+
 @router.delete("/groups/{group_id}")
 def delete_group(group_id: str, db: Session = Depends(get_db), actor=Depends(require_roles())):
     group = db.get(UserGroup, group_id)

@@ -98,6 +98,32 @@ def test_group_membership_and_workflow_auth(client, admin_headers, ctx):
     assert client.delete(f"/api/admin/groups/{g['id']}", headers=admin_headers).json()["error"]["code"] != "NOT_FOUND"
 
 
+def test_person_groups_two_way(client, admin_headers, ctx):
+    """按人设置用户组与按组设置成员双向一致。"""
+    g1 = client.post("/api/admin/groups", json={"code": "grp_a", "name": "A组"}, headers=admin_headers).json()["data"]
+    g2 = client.post("/api/admin/groups", json={"code": "grp_b", "name": "B组"}, headers=admin_headers).json()["data"]
+    p, _ = ctx["member_and_user"]("组员甲", "grpuser01", ["it_dev"])
+
+    r = client.put(f"/api/admin/members/{p}/groups", json={"group_ids": [g1["id"], g2["id"]]}, headers=admin_headers)
+    assert r.json()["success"], r.text
+    mine = client.get(f"/api/admin/members/{p}/groups", headers=admin_headers).json()["data"]
+    assert {x["code"] for x in mine} == {"grp_a", "grp_b"}
+
+    # 按组视角能看到该成员
+    groups = client.get("/api/admin/groups", headers=admin_headers).json()["data"]
+    ga = next(x for x in groups if x["code"] == "grp_a")
+    assert any(m["id"] == p for m in ga["members"])
+
+    # 改为只留 A 组
+    client.put(f"/api/admin/members/{p}/groups", json={"group_ids": [g1["id"]]}, headers=admin_headers)
+    mine = client.get(f"/api/admin/members/{p}/groups", headers=admin_headers).json()["data"]
+    assert [x["code"] for x in mine] == ["grp_a"]
+
+    # 不存在的组被拒
+    r = client.put(f"/api/admin/members/{p}/groups", json={"group_ids": ["NOPE"]}, headers=admin_headers)
+    assert r.json()["error"]["code"] == "INVALID_GROUP"
+
+
 def test_workflow_config_validation(client, admin_headers):
     bad = {
         "entity_type": "ticket",
