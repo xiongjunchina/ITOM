@@ -9,6 +9,7 @@ from app.core.errors import AppError
 from app.core.rbac import ADMIN
 from app.models import AuthUser, WorkflowStatus, WorkflowTransition
 from app.services.audit import audit
+from app.services.rbac import actor_keys
 
 # 各转换要求的阶段必填字段：{entity_type: {(from, to) 或 ("*", to): [字段]}}
 STAGE_FIELDS: dict[str, dict[tuple, list[str]]] = {
@@ -53,7 +54,7 @@ def transition(
 
     allowed = rule.allowed_roles or []
     if allowed:
-        held = set(actor.roles or [])
+        held = actor_keys(db, actor)
         if ADMIN not in held and not (held & set(allowed)):
             raise AppError("FORBIDDEN", "当前角色无权执行此流转", 403)
 
@@ -90,7 +91,7 @@ def allowed_targets(db: Session, entity_type: str, from_code: str, actor: AuthUs
         )
         .all()
     )
-    held = set(actor.roles or [])
+    held = actor_keys(db, actor)
     result = []
     for t in rows:
         allowed = t.allowed_roles or []

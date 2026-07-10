@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import ALL_ROLES
 from app.core.security import hash_password
 from app.db import get_db
 from app.deps import require_roles
@@ -26,8 +25,10 @@ def _row(u: AuthUser) -> dict:
     }
 
 
-def _check_roles(roles: list[str]):
-    bad = set(roles) - set(ALL_ROLES)
+def _check_roles(db: Session, roles: list[str]):
+    from app.services.rbac import valid_role_codes
+
+    bad = set(roles) - valid_role_codes(db)
     if bad:
         raise AppError("INVALID_ROLE", f"未知角色: {','.join(bad)}")
 
@@ -43,7 +44,7 @@ def list_users(page: int = 1, page_size: int = 20, q: str = "", db: Session = De
 
 @router.post("")
 def create_user(body: UserCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
-    _check_roles(body.roles)
+    _check_roles(db, body.roles)
     if db.query(AuthUser).filter(AuthUser.username == body.username).first():
         raise AppError("USERNAME_TAKEN", "用户名已存在")
     user = AuthUser(
@@ -67,7 +68,7 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
         raise AppError("NOT_FOUND", "用户不存在", 404)
     changes: dict = {}
     if body.roles is not None:
-        _check_roles(body.roles)
+        _check_roles(db, body.roles)
         changes["roles"] = {"from": user.roles, "to": body.roles}
         user.roles = body.roles
     if body.password:

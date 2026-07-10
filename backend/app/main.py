@@ -10,6 +10,7 @@ from app.core.errors import AppError
 from app.db import Base, SessionLocal, engine
 from app.routers import (
     admin_misc,
+    admin_rbac,
     admin_users,
     attachments,
     auth,
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="New_AOM API", version="0.2.0-m2", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="New_AOM API", version="0.2.5-m2.5", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
@@ -62,7 +63,7 @@ async def validation_handler(_: Request, exc: RequestValidationError):
     )
 
 
-for r in (auth, admin_users, members, admin_misc, notifications, attachments, dashboard, itsm_catalog, tickets, process):
+for r in (auth, admin_users, admin_rbac, members, admin_misc, notifications, attachments, dashboard, itsm_catalog, tickets, process):
     app.include_router(r.router)
 
 

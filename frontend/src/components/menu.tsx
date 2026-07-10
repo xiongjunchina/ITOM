@@ -73,8 +73,11 @@ export const MENU_TREE: MenuNode[] = [
     roles: ['admin', 'is_mgr'],
     children: [
       { key: '/admin/users', path: '/admin/users', label: '用户管理', roles: ['admin'] },
+      { key: '/admin/roles', path: '/admin/roles', label: '角色管理', roles: ['admin'] },
+      { key: '/admin/groups', path: '/admin/groups', label: '用户组', roles: ['admin'] },
       { key: '/admin/members', path: '/admin/members', label: '人员主数据', roles: ['admin'] },
       { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典', roles: ['admin'] },
+      { key: '/admin/workflow-config', path: '/admin/workflow-config', label: '状态机配置', roles: ['admin'] },
       { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', roles: ['admin', 'is_mgr'] },
     ],
   },

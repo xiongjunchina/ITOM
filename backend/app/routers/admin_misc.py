@@ -70,6 +70,70 @@ def update_master_data(
     return ok({"id": item.id})
 
 
+from pydantic import BaseModel
+
+
+class StatusIn(BaseModel):
+    code: str
+    name: str
+    is_initial: bool = False
+    is_terminal: bool = False
+    sort: int = 0
+
+
+class TransitionIn(BaseModel):
+    from_code: str
+    to_code: str
+    allowed_roles: list[str] = []
+
+
+class WorkflowConfigIn(BaseModel):
+    entity_type: str
+    statuses: list[StatusIn]
+    transitions: list[TransitionIn]
+
+
+@router.put("/workflow-config")
+def put_workflow_config(body: WorkflowConfigIn, db: Session = Depends(get_db), actor=Depends(require_roles())):
+    """整体替换某单据类型的状态机配置（校验后生效）。"""
+    codes = [s.code for s in body.statuses]
+    if len(codes) != len(set(codes)):
+        raise AppError("INVALID_CONFIG", "状态代码重复")
+    if sum(1 for s in body.statuses if s.is_initial) != 1:
+        raise AppError("INVALID_CONFIG", "必须且只能有一个初始状态")
+    if not any(s.is_terminal for s in body.statuses):
+        raise AppError("INVALID_CONFIG", "至少需要一个终态")
+    code_set = set(codes)
+    for t in body.transitions:
+        if t.from_code not in code_set or t.to_code not in code_set:
+            raise AppError("INVALID_CONFIG", f"流转 {t.from_code}→{t.to_code} 引用了不存在的状态")
+        if t.from_code == t.to_code:
+            raise AppError("INVALID_CONFIG", "不允许自环流转")
+
+    # 在用状态保护：现存单据的状态不能被删掉
+    from app.models import Ticket
+
+    if body.entity_type in ("ticket", "ticket_change"):
+        type_filter = Ticket.ticket_type == "change" if body.entity_type == "ticket_change" else Ticket.ticket_type != "change"
+        in_use = {
+            s for (s,) in db.query(Ticket.status).filter(type_filter, Ticket.is_deleted.is_(False)).distinct()
+        }
+        missing = in_use - code_set
+        if missing:
+            raise AppError("STATUS_IN_USE", f"存量单据仍处于状态 {','.join(missing)}，不能删除这些状态")
+
+    db.query(WorkflowStatus).filter(WorkflowStatus.entity_type == body.entity_type).delete()
+    db.query(WorkflowTransition).filter(WorkflowTransition.entity_type == body.entity_type).delete()
+    for s in body.statuses:
+        db.add(WorkflowStatus(entity_type=body.entity_type, **s.model_dump()))
+    for t in body.transitions:
+        db.add(WorkflowTransition(entity_type=body.entity_type, **t.model_dump()))
+    audit(db, "workflow_config", body.entity_type, "replace", actor,
+          {"statuses": len(body.statuses), "transitions": len(body.transitions)})
+    db.commit()
+    return ok({"entity_type": body.entity_type})
+
+
 @router.get("/workflow-config")
 def get_workflow_config(entity_type: str = "", db: Session = Depends(get_db), _=Depends(require_roles())):
     sq = db.query(WorkflowStatus).filter(WorkflowStatus.is_deleted.is_(False))

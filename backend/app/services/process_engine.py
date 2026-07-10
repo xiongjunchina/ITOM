@@ -11,7 +11,11 @@ from app.models import (
     ProcessInstance,
     ProcessStep,
     ProcessTask,
+    Role,
+    UserGroup,
+    UserGroupMember,
 )
+from app.services.rbac import GROUP_PREFIX
 
 
 def _match_definition(db: Session, entity_type: str, entity: dict) -> ProcessDefinition | None:
@@ -32,19 +36,48 @@ def _match_definition(db: Session, entity_type: str, entity: dict) -> ProcessDef
 
 
 def _resolve_assignee(db: Session, step: ProcessStep, preferred: str | None) -> str | None:
-    """指派解析：优先单据受理人，否则按步骤默认角色找一个在岗成员（负载均衡留后续）。"""
+    """指派解析：优先单据受理人；否则按步骤默认角色/用户组找一个在岗成员。
+
+    default_role 支持三种取值：内置角色码、自定义角色码（含继承匹配）、"group:组码"。
+    """
     if preferred:
         return preferred
-    if not step.default_role:
+    target = step.default_role
+    if not target:
         return None
+    if target.startswith(GROUP_PREFIX):
+        code = target[len(GROUP_PREFIX):]
+        group = db.query(UserGroup).filter(UserGroup.code == code, UserGroup.is_deleted.is_(False)).first()
+        if not group:
+            return None
+        member = (
+            db.query(OrgMember)
+            .join(UserGroupMember, UserGroupMember.person_id == OrgMember.id)
+            .filter(
+                UserGroupMember.group_id == group.id,
+                UserGroupMember.is_deleted.is_(False),
+                OrgMember.status == "在岗",
+            )
+            .first()
+        )
+        return member.id if member else None
+
+    custom_base = {
+        r.code: r.base_role
+        for r in db.query(Role).filter(Role.is_builtin.is_(False), Role.is_deleted.is_(False))
+    }
     candidates = (
         db.query(AuthUser)
         .join(OrgMember, AuthUser.person_id == OrgMember.id)
         .filter(AuthUser.is_active.is_(True), OrgMember.status == "在岗")
         .all()
     )
-    user = next((u for u in candidates if step.default_role in (u.roles or [])), None)
-    return user.person_id if user else None
+    for u in candidates:
+        keys = set(u.roles or [])
+        keys |= {custom_base[c] for c in list(keys) if custom_base.get(c)}
+        if target in keys:
+            return u.person_id
+    return None
 
 
 def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):

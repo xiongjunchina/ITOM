@@ -24,10 +24,14 @@ def get_current_user(
 
 
 def require_roles(*roles: str):
-    """角色守卫：admin 隐式放行。"""
+    """角色守卫：admin 隐式放行；自定义角色经 base_role 继承内置权限。"""
 
-    def guard(user: AuthUser = Depends(get_current_user)) -> AuthUser:
-        held = set(user.roles or [])
+    def guard(
+        user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)
+    ) -> AuthUser:
+        from app.services.rbac import actor_keys
+
+        held = actor_keys(db, user)
         if ADMIN in held or held & set(roles):
             return user
         raise AppError("FORBIDDEN", "没有执行此操作的权限", 403)

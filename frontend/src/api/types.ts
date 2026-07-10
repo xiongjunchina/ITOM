@@ -244,6 +244,99 @@ export interface TicketDetail extends TicketRow {
   process?: TicketProcess | null;
 }
 
+// ============ M2.5 自配置：角色 / 用户组 ============
+
+/** 角色定义（9 个内置角色 + 自定义角色） */
+export interface RoleDef {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  /** 自定义角色继承的内置角色 code；内置角色为空 */
+  base_role?: Role | null;
+  is_builtin: boolean;
+  user_count: number;
+}
+
+/** 用户组（授权与流程指派对象，引用键格式 "group:组码"） */
+export interface UserGroup {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  members: { id: string; name: string }[];
+}
+
+// ============ M2.5 自配置：状态机 ============
+
+export type WorkflowEntityType = 'ticket' | 'ticket_change';
+
+export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
+  ticket: '工单（事件/服务请求）',
+  ticket_change: '工单（变更）',
+};
+
+/** 状态定义 */
+export interface WorkflowStatusDef {
+  id?: string;
+  entity_type?: WorkflowEntityType;
+  code: string;
+  name: string;
+  is_initial: boolean;
+  is_terminal: boolean;
+  sort: number;
+}
+
+/** 流转规则；allowed_roles 元素 = 角色 code 或 "group:组码"，空数组 = 不限角色 */
+export interface WorkflowTransitionDef {
+  id?: string;
+  entity_type?: WorkflowEntityType;
+  from_code: string;
+  to_code: string;
+  allowed_roles: string[];
+}
+
+export interface WorkflowConfig {
+  statuses: WorkflowStatusDef[];
+  transitions: WorkflowTransitionDef[];
+}
+
+// ============ M2.5 自配置：流程定义 ============
+
+export type AutonomyLevel = 'L1' | 'L2' | 'L3' | 'L4';
+
+export const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
+  L1: 'L1 全自动',
+  L2: 'L2 自动执行·人工确认',
+  L3: 'L3 人工为主·系统辅助',
+  L4: 'L4 纯人工',
+};
+
+/** 流程步骤定义；default_role = 角色 code 或 "group:组码" */
+export interface ProcessStepDef {
+  seq: number;
+  name: string;
+  default_role?: string | null;
+  autonomy_level: AutonomyLevel;
+  sla_hours?: number | null;
+  description?: string | null;
+}
+
+/** 流程定义 */
+export interface ProcessDefinition {
+  id: string;
+  code: string;
+  name: string;
+  entity_type: WorkflowEntityType;
+  trigger_condition?: Record<string, unknown> | null;
+  version: number;
+  active: boolean;
+  description?: string | null;
+  instance_count: number;
+  steps_locked: boolean;
+  steps: ProcessStepDef[];
+}
+
 // ============ 服务目录 ============
 
 export type CatalogTier = 'gold' | 'silver' | 'bronze';

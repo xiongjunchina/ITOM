@@ -5,9 +5,13 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Positions from './pages/team/Positions';
 import Users from './pages/admin/Users';
+import Roles from './pages/admin/Roles';
+import Groups from './pages/admin/Groups';
 import Members from './pages/admin/Members';
 import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
+import WorkflowConfig from './pages/admin/WorkflowConfig';
+import Definitions from './pages/process/Definitions';
 import Tickets from './pages/itsm/Tickets';
 import TicketDetail from './pages/itsm/TicketDetail';
 import CatalogPage from './pages/itsm/CatalogPage';
@@ -36,8 +40,8 @@ export const router = createBrowserRouter([
       { path: 'projects', element: <PlaceholderPage title="项目管理" /> },
       { path: 'requirements', element: <PlaceholderPage title="需求管理" /> },
 
-      // 流程中心（M2+ 交付）
-      { path: 'process/definitions', element: <PlaceholderPage title="流程定义" /> },
+      // 流程中心
+      { path: 'process/definitions', element: <Definitions /> },
       { path: 'process/monitor', element: <PlaceholderPage title="流程监控" /> },
 
       // 团队管理
@@ -50,8 +54,11 @@ export const router = createBrowserRouter([
 
       // 系统管理（admin）
       { path: 'admin/users', element: <Users /> },
+      { path: 'admin/roles', element: <Roles /> },
+      { path: 'admin/groups', element: <Groups /> },
       { path: 'admin/members', element: <Members /> },
       { path: 'admin/master-data', element: <MasterData /> },
+      { path: 'admin/workflow-config', element: <WorkflowConfig /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
 
       { path: '*', element: <Navigate to="/dashboard" replace /> },

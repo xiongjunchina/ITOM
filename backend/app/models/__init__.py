@@ -9,6 +9,9 @@ from app.models.support import (
     NotificationOutbox,
     OrgMember,
     Position,
+    Role,
+    UserGroup,
+    UserGroupMember,
     WorkflowStatus,
     WorkflowTransition,
 )
@@ -30,6 +33,9 @@ __all__ = [
     "ServiceItem",
     "SlaPolicy",
     "Ticket",
+    "Role",
+    "UserGroup",
+    "UserGroupMember",
     "WorkflowStatus",
     "WorkflowTransition",
 ]

@@ -1,11 +1,14 @@
-"""流程任务操作 + 定义只读（完整管理页在 M6）。"""
+"""流程任务操作 + 流程定义自配置管理（admin）。"""
+import re
+
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.errors import AppError
 from app.db import get_db
 from app.deps import get_current_user, require_roles
-from app.models import AuthUser, ProcessDefinition
+from app.models import AuthUser, ProcessDefinition, ProcessInstance, ProcessStep
 from app.schemas.common import ok
 from app.services import process_engine
 from app.services.audit import audit
@@ -19,6 +22,32 @@ class CompleteIn(BaseModel):
 
 class ReassignIn(BaseModel):
     assignee: str
+
+
+class StepIn(BaseModel):
+    seq: int
+    name: str = Field(min_length=1, max_length=128)
+    default_role: str | None = None
+    autonomy_level: str = "L4"
+    sla_hours: float | None = None
+    description: str | None = None
+
+
+class DefinitionCreate(BaseModel):
+    code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_@]+$")
+    name: str = Field(min_length=1, max_length=128)
+    entity_type: str
+    trigger_condition: dict | None = None
+    description: str | None = None
+    steps: list[StepIn] = Field(min_length=1)
+
+
+class DefinitionUpdate(BaseModel):
+    name: str | None = None
+    active: bool | None = None
+    trigger_condition: dict | None = None
+    description: str | None = None
+    steps: list[StepIn] | None = None
 
 
 @router.post("/api/process-tasks/{task_id}/complete")
@@ -37,21 +66,144 @@ def reassign(task_id: str, body: ReassignIn, db: Session = Depends(get_db), user
     return ok({"id": task.id, "assignee": task.assignee})
 
 
+def _def_row(d: ProcessDefinition, db: Session) -> dict:
+    instance_count = (
+        db.query(ProcessInstance)
+        .filter(ProcessInstance.definition_id == d.id, ProcessInstance.is_deleted.is_(False))
+        .count()
+    )
+    return {
+        "id": d.id, "code": d.code, "name": d.name, "entity_type": d.entity_type,
+        "trigger_condition": d.trigger_condition, "version": d.version,
+        "active": d.active, "description": d.description,
+        "instance_count": instance_count,
+        "steps_locked": instance_count > 0,
+        "steps": [
+            {"seq": s.seq, "name": s.name, "default_role": s.default_role,
+             "autonomy_level": s.autonomy_level, "sla_hours": s.sla_hours, "description": s.description}
+            for s in d.steps if not s.is_deleted
+        ],
+    }
+
+
+def _validate_steps(steps: list[StepIn]):
+    seqs = [s.seq for s in steps]
+    if sorted(seqs) != list(range(1, len(steps) + 1)):
+        raise AppError("INVALID_STEPS", "步骤序号必须从 1 连续递增")
+    for s in steps:
+        if s.autonomy_level not in ("L1", "L2", "L3", "L4"):
+            raise AppError("INVALID_STEPS", f"步骤「{s.name}」自治级别必须为 L1-L4")
+
+
+def _check_trigger_conflict(db: Session, entity_type: str, trigger: dict | None, exclude_id: str | None = None):
+    """同一单据类型下，激活的流程定义触发条件必须唯一，否则匹配歧义。"""
+    query = db.query(ProcessDefinition).filter(
+        ProcessDefinition.entity_type == entity_type,
+        ProcessDefinition.active.is_(True),
+        ProcessDefinition.is_deleted.is_(False),
+    )
+    if exclude_id:
+        query = query.filter(ProcessDefinition.id != exclude_id)
+    for d in query.all():
+        if (d.trigger_condition or {}) == (trigger or {}):
+            raise AppError("TRIGGER_CONFLICT", f"与激活流程「{d.name}」的触发条件相同，请先停用它或修改触发条件")
+
+
 @router.get("/api/admin/process-definitions")
 def list_definitions(db: Session = Depends(get_db), _=Depends(require_roles())):
-    rows = db.query(ProcessDefinition).filter(ProcessDefinition.is_deleted.is_(False)).all()
-    return ok(
-        [
-            {
-                "id": d.id, "code": d.code, "name": d.name, "entity_type": d.entity_type,
-                "trigger_condition": d.trigger_condition, "active": d.active,
-                "steps": [
-                    {"seq": s.seq, "name": s.name, "default_role": s.default_role,
-                     "autonomy_level": s.autonomy_level, "sla_hours": s.sla_hours}
-                    for s in d.steps
-                ],
-            }
-            for d in rows
-        ],
-        total=len(rows),
+    rows = (
+        db.query(ProcessDefinition)
+        .filter(ProcessDefinition.is_deleted.is_(False))
+        .order_by(ProcessDefinition.entity_type, ProcessDefinition.code)
+        .all()
     )
+    return ok([_def_row(d, db) for d in rows], total=len(rows))
+
+
+@router.post("/api/admin/process-definitions")
+def create_definition(body: DefinitionCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+    if db.query(ProcessDefinition).filter(ProcessDefinition.code == body.code, ProcessDefinition.is_deleted.is_(False)).first():
+        raise AppError("DUPLICATE", "流程代码已存在")
+    _validate_steps(body.steps)
+    _check_trigger_conflict(db, body.entity_type, body.trigger_condition)
+    definition = ProcessDefinition(
+        code=body.code, name=body.name, entity_type=body.entity_type,
+        trigger_condition=body.trigger_condition, description=body.description,
+    )
+    db.add(definition)
+    db.flush()
+    for s in body.steps:
+        db.add(ProcessStep(definition_id=definition.id, **s.model_dump()))
+    audit(db, "process_definition", definition.id, "create", actor, {"code": body.code, "steps": len(body.steps)})
+    db.commit()
+    return ok(_def_row(definition, db))
+
+
+@router.patch("/api/admin/process-definitions/{def_id}")
+def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+    definition = db.get(ProcessDefinition, def_id)
+    if not definition or definition.is_deleted:
+        raise AppError("NOT_FOUND", "流程定义不存在", 404)
+    data = body.model_dump(exclude_unset=True)
+    steps = data.pop("steps", None)
+    if steps is not None:
+        instance_count = (
+            db.query(ProcessInstance)
+            .filter(ProcessInstance.definition_id == definition.id, ProcessInstance.is_deleted.is_(False))
+            .count()
+        )
+        if instance_count > 0:
+            raise AppError(
+                "STEPS_LOCKED",
+                f"该流程已有 {instance_count} 个实例，步骤不可直接修改；请使用「另存新版本」",
+            )
+        step_models = [StepIn(**s) for s in steps]
+        _validate_steps(step_models)
+        db.query(ProcessStep).filter(ProcessStep.definition_id == definition.id).delete()
+        for s in step_models:
+            db.add(ProcessStep(definition_id=definition.id, **s.model_dump()))
+    if data.get("active") is True or ("trigger_condition" in data and definition.active):
+        _check_trigger_conflict(
+            db, definition.entity_type, data.get("trigger_condition", definition.trigger_condition), exclude_id=definition.id
+        )
+    for k, v in data.items():
+        setattr(definition, k, v)
+    audit(db, "process_definition", definition.id, "update", actor, {"fields": list(data.keys()), "steps_replaced": steps is not None})
+    db.commit()
+    db.refresh(definition)
+    return ok(_def_row(definition, db))
+
+
+@router.post("/api/admin/process-definitions/{def_id}/new-version")
+def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+    """复制为新版本并停用旧版：老单据沿用旧版步骤，新单据走新版。"""
+    old = db.get(ProcessDefinition, def_id)
+    if not old or old.is_deleted:
+        raise AppError("NOT_FOUND", "流程定义不存在", 404)
+    steps = body.steps if body.steps is not None else [
+        StepIn(seq=s.seq, name=s.name, default_role=s.default_role,
+               autonomy_level=s.autonomy_level, sla_hours=s.sla_hours, description=s.description)
+        for s in old.steps if not s.is_deleted
+    ]
+    _validate_steps(steps)
+    new_trigger = body.trigger_condition if body.trigger_condition is not None else old.trigger_condition
+    _check_trigger_conflict(db, old.entity_type, new_trigger, exclude_id=old.id)
+    base_code = re.sub(r"@v\d+$", "", old.code)
+    new_ver = old.version + 1
+    definition = ProcessDefinition(
+        code=f"{base_code}@v{new_ver}",
+        name=body.name or old.name,
+        entity_type=old.entity_type,
+        trigger_condition=body.trigger_condition if body.trigger_condition is not None else old.trigger_condition,
+        description=body.description if body.description is not None else old.description,
+        version=new_ver,
+        active=True,
+    )
+    db.add(definition)
+    db.flush()
+    for s in steps:
+        db.add(ProcessStep(definition_id=definition.id, **s.model_dump()))
+    old.active = False
+    audit(db, "process_definition", definition.id, "new_version", actor, {"from": old.code, "to": definition.code})
+    db.commit()
+    return ok(_def_row(definition, db))

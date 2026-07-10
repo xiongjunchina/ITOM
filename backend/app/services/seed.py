@@ -6,9 +6,21 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.rbac import ADMIN
 from app.core.security import hash_password
-from app.models import AuthUser, MasterData
+from app.models import AuthUser, MasterData, Role
 
 logger = logging.getLogger("aom.seed")
+
+BUILTIN_ROLES = [
+    ("admin", "系统管理员", "全部功能与系统配置"),
+    ("manager", "团队负责人", "全部业务 + 团队管理 + 变更审批 + 建言采纳"),
+    ("it_pdm", "IT产品经理", "侧重需求域：需求分析/排期/验收/关闭"),
+    ("it_pm", "IT项目经理", "侧重项目域：项目创建与管理"),
+    ("it_dev", "IT开发", "侧重交付：需求任务/WBS 任务/工单处理"),
+    ("it_ops", "IT运维", "侧重运维：工单/变更实施/问题/CMDB/SLA"),
+    ("is_mgr", "信息安全管理员", "安全治理：安全工单/变更风险评估/审计查看"),
+    ("it_bp", "IT业务合作伙伴", "业务接口：需求登记与业务对齐/代提单"),
+    ("requester", "业务用户", "提交工单和需求、查询自己的单据、满意度评价"),
+]
 
 MASTER_DATA = [
     # (category, code, name, sort)
@@ -28,6 +40,9 @@ MASTER_DATA = [
 
 
 def run_seed(db: Session):
+    for code, name, desc in BUILTIN_ROLES:
+        if not db.query(Role).filter(Role.code == code).first():
+            db.add(Role(code=code, name=name, description=desc, is_builtin=True))
     if not db.query(AuthUser).filter(AuthUser.username == "admin").first():
         db.add(
             AuthUser(

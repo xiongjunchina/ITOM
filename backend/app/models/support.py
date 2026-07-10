@@ -1,7 +1,7 @@
 """支撑域模型（docs/04 §1）+ 岗位表（人员主数据依赖）。"""
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -30,6 +30,35 @@ class OrgMember(GlidBase):
     remarks: Mapped[str | None] = mapped_column(Text)
 
     position: Mapped[Position | None] = relationship()
+
+
+class Role(GlidBase):
+    """角色注册表：内置角色承载系统权限；自定义角色继承内置角色权限，
+    并可被状态机 allowed_roles 与流程步骤 default_role 精确引用。"""
+
+    __tablename__ = "role"
+
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str | None] = mapped_column(Text)
+    base_role: Mapped[str | None] = mapped_column(String(32), comment="自定义角色继承的内置角色 code；内置角色为空")
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class UserGroup(GlidBase):
+    __tablename__ = "user_group"
+
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class UserGroupMember(GlidBase):
+    __tablename__ = "user_group_member"
+    __table_args__ = (UniqueConstraint("group_id", "person_id"),)
+
+    group_id: Mapped[str] = mapped_column(ForeignKey("user_group.id"), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
 
 
 class AuthUser(GlidBase):

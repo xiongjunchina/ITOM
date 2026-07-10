@@ -76,4 +76,8 @@ export const api = {
     const env = await request<T>({ method: 'put', url, data });
     return env.data;
   },
+  async delete<T = unknown>(url: string): Promise<T> {
+    const env = await request<T>({ method: 'delete', url });
+    return env.data;
+  },
 };
