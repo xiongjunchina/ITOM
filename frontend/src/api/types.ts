@@ -775,9 +775,9 @@ export interface ImportFailedRow {
   sheet?: string;
 }
 
-/** Excel 导入结果；created 在服务目录导入时为分项计数 */
+/** Excel 导入结果；created 为总数或分项计数（目录/服务项、WBS/里程碑等） */
 export interface ImportResult {
-  created: number | { catalogs: number; items: number };
+  created: number | Record<string, number>;
   failed: ImportFailedRow[];
 }
 

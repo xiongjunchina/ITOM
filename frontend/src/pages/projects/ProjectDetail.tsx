@@ -41,6 +41,7 @@ import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
 import GanttChart from '../../components/GanttChart';
+import ImportButtons from '../../components/ImportButtons';
 import type {
   AllowedTransition,
   AttachmentItem,
@@ -714,6 +715,25 @@ export default function ProjectDetail() {
 
   const progressTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {canEdit && (
+        <Card size="small">
+          <Space wrap>
+            <ImportButtons
+              templateUrl="/project-progress/template"
+              importUrl={`/projects/${id}/import-progress`}
+              onDone={() => {
+                void loadWbs();
+                void loadMilestones();
+                void loadDetail();
+              }}
+              buttonText="导入 WBS 与里程碑"
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              模板含「WBS任务」「里程碑」两个工作表；上级/前置任务按名称挂接，导入后自动生成层级编码与甘特依赖线
+            </Typography.Text>
+          </Space>
+        </Card>
+      )}
       <Card
         title="里程碑"
         size="small"

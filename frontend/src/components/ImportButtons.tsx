@@ -21,11 +21,20 @@ interface ImportButtonsProps {
   buttonText?: string;
 }
 
-/** 成功数文案：服务目录导入时 created 为分项对象 */
+const CREATED_LABELS: Record<string, string> = {
+  catalogs: '目录',
+  items: '服务项',
+  wbs: 'WBS 任务',
+  milestones: '里程碑',
+};
+
+/** 成功数文案：created 为数字或分项对象（键经 CREATED_LABELS 映射） */
 function createdText(created: ImportResult['created']): string {
-  return typeof created === 'number'
-    ? `成功导入 ${created} 条`
-    : `成功导入：目录 ${created.catalogs} 条、服务项 ${created.items} 条`;
+  if (typeof created === 'number') return `成功导入 ${created} 条`;
+  const parts = Object.entries(created as Record<string, number>).map(
+    ([k, v]) => `${CREATED_LABELS[k] ?? k} ${v} 条`,
+  );
+  return `成功导入：${parts.join('、')}`;
 }
 
 /**

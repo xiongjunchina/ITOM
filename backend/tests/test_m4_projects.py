@@ -222,3 +222,56 @@ def test_dashboard_project_section(client, ctx):
     dash = client.get("/api/dashboard", headers=ctx["pm"]).json()["data"]
     assert dash["project"]["active"] >= 2
     assert sum(dash["project"]["health"].values()) >= 3
+
+
+def test_progress_template_and_import(client, ctx):
+    """M5.2：进度页 WBS+里程碑模板导入（层级/前置按名称挂接）。"""
+    import io
+    from openpyxl import Workbook, load_workbook
+
+    r = client.get("/api/project-progress/template", headers=ctx["pm"])
+    assert r.status_code == 200
+    wb = load_workbook(io.BytesIO(r.content))
+    assert set(wb.sheetnames) == {"WBS任务", "里程碑"}
+
+    p = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="导入进度项目")
+    pid = p["id"]
+
+    wb2 = Workbook(); wb2.remove(wb2.active)
+    ws = wb2.create_sheet("WBS任务")
+    ws.append(["h"] * 8); ws.append(["hint"] * 8)
+    ws.append(["需求调研", "项目张经理", str(TODAY), str(TODAY + timedelta(days=5)), "", "", "调研报告", ""])
+    ws.append(["方案设计", "项目张经理", str(TODAY + timedelta(days=6)), str(TODAY + timedelta(days=10)), "", "需求调研", "", ""])
+    ws.append(["接口开发", "项目张经理", str(TODAY + timedelta(days=6)), str(TODAY + timedelta(days=15)), "方案设计", "", "", ""])
+    ws.append(["坏行-负责人不存在", "查无此人", str(TODAY), str(TODAY), "", "", "", ""])
+    ws.append(["坏行-上级不存在", "项目张经理", str(TODAY), str(TODAY), "不存在的任务", "", "", ""])
+    ms = wb2.create_sheet("里程碑")
+    ms.append(["h"] * 3); ms.append(["hint"] * 3)
+    ms.append(["一期上线", str(TODAY + timedelta(days=20)), "上线即验收"])
+    buf = io.BytesIO(); wb2.save(buf)
+
+    result = client.post(
+        f"/api/projects/{pid}/import-progress",
+        files={"file": ("progress.xlsx", buf.getvalue())},
+        headers=ctx["pm"],
+    ).json()["data"]
+    assert result["created"] == {"wbs": 4, "milestones": 1}
+    assert any("查无此人" in e["error"] for e in result["failed"])
+    assert any("按顶层处理" in e["error"] for e in result["failed"])
+
+    wbs = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"]
+    by_name = {w["name"]: w for w in wbs}
+    assert by_name["接口开发"]["parent_task_id"] == by_name["方案设计"]["id"]  # 层级
+    assert by_name["方案设计"]["predecessor_ids"] == [by_name["需求调研"]["id"]]  # 前置依赖
+    assert by_name["方案设计"]["wbs_code"] and "." not in by_name["方案设计"]["wbs_code"]
+    assert "." in by_name["接口开发"]["wbs_code"]  # 子任务层级编码
+
+    mss = client.get(f"/api/projects/{pid}/milestones", headers=ctx["pm"]).json()["data"]
+    assert any(m["name"] == "一期上线" for m in mss)
+
+    # 示例项目禁止导入
+    projects = client.get("/api/projects", headers=ctx["pm"]).json()["data"]
+    demo = next(x for x in projects if x.get("is_example"))
+    r = client.post(f"/api/projects/{demo['id']}/import-progress",
+                    files={"file": ("p.xlsx", buf.getvalue())}, headers=ctx["pm"])
+    assert r.json()["error"]["code"] == "EXAMPLE_READONLY"

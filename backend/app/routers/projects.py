@@ -614,3 +614,144 @@ def delete_cost(cost_id: str, db: Session = Depends(get_db), actor=Depends(requi
     audit(db, "cost_entry", c.id, "delete", actor, {"amount_10k": c.amount_10k})
     db.commit()
     return ok({"id": c.id})
+
+
+# ---------- 进度批量导入（WBS + 里程碑，PRD §6.2 进度页） ----------
+
+from app.services.excel_io import Col, Sheet, build_template, parse_sheet
+
+PROGRESS_SHEETS = [
+    Sheet("WBS任务", [
+        Col("name", "任务名称", required=True, hint="同一项目内任务名称不能重复（上级/前置按名称挂接）"),
+        Col("assignee_name", "负责人姓名", required=True, hint="须为系统中已有在岗人员"),
+        Col("start_date", "开始日期", required=True, kind="date"),
+        Col("end_date", "结束日期", required=True, kind="date"),
+        Col("parent_name", "上级任务名称", hint="留空为顶层；须为本文件中已出现或项目中已有的任务名称"),
+        Col("predecessor_names", "前置任务名称", hint="多个用逗号分隔；甘特图将显示依赖箭头"),
+        Col("deliverable", "交付物"),
+        Col("description", "说明"),
+    ]),
+    Sheet("里程碑", [
+        Col("name", "里程碑名称", required=True),
+        Col("target_date", "目标日期", required=True, kind="date"),
+        Col("description", "说明"),
+    ]),
+]
+
+
+@router.get("/api/project-progress/template")
+def progress_template(_=Depends(require_perm("projects", "edit"))):
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    content = build_template(PROGRESS_SHEETS)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=template.xlsx; filename*=UTF-8''{quote('项目进度导入模板.xlsx')}"},
+    )
+
+
+@router.post("/api/projects/{project_id}/import-progress")
+async def import_progress(project_id: str, file: UploadFile, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(project)
+    if project.status in ("closed", "cancelled"):
+        raise AppError("PROJECT_FINAL", "终态项目不可导入")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise AppError("FILE_TOO_LARGE", "导入文件不能超过 5MB")
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise AppError("INVALID_FORMAT", "请上传 .xlsx 文件（使用系统导出的模板）")
+
+    wbs_rows, wbs_errors = parse_sheet(content, PROGRESS_SHEETS[0])
+    ms_rows, ms_errors = parse_sheet(content, PROGRESS_SHEETS[1])
+    errors = [{**e, "sheet": "WBS任务"} for e in wbs_errors] + [{**e, "sheet": "里程碑"} for e in ms_errors]
+    created = {"wbs": 0, "milestones": 0}
+
+    members = {
+        m.name: m.id
+        for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
+    }
+    existing_tasks = {
+        t.name: t for t in db.query(WbsTask).filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
+    }
+    sort_base = len(existing_tasks)
+
+    # 第一遍：建任务（查重/负责人/日期校验）
+    file_tasks: dict[str, WbsTask] = {}
+    pending_links: list[tuple[dict, WbsTask]] = []
+    seen_names: set[str] = set()
+    for r in wbs_rows:
+        name = r["name"]
+        if name in seen_names:
+            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": f"任务「{name}」在文件中重复"})
+            continue
+        seen_names.add(name)
+        if name in existing_tasks:
+            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": f"任务「{name}」已存在于项目中，跳过"})
+            continue
+        assignee = members.get(r["assignee_name"])
+        if not assignee:
+            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": f"负责人「{r['assignee_name']}」不是系统中的在岗人员"})
+            continue
+        if r["end_date"] < r["start_date"]:
+            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": "结束日期早于开始日期"})
+            continue
+        task = WbsTask(
+            project_id=project.id, name=name, assignee=assignee,
+            start_date=r["start_date"], end_date=r["end_date"],
+            deliverable=r.get("deliverable"), description=r.get("description"),
+            wbs_code="0", sort=sort_base + created["wbs"],
+        )
+        db.add(task)
+        db.flush()
+        file_tasks[name] = task
+        pending_links.append((r, task))
+        created["wbs"] += 1
+
+    # 第二遍：挂上级与前置（文件内任务 + 项目已有任务 皆可引用）
+    all_by_name = {**{k: v for k, v in existing_tasks.items()}, **file_tasks}
+    for r, task in pending_links:
+        parent_name = r.get("parent_name")
+        if parent_name:
+            parent = all_by_name.get(parent_name)
+            if not parent or parent.id == task.id:
+                errors.append({"sheet": "WBS任务", "row": r["_row"],
+                               "error": f"已导入，但上级任务「{parent_name}」未找到，按顶层处理"})
+            else:
+                task.parent_task_id = parent.id
+        pred_raw = r.get("predecessor_names")
+        if pred_raw:
+            pred_ids = []
+            for pname in [x.strip() for x in str(pred_raw).replace("，", ",").split(",") if x.strip()]:
+                pred = all_by_name.get(pname)
+                if not pred or pred.id == task.id:
+                    errors.append({"sheet": "WBS任务", "row": r["_row"],
+                                   "error": f"已导入，但前置任务「{pname}」未找到，已忽略"})
+                else:
+                    pred_ids.append(pred.id)
+            task.predecessor_ids = pred_ids
+
+    # 里程碑
+    existing_ms = {
+        m.name for m in db.query(Milestone).filter(Milestone.project_id == project.id, Milestone.is_deleted.is_(False))
+    }
+    for r in ms_rows:
+        if r["name"] in existing_ms:
+            errors.append({"sheet": "里程碑", "row": r["_row"], "error": f"里程碑「{r['name']}」已存在，跳过"})
+            continue
+        db.add(Milestone(project_id=project.id, name=r["name"], target_date=r["target_date"],
+                         description=r.get("description")))
+        existing_ms.add(r["name"])
+        created["milestones"] += 1
+
+    db.flush()
+    rebuild_wbs_codes(db, project.id)
+    audit(db, "project", project.id, "import_progress", actor, {**created, "failed": len(errors)})
+    db.commit()
+    return ok({"created": created, "failed": errors})
