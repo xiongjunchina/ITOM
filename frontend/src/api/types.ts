@@ -1124,6 +1124,250 @@ export interface RequirementDetail extends RequirementRow {
   can_edit: boolean;
 }
 
+// ============ M6 团队管理 ============
+
+/** 积分来源类型 → 中文名（自动积分维度） */
+export const POINT_SOURCE_LABELS: Record<string, string> = {
+  ticket_resolved: '工单解决',
+  ticket_sla_met: 'SLA达成',
+  ticket_satisfaction: '满意度好评',
+  idea_submit: '建言',
+  idea_like: '被点赞',
+  idea_adopt: '建言采纳',
+  wbs_done_on_time: '任务按期',
+  milestone_achieved: '里程碑',
+  requirement_task_done: '需求任务',
+  requirement_closed: '需求交付',
+  knowledge_published: '发布知识',
+  knowledge_voted: '知识好评',
+  training_host: '主讲培训',
+  training_attend: '参与培训',
+  campaign_award: '专项活动',
+};
+
+/** 积分流水条目 */
+export interface PointEntryRow {
+  id?: string;
+  points: number;
+  source_type: string;
+  period: string;
+  note: string | null;
+  created_at: string;
+}
+
+/** 我的积分（GET /points/mine；未关联人员档案时无 period_total） */
+export interface MyPoints {
+  period: string;
+  period_total?: number;
+  total: number;
+  entries: PointEntryRow[];
+}
+
+/** 本期积分排行榜（GET /points/leaderboard） */
+export interface PointsLeaderboard {
+  period: string;
+  board: { person_name: string | null; points: number }[];
+}
+
+/** 积分规则（自动事件分值，可调可停用） */
+export interface PointRule {
+  code: string;
+  name: string;
+  points: number;
+  active: boolean;
+}
+
+/** 建言状态 */
+export type IdeaStatus = 'submitted' | 'adopted' | 'implemented' | 'declined';
+
+export const IDEA_STATUS_COLORS: Record<IdeaStatus, string> = {
+  submitted: 'processing',
+  adopted: 'success',
+  implemented: 'blue',
+  declined: 'default',
+};
+
+/** 建言 */
+export interface IdeaRow {
+  id: string;
+  idea_code: string;
+  title: string;
+  content: string;
+  proposer_name: string | null;
+  status: IdeaStatus | string;
+  status_name: string;
+  like_count: number;
+  liked: boolean;
+  adopted_at: string | null;
+  decline_reason: string | null;
+  created_at: string;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
+}
+
+/** 专项活动状态 */
+export type CampaignStatus = 'draft' | 'active' | 'offline';
+
+export const CAMPAIGN_STATUS_COLORS: Record<CampaignStatus, string> = {
+  draft: 'default',
+  active: 'green',
+  offline: 'red',
+};
+
+/** 专项活动激励任务 */
+export interface CampaignTaskRow {
+  id: string;
+  name: string;
+  description: string | null;
+  points: number;
+  /** 每人上限次数；0 = 不限 */
+  max_times: number;
+}
+
+/** 专项活动列表行 */
+export interface CampaignRow {
+  id: string;
+  name: string;
+  description: string | null;
+  period_label: string;
+  start_date: string;
+  end_date: string;
+  performance_ratio: number;
+  status: CampaignStatus | string;
+  status_name: string;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
+  total_awarded: number;
+  tasks: CampaignTaskRow[];
+  my_points?: number;
+  my_performance?: number;
+}
+
+/** 专项活动发放记录 */
+export interface CampaignAwardRow {
+  id?: string;
+  person_name: string | null;
+  task_name: string | null;
+  points: number;
+  note: string | null;
+  created_at: string;
+}
+
+/** 专项活动详情（含发放记录与排行榜） */
+export interface CampaignDetail extends CampaignRow {
+  awards: CampaignAwardRow[];
+  leaderboard: { person_name: string | null; points: number; performance: number }[];
+  can_manage: boolean;
+}
+
+/** 培训发展活动 */
+export interface TrainingRow {
+  id: string;
+  activity_type: string;
+  topic: string;
+  activity_date: string;
+  host_id?: string | null;
+  host_name: string | null;
+  participant_names: string[];
+  output_link: string | null;
+  remarks: string | null;
+}
+
+/** 团队文化（单例） */
+export interface TeamCharterData {
+  vision: string | null;
+  goals: string | null;
+  principles: string | null;
+  updated_at: string | null;
+}
+
+/** 招聘需求状态 → Tag 颜色 */
+export const HIRING_STATUS_COLORS: Record<string, string> = {
+  待招聘: 'orange',
+  面试中: 'blue',
+  已到岗: 'green',
+  已取消: 'default',
+};
+
+export const HIRING_STATUSES = ['待招聘', '面试中', '已到岗', '已取消'] as const;
+
+/** 招聘需求 */
+export interface HiringNeedRow {
+  id: string;
+  position_id: string;
+  position_name: string | null;
+  headcount: number;
+  status: string;
+  progress_note: string | null;
+}
+
+/** 团队总览（GET /team/overview） */
+export interface TeamOverviewData {
+  period: string;
+  workload: {
+    person_id: string;
+    person_name: string;
+    tickets: number;
+    wbs_tasks: number;
+    req_tasks: number;
+    total: number;
+  }[];
+  points_board: { person_name: string | null; points: number }[];
+  trainings_month: number;
+  active_campaigns: number;
+  onboard_count: number;
+  open_hirings: number;
+}
+
+/** 人效评分行 */
+export interface PerformanceRow {
+  person_id: string;
+  person_name: string;
+  auto_points: number;
+  campaign_points: number;
+  campaign_performance: number;
+  /** 自动积分维度计数 {source_type: 次数} */
+  dimensions: Record<string, number>;
+  total_score: number;
+}
+
+/** 人效评分（GET /team/performance） */
+export interface PerformanceData {
+  period: string;
+  formula: string;
+  rows: PerformanceRow[];
+}
+
+/** 流程实例（监控行） */
+export interface ProcessInstanceRow {
+  id: string;
+  definition_name: string;
+  entity_type: string;
+  entity_id: string;
+  status: string;
+  current_step: string | null;
+  current_assignee: string | null;
+  current_due_at: string | null;
+  overdue: boolean;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export const PROCESS_INSTANCE_STATUS: Record<string, { label: string; color: string }> = {
+  running: { label: '进行中', color: 'processing' },
+  completed: { label: '已完成', color: 'success' },
+  cancelled: { label: '已取消', color: 'default' },
+};
+
+/** 流程实例实体类型 → 中文 */
+export const PROCESS_ENTITY_LABELS: Record<string, string> = {
+  ticket: '工单',
+  ticket_change: '变更',
+  problem: '问题',
+  project: '项目',
+  requirement: '需求',
+};
+
 /** SLA 看板 */
 export interface SlaDashboard {
   month: string;

@@ -219,3 +219,40 @@ def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_d
     audit(db, "process_definition", definition.id, "new_version", actor, {"from": old.code, "to": definition.code})
     db.commit()
     return ok(_def_row(definition, db))
+
+
+@router.get("/api/process-instances")
+def list_instances(
+    status: str = "", entity_type: str = "", page: int = 1, page_size: int = 20,
+    db: Session = Depends(get_db), _=Depends(require_perm("process_monitor", "view")),
+):
+    """流程监控：实例列表 + 当前卡点步骤 + 超时任务。"""
+    from datetime import datetime
+
+    from app.models import OrgMember, ProcessTask
+    from app.schemas.common import paginate
+
+    query = (
+        db.query(ProcessInstance)
+        .filter(ProcessInstance.is_deleted.is_(False))
+    )
+    if status:
+        query = query.filter(ProcessInstance.status == status)
+    if entity_type:
+        query = query.filter(ProcessInstance.entity_type == entity_type)
+    items, total = paginate(query.order_by(ProcessInstance.created_at.desc()), page, page_size)
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    now = datetime.now()
+    rows = []
+    for ins in items:
+        pending = next((t for t in ins.tasks if t.status == "待处理" and not t.is_deleted), None)
+        rows.append({
+            "id": ins.id, "definition_name": ins.definition.name, "entity_type": ins.entity_type,
+            "entity_id": ins.entity_id, "status": ins.status,
+            "current_step": pending.step.name if pending else None,
+            "current_assignee": names.get(pending.assignee) if pending and pending.assignee else None,
+            "current_due_at": pending.due_at if pending else None,
+            "overdue": bool(pending and pending.due_at and pending.due_at < now),
+            "started_at": ins.started_at, "completed_at": ins.completed_at,
+        })
+    return ok(rows, total=total, page=page)

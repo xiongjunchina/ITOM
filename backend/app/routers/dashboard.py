@@ -107,6 +107,40 @@ def _project_section(db: Session) -> tuple[dict, list]:
     )
 
 
+def _team_section(db: Session) -> dict:
+    from app.models import DevelopmentActivity, HiringNeed, PointEntry, OrgMember
+    from app.services.points import current_period
+    from sqlalchemy import func as _f
+
+    period = current_period()
+    board = (
+        db.query(PointEntry.person_id, _f.sum(PointEntry.points))
+        .filter(PointEntry.period == period, PointEntry.is_deleted.is_(False))
+        .group_by(PointEntry.person_id)
+        .order_by(_f.sum(PointEntry.points).desc())
+        .limit(5)
+        .all()
+    )
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    month_start = date.today().replace(day=1)
+    trainings = (
+        db.query(DevelopmentActivity)
+        .filter(DevelopmentActivity.activity_date >= month_start, DevelopmentActivity.is_deleted.is_(False))
+        .count()
+    )
+    from app.routers.team_mgmt import _workload
+
+    workload = _workload(db)[:5]
+    return {
+        "top_workload": [{"name": w["person_name"], "value": w["total"]} for w in workload],
+        "top_points": [{"name": names.get(pid), "value": round(float(pts), 1)} for pid, pts in board],
+        "trainings": trainings,
+        "hirings": db.query(HiringNeed).filter(
+            HiringNeed.is_deleted.is_(False), HiringNeed.status.in_(["待招聘", "面试中"])
+        ).count(),
+    }
+
+
 def _requirement_section(db: Session) -> dict:
     rows = db.query(Requirement).filter(Requirement.is_deleted.is_(False)).all()
     by_stage = {"registered": 0, "analyzing": 0, "implementing": 0, "closed": 0}
@@ -132,7 +166,7 @@ def dashboard(db: Session = Depends(get_db), _=Depends(get_current_user)):
             "service": service,
             "project": project_section,
             "requirement": _requirement_section(db),
-            "team": {"top_workload": [], "top_points": [], "trainings": 0, "hirings": 0},
+            "team": _team_section(db),
             "alerts": alerts,
         }
     )

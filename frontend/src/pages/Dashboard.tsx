@@ -153,34 +153,57 @@ export default function Dashboard() {
         <Card
           title={
             <span>
-              <TeamOutlined /> 团队
+              <TeamOutlined /> 团队动态
             </span>
           }
+          extra={<Link to="/team/overview">查看</Link>}
         >
           <Row gutter={16}>
-            <Col span={6}>
-              <Statistic title="进行中培训" value={team?.trainings ?? 0} />
+            <Col span={12}>
+              <Statistic title="本月培训" value={team?.trainings ?? 0} />
             </Col>
-            <Col span={6}>
-              <Statistic title="招聘需求" value={team?.hirings ?? 0} />
-            </Col>
-            <Col span={6}>
-              <Statistic title="负载 TOP" value={team?.top_workload?.length ?? 0} suffix="人" />
-            </Col>
-            <Col span={6}>
-              <Statistic title="积分 TOP" value={team?.top_points?.length ?? 0} suffix="人" />
+            <Col span={12}>
+              <Statistic
+                title="招聘中"
+                value={team?.hirings ?? 0}
+                valueStyle={(team?.hirings ?? 0) > 0 ? { color: '#fa8c16' } : undefined}
+              />
             </Col>
           </Row>
-          {(team?.top_workload?.length ?? 0) > 0 && (
-            <Typography.Paragraph style={{ marginTop: 12, marginBottom: 0 }} type="secondary">
-              负载 TOP：{team?.top_workload.map((t) => `${t.name}(${t.value})`).join('、')}
-            </Typography.Paragraph>
-          )}
-          {(team?.top_points?.length ?? 0) > 0 && (
-            <Typography.Paragraph style={{ marginTop: 4, marginBottom: 0 }} type="secondary">
-              积分 TOP：{team?.top_points.map((t) => `${t.name}(${t.value})`).join('、')}
-            </Typography.Paragraph>
-          )}
+          <Row gutter={16} style={{ marginTop: 12 }}>
+            <Col span={12}>
+              <Typography.Text type="secondary">负载 Top5</Typography.Text>
+              <List
+                size="small"
+                dataSource={team?.top_workload ?? []}
+                locale={{ emptyText: '暂无数据' }}
+                renderItem={(t, i) => (
+                  <List.Item style={{ padding: '4px 0' }}>
+                    <span>
+                      {i + 1}. {t.name}
+                    </span>
+                    <Typography.Text type="secondary">{t.value}</Typography.Text>
+                  </List.Item>
+                )}
+              />
+            </Col>
+            <Col span={12}>
+              <Typography.Text type="secondary">本期积分 Top5</Typography.Text>
+              <List
+                size="small"
+                dataSource={team?.top_points ?? []}
+                locale={{ emptyText: '暂无数据' }}
+                renderItem={(t, i) => (
+                  <List.Item style={{ padding: '4px 0' }}>
+                    <span>
+                      {i + 1}. {t.name}
+                    </span>
+                    <Typography.Text type="secondary">{t.value}</Typography.Text>
+                  </List.Item>
+                )}
+              />
+            </Col>
+          </Row>
         </Card>
       </Col>
       <Col span={24}>

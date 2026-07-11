@@ -1,9 +1,14 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 import MainLayout from './components/MainLayout';
-import PlaceholderPage from './components/PlaceholderPage';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Positions from './pages/team/Positions';
+import Overview from './pages/team/Overview';
+import Performance from './pages/team/Performance';
+import Activities from './pages/team/Activities';
+import ActivityPoints from './pages/team/ActivityPoints';
+import Charter from './pages/team/Charter';
+import Monitor from './pages/process/Monitor';
 import OrgManagement from './pages/admin/OrgManagement';
 import Identity from './pages/admin/Identity';
 import Access from './pages/admin/Access';
@@ -62,15 +67,15 @@ export const router = createBrowserRouter([
 
       // 流程中心
       { path: 'process/definitions', element: <Definitions /> },
-      { path: 'process/monitor', element: <PlaceholderPage title="流程监控" /> },
+      { path: 'process/monitor', element: <Monitor /> },
 
-      // 团队管理
-      { path: 'team/overview', element: <PlaceholderPage title="团队总览" /> },
-      { path: 'team/performance', element: <PlaceholderPage title="人效评分" /> },
+      // 团队管理（M6 交付）
+      { path: 'team/overview', element: <Overview /> },
+      { path: 'team/performance', element: <Performance /> },
       { path: 'team/positions', element: <Positions /> },
-      { path: 'team/activities', element: <PlaceholderPage title="培训发展" /> },
-      { path: 'team/ideas', element: <PlaceholderPage title="建言献策" /> },
-      { path: 'team/charter', element: <PlaceholderPage title="团队文化" /> },
+      { path: 'team/activities', element: <Activities /> },
+      { path: 'team/ideas', element: <ActivityPoints /> },
+      { path: 'team/charter', element: <Charter /> },
 
       // 系统管理（admin，M3.9 收敛为 6 项）
       { path: 'admin/org', element: <OrgManagement /> },

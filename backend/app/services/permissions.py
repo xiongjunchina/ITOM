@@ -32,7 +32,7 @@ MODULES = [
     ("performance", "人效评分", "团队"),
     ("positions", "岗位编制", "团队"),
     ("activities", "培训发展", "团队"),
-    ("ideas", "建言献策", "团队"),
+    ("ideas", "活动积分", "团队"),
     ("charter", "团队文化", "团队"),
     ("admin_users", "用户管理", "系统管理"),
     ("admin_roles", "角色管理", "系统管理"),
@@ -96,7 +96,7 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     }),
     "it_tm": _merge(_staff_base(), {
         "positions": "ce", "activities": "e", "performance": "v", "charter": "e",
-        "process_monitor": "v", "admin_members": "vce",
+        "ideas": "e", "process_monitor": "v", "admin_members": "vce",
     }),
 }
 

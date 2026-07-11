@@ -62,6 +62,27 @@ def run_seed(db: Session):
     from app.services.permissions import seed_permissions
 
     seed_permissions(db)
+    from app.models import PointRule
+
+    POINT_RULES = [
+        ("idea_submit", "提出建言", 2),
+        ("idea_like", "建言被点赞（每赞）", 1),
+        ("idea_adopt", "建言被采纳", 20),
+        ("ticket_resolved", "工单解决", 5),
+        ("ticket_sla_met", "工单 SLA 双达成", 3),
+        ("ticket_satisfaction", "满意度好评(≥4星)", 5),
+        ("wbs_done_on_time", "项目任务按期完成", 5),
+        ("milestone_achieved", "里程碑达成", 10),
+        ("requirement_task_done", "需求任务完成", 5),
+        ("requirement_closed", "需求关闭交付", 10),
+        ("knowledge_published", "发表知识文章", 8),
+        ("knowledge_voted", "知识被点有用（每次）", 2),
+        ("training_host", "主讲/组织培训", 15),
+        ("training_attend", "参与培训", 3),
+    ]
+    for code, name, points in POINT_RULES:
+        if not db.query(PointRule).filter(PointRule.code == code).first():
+            db.add(PointRule(code=code, name=name, points=points))
     if not db.query(AuthUser).filter(AuthUser.username == "admin").first():
         db.add(
             AuthUser(

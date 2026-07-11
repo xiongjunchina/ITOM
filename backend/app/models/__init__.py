@@ -12,6 +12,17 @@ from app.models.itsm_assets import (
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.project import CostEntry, Milestone, Portfolio, Project, Risk, WbsTask
 from app.models.requirement import Requirement, RequirementTask
+from app.models.team import (
+    ActivityCampaign,
+    CampaignTask,
+    DevelopmentActivity,
+    HiringNeed,
+    Idea,
+    IdeaLike,
+    PointEntry,
+    PointRule,
+    TeamCharter,
+)
 from app.models.support import (
     Attachment,
     BusinessDomain,
@@ -34,12 +45,16 @@ from app.models.support import (
 )
 
 __all__ = [
+    "ActivityCampaign",
     "Attachment",
     "BusinessDomain",
     "BusinessDomainMember",
     "Department",
+    "DevelopmentActivity",
+    "HiringNeed",
     "ProvisionRule",
     "AuditLog",
+    "CampaignTask",
     "Ci",
     "CostEntry",
     "CiRelationship",
@@ -51,11 +66,15 @@ __all__ = [
     "Vendor",
     "WbsTask",
     "AuthUser",
+    "Idea",
+    "IdeaLike",
     "InAppNotification",
     "MasterData",
     "Milestone",
     "NotificationOutbox",
     "OrgMember",
+    "PointEntry",
+    "PointRule",
     "Portfolio",
     "Position",
     "Project",
@@ -68,6 +87,7 @@ __all__ = [
     "ServiceCatalog",
     "ServiceItem",
     "SlaPolicy",
+    "TeamCharter",
     "Ticket",
     "Risk",
     "Role",

@@ -298,3 +298,58 @@ def run_seed_examples(db: Session):
     ))
 
     db.commit()
+
+
+def run_seed_team_examples(db: Session):
+    """M6：示例专项活动 + 示例建言（业务示例只读）。"""
+    from datetime import date, timedelta
+
+    from app.models import ActivityCampaign, CampaignTask, Idea
+
+    if db.query(ActivityCampaign).filter(ActivityCampaign.is_example.is_(True)).first():
+        return
+    today = date.today()
+    half_start = date(today.year, 1 if today.month <= 6 else 7, 1)
+    half_end = date(today.year, 6, 30) if today.month <= 6 else date(today.year, 12, 31)
+    period = f"{today.year}-H{1 if today.month <= 6 else 2}"
+
+    campaign = ActivityCampaign(
+        is_example=True,
+        name="【示例】团建活动方案策划",
+        description=(
+            "填写指引——活动说明建议包含：\n"
+            "① 活动目的：征集下季度团建方案，提升团队凝聚力\n"
+            "② 参与方式：任何成员均可提交方案/参与评选/协助执行\n"
+            "③ 积分规则：完成下方激励任务由管理员核实后发放积分\n"
+            "④ 绩效折算：本活动折算系数 0.1，即活动积分 × 0.1 计入 " + period + " 考核期绩效分\n"
+            "（示例：拿满 105 分 → 绩效加 10.5 分）"
+        ),
+        period_label=period, start_date=half_start, end_date=half_end,
+        performance_ratio=0.1, status="active",
+    )
+    db.add(campaign)
+    db.flush()
+    tasks = [
+        ("提交完整团建方案", "填写指引：贡献指标要可核实——方案含预算明细、日程安排、场地备选；由管理员核实后发放", 30, 1),
+        ("方案被评选采纳", "填写指引：结果型指标分值应高于过程型——最终被采纳执行的方案额外奖励", 50, 1),
+        ("参与方案投票与评论反馈", "填写指引：轻量参与型任务用低分+多次数鼓励广泛参与（每次 5 分，最多 3 次）", 5, 3),
+        ("活动现场组织与执行贡献", "填写指引：执行型贡献按实际承担核发（物料/签到/摄影/主持等，每项 20 分，最多 2 项）", 20, 2),
+    ]
+    for idx, (name, desc, points, max_times) in enumerate(tasks):
+        db.add(CampaignTask(is_example=True, campaign_id=campaign.id, name=name,
+                            description=desc, points=points, max_times=max_times, sort=idx))
+
+    if not db.query(Idea).filter(Idea.is_example.is_(True)).first():
+        db.add(Idea(
+            is_example=True, idea_code="ID-DEMO-001",
+            title="【示例】建议引入自动化巡检脚本减少手工检查",
+            content=(
+                "填写指引——建言内容建议包含：\n"
+                "① 现状问题：每天早上人工检查 12 个系统状态，耗时约 40 分钟\n"
+                "② 建议方案：用脚本定时巡检并推送异常告警\n"
+                "③ 预期收益：每人每天节省 30 分钟，异常发现提前到分钟级\n"
+                "提示：提出建言 +2 分；被点赞每次 +1 分；被管理员采纳 +20 分（分值可在积分规则中调整）"
+            ),
+            proposer=None, proposer_name="系统示例", status="submitted", like_count=0,
+        ))
+    db.commit()

@@ -60,7 +60,7 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/team/performance', path: '/team/performance', label: '人效评分', module: 'performance', roles: ['admin', 'cio', 'it_tm'] },
       { key: '/team/positions', path: '/team/positions', label: '岗位编制', module: 'positions' },
       { key: '/team/activities', path: '/team/activities', label: '培训发展', module: 'activities' },
-      { key: '/team/ideas', path: '/team/ideas', label: '建言献策', module: 'ideas' },
+      { key: '/team/ideas', path: '/team/ideas', label: '活动积分', module: 'ideas' },
       { key: '/team/charter', path: '/team/charter', label: '团队文化', module: 'charter' },
     ],
   },
