@@ -257,6 +257,22 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
         "process": process_engine.instance_view(db, "project", p.id),
         "can_edit": has_perm(db, user, "projects", "edit"),
     })
+    # 关联需求（PRD §6.2 概述页）：M5 需求经 project_id 挂接
+    from app.models import Requirement
+    from app.services.workflow import status_names as _sn
+
+    req_status = _sn(db, "requirement")
+    linked = (
+        db.query(Requirement)
+        .filter(Requirement.project_id == p.id, Requirement.is_deleted.is_(False))
+        .order_by(Requirement.created_at.desc())
+        .all()
+    )
+    detail["linked_requirements"] = [
+        {"id": r.id, "requirement_code": r.requirement_code, "title": r.title,
+         "status": r.status, "status_name": req_status.get(r.status, r.status), "moscow": r.moscow}
+        for r in linked
+    ]
     return ok(detail)
 
 

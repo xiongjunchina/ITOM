@@ -115,6 +115,34 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
   const today = dayjs().startOf('day');
   const todayVisible = !today.isBefore(min) && !today.isAfter(max);
 
+  // 依赖线（PRD §6.2）：前置任务条尾 → 后继任务条头 的折线 + 箭头
+  const rowIndexById = new Map(rows.map((r, i) => [r.task.id, i]));
+  const barGeom = (t: WbsTask) => {
+    const x1 = LABEL_W + offsetOf(t.start_date);
+    const w = Math.max((dayjs(t.end_date).diff(dayjs(t.start_date), 'day') + 1) * dayWidth - 1, 5);
+    return { left: x1, right: x1 + w };
+  };
+  const depEdges: { key: string; d: string }[] = [];
+  rows.forEach(({ task }) => {
+    const toIdx = rowIndexById.get(task.id);
+    if (toIdx === undefined) return;
+    (task.predecessor_ids ?? []).forEach((pid) => {
+      const fromIdx = rowIndexById.get(pid);
+      const pred = rows[fromIdx ?? -1]?.task;
+      if (fromIdx === undefined || !pred) return;
+      const fromY = bodyTop + fromIdx * ROW_H + ROW_H / 2;
+      const toY = bodyTop + toIdx * ROW_H + ROW_H / 2;
+      const fromX = barGeom(pred).right + 2;
+      const toX = barGeom(task).left - 6;
+      const elbowX = Math.max(fromX + 8, toX - 8);
+      const d =
+        toX > fromX + 12
+          ? `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`
+          : `M ${fromX} ${fromY} H ${fromX + 10} V ${(fromY + toY) / 2} H ${toX - 10} V ${toY} H ${toX}`;
+      depEdges.push({ key: `${pid}->${task.id}`, d });
+    });
+  });
+
   const labelCell = (content: React.ReactNode, height: number, strong = false): JSX.Element => (
     <div
       style={{
@@ -184,6 +212,19 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
             }}
           />
           今日
+        </span>
+        <span>
+          <span
+            style={{
+              display: 'inline-block',
+              width: 16,
+              height: 0,
+              borderTop: '2px dashed #8c8c8c',
+              marginRight: 4,
+              verticalAlign: 'middle',
+            }}
+          />
+          依赖线
         </span>
       </div>
 
@@ -294,6 +335,32 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
               </div>
             );
           })}
+
+          {/* 依赖线覆盖层 */}
+          {depEdges.length > 0 && (
+            <svg
+              width={LABEL_W + chartW}
+              height={totalH}
+              style={{ position: 'absolute', top: 0, left: 0, zIndex: 2, pointerEvents: 'none' }}
+            >
+              <defs>
+                <marker id="gantt-dep-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#8c8c8c" />
+                </marker>
+              </defs>
+              {depEdges.map((e) => (
+                <path
+                  key={e.key}
+                  d={e.d}
+                  fill="none"
+                  stroke="#8c8c8c"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                  markerEnd="url(#gantt-dep-arrow)"
+                />
+              ))}
+            </svg>
+          )}
 
           {/* 今日红色竖线 */}
           {todayVisible && (

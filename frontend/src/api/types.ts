@@ -841,7 +841,18 @@ export interface ProjectRow {
 }
 
 /** 项目详情 */
+export interface LinkedRequirementBrief {
+  id: string;
+  requirement_code: string;
+  title: string;
+  status: string;
+  status_name: string;
+  moscow?: string | null;
+}
+
 export interface ProjectDetail extends ProjectRow {
+  /** 关联需求（需求实现阶段挂接本项目） */
+  linked_requirements?: LinkedRequirementBrief[];
   description: string | null;
   service_item_id: string | null;
   allowed_transitions: AllowedTransition[];

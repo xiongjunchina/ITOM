@@ -341,6 +341,7 @@ export default function ProjectDetail() {
         dates: [dayjs(task.start_date), dayjs(task.end_date)],
         description: task.description ?? undefined,
         deliverable: task.deliverable ?? undefined,
+        predecessor_ids: task.predecessor_ids ?? [],
       });
     }
     setTaskModal({ mode, task, parent });
@@ -356,6 +357,7 @@ export default function ProjectDetail() {
       end_date: (v.dates[1] as Dayjs).format('YYYY-MM-DD'),
       description: v.description || null,
       deliverable: v.deliverable || null,
+      predecessor_ids: v.predecessor_ids ?? [],
     };
     setTaskSaving(true);
     try {
@@ -567,6 +569,25 @@ export default function ProjectDetail() {
         >
           {detail.latest_update || '暂无动态'}
         </Typography.Paragraph>
+      </Card>
+
+      <Card title="关联需求" size="small">
+        {(detail.linked_requirements ?? []).length === 0 ? (
+          <Typography.Text type="secondary">
+            暂无关联需求（在需求详情的实现阶段可挂接本项目）
+          </Typography.Text>
+        ) : (
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            {(detail.linked_requirements ?? []).map((r) => (
+              <Space key={r.id} size={8}>
+                <Link to={`/requirements/${r.id}`}>{r.requirement_code}</Link>
+                <span>{r.title}</span>
+                {r.moscow && <Tag>{r.moscow}</Tag>}
+                <Tag>{r.status_name}</Tag>
+              </Space>
+            ))}
+          </Space>
+        )}
       </Card>
 
       <Card title="进度" size="small">
@@ -1184,6 +1205,20 @@ export default function ProjectDetail() {
           </Form.Item>
           <Form.Item name="deliverable" label="交付物">
             <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item
+            name="predecessor_ids"
+            label="前置任务"
+            extra="前置任务完成后本任务才应开始；甘特图中以虚线箭头表示"
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              optionFilterProp="label"
+              options={wbs
+                .filter((t) => t.id !== taskModal?.task?.id)
+                .map((t) => ({ value: t.id, label: `${t.wbs_code} ${t.name}` }))}
+            />
           </Form.Item>
           <Form.Item name="description" label="说明">
             <Input.TextArea rows={2} maxLength={1000} />
