@@ -491,7 +491,7 @@ export default function Cmdb() {
               placeholder="选择负责人"
               options={members.map((m) => ({
                 value: m.id,
-                label: m.dept ? `${m.name}（${m.dept}）` : m.name,
+                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
               }))}
             />
           </Form.Item>

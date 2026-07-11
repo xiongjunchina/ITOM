@@ -7,7 +7,7 @@ export interface Envelope<T = unknown> {
   error?: { code: string; message: string };
 }
 
-/** 系统角色 */
+/** 系统角色（10 个内置角色） */
 export type Role =
   | 'admin'
   | 'manager'
@@ -17,6 +17,7 @@ export type Role =
   | 'it_ops'
   | 'is_mgr'
   | 'it_bp'
+  | 'auditor'
   | 'requester';
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -28,17 +29,25 @@ export const ROLE_LABELS: Record<Role, string> = {
   it_ops: 'IT运维',
   is_mgr: '信息安全管理员',
   it_bp: 'IT业务合作伙伴',
+  auditor: '审计员',
   requester: '业务用户',
 };
 
 export const ALL_ROLES = Object.keys(ROLE_LABELS) as Role[];
+
+/** 认证源 */
+export type AuthSource = 'local' | 'ad' | 'feishu' | 'sms' | 'wechat';
 
 /** 登录用户 */
 export interface AuthUser {
   id: string;
   username: string;
   name: string;
+  /** 有效角色 = 直接角色 ∪ 用户组授予 ∪ 继承展开（菜单/权限过滤用它） */
   roles: Role[];
+  /** 直接授予的角色（不含组继承） */
+  direct_roles?: Role[];
+  auth_source?: AuthSource;
   person_id: string | null;
 }
 
@@ -54,20 +63,29 @@ export interface AdminUser {
   roles: Role[];
   person_id: string | null;
   is_active: boolean;
+  auth_source: AuthSource;
   last_login_at?: string | null;
 }
 
-/** 人员主数据 */
+/** 人员主数据（人的档案，纯数据零权限） */
 export interface Member {
   id: string;
+  /** 中文姓名 */
   name: string;
-  dept?: string | null;
-  team?: string | null;
+  name_en?: string | null;
+  department_id?: string | null;
+  department_name?: string | null;
   position_id?: string | null;
+  position_name?: string | null;
   status?: '在岗' | '离职' | null;
   hire_date?: string | null;
   email?: string | null;
+  mobile?: string | null;
+  /** 同步来源（本地维护为空） */
+  external_source?: string | null;
   skills?: string[] | null;
+  /** 所属用户组名列表（只读，团队归属在用户组维护） */
+  groups?: string[];
   remarks?: string | null;
 }
 
@@ -258,13 +276,81 @@ export interface RoleDef {
   user_count: number;
 }
 
-/** 用户组（授权与流程指派对象，引用键格式 "group:组码"） */
+/** 用户组（授权与流程指派对象，引用键格式 "group:组码"）；人进组自动继承组授予的角色 */
 export interface UserGroup {
   id: string;
   code: string;
   name: string;
   description?: string | null;
+  /** 组授予的角色 code 列表（不允许 admin） */
+  roles: string[];
   members: { id: string; name: string }[];
+}
+
+// ============ M3.5 身份与组织：部门 / 业务域 / 开通规则 ============
+
+/** 部门类型 */
+export type DeptType = 'it' | 'business' | 'audit';
+
+export const DEPT_TYPE_LABELS: Record<DeptType, string> = {
+  it: 'IT',
+  business: '业务',
+  audit: '审计',
+};
+
+export const DEPT_TYPE_COLORS: Record<DeptType, string> = {
+  it: 'blue',
+  business: 'green',
+  audit: 'orange',
+};
+
+/** 部门（公司组织架构，一人一部门，仅数据归属不带权限） */
+export interface Department {
+  id: string;
+  code: string;
+  name: string;
+  parent_id: string | null;
+  dept_type: DeptType;
+  sort: number;
+  active: boolean;
+  /** 同步来源（本地维护为空） */
+  external_source?: string | null;
+  member_count: number;
+}
+
+/** 业务域（负责人是数据字段而非角色） */
+export interface BusinessDomain {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  owner_id?: string | null;
+  owner_name?: string | null;
+  backup_owner_id?: string | null;
+  backup_owner_name?: string | null;
+  sort: number;
+  active: boolean;
+}
+
+/** 开通规则匹配类型 */
+export type ProvisionMatchType = 'dept_type' | 'department';
+
+export const PROVISION_MATCH_LABELS: Record<ProvisionMatchType, string> = {
+  dept_type: '按部门类型',
+  department: '按具体部门',
+};
+
+/** 开通规则（仅账号首次创建时赋默认角色，之后角色自由增减） */
+export interface ProvisionRule {
+  id?: string;
+  match_type: ProvisionMatchType;
+  /** match_type=dept_type 时为 it/business/audit；=department 时为部门 id */
+  match_value: string;
+  /** 回显用（如部门名） */
+  match_label?: string | null;
+  default_roles: string[];
+  sort: number;
+  active: boolean;
 }
 
 // ============ M2.5 自配置：状态机 ============

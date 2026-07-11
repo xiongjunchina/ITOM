@@ -18,19 +18,23 @@ from app.services.audit import audit
 router = APIRouter(tags=["team"])
 
 
-def _member_row(m: OrgMember) -> dict:
+def _member_row(m: OrgMember, groups_by_person: dict[str, list] | None = None) -> dict:
     return {
         "id": m.id,
         "name": m.name,
-        "dept": m.dept,
-        "team": m.team,
+        "name_en": m.name_en,
+        "department_id": m.department_id,
+        "department_name": m.department.name if m.department else None,
         "position_id": m.position_id,
         "position_name": m.position.name if m.position else None,
         "status": m.status,
         "hire_date": m.hire_date,
         "email": m.email,
+        "mobile": m.mobile,
+        "external_source": m.external_source,
         "skills": m.skills or [],
         "remarks": m.remarks,
+        "groups": (groups_by_person or {}).get(m.id, []),
     }
 
 
@@ -46,7 +50,18 @@ def list_members(
     if q:
         query = query.filter(OrgMember.name.ilike(f"%{q}%"))
     items, total = paginate(query.order_by(OrgMember.created_at.desc()), page, page_size)
-    return ok([_member_row(m) for m in items], total=total, page=page)
+    from app.models import UserGroup, UserGroupMember
+
+    groups_by_person: dict[str, list] = {}
+    rows = (
+        db.query(UserGroupMember.person_id, UserGroup.name)
+        .join(UserGroup, UserGroup.id == UserGroupMember.group_id)
+        .filter(UserGroupMember.is_deleted.is_(False), UserGroup.is_deleted.is_(False))
+        .all()
+    )
+    for person_id, group_name in rows:
+        groups_by_person.setdefault(person_id, []).append(group_name)
+    return ok([_member_row(m, groups_by_person) for m in items], total=total, page=page)
 
 
 @router.post("/api/members")

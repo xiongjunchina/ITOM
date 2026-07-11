@@ -547,7 +547,7 @@ export default function TicketDetail() {
           onChange={setReassignTo}
           options={members.map((m) => ({
             value: m.id,
-            label: m.dept ? `${m.name}（${m.dept}）` : m.name,
+            label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
           }))}
         />
       </Modal>

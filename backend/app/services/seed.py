@@ -19,7 +19,15 @@ BUILTIN_ROLES = [
     ("it_ops", "IT运维", "侧重运维：工单/变更实施/问题/CMDB/SLA"),
     ("is_mgr", "信息安全管理员", "安全治理：安全工单/变更风险评估/审计查看"),
     ("it_bp", "IT业务合作伙伴", "业务接口：需求登记与业务对齐/代提单"),
+    ("auditor", "审计员", "全模块只读 + 审计日志查看，不可修改任何单据"),
     ("requester", "业务用户", "提交工单和需求、查询自己的单据、满意度评价"),
+]
+
+DEFAULT_PROVISION_RULES = [
+    # (match_type, match_value, default_roles, sort) 仅账号首次开通生效
+    ("dept_type", "business", ["requester"], 10),
+    ("dept_type", "audit", ["requester"], 20),   # 审计部门默认也是业务用户；auditor 由管理员手工授予
+    ("dept_type", "it", ["requester"], 30),      # IT 新人先基础权限，管理员再细分
 ]
 
 MASTER_DATA = [
@@ -40,9 +48,14 @@ MASTER_DATA = [
 
 
 def run_seed(db: Session):
+    from app.models import ProvisionRule
+
     for code, name, desc in BUILTIN_ROLES:
         if not db.query(Role).filter(Role.code == code).first():
             db.add(Role(code=code, name=name, description=desc, is_builtin=True))
+    if not db.query(ProvisionRule).first():
+        for match_type, match_value, roles, sort in DEFAULT_PROVISION_RULES:
+            db.add(ProvisionRule(match_type=match_type, match_value=match_value, default_roles=roles, sort=sort))
     if not db.query(AuthUser).filter(AuthUser.username == "admin").first():
         db.add(
             AuthUser(

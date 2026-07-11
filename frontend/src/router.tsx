@@ -7,7 +7,10 @@ import Positions from './pages/team/Positions';
 import Users from './pages/admin/Users';
 import Roles from './pages/admin/Roles';
 import Groups from './pages/admin/Groups';
+import ProvisionRules from './pages/admin/ProvisionRules';
+import Departments from './pages/admin/Departments';
 import Members from './pages/admin/Members';
+import BusinessDomains from './pages/admin/BusinessDomains';
 import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
@@ -68,7 +71,10 @@ export const router = createBrowserRouter([
       { path: 'admin/users', element: <Users /> },
       { path: 'admin/roles', element: <Roles /> },
       { path: 'admin/groups', element: <Groups /> },
+      { path: 'admin/provision-rules', element: <ProvisionRules /> },
+      { path: 'admin/departments', element: <Departments /> },
       { path: 'admin/members', element: <Members /> },
+      { path: 'admin/business-domains', element: <BusinessDomains /> },
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },

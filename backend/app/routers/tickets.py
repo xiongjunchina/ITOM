@@ -18,9 +18,11 @@ from app.services.workflow import allowed_targets, status_names
 router = APIRouter(prefix="/api/tickets", tags=["itsm"])
 
 
-def _is_requester_only(user: AuthUser) -> bool:
-    roles = set(user.roles or [])
-    return roles == {REQUESTER}
+def _is_requester_only(db: Session, user: AuthUser) -> bool:
+    from app.services.rbac import effective_roles
+
+    roles = effective_roles(db, user)
+    return roles == {REQUESTER}  # auditor 等其他角色可全局只读
 
 
 def _row(t: Ticket, db: Session, names: dict) -> dict:
@@ -55,7 +57,7 @@ def list_tickets(
     user: AuthUser = Depends(get_current_user),
 ):
     query = db.query(Ticket).filter(Ticket.is_deleted.is_(False))
-    if _is_requester_only(user) or scope == "mine":
+    if _is_requester_only(db, user) or scope == "mine":
         query = query.filter(or_(Ticket.submitter == user.id, Ticket.assignee == (user.person_id or "-")))
     if q:
         query = query.filter(or_(Ticket.title.ilike(f"%{q}%"), Ticket.ticket_code.ilike(f"%{q}%")))
@@ -83,7 +85,7 @@ def _get_ticket(db: Session, ticket_id: str, user: AuthUser) -> Ticket:
     t = db.get(Ticket, ticket_id)
     if not t or t.is_deleted:
         raise AppError("NOT_FOUND", "工单不存在", 404)
-    if _is_requester_only(user) and t.submitter != user.id:
+    if _is_requester_only(db, user) and t.submitter != user.id:
         raise AppError("FORBIDDEN", "无权查看他人工单", 403)
     return t
 

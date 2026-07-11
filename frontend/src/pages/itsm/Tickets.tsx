@@ -415,7 +415,7 @@ export default function Tickets() {
                         placeholder="留空由后台分派"
                         options={members.map((m) => ({
                           value: m.id,
-                          label: m.dept ? `${m.name}（${m.dept}）` : m.name,
+                          label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
                         }))}
                       />
                     </Form.Item>

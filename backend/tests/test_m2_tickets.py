@@ -5,7 +5,7 @@ import pytest
 def ctx(client, admin_headers):
     """准备：一个 it_ops 成员账号 + manager 账号 + 服务项。"""
     def member_and_user(name, username, roles):
-        m = client.post("/api/members", json={"name": name, "dept": "IT部"}, headers=admin_headers).json()["data"]
+        m = client.post("/api/members", json={"name": name}, headers=admin_headers).json()["data"]
         client.post(
             "/api/admin/users",
             json={"username": username, "password": "pass123", "roles": roles, "person_id": m["id"]},

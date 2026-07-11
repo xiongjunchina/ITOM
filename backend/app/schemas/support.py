@@ -25,24 +25,26 @@ class UserUpdate(BaseModel):
 
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
-    dept: str | None = None
-    team: str | None = None
+    name_en: str | None = None
+    department_id: str | None = None
     position_id: str | None = None
     status: str = "在岗"
     hire_date: date | None = None
     email: str | None = None
+    mobile: str | None = None
     skills: list[str] = []
     remarks: str | None = None
 
 
 class MemberUpdate(BaseModel):
     name: str | None = None
-    dept: str | None = None
-    team: str | None = None
+    name_en: str | None = None
+    department_id: str | None = None
     position_id: str | None = None
     status: str | None = None
     hire_date: date | None = None
     email: str | None = None
+    mobile: str | None = None
     skills: list[str] | None = None
     remarks: str | None = None
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Button,
   Card,
@@ -15,18 +15,21 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
-import type { Member, UserGroup } from '../../api/types';
+import { ROLE_LABELS } from '../../api/types';
+import type { Member, Role, RoleDef, UserGroup } from '../../api/types';
 
 interface GroupForm {
   code: string;
   name: string;
   description?: string;
+  roles?: string[];
 }
 
 export default function Groups() {
   const [items, setItems] = useState<UserGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [roleDefs, setRoleDefs] = useState<RoleDef[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<UserGroup | null>(null);
@@ -58,7 +61,26 @@ export default function Groups() {
       .getList<Member>('/members', { page: 1, page_size: 999 })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
+    api
+      .getList<RoleDef>('/admin/roles')
+      .then((res) => setRoleDefs(res.items))
+      .catch(() => undefined);
   }, []);
+
+  /** 组可授予的角色选项（不允许 admin，后端亦会拒绝） */
+  const roleOptions = useMemo(
+    () =>
+      roleDefs
+        .filter((r) => r.code !== 'admin')
+        .map((r) => ({ value: r.code, label: r.name })),
+    [roleDefs],
+  );
+
+  const roleName = useMemo(() => {
+    const map = new Map<string, string>();
+    roleDefs.forEach((r) => map.set(r.code, r.name));
+    return map;
+  }, [roleDefs]);
 
   const openCreate = () => {
     setEditing(null);
@@ -72,6 +94,7 @@ export default function Groups() {
       code: record.code,
       name: record.name,
       description: record.description ?? undefined,
+      roles: record.roles ?? [],
     });
     setModalOpen(true);
   };
@@ -84,6 +107,7 @@ export default function Groups() {
         await api.patch(`/admin/groups/${editing.id}`, {
           name: values.name,
           description: values.description ?? null,
+          roles: values.roles ?? [],
         });
         message.success('用户组已更新');
       } else {
@@ -91,6 +115,7 @@ export default function Groups() {
           code: values.code,
           name: values.name,
           description: values.description ?? null,
+          roles: values.roles ?? [],
         });
         message.success('用户组已创建');
       }
@@ -138,6 +163,23 @@ export default function Groups() {
   const columns: ColumnsType<UserGroup> = [
     { title: '代码', dataIndex: 'code', width: 160 },
     { title: '名称', dataIndex: 'name', width: 180 },
+    {
+      title: '授予角色',
+      dataIndex: 'roles',
+      width: 220,
+      render: (roles: string[] | undefined) =>
+        (roles ?? []).length === 0 ? (
+          '-'
+        ) : (
+          <>
+            {(roles ?? []).map((code) => (
+              <Tag key={code} color="geekblue">
+                {roleName.get(code) ?? ROLE_LABELS[code as Role] ?? code}
+              </Tag>
+            ))}
+          </>
+        ),
+    },
     { title: '描述', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
     {
       title: '成员',
@@ -224,6 +266,19 @@ export default function Groups() {
           >
             <Input maxLength={50} />
           </Form.Item>
+          <Form.Item
+            name="roles"
+            label="授予角色"
+            extra="人进组自动继承这些角色（ServiceNow 式）"
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              optionFilterProp="label"
+              placeholder="可多选（不含系统管理员）"
+              options={roleOptions}
+            />
+          </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} maxLength={200} />
           </Form.Item>
@@ -247,7 +302,7 @@ export default function Groups() {
           placeholder="从人员主数据中选择成员"
           options={members.map((m) => ({
             value: m.id,
-            label: m.dept ? `${m.name}（${m.dept}）` : m.name,
+            label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
           }))}
         />
       </Modal>

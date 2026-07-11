@@ -43,11 +43,13 @@ class GroupCreate(BaseModel):
     code: str = Field(min_length=2, max_length=32, pattern=r"^[a-z][a-z0-9_]+$")
     name: str = Field(min_length=1, max_length=64)
     description: str | None = None
+    roles: list[str] = []
 
 
 class GroupUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    roles: list[str] | None = None
 
 
 class GroupMembersIn(BaseModel):
@@ -155,6 +157,7 @@ def _group_row(g: UserGroup, db: Session) -> dict:
     )
     return {
         "id": g.id, "code": g.code, "name": g.name, "description": g.description,
+        "roles": g.roles or [],
         "members": [{"id": m.id, "name": m.name} for m in members],
     }
 
@@ -165,10 +168,21 @@ def list_groups(db: Session = Depends(get_db), _: AuthUser = Depends(get_current
     return ok([_group_row(g, db) for g in rows], total=len(rows))
 
 
+def _check_group_roles(db: Session, roles: list[str]):
+    from app.services.rbac import valid_role_codes
+
+    bad = set(roles) - valid_role_codes(db)
+    if bad:
+        raise AppError("INVALID_ROLE", f"未知角色: {','.join(bad)}")
+    if "admin" in roles:
+        raise AppError("INVALID_ROLE", "admin 不允许通过用户组授予，请在用户管理单独分配")
+
+
 @router.post("/groups")
 def create_group(body: GroupCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
     if db.query(UserGroup).filter(UserGroup.code == body.code, UserGroup.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "用户组代码已存在")
+    _check_group_roles(db, body.roles)
     group = UserGroup(**body.model_dump())
     db.add(group)
     db.flush()
@@ -183,6 +197,8 @@ def update_group(group_id: str, body: GroupUpdate, db: Session = Depends(get_db)
     if not group or group.is_deleted:
         raise AppError("NOT_FOUND", "用户组不存在", 404)
     data = body.model_dump(exclude_unset=True)
+    if data.get("roles") is not None:
+        _check_group_roles(db, data["roles"])
     for k, v in data.items():
         setattr(group, k, v)
     audit(db, "user_group", group.id, "update", actor, data)

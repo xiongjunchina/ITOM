@@ -22,7 +22,7 @@ import type { AdminUser, Member, Role, RoleDef, UserGroup } from '../../api/type
 interface UserForm {
   username: string;
   password?: string;
-  roles: Role[];
+  roles?: Role[];
   person_id?: string | null;
   group_ids?: string[];
 }
@@ -146,14 +146,14 @@ export default function Users() {
       if (editing) {
         await api.patch(`/admin/users/${editing.id}`, {
           username: values.username,
-          roles: values.roles,
+          roles: values.roles ?? [],
           person_id: values.person_id ?? null,
         });
       } else {
         await api.post('/admin/users', {
           username: values.username,
           password: values.password,
-          roles: values.roles,
+          roles: values.roles ?? [],
           person_id: values.person_id ?? null,
         });
       }
@@ -220,6 +220,13 @@ export default function Users() {
       dataIndex: 'person_id',
       width: 140,
       render: (id: string | null) => (id != null ? memberName.get(id) ?? id : "-"),
+    },
+    {
+      title: '认证源',
+      dataIndex: 'auth_source',
+      width: 90,
+      render: (v: AdminUser['auth_source'] | undefined) =>
+        v === 'local' ? '本地' : v || '-',
     },
     {
       title: '用户组',
@@ -348,9 +355,14 @@ export default function Users() {
           <Form.Item
             name="roles"
             label="角色"
-            rules={[{ required: true, message: '请选择至少一个角色' }]}
+            extra="可留空——将按开通规则取默认角色（依据关联人员的部门）；用户可持有多个角色"
           >
-            <Select mode="multiple" options={roleOptions} placeholder="可多选（含自定义角色）" />
+            <Select
+              mode="multiple"
+              allowClear
+              options={roleOptions}
+              placeholder="可多选（含自定义角色），可留空"
+            />
           </Form.Item>
           <Form.Item name="person_id" label="关联人员">
             <Select
@@ -358,7 +370,10 @@ export default function Users() {
               showSearch
               optionFilterProp="label"
               placeholder="从人员主数据中选择"
-              options={members.map((m) => ({ value: m.id, label: m.name }))}
+              options={members.map((m) => ({
+                value: m.id,
+                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+              }))}
             />
           </Form.Item>
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.person_id !== cur.person_id}>

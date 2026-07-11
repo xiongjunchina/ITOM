@@ -15,21 +15,68 @@ class Position(GlidBase):
     headcount: Mapped[int] = mapped_column(Integer, default=0, comment="编制数")
 
 
+class Department(GlidBase):
+    """公司组织架构（对齐 ServiceNow cmn_department）：一人一部门，纯数据不带权限。"""
+
+    __tablename__ = "department"
+
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(128))
+    parent_id: Mapped[str | None] = mapped_column(ForeignKey("department.id"))
+    dept_type: Mapped[str] = mapped_column(String(16), default="business", comment="it/business/audit")
+    external_source: Mapped[str | None] = mapped_column(String(16), comment="同步来源预留：feishu/ad")
+    external_id: Mapped[str | None] = mapped_column(String(128), comment="外部组织节点 ID 预留")
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class OrgMember(GlidBase):
+    """人员主数据：人的档案（who you are），零权限语义。团队归属看用户组，权限看角色。"""
+
     __tablename__ = "org_member"
 
-    name: Mapped[str] = mapped_column(String(64))
-    dept: Mapped[str | None] = mapped_column(String(64))
-    team: Mapped[str | None] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(64), comment="中文姓名")
+    name_en: Mapped[str | None] = mapped_column(String(64), comment="英文姓名")
+    department_id: Mapped[str | None] = mapped_column(ForeignKey("department.id"), index=True)
     position_id: Mapped[str | None] = mapped_column(ForeignKey("position.id"))
     status: Mapped[str] = mapped_column(String(16), default="在岗", comment="在岗/离职")
     hire_date: Mapped[date | None] = mapped_column(Date)
     email: Mapped[str | None] = mapped_column(String(128))
+    mobile: Mapped[str | None] = mapped_column(String(32))
+    external_source: Mapped[str | None] = mapped_column(String(16), comment="同步来源预留：feishu/ad")
+    external_id: Mapped[str | None] = mapped_column(String(128), comment="外部人员 ID 预留")
     feishu_user_id: Mapped[str | None] = mapped_column(String(64), comment="飞书集成预留")
     skills: Mapped[list | None] = mapped_column(JsonCol, default=list)
     remarks: Mapped[str | None] = mapped_column(Text)
 
     position: Mapped[Position | None] = relationship()
+    department: Mapped[Department | None] = relationship()
+
+
+class BusinessDomain(GlidBase):
+    """业务域/服务线：负责人是字段不是角色（ServiceNow ownership 惯例）。"""
+
+    __tablename__ = "business_domain"
+
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text)
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="BP 负责人")
+    backup_owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ProvisionRule(GlidBase):
+    """账号首次开通的默认角色映射（仅首次生效，之后角色自由增减，绝不绑死）。"""
+
+    __tablename__ = "provision_rule"
+
+    match_type: Mapped[str] = mapped_column(String(16), comment="dept_type/department")
+    match_value: Mapped[str] = mapped_column(String(128), comment="dept_type 值或 department.id")
+    default_roles: Mapped[list] = mapped_column(JsonCol, default=list)
+    sort: Mapped[int] = mapped_column(Integer, default=0, comment="小号优先，命中即停")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class Role(GlidBase):
@@ -51,6 +98,7 @@ class UserGroup(GlidBase):
     code: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str | None] = mapped_column(Text)
+    roles: Mapped[list | None] = mapped_column(JsonCol, default=list, comment="组授予的角色（人进组自动继承）")
 
 
 class UserGroupMember(GlidBase):
@@ -66,8 +114,10 @@ class AuthUser(GlidBase):
 
     username: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    auth_source: Mapped[str] = mapped_column(String(16), default="local", comment="local/ad/feishu/sms/wechat")
+    external_id: Mapped[str | None] = mapped_column(String(128), comment="外部认证源用户 ID")
     person_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
-    roles: Mapped[list] = mapped_column(JsonCol, default=list)
+    roles: Mapped[list] = mapped_column(JsonCol, default=list, comment="直接角色；有效角色=直接∪组授予")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
 

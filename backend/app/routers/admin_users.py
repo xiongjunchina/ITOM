@@ -20,6 +20,7 @@ def _row(u: AuthUser) -> dict:
         "name": u.person.name if u.person else u.username,
         "roles": u.roles or [],
         "person_id": u.person_id,
+        "auth_source": u.auth_source,
         "is_active": u.is_active,
         "last_login_at": u.last_login_at,
     }
@@ -47,16 +48,23 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), actor=Depends(r
     _check_roles(db, body.roles)
     if db.query(AuthUser).filter(AuthUser.username == body.username).first():
         raise AppError("USERNAME_TAKEN", "用户名已存在")
+    roles = body.roles
+    if not roles:  # 未指定角色时按开通规则取默认（仅创建时，之后自由增减）
+        from app.models import OrgMember
+        from app.services.provisioning import default_roles_for
+
+        person = db.get(OrgMember, body.person_id) if body.person_id else None
+        roles = default_roles_for(db, person.department_id if person else None)
     user = AuthUser(
         username=body.username,
         password_hash=hash_password(body.password),
-        roles=body.roles,
+        roles=roles,
         person_id=body.person_id,
         is_active=body.is_active,
     )
     db.add(user)
     db.flush()
-    audit(db, "auth_user", user.id, "create", actor, {"username": body.username, "roles": body.roles})
+    audit(db, "auth_user", user.id, "create", actor, {"username": body.username, "roles": roles})
     db.commit()
     return ok(_row(user))
 

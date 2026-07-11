@@ -12,6 +12,9 @@ from app.models.itsm_assets import (
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.support import (
     Attachment,
+    BusinessDomain,
+    Department,
+    ProvisionRule,
     AuditLog,
     AuthUser,
     InAppNotification,
@@ -28,6 +31,9 @@ from app.models.support import (
 
 __all__ = [
     "Attachment",
+    "BusinessDomain",
+    "Department",
+    "ProvisionRule",
     "AuditLog",
     "Ci",
     "CiRelationship",

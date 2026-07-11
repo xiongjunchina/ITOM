@@ -29,7 +29,7 @@ def test_position_and_member_crud(client, admin_headers):
 
     resp = client.post(
         "/api/members",
-        json={"name": "张三", "dept": "IT部", "position_id": pos_id, "skills": ["linux", "k8s"]},
+        json={"name": "张三", "position_id": pos_id, "skills": ["linux", "k8s"]},
         headers=admin_headers,
     )
     assert resp.json()["data"]["position_name"] == "运维工程师"
@@ -40,8 +40,8 @@ def test_position_and_member_crud(client, admin_headers):
     row = next(p for p in resp.json()["data"] if p["id"] == pos_id)
     assert row["onboard"] == 1 and row["gap"] == 1
 
-    resp = client.patch(f"/api/members/{member_id}", json={"team": "平台组"}, headers=admin_headers)
-    assert resp.json()["data"]["team"] == "平台组"
+    resp = client.patch(f"/api/members/{member_id}", json={"name_en": "Zhang San"}, headers=admin_headers)
+    assert resp.json()["data"]["name_en"] == "Zhang San"
 
 
 def test_user_crud_and_rbac(client, admin_headers):

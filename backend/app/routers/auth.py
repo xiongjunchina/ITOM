@@ -14,12 +14,16 @@ from app.schemas.support import LoginIn
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _user_payload(user: AuthUser) -> dict:
+def _user_payload(db: Session, user: AuthUser) -> dict:
+    from app.services.rbac import effective_roles
+
     return {
         "id": user.id,
         "username": user.username,
         "name": user.person.name if user.person else user.username,
-        "roles": user.roles or [],
+        "roles": sorted(effective_roles(db, user)),  # 有效角色=直接∪组授予∪继承，前端菜单以此渲染
+        "direct_roles": user.roles or [],
+        "auth_source": user.auth_source,
         "person_id": user.person_id,
     }
 
@@ -33,9 +37,9 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         raise AppError("LOGIN_FAILED", "账号已禁用", 401)
     user.last_login_at = datetime.now()
     db.commit()
-    return ok({"token": create_token(user.id), "user": _user_payload(user)})
+    return ok({"token": create_token(user.id), "user": _user_payload(db, user)})
 
 
 @router.get("/me")
-def me(user: AuthUser = Depends(get_current_user)):
-    return ok(_user_payload(user))
+def me(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(_user_payload(db, user))

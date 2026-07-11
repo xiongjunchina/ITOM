@@ -45,7 +45,7 @@ def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
         status="new",
         submitter=actor.id,
         submitter_name=person.name if person else actor.username,
-        submitter_dept=person.dept if person else None,
+        submitter_dept=person.department.name if person and person.department else None,
         service_line=item.catalog.name,
         submitted_at=now,
         sla_response_min=resp_min,
