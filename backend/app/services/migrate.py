@@ -33,6 +33,9 @@ ENSURE_COLUMNS = {
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         ("owner_id", "VARCHAR(26)"),
     ],
+    "process_step": [
+        ("cc_roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+    ],
 }
 
 

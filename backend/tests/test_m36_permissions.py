@@ -110,3 +110,50 @@ def test_member_row_no_groups_field(client, admin_headers, ctx):
     """①人员主数据与用户组解耦：行数据不再返回 groups。"""
     rows = client.get("/api/members", headers=admin_headers).json()["data"]
     assert rows and "groups" not in rows[0]
+
+
+def test_process_step_cc_notify(client, admin_headers, ctx):
+    """知会人：仅收通知不产生任务、不阻塞流程；校验非法知会键被拒。"""
+    cio_p, cio_h = ctx["member_and_user"]("知会CIO", "cc_cio", ["cio"])
+    ops_p, ops_h = ctx["member_and_user"]("知会运维", "cc_ops", ["it_ops"])
+
+    # 非法知会键
+    r = client.post(
+        "/api/admin/process-definitions",
+        json={"code": "cc_bad", "name": "x", "entity_type": "ticket",
+              "steps": [{"seq": 1, "name": "a", "cc_roles": ["ghost_role"]}]},
+        headers=admin_headers,
+    )
+    assert r.json()["error"]["code"] == "INVALID_STEPS"
+
+    # 停用 incident_flow, 建带知会的流程
+    defs = client.get("/api/admin/process-definitions", headers=admin_headers).json()["data"]
+    inc = next(d for d in defs if d["code"] == "incident_flow")
+    client.patch(f"/api/admin/process-definitions/{inc['id']}", json={"active": False}, headers=admin_headers)
+    r = client.post(
+        "/api/admin/process-definitions",
+        json={"code": "cc_flow", "name": "知会测试流程", "entity_type": "ticket",
+              "trigger_condition": {"ticket_type": "incident"},
+              "steps": [{"seq": 1, "name": "处理", "default_role": "it_ops", "cc_roles": ["cio"], "autonomy_level": "L3"}]},
+        headers=admin_headers,
+    )
+    assert r.json()["success"], r.text
+
+    item = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
+    t = client.post(
+        "/api/tickets",
+        json={"title": "知会验证", "ticket_type": "incident", "priority": "P3",
+              "description": "d", "service_item_id": item},
+        headers=ops_h,
+    ).json()["data"]
+
+    detail = client.get(f"/api/tickets/{t['id']}", headers=ops_h).json()["data"]
+    step = detail["process"]["steps"][0]
+    assert step["cc_roles"] == ["cio"]
+    assert step["task_status"] == "待处理"  # 任务只给处理人
+
+    # CIO 收到知会通知；且流程不因知会阻塞（处理人可直接完成步骤）
+    notif = client.get("/api/notifications", headers=cio_h).json()["data"]
+    assert any("流程知会" in n["title"] for n in notif)
+    r = client.post(f"/api/process-tasks/{step['task_id']}/complete", json={"comment": "done"}, headers=ops_h)
+    assert r.json()["data"]["status"] == "已完成"

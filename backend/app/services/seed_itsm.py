@@ -111,10 +111,10 @@ PROCESS_DEFS = [
         "code": "change_flow", "name": "变更管理流程", "entity_type": "ticket_change",
         "trigger": {"ticket_type": "change"},
         "steps": [
-            ("变更登记与风险评估", IS_MGR, "L3", 8),
-            ("变更审批", CIO, "L3", 24),
-            ("实施与验证", IT_OPS, "L3", None),
-            ("变更复盘(PIR)", IT_TM, "L2", 48),
+            ("变更登记与风险评估", IS_MGR, "L3", 8, [IT_TM]),
+            ("变更审批", CIO, "L3", 24, [IT_BM]),
+            ("实施与验证", IT_OPS, "L3", None, [IS_MGR, IT_BM]),
+            ("变更复盘(PIR)", IT_TM, "L2", 48, [CIO]),
         ],
     },
     {
@@ -163,8 +163,11 @@ def run_seed_itsm(db: Session):
             )
             db.add(definition)
             db.flush()
-            for seq, (name, role, level, sla_hours) in enumerate(d["steps"], start=1):
-                db.add(ProcessStep(definition_id=definition.id, seq=seq, name=name, default_role=role, autonomy_level=level, sla_hours=sla_hours))
+            for seq, step in enumerate(d["steps"], start=1):
+                name, role, level, sla_hours = step[:4]
+                cc = list(step[4]) if len(step) > 4 else []
+                db.add(ProcessStep(definition_id=definition.id, seq=seq, name=name, default_role=role,
+                                   cc_roles=cc, autonomy_level=level, sla_hours=sla_hours))
     # 示例目录/服务项：让系统开箱可报单，用户可改名或补充
     if not db.query(ServiceCatalog).first():
         catalog = ServiceCatalog(code="SC-INIT-0001", name="通用 IT 服务", tier="silver", description="初始目录，可编辑", sort=1)

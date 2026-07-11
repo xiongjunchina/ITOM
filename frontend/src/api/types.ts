@@ -222,6 +222,8 @@ export interface ProcessStep {
   seq: number;
   name: string;
   default_role?: string | null;
+  /** 知会人（角色 code 或 "group:组码"）：步骤激活时仅收站内通知，不产生任务 */
+  cc_roles?: string[];
   autonomy_level?: string | null;
   task_id: string | null;
   task_status: '未开始' | '待处理' | '已完成';
@@ -442,6 +444,8 @@ export interface ProcessStepDef {
   seq: number;
   name: string;
   default_role?: string | null;
+  /** 知会人列表（与 default_role 同一词表）：步骤激活时仅通知、不产生任务、不阻塞 */
+  cc_roles?: string[];
   autonomy_level: AutonomyLevel;
   sla_hours?: number | null;
   description?: string | null;

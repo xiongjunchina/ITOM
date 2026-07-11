@@ -28,6 +28,7 @@ class StepIn(BaseModel):
     seq: int
     name: str = Field(min_length=1, max_length=128)
     default_role: str | None = None
+    cc_roles: list[str] = []
     autonomy_level: str = "L4"
     sla_hours: float | None = None
     description: str | None = None
@@ -79,20 +80,31 @@ def _def_row(d: ProcessDefinition, db: Session) -> dict:
         "instance_count": instance_count,
         "steps_locked": instance_count > 0,
         "steps": [
-            {"seq": s.seq, "name": s.name, "default_role": s.default_role,
+            {"seq": s.seq, "name": s.name, "default_role": s.default_role, "cc_roles": s.cc_roles or [],
              "autonomy_level": s.autonomy_level, "sla_hours": s.sla_hours, "description": s.description}
             for s in d.steps if not s.is_deleted
         ],
     }
 
 
-def _validate_steps(steps: list[StepIn]):
+def _validate_steps(db: Session, steps: list[StepIn]):
+    from app.models import UserGroup
+    from app.services.rbac import GROUP_PREFIX, valid_role_codes
+
     seqs = [s.seq for s in steps]
     if sorted(seqs) != list(range(1, len(steps) + 1)):
         raise AppError("INVALID_STEPS", "步骤序号必须从 1 连续递增")
+    valid_keys = valid_role_codes(db)
+    valid_keys |= {
+        f"{GROUP_PREFIX}{code}"
+        for (code,) in db.query(UserGroup.code).filter(UserGroup.is_deleted.is_(False))
+    }
     for s in steps:
         if s.autonomy_level not in ("L1", "L2", "L3", "L4"):
             raise AppError("INVALID_STEPS", f"步骤「{s.name}」自治级别必须为 L1-L4")
+        for key in s.cc_roles:
+            if key not in valid_keys:
+                raise AppError("INVALID_STEPS", f"步骤「{s.name}」知会人 {key} 不是有效的角色或用户组")
 
 
 def _check_trigger_conflict(db: Session, entity_type: str, trigger: dict | None, exclude_id: str | None = None):
@@ -124,7 +136,7 @@ def list_definitions(db: Session = Depends(get_db), _=Depends(require_perm("proc
 def create_definition(body: DefinitionCreate, db: Session = Depends(get_db), actor=Depends(require_perm("process_definitions", "create"))):
     if db.query(ProcessDefinition).filter(ProcessDefinition.code == body.code, ProcessDefinition.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "流程代码已存在")
-    _validate_steps(body.steps)
+    _validate_steps(db, body.steps)
     _check_trigger_conflict(db, body.entity_type, body.trigger_condition)
     definition = ProcessDefinition(
         code=body.code, name=body.name, entity_type=body.entity_type,
@@ -158,7 +170,7 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
                 f"该流程已有 {instance_count} 个实例，步骤不可直接修改；请使用「另存新版本」",
             )
         step_models = [StepIn(**s) for s in steps]
-        _validate_steps(step_models)
+        _validate_steps(db, step_models)
         db.query(ProcessStep).filter(ProcessStep.definition_id == definition.id).delete()
         for s in step_models:
             db.add(ProcessStep(definition_id=definition.id, **s.model_dump()))
@@ -181,11 +193,11 @@ def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_d
     if not old or old.is_deleted:
         raise AppError("NOT_FOUND", "流程定义不存在", 404)
     steps = body.steps if body.steps is not None else [
-        StepIn(seq=s.seq, name=s.name, default_role=s.default_role,
+        StepIn(seq=s.seq, name=s.name, default_role=s.default_role, cc_roles=s.cc_roles or [],
                autonomy_level=s.autonomy_level, sla_hours=s.sla_hours, description=s.description)
         for s in old.steps if not s.is_deleted
     ]
-    _validate_steps(steps)
+    _validate_steps(db, steps)
     new_trigger = body.trigger_condition if body.trigger_condition is not None else old.trigger_condition
     _check_trigger_conflict(db, old.entity_type, new_trigger, exclude_id=old.id)
     base_code = re.sub(r"@v\d+$", "", old.code)

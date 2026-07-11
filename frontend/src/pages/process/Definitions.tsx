@@ -13,7 +13,6 @@ import {
   Select,
   Space,
   Spin,
-  Steps,
   Switch,
   Table,
   Tag,
@@ -37,11 +36,12 @@ import type {
   AutonomyLevel,
   ProcessDefinition,
   ProcessStepDef,
-  RoleDef,
   TicketType,
-  UserGroup,
   WorkflowEntityType,
 } from '../../api/types';
+import FlowDiagram from '../../components/FlowDiagram';
+import type { FlowDiagramStep } from '../../components/FlowDiagram';
+import { useRoleOptions } from '../../utils/roleOptions';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 
 type DrawerMode = 'create' | 'edit' | 'new-version';
@@ -49,6 +49,7 @@ type DrawerMode = 'create' | 'edit' | 'new-version';
 interface StepFormRow {
   name: string;
   default_role?: string | null;
+  cc_roles?: string[];
   autonomy_level: AutonomyLevel;
   sla_hours?: number | null;
   description?: string | null;
@@ -89,9 +90,8 @@ export default function Definitions() {
   const [items, setItems] = useState<ProcessDefinition[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [roleOptions, setRoleOptions] = useState<
-    { value: string; label: string }[]
-  >([]);
+  /** 角色 + 用户组选项（default_role / cc_roles 共用词表）与中文名映射 */
+  const { roleOptions, roleLabel } = useRoleOptions();
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mode, setMode] = useState<DrawerMode>('create');
@@ -115,25 +115,26 @@ export default function Definitions() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    void Promise.all([
-      api.getList<RoleDef>('/admin/roles').catch(() => ({ items: [] as RoleDef[], total: 0 })),
-      api.getList<UserGroup>('/admin/groups').catch(() => ({ items: [] as UserGroup[], total: 0 })),
-    ]).then(([roles, groups]) => {
-      setRoleOptions([
-        ...roles.items.map((r) => ({ value: r.code, label: r.name })),
-        ...groups.items.map((g) => ({ value: `group:${g.code}`, label: `组：${g.name}` })),
-      ]);
-    });
-  }, []);
-
-  const roleLabel = useMemo(() => {
-    const map = new Map(roleOptions.map((o) => [o.value, o.label]));
-    return (v?: string | null) => (v ? map.get(v) ?? v : '未指派');
-  }, [roleOptions]);
-
   /** 步骤是否可编辑：新建/另存新版本总是可编辑；编辑时受 steps_locked 限制 */
   const stepsEditable = mode !== 'edit' || !target?.steps_locked;
+
+  /** Drawer 实时预览：Form.List 值驱动示意图即时更新；步骤锁定时用 target.steps */
+  const stepsWatch = Form.useWatch('steps', form) as StepFormRow[] | undefined;
+  const previewSteps: FlowDiagramStep[] = useMemo(() => {
+    const rows: (StepFormRow | ProcessStepDef | undefined)[] = stepsEditable
+      ? stepsWatch ?? []
+      : target?.steps ?? [];
+    return rows
+      .filter((r): r is StepFormRow | ProcessStepDef => !!r)
+      .map((s, i) => ({
+        seq: i + 1,
+        name: (s.name ?? '').trim(),
+        default_role: s.default_role ?? null,
+        cc_roles: s.cc_roles ?? [],
+        autonomy_level: s.autonomy_level,
+        sla_hours: s.sla_hours ?? null,
+      }));
+  }, [stepsEditable, stepsWatch, target]);
 
   const openDrawer = (m: DrawerMode, record?: ProcessDefinition) => {
     setMode(m);
@@ -154,6 +155,7 @@ export default function Definitions() {
         steps: record.steps.map((s) => ({
           name: s.name,
           default_role: s.default_role ?? undefined,
+          cc_roles: s.cc_roles ?? [],
           autonomy_level: s.autonomy_level,
           sla_hours: s.sla_hours ?? undefined,
           description: s.description ?? undefined,
@@ -163,7 +165,7 @@ export default function Definitions() {
       form.setFieldsValue({
         entity_type: 'ticket',
         trigger_json: '',
-        steps: [{ name: '', autonomy_level: 'L4' }],
+        steps: [{ name: '', autonomy_level: 'L4', cc_roles: [] }],
       });
     }
     setDrawerOpen(true);
@@ -197,6 +199,7 @@ export default function Definitions() {
       seq: i + 1,
       name: s.name,
       default_role: s.default_role ?? null,
+      cc_roles: s.cc_roles ?? [],
       autonomy_level: s.autonomy_level,
       sla_hours: s.sla_hours ?? null,
       description: s.description ?? null,
@@ -263,6 +266,12 @@ export default function Definitions() {
       title: '默认指派',
       dataIndex: 'default_role',
       render: (v: string | null | undefined) => roleLabel(v),
+    },
+    {
+      title: '知会人',
+      dataIndex: 'cc_roles',
+      render: (v: string[] | undefined) =>
+        v && v.length > 0 ? v.map((k) => roleLabel(k)).join('、') : '-',
     },
     {
       title: '自治级别',
@@ -341,15 +350,8 @@ export default function Definitions() {
           {def.description && (
             <Typography.Text type="secondary">{def.description}</Typography.Text>
           )}
-          <div style={{ overflowX: 'auto', paddingTop: 4 }}>
-            <Steps
-              size="small"
-              current={-1}
-              items={def.steps.map((s) => ({
-                title: s.name,
-                description: `${roleLabel(s.default_role)} · ${s.autonomy_level}`,
-              }))}
-            />
+          <div style={{ paddingTop: 4 }}>
+            <FlowDiagram steps={def.steps} roleLabel={roleLabel} />
           </div>
         </Space>
       </Card>
@@ -422,6 +424,14 @@ export default function Definitions() {
             message={`将基于 v${target.version} 创建新版本（code 自动变更，如 ${target.code}@v${target.version + 1}），并停用旧版本`}
           />
         )}
+        <Card
+          size="small"
+          title="流程预览"
+          style={{ marginBottom: 16 }}
+          styles={{ body: { background: '#fafafa' } }}
+        >
+          <FlowDiagram steps={previewSteps} roleLabel={roleLabel} />
+        </Card>
         <Form<DefinitionForm> form={form} layout="vertical" preserve={false}>
           <Typography.Title level={5}>基本信息</Typography.Title>
           <Row gutter={16}>
@@ -502,13 +512,24 @@ export default function Definitions() {
               {(fields, { add, remove, move }) => (
                 <>
                   {fields.map((field, index) => (
-                    <Row gutter={8} key={field.key} align="top" wrap={false}>
+                    <Row
+                      gutter={8}
+                      key={field.key}
+                      align="top"
+                      wrap={false}
+                      style={{
+                        border: '1px solid #f0f0f0',
+                        borderRadius: 8,
+                        padding: '8px 8px 0',
+                        marginBottom: 8,
+                      }}
+                    >
                       <Col flex="30px" style={{ paddingTop: 5 }}>
                         <Typography.Text type="secondary">{index + 1}</Typography.Text>
                       </Col>
                       <Col flex="auto">
                         <Row gutter={8}>
-                          <Col span={6}>
+                          <Col span={7}>
                             <Form.Item
                               name={[field.name, 'name']}
                               rules={[{ required: true, message: '步骤名称必填' }]}
@@ -517,7 +538,7 @@ export default function Definitions() {
                               <Input placeholder="步骤名称" maxLength={50} />
                             </Form.Item>
                           </Col>
-                          <Col span={6}>
+                          <Col span={7}>
                             <Form.Item
                               name={[field.name, 'default_role']}
                               style={{ marginBottom: 8 }}
@@ -531,7 +552,7 @@ export default function Definitions() {
                               />
                             </Form.Item>
                           </Col>
-                          <Col span={5}>
+                          <Col span={6}>
                             <Form.Item
                               name={[field.name, 'autonomy_level']}
                               rules={[{ required: true, message: '必选' }]}
@@ -540,7 +561,7 @@ export default function Definitions() {
                               <Select placeholder="自治级别" options={AUTONOMY_OPTIONS} />
                             </Form.Item>
                           </Col>
-                          <Col span={3}>
+                          <Col span={4}>
                             <Form.Item
                               name={[field.name, 'sla_hours']}
                               style={{ marginBottom: 8 }}
@@ -552,7 +573,25 @@ export default function Definitions() {
                               />
                             </Form.Item>
                           </Col>
-                          <Col span={4}>
+                        </Row>
+                        <Row gutter={8}>
+                          <Col span={14}>
+                            <Form.Item
+                              name={[field.name, 'cc_roles']}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Select
+                                mode="multiple"
+                                allowClear
+                                showSearch
+                                optionFilterProp="label"
+                                maxTagCount="responsive"
+                                placeholder="知会人（可多选，仅通知不产生任务）"
+                                options={roleOptions}
+                              />
+                            </Form.Item>
+                          </Col>
+                          <Col span={10}>
                             <Form.Item
                               name={[field.name, 'description']}
                               style={{ marginBottom: 8 }}
@@ -593,12 +632,13 @@ export default function Definitions() {
                     type="dashed"
                     block
                     icon={<PlusOutlined />}
-                    onClick={() => add({ name: '', autonomy_level: 'L4' })}
+                    onClick={() => add({ name: '', autonomy_level: 'L4', cc_roles: [] })}
                   >
                     添加步骤
                   </Button>
                   <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                    步骤顺序即执行顺序（保存时自动按当前顺序编号）。自治级别：L1 全自动 ~ L4 纯人工。
+                    步骤顺序即执行顺序（保存时自动按当前顺序编号）。自治级别：L1 全自动 ~ L4
+                    纯人工。「知会人」在步骤激活时仅发送站内通知，不产生任务、不阻塞流程。
                   </Typography.Paragraph>
                 </>
               )}

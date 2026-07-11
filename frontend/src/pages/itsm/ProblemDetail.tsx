@@ -29,6 +29,7 @@ import type {
   TicketRow,
 } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
+import { useRoleOptions } from '../../utils/roleOptions';
 import { problemStatusBadge } from './Problems';
 
 const fmt = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-');
@@ -45,6 +46,9 @@ const NEEDS_ROOT_CAUSE = new Set(['known_error', 'resolved']);
 export default function ProblemDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+
+  /** 角色/组 code → 中文名（流程条处理人与知会人展示） */
+  const { roleLabel } = useRoleOptions();
 
   const [detail, setDetail] = useState<ProblemDetailData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -236,9 +240,14 @@ export default function ProblemDetail() {
               description: (
                 <Space direction="vertical" size={0}>
                   <span>
-                    {s.assignee_name ?? s.default_role ?? '-'}
+                    {s.assignee_name ?? (s.default_role ? roleLabel(s.default_role) : '-')}
                     {s.autonomy_level ? ` · ${s.autonomy_level}` : ''}
                   </span>
+                  {(s.cc_roles?.length ?? 0) > 0 && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      知会：{(s.cc_roles ?? []).map((k) => roleLabel(k)).join('、')}
+                    </Typography.Text>
+                  )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
                   {s.task_status === '待处理' && s.task_id != null && (
                     <Button

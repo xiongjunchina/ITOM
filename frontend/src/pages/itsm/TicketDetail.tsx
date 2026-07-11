@@ -21,6 +21,7 @@ import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { useAuthStore } from '../../stores/auth';
+import { useRoleOptions } from '../../utils/roleOptions';
 import type {
   AllowedTransition,
   MasterDataItem,
@@ -51,6 +52,9 @@ export default function TicketDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+
+  /** 角色/组 code → 中文名（流程条处理人与知会人展示） */
+  const { roleLabel } = useRoleOptions();
 
   const [detail, setDetail] = useState<TicketDetailData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -319,9 +323,14 @@ export default function TicketDetail() {
               description: (
                 <Space direction="vertical" size={0}>
                   <span>
-                    {s.assignee_name ?? s.default_role ?? '-'}
+                    {s.assignee_name ?? (s.default_role ? roleLabel(s.default_role) : '-')}
                     {s.autonomy_level ? ` · ${s.autonomy_level}` : ''}
                   </span>
+                  {(s.cc_roles?.length ?? 0) > 0 && (
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      知会：{(s.cc_roles ?? []).map((k) => roleLabel(k)).join('、')}
+                    </Typography.Text>
+                  )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
                   {s.task_status === '待处理' && s.task_id != null && (
                     <Button

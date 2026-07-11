@@ -80,18 +80,87 @@ def _resolve_assignee(db: Session, step: ProcessStep, preferred: str | None) -> 
     return None
 
 
+ENTITY_LINKS = {
+    "ticket": "/itsm/tickets/{id}",
+    "ticket_change": "/itsm/tickets/{id}",
+    "problem": "/itsm/problems/{id}",
+    "requirement": "/requirements/{id}",
+}
+
+
+def _resolve_key_persons(db: Session, key: str) -> list[str]:
+    """解析角色码或 group:组码 → 在岗人员 person_id 列表（知会解析用）。"""
+    if key.startswith(GROUP_PREFIX):
+        code = key[len(GROUP_PREFIX):]
+        group = db.query(UserGroup).filter(UserGroup.code == code, UserGroup.is_deleted.is_(False)).first()
+        if not group:
+            return []
+        members = (
+            db.query(OrgMember)
+            .join(UserGroupMember, UserGroupMember.person_id == OrgMember.id)
+            .filter(
+                UserGroupMember.group_id == group.id,
+                UserGroupMember.is_deleted.is_(False),
+                OrgMember.status == "在岗",
+            )
+            .all()
+        )
+        return [m.id for m in members]
+    custom_base = {
+        r.code: r.base_role
+        for r in db.query(Role).filter(Role.is_builtin.is_(False), Role.is_deleted.is_(False))
+    }
+    result = []
+    candidates = (
+        db.query(AuthUser)
+        .join(OrgMember, AuthUser.person_id == OrgMember.id)
+        .filter(AuthUser.is_active.is_(True), OrgMember.status == "在岗")
+        .all()
+    )
+    for u in candidates:
+        keys = set(u.roles or [])
+        keys |= {custom_base[c] for c in list(keys) if custom_base.get(c)}
+        if key in keys:
+            result.append(u.person_id)
+    return result
+
+
+def _notify_cc(db: Session, instance: ProcessInstance, step: ProcessStep, assignee: str | None):
+    """知会人：仅通知，不产生任务、不阻塞流程（RACI 的 I）。"""
+    if not step.cc_roles:
+        return
+    from app.events import notifier
+
+    recipients: set[str] = set()
+    for key in step.cc_roles:
+        recipients.update(_resolve_key_persons(db, key))
+    recipients.discard(assignee)
+    if not recipients:
+        return
+    link = ENTITY_LINKS.get(instance.entity_type, "").format(id=instance.entity_id)
+    notifier.notify(
+        db, "process.step_cc", instance.entity_type, instance.entity_id,
+        sorted(recipients),
+        f"流程知会：{instance.definition.name}·{step.name}",
+        content="该节点进入处理中，你是知会人（无需操作）",
+        link=link,
+    )
+
+
 def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):
     now = datetime.now()
+    assignee = _resolve_assignee(db, step, preferred)
     db.add(
         ProcessTask(
             instance_id=instance.id,
             step_id=step.id,
-            assignee=_resolve_assignee(db, step, preferred),
+            assignee=assignee,
             status="待处理",
             started_at=now,
             due_at=now + timedelta(hours=step.sla_hours) if step.sla_hours else None,
         )
     )
+    _notify_cc(db, instance, step, assignee)
 
 
 def start_instance(db: Session, entity_type: str, entity_id: str, entity_attrs: dict, preferred_assignee: str | None = None) -> ProcessInstance | None:
@@ -167,6 +236,7 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
                 "seq": s.seq,
                 "name": s.name,
                 "default_role": s.default_role,
+                "cc_roles": s.cc_roles or [],
                 "autonomy_level": s.autonomy_level,
                 "task_id": tasks_by_step[s.id].id if s.id in tasks_by_step else None,
                 "task_status": tasks_by_step[s.id].status if s.id in tasks_by_step else "未开始",
