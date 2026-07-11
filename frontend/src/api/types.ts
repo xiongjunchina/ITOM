@@ -11,7 +11,6 @@ export interface Envelope<T = unknown> {
 export type Role =
   | 'admin'
   | 'cio'
-  | 'manager'
   | 'it_bm'
   | 'it_tm'
   | 'it_pdm'
@@ -26,7 +25,6 @@ export type Role =
 export const ROLE_LABELS: Record<Role, string> = {
   admin: '系统管理员',
   cio: 'CIO(IT总负责人)',
-  manager: '团队负责人(通用)',
   it_bm: 'IT业务线负责人',
   it_tm: 'IT专业线负责人',
   it_pdm: 'IT产品经理',

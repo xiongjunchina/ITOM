@@ -20,7 +20,7 @@ def ctx(client, admin_headers):
 
 def test_builtin_roles_seeded(client, admin_headers):
     roles = client.get("/api/admin/roles", headers=admin_headers).json()["data"]
-    assert sum(1 for r in roles if r["is_builtin"]) == 13  # 含 auditor + cio/it_bm/it_tm
+    assert sum(1 for r in roles if r["is_builtin"]) == 12  # 13 - manager(已移除)
 
 
 def test_custom_role_inherits_permissions(client, admin_headers, ctx):
@@ -69,7 +69,7 @@ def test_group_membership_and_workflow_auth(client, admin_headers, ctx):
     cfg = client.get("/api/admin/workflow-config?entity_type=ticket_change", headers=admin_headers).json()["data"]
     for t in cfg["transitions"]:
         if t["from_code"] == "pending_approval" and t["to_code"] == "approved":
-            t["allowed_roles"] = ["manager", "group:db_team"]
+            t["allowed_roles"] = ["cio", "group:db_team"]
     r = client.put(
         "/api/admin/workflow-config",
         json={

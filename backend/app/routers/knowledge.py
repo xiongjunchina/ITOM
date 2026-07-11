@@ -110,10 +110,12 @@ def update_article(article_id: str, body: ArticleUpdate, db: Session = Depends(g
     a = db.get(KnowledgeArticle, article_id)
     if not a or a.is_deleted:
         raise AppError("NOT_FOUND", "文章不存在", 404)
-    from app.core.rbac import ADMIN, MANAGER
+    from app.core.rbac import ADMIN, CIO
 
-    held = set(user.roles or [])
-    if a.author != user.id and not held & {ADMIN, MANAGER}:
+    from app.services.rbac import effective_roles
+
+    held = effective_roles(db, user)
+    if a.author != user.id and not held & {ADMIN, CIO}:
         raise AppError("FORBIDDEN", "仅作者或负责人可编辑", 403)
     data = body.model_dump(exclude_unset=True)
     was_draft = a.status == "draft"

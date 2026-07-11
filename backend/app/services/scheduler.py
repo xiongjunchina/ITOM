@@ -3,7 +3,7 @@ import asyncio
 import logging
 from datetime import datetime
 
-from app.core.rbac import MANAGER
+from app.core.rbac import CIO, IT_TM
 from app.db import SessionLocal
 from app.events import notifier
 from app.models import AuthUser, Ticket
@@ -29,10 +29,11 @@ def scan_sla_warnings():
             )
             .all()
         )
+        escalation_roles = {CIO, IT_TM}
         managers = [
             u.person_id
             for u in db.query(AuthUser).filter(AuthUser.is_active.is_(True)).all()
-            if u.person_id and MANAGER in (u.roles or [])
+            if u.person_id and escalation_roles & set(u.roles or [])
         ]
         for t in open_tickets:
             elapsed_hours = sla.effective_minutes(t, now) / 60
@@ -67,10 +68,11 @@ def scan_contract_expiry():
             )
             .all()
         )
+        escalation_roles = {CIO, IT_TM}
         managers = [
             u.person_id
             for u in db.query(AuthUser).filter(AuthUser.is_active.is_(True)).all()
-            if u.person_id and MANAGER in (u.roles or [])
+            if u.person_id and escalation_roles & set(u.roles or [])
         ]
         for c in expiring:
             c.expiry_warned = True

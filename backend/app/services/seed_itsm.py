@@ -1,7 +1,7 @@
 """M2 种子：工单两套状态机、SLA 策略、流程定义、示例目录/服务项。幂等。"""
 from sqlalchemy.orm import Session
 
-from app.core.rbac import IS_MGR, IT_OPS, MANAGER
+from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_TM
 from app.models import (
     ProcessDefinition,
     ProcessStep,
@@ -70,8 +70,8 @@ TICKET_TRANSITIONS = [
     ("ticket", "resolved", "processing", []),   # 重开
     ("ticket", "resolved", "closed", []),
     ("ticket_change", "new", "pending_approval", []),
-    ("ticket_change", "pending_approval", "approved", [MANAGER]),
-    ("ticket_change", "pending_approval", "rejected", [MANAGER]),
+    ("ticket_change", "pending_approval", "approved", [CIO, IT_TM]),
+    ("ticket_change", "pending_approval", "rejected", [CIO, IT_TM]),
     ("ticket_change", "approved", "implementing", []),
     ("ticket_change", "implementing", "resolved", []),
     ("ticket_change", "implementing", "rolled_back", []),
@@ -83,6 +83,10 @@ SLA_POLICIES = [
     ("P1", 30, 4), ("P2", 60, 8), ("P3", 240, 24), ("P4", 480, 72),
 ]
 
+# ITIL 4 实践 × 矩阵式组织（docs/06 §六）：
+# 事件=快速恢复(运维处理,TM 复盘)；服务请求=标准交付(BP 对接用户确认)；
+# 变更=风险评估(信息安全)→授权(CIO/TM)→实施(运维)→PIR 复盘(TM)；
+# 问题=根因管理；需求=BP登记→产品分析→BM排期协调→开发→产品验收（M5 单据上线即挂接）
 PROCESS_DEFS = [
     {
         "code": "incident_flow", "name": "事件处理流程", "entity_type": "ticket",
@@ -90,8 +94,8 @@ PROCESS_DEFS = [
         "steps": [
             ("受理定级", IT_OPS, "L3", 0.5),
             ("诊断与处理", IT_OPS, "L3", None),
-            ("解决确认", IT_OPS, "L3", None),
-            ("关闭回访", IT_OPS, "L2", 24),
+            ("解决与用户确认", IT_OPS, "L3", None),
+            ("关闭复盘", IT_TM, "L2", 24),
         ],
     },
     {
@@ -100,17 +104,17 @@ PROCESS_DEFS = [
         "steps": [
             ("受理确认", IT_OPS, "L2", 4),
             ("实施交付", IT_OPS, "L3", None),
-            ("确认关闭", IT_OPS, "L3", 24),
+            ("用户确认关闭", IT_BP, "L3", 24),
         ],
     },
     {
         "code": "change_flow", "name": "变更管理流程", "entity_type": "ticket_change",
         "trigger": {"ticket_type": "change"},
         "steps": [
-            ("提交与风险评估", IS_MGR, "L3", 8),
-            ("变更审批", MANAGER, "L3", 24),
+            ("变更登记与风险评估", IS_MGR, "L3", 8),
+            ("变更审批", CIO, "L3", 24),
             ("实施与验证", IT_OPS, "L3", None),
-            ("关闭复盘", IT_OPS, "L2", 48),
+            ("变更复盘(PIR)", IT_TM, "L2", 48),
         ],
     },
     {
@@ -120,7 +124,18 @@ PROCESS_DEFS = [
             ("问题确认", IT_OPS, "L3", 24),
             ("根因分析", IT_OPS, "L3", None),
             ("解决与验证", IT_OPS, "L3", None),
-            ("关闭复盘", IT_OPS, "L2", 48),
+            ("关闭复盘", IT_TM, "L2", 48),
+        ],
+    },
+    {
+        "code": "requirement_flow", "name": "需求交付流程", "entity_type": "requirement",
+        "trigger": None,
+        "steps": [
+            ("需求登记与业务对齐", IT_BP, "L3", 24),
+            ("需求分析与方案", IT_PDM, "L3", None),
+            ("排期与资源协调", IT_BM, "L3", 48),
+            ("开发实现", IT_DEV, "L3", None),
+            ("验收与关闭", IT_PDM, "L3", None),
         ],
     },
 ]

@@ -53,9 +53,9 @@ def test_provision_default_roles_business_dept(client, admin_headers, ctx):
 
 def test_explicit_roles_never_overridden(client, admin_headers, ctx):
     """显式指定多角色时规则不干预——用户永远可多角色。"""
-    _, h = ctx["member_and_user"]("多面手", "multi01", "it", roles=["it_dev", "it_ops", "manager"])
+    _, h = ctx["member_and_user"]("多面手", "multi01", "it", roles=["it_dev", "it_ops", "cio"])
     me = client.get("/api/auth/me", headers=h).json()["data"]
-    assert set(me["roles"]) >= {"it_dev", "it_ops", "manager"}
+    assert set(me["roles"]) >= {"it_dev", "it_ops", "cio"}
 
 
 def test_group_grants_roles(client, admin_headers, ctx):

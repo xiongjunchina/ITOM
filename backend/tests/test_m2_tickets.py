@@ -15,7 +15,7 @@ def ctx(client, admin_headers):
         return m["id"], {"Authorization": f"Bearer {token}"}
 
     ops_person, ops_headers = member_and_user("运维一号", "ops1", ["it_ops"])
-    mgr_person, mgr_headers = member_and_user("负责人", "mgr1", ["manager"])
+    mgr_person, mgr_headers = member_and_user("负责人", "mgr1", ["cio"])
 
     item_id = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
     return {
@@ -109,7 +109,7 @@ def test_change_approval_flow(client, ctx):
     resp = client.post(f"/api/tickets/{tid}/transition", json={"to": "approved", "fields": {}}, headers=ctx["ops"])
     assert resp.status_code == 403
 
-    # manager 审批通过
+    # cio 审批通过
     resp = client.post(
         f"/api/tickets/{tid}/transition",
         json={"to": "approved", "fields": {"approval_comment": "同意"}},

@@ -46,7 +46,7 @@ interface ItemFormValues {
 
 export default function CatalogPage() {
   const user = useAuthStore((s) => s.user);
-  const canManage = hasAnyRole(user, ['admin', 'manager']);
+  const canManage = hasAnyRole(user, ['admin', 'cio']);
 
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null);

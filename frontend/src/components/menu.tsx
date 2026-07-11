@@ -25,7 +25,7 @@ export interface MenuNode {
 
 /** 除业务用户(requester)之外的内部角色（权限缺失时的回退过滤用） */
 const STAFF: Role[] = [
-  'admin', 'cio', 'manager', 'it_bm', 'it_tm',
+  'admin', 'cio', 'it_bm', 'it_tm',
   'it_pdm', 'it_pm', 'it_dev', 'it_ops', 'is_mgr', 'it_bp',
 ];
 
@@ -52,7 +52,7 @@ export const MENU_TREE: MenuNode[] = [
     key: 'process',
     label: '流程中心',
     icon: <ApartmentOutlined />,
-    roles: ['admin', 'manager'],
+    roles: ['admin', 'cio', 'it_tm'],
     children: [
       { key: '/process/definitions', path: '/process/definitions', label: '流程定义', module: 'process_definitions' },
       { key: '/process/monitor', path: '/process/monitor', label: '流程监控', module: 'process_monitor' },
@@ -65,7 +65,7 @@ export const MENU_TREE: MenuNode[] = [
     roles: STAFF,
     children: [
       { key: '/team/overview', path: '/team/overview', label: '团队总览', module: 'team_overview' },
-      { key: '/team/performance', path: '/team/performance', label: '人效评分', module: 'performance', roles: ['admin', 'manager'] },
+      { key: '/team/performance', path: '/team/performance', label: '人效评分', module: 'performance', roles: ['admin', 'cio', 'it_tm'] },
       { key: '/team/positions', path: '/team/positions', label: '岗位编制', module: 'positions' },
       { key: '/team/activities', path: '/team/activities', label: '培训发展', module: 'activities' },
       { key: '/team/ideas', path: '/team/ideas', label: '建言献策', module: 'ideas' },

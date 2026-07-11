@@ -65,7 +65,7 @@ interface CiFormValues {
 }
 
 /** CI 写操作角色 */
-const CI_WRITERS = ['it_ops', 'is_mgr', 'manager', 'admin'] as const;
+const CI_WRITERS = ['it_ops', 'is_mgr', 'cio', 'admin'] as const;
 
 export default function Cmdb() {
   const user = useAuthStore((s) => s.user);

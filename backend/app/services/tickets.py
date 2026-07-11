@@ -4,7 +4,6 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import MANAGER
 from app.events import notifier
 from app.events.bus import publish
 from app.models import AuthUser, OrgMember, ServiceItem, Ticket
@@ -21,9 +20,17 @@ def entity_type_of(ticket: Ticket) -> str:
     return "ticket_change" if ticket.ticket_type == CHANGE else "ticket"
 
 
-def _manager_person_ids(db: Session) -> list[str]:
+def _approver_person_ids(db: Session, entity_type: str) -> list[str]:
+    """按状态机 pending_approval→approved 的 allowed_roles 动态解析审批人（含组/继承）。"""
+    from app.services.rbac import actor_keys
+    from app.services.workflow import get_transition
+
+    rule = get_transition(db, entity_type, "pending_approval", "approved")
+    allowed = set(rule.allowed_roles or []) if rule else set()
     users = db.query(AuthUser).filter(AuthUser.is_active.is_(True)).all()
-    return [u.person_id for u in users if u.person_id and MANAGER in (u.roles or [])]
+    if not allowed:  # 未限定角色则不定向通知
+        return []
+    return [u.person_id for u in users if u.person_id and (actor_keys(db, u) & allowed)]
 
 
 def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
@@ -112,11 +119,11 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     # 变更审批
     if to == "pending_approval":
         publish(db, "change.approval_requested", "ticket", ticket.id, {})
-        managers = _manager_person_ids(db)
-        if managers:
+        approvers = _approver_person_ids(db, entity_type_of(ticket))
+        if approvers:
             notifier.notify(
                 db, "change.approval_requested", "ticket", ticket.id,
-                managers,
+                approvers,
                 f"变更待审批：{ticket.ticket_code} {ticket.title}（风险 {ticket.risk_level or '-'}）",
                 link=f"/itsm/tickets/{ticket.id}",
             )

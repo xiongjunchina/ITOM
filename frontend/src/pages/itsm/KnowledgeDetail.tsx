@@ -156,7 +156,7 @@ export default function KnowledgeDetail() {
   }
 
   const canEdit =
-    hasAnyRole(user, ['admin', 'manager']) || (!!user && !!detail.author && detail.author === user.id);
+    hasAnyRole(user, ['admin', 'cio']) || (!!user && !!detail.author && detail.author === user.id);
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>

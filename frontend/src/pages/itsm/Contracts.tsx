@@ -33,7 +33,7 @@ interface ContractFormValues {
 
 export default function Contracts() {
   const user = useAuthStore((s) => s.user);
-  const canWrite = hasAnyRole(user, ['it_ops', 'manager', 'admin']);
+  const canWrite = hasAnyRole(user, ['it_ops', 'cio', 'admin']);
 
   const [items, setItems] = useState<Contract[]>([]);
   const [total, setTotal] = useState(0);
