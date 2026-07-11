@@ -20,6 +20,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import ImportButtons from '../../components/ImportButtons';
 import { useAuthStore, hasAnyRole } from '../../stores/auth';
 import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
 import { TIER_COLORS, TIER_LABELS } from '../../api/types';
@@ -316,9 +317,19 @@ export default function CatalogPage() {
                 onSearch={setQ}
               />
               {canManage && (
-                <Button type="primary" icon={<PlusOutlined />} onClick={openItemCreate}>
-                  新建服务项
-                </Button>
+                <>
+                  <ImportButtons
+                    templateUrl="/itsm-import/catalog/template"
+                    importUrl="/itsm-import/catalog"
+                    onDone={() => {
+                      void loadCatalogs();
+                      void loadItems();
+                    }}
+                  />
+                  <Button type="primary" icon={<PlusOutlined />} onClick={openItemCreate}>
+                    新建服务项
+                  </Button>
+                </>
               )}
             </Space>
           }

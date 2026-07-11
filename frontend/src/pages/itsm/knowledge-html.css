@@ -1,0 +1,94 @@
+/* 知识库 HTML 格式文章（文档导入）基础排版：与内置 Markdown 渲染视觉一致 */
+.kb-html-content {
+  color: rgba(0, 0, 0, 0.88);
+  line-height: 1.7;
+  word-break: break-word;
+}
+.kb-html-content h1,
+.kb-html-content h2,
+.kb-html-content h3,
+.kb-html-content h4,
+.kb-html-content h5,
+.kb-html-content h6 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: rgba(0, 0, 0, 0.88);
+}
+.kb-html-content h1 {
+  font-size: 24px;
+}
+.kb-html-content h2 {
+  font-size: 20px;
+}
+.kb-html-content h3 {
+  font-size: 17px;
+}
+.kb-html-content h4,
+.kb-html-content h5,
+.kb-html-content h6 {
+  font-size: 15px;
+}
+.kb-html-content p {
+  margin: 0 0 12px;
+}
+.kb-html-content ul,
+.kb-html-content ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+.kb-html-content li {
+  margin-bottom: 4px;
+}
+.kb-html-content blockquote {
+  margin: 0 0 12px;
+  padding-left: 12px;
+  border-left: 3px solid #d9d9d9;
+  color: rgba(0, 0, 0, 0.55);
+}
+.kb-html-content pre {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 4px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+.kb-html-content code {
+  background: #f5f5f5;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.925em;
+}
+.kb-html-content pre code {
+  background: none;
+  padding: 0;
+}
+.kb-html-content table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0 0 12px;
+}
+.kb-html-content th,
+.kb-html-content td {
+  border: 1px solid #e5e5e5;
+  padding: 6px 12px;
+}
+.kb-html-content th {
+  background: #fafafa;
+  font-weight: 600;
+}
+.kb-html-content img {
+  max-width: 100%;
+}
+.kb-html-content a {
+  color: #1677ff;
+}
+.kb-html-content hr {
+  border: none;
+  border-top: 1px solid #e8e8e8;
+  margin: 16px 0;
+}

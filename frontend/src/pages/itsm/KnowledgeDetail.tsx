@@ -3,9 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, Card, Space, Spin, Tag, Typography, message } from 'antd';
 import { ArrowLeftOutlined, EditOutlined, EyeOutlined, LikeOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import DOMPurify from 'dompurify';
 import { api } from '../../api/client';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type { KnowledgeDetail as KnowledgeDetailData } from '../../api/types';
+import './knowledge-html.css';
 
 /**
  * 极简 Markdown 渲染（不引第三方库）：
@@ -202,7 +204,19 @@ export default function KnowledgeDetail() {
         </Space>
       </Card>
 
-      <Card>{renderContent(detail.content || '')}</Card>
+      <Card>
+        {detail.content_format === 'html' ? (
+          // 文档导入的 HTML：后端已 bleach 白名单净化，前端再过一层 DOMPurify 防御
+          <div
+            className="kb-html-content"
+            dangerouslySetInnerHTML={{
+              __html: DOMPurify.sanitize(detail.content || '', { USE_PROFILES: { html: true } }),
+            }}
+          />
+        ) : (
+          renderContent(detail.content || '')
+        )}
+      </Card>
 
       {detail.linked_tickets?.length > 0 && (
         <Card title="关联工单" size="small">

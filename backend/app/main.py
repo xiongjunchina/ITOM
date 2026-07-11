@@ -18,6 +18,7 @@ from app.routers import (
     cmdb,
     dashboard,
     itsm_catalog,
+    itsm_import,
     knowledge,
     members,
     notifications,
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="New_AOM API", version="0.3.9-m3.9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="New_AOM API", version="0.3.10-m3.10", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
@@ -104,7 +105,7 @@ async def auditor_readonly_guard(request: Request, call_next):
 
 
 for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
-          itsm_catalog, tickets, process, problems, cmdb, vendors_contracts, knowledge):
+          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge):
     app.include_router(r.router)
 
 

@@ -1,5 +1,5 @@
 """知识库（PRD §5.7）：发布 2 必填、全文检索、有用投票（防重复）。"""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -37,6 +37,7 @@ def _row(a: KnowledgeArticle, brief: bool = True) -> dict:
         "id": a.id, "article_code": a.article_code, "title": a.title,
         "tags": a.tags or [], "status": a.status,
         "author_name": a.author_name, "view_count": a.view_count, "helpful_count": a.helpful_count,
+        "content_format": a.content_format,
         "created_at": a.created_at, "updated_at": a.updated_at,
     }
     if not brief:
@@ -126,6 +127,35 @@ def update_article(article_id: str, body: ArticleUpdate, db: Session = Depends(g
     audit(db, "knowledge_article", a.id, "update", user, {"fields": list(data.keys())})
     db.commit()
     return ok(_row(a, brief=False))
+
+
+@router.post("/import")
+async def import_document(
+    file: UploadFile, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("knowledge", "create"))
+):
+    """word/markdown/html/txt 导入为知识草稿，供审阅后发布。"""
+    from fastapi import UploadFile as _UF  # noqa: F401  (类型仅用于签名)
+    from app.services.doc_import import convert_document
+
+    content = await file.read()
+    try:
+        doc = convert_document(file.filename or "", content)
+    except ValueError as e:
+        raise AppError("IMPORT_FAILED", str(e))
+    person = db.get(OrgMember, user.person_id) if user.person_id else None
+    article = KnowledgeArticle(
+        title=doc["title"], content=doc["content"], content_format=doc["content_format"],
+        status="draft", tags=["导入"],
+        article_code=gen_code(db, KnowledgeArticle, "article_code", "KB"),
+        author=user.id,
+        author_name=person.name if person else user.username,
+    )
+    db.add(article)
+    db.flush()
+    audit(db, "knowledge_article", article.id, "import", user,
+          {"code": article.article_code, "filename": file.filename, "format": doc["content_format"]})
+    db.commit()
+    return ok({"article_id": article.id, "article_code": article.article_code, "title": article.title})
 
 
 @router.post("/{article_id}/vote")

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Button, Card, Form, Input, Select, Space, Spin, Typography, message } from 'antd';
+import { Alert, Button, Card, Form, Input, Select, Space, Spin, Typography, message } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import type { KnowledgeDetail as KnowledgeDetailData, KnowledgeStatus } from '../../api/types';
@@ -21,6 +21,8 @@ export default function KnowledgeEdit() {
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState<KnowledgeStatus | null>(null);
   const [origin, setOrigin] = useState<KnowledgeDetailData | null>(null);
+  /** 文档导入的 HTML 格式文章：编辑的是 HTML 源码（保存仍走 PATCH content，格式不变） */
+  const isHtml = origin?.content_format === 'html';
 
   useEffect(() => {
     if (!isEdit) return;
@@ -115,19 +117,27 @@ export default function KnowledgeEdit() {
         </Space>
       }
     >
+      {isHtml && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="该文章由文档导入（HTML 格式），可直接编辑 HTML 源码"
+        />
+      )}
       <Form<ArticleFormValues> form={form} layout="vertical">
         <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
           <Input maxLength={200} placeholder="文章标题" />
         </Form.Item>
         <Form.Item
           name="content"
-          label="内容（Markdown）"
+          label={isHtml ? '内容（HTML）' : '内容（Markdown）'}
           rules={[{ required: true, message: '请输入内容' }]}
-          extra="支持 #/##/### 标题、> 引用、``` 代码块 等简单 Markdown 语法"
+          extra={isHtml ? undefined : '支持 #/##/### 标题、> 引用、``` 代码块 等简单 Markdown 语法'}
         >
           <Input.TextArea
             rows={18}
-            placeholder={'## 问题现象\n\n…\n\n## 解决方案\n\n…'}
+            placeholder={isHtml ? undefined : '## 问题现象\n\n…\n\n## 解决方案\n\n…'}
             style={{ fontFamily: 'monospace' }}
           />
         </Form.Item>

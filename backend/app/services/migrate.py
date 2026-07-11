@@ -42,6 +42,9 @@ ENSURE_COLUMNS = {
     "process_step": [
         ("cc_roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
     ],
+    "knowledge_article": [
+        ("content_format", "VARCHAR(8) NOT NULL DEFAULT 'markdown'"),
+    ],
 }
 
 

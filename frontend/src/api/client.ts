@@ -21,7 +21,7 @@ http.interceptors.request.use((config) => {
 // 响应拦截：401 清 token 跳登录页；其余错误统一提示
 http.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<Envelope>) => {
+  async (error: AxiosError<Envelope | Blob>) => {
     const status = error.response?.status;
     if (status === 401) {
       useAuthStore.getState().logout();
@@ -29,7 +29,16 @@ http.interceptors.response.use(
         window.location.href = '/login';
       }
     } else {
-      const msg = error.response?.data?.error?.message || error.message || '请求失败';
+      let body = error.response?.data;
+      // blob 请求（模板下载）出错时错误体是 Blob，需还原成 JSON 才能取到后端中文提示
+      if (body instanceof Blob) {
+        try {
+          body = JSON.parse(await body.text()) as Envelope;
+        } catch {
+          body = undefined;
+        }
+      }
+      const msg = body?.error?.message || error.message || '请求失败';
       message.error(msg);
     }
     return Promise.reject(error);
@@ -51,6 +60,21 @@ async function request<T>(config: AxiosRequestConfig): Promise<Envelope<T>> {
 export interface ListResult<T> {
   items: T[];
   total: number;
+}
+
+/** 从 Content-Disposition 解析下载文件名：优先 RFC 5987 的 filename*=UTF-8''，回退 filename= */
+function parseDispositionFilename(disposition?: string): string | null {
+  if (!disposition) return null;
+  const star = /filename\*\s*=\s*utf-8''([^;]+)/i.exec(disposition);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, ''));
+    } catch {
+      // 编码异常时回退 filename=
+    }
+  }
+  const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(disposition);
+  return plain ? plain[1].trim() : null;
 }
 
 /** 解包后的 API 客户端：直接 resolve data 层；列表接口用 getList 以保留 total */
@@ -78,6 +102,27 @@ export const api = {
   },
   async delete<T = unknown>(url: string): Promise<T> {
     const env = await request<T>({ method: 'delete', url });
+    return env.data;
+  },
+  /** 下载二进制文件（如 Excel 模板）：从 Content-Disposition 解析文件名并触发浏览器保存 */
+  async download(url: string): Promise<void> {
+    const resp = await http.get<Blob>(url, { responseType: 'blob', timeout: 60000 });
+    const headers = resp.headers as Record<string, string | undefined>;
+    const filename = parseDispositionFilename(headers['content-disposition']) || 'download.xlsx';
+    const blobUrl = URL.createObjectURL(resp.data);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  },
+  /** multipart 上传单个文件（后端约定字段名 file），resolve data 层 */
+  async upload<T>(url: string, file: File): Promise<T> {
+    const fd = new FormData();
+    fd.append('file', file);
+    const env = await request<T>({ method: 'post', url, data: fd, timeout: 60000 });
     return env.data;
   },
 };

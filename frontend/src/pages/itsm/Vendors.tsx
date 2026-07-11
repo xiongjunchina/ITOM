@@ -3,6 +3,7 @@ import { Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message } 
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type { Vendor, VendorRating } from '../../api/types';
 import { VENDOR_RATING_COLORS } from '../../api/types';
@@ -150,9 +151,16 @@ export default function Vendors() {
       title="供应商"
       extra={
         canWrite && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建供应商
-          </Button>
+          <Space>
+            <ImportButtons
+              templateUrl="/itsm-import/vendor/template"
+              importUrl="/itsm-import/vendor"
+              onDone={() => void load()}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新建供应商
+            </Button>
+          </Space>
         )
       }
     >

@@ -32,6 +32,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type {
   CiImpact,
@@ -382,9 +383,16 @@ export default function Cmdb() {
       title="CMDB 配置管理"
       extra={
         canWrite && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建配置项
-          </Button>
+          <Space>
+            <ImportButtons
+              templateUrl="/itsm-import/ci/template"
+              importUrl="/itsm-import/ci"
+              onDone={() => void load()}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新建配置项
+            </Button>
+          </Space>
         )
       }
     >

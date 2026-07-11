@@ -95,7 +95,8 @@ class KnowledgeArticle(GlidBase):
 
     article_code: Mapped[str] = mapped_column(String(32), unique=True)
     title: Mapped[str] = mapped_column(String(200))
-    content: Mapped[str] = mapped_column(Text, comment="Markdown")
+    content: Mapped[str] = mapped_column(Text, comment="Markdown 或净化后的 HTML")
+    content_format: Mapped[str] = mapped_column(String(8), default="markdown", comment="markdown/html")
     tags: Mapped[list | None] = mapped_column(JsonCol, default=list)
     status: Mapped[str] = mapped_column(String(16), default="published", comment="draft/published")
     author: Mapped[str | None] = mapped_column(String(26), comment="auth_user.id")

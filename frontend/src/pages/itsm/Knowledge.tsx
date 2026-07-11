@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button, Card, Input, Select, Space, Table, Tag } from 'antd';
+import { Button, Card, Input, Select, Space, Table, Tag, Upload, message } from 'antd';
+import type { UploadProps } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { EditOutlined, EyeOutlined, LikeOutlined, ReloadOutlined } from '@ant-design/icons';
+import { EditOutlined, EyeOutlined, ImportOutlined, LikeOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
-import type { KnowledgeRow, KnowledgeStatus } from '../../api/types';
+import type { KnowledgeImportResult, KnowledgeRow, KnowledgeStatus } from '../../api/types';
 
 export default function Knowledge() {
   const navigate = useNavigate();
@@ -16,6 +17,24 @@ export default function Knowledge() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<KnowledgeStatus | undefined>();
+  const [importing, setImporting] = useState(false);
+
+  /** 文档导入（.docx/.md/.html/.txt）：成功创建草稿后跳转详情供审阅发布 */
+  const importDocRequest: NonNullable<UploadProps['customRequest']> = ({ file, onSuccess, onError }) => {
+    setImporting(true);
+    api
+      .upload<KnowledgeImportResult>('/knowledge/import', file as File)
+      .then((res) => {
+        message.success(`已导入「${res.title}」，当前为草稿`);
+        onSuccess?.(res);
+        navigate(`/itsm/knowledge/${res.article_id}`);
+      })
+      .catch((e) => {
+        // 已统一提示（IMPORT_FAILED 等）
+        onError?.(e as Error);
+      })
+      .finally(() => setImporting(false));
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -141,6 +160,16 @@ export default function Knowledge() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           刷新
         </Button>
+        <Upload
+          accept=".docx,.md,.markdown,.html,.htm,.txt"
+          showUploadList={false}
+          customRequest={importDocRequest}
+          disabled={importing}
+        >
+          <Button icon={<ImportOutlined />} loading={importing}>
+            导入文档
+          </Button>
+        </Upload>
       </Space>
 
       <Table<KnowledgeRow>

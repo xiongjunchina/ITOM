@@ -18,6 +18,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type { Contract, ContractStatus, Member, Vendor } from '../../api/types';
 import { CONTRACT_STATUS_COLORS } from '../../api/types';
@@ -203,9 +204,16 @@ export default function Contracts() {
       title="合同"
       extra={
         canWrite && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建合同
-          </Button>
+          <Space>
+            <ImportButtons
+              templateUrl="/itsm-import/contract/template"
+              importUrl="/itsm-import/contract"
+              onDone={() => void load()}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              新建合同
+            </Button>
+          </Space>
         )
       }
     >

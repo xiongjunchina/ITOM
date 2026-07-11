@@ -715,6 +715,9 @@ export interface Contract {
 
 export type KnowledgeStatus = 'draft' | 'published';
 
+/** 知识文章内容格式：markdown=站内编写；html=文档导入（docx/html 转换） */
+export type KnowledgeContentFormat = 'markdown' | 'html';
+
 /** 知识文章列表行 */
 export interface KnowledgeRow {
   id: string;
@@ -722,6 +725,7 @@ export interface KnowledgeRow {
   title: string;
   tags: string[];
   status: KnowledgeStatus;
+  content_format: KnowledgeContentFormat;
   author_name: string | null;
   view_count: number;
   helpful_count: number;
@@ -736,6 +740,29 @@ export interface KnowledgeDetail extends KnowledgeRow {
   author?: string | null;
   linked_tickets: LinkedTicketBrief[];
   voted: boolean;
+}
+
+/** 知识文档导入结果（POST /knowledge/import，创建为草稿） */
+export interface KnowledgeImportResult {
+  article_id: string;
+  article_code: string;
+  title: string;
+}
+
+// ============ M3.10 Excel 批量导入 ============
+
+/** Excel 导入失败行（部分成功语义：失败行修正后可重新导入，已入库的行会报「已存在，跳过」） */
+export interface ImportFailedRow {
+  row: number;
+  error: string;
+  /** 多 sheet 模板（服务目录）时标记来源工作表 */
+  sheet?: string;
+}
+
+/** Excel 导入结果；created 在服务目录导入时为分项计数 */
+export interface ImportResult {
+  created: number | { catalogs: number; items: number };
+  failed: ImportFailedRow[];
 }
 
 /** SLA 看板 */
