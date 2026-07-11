@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events import notifier
@@ -133,7 +133,7 @@ class CharterCreateIn(BaseModel):
 
 @router.get("/api/portfolios")
 def list_portfolios(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.query(Portfolio).filter(Portfolio.is_deleted.is_(False)).order_by(Portfolio.sort).all()
+    rows = db.query(Portfolio).filter(Portfolio.is_deleted.is_(False)).order_by(Portfolio.is_example.desc(), Portfolio.sort).all()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     projects = db.query(Project).filter(Project.is_deleted.is_(False)).all()
     stats: dict[str, dict] = {}
@@ -142,7 +142,7 @@ def list_portfolios(db: Session = Depends(get_db), _=Depends(get_current_user)):
             s = stats.setdefault(p.portfolio_id, {"count": 0})
             s["count"] += 1
     return ok([
-        {"id": r.id, "name": r.name, "owner_id": r.owner_id, "owner_name": names.get(r.owner_id),
+        {"id": r.id, "name": r.name, "is_example": r.is_example, "owner_id": r.owner_id, "owner_name": names.get(r.owner_id),
          "year": r.year, "description": r.description, "sort": r.sort,
          "project_count": stats.get(r.id, {}).get("count", 0)}
         for r in rows
@@ -166,6 +166,7 @@ def update_portfolio(portfolio_id: str, body: PortfolioIn, db: Session = Depends
     row = db.get(Portfolio, portfolio_id)
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "组合不存在", 404)
+    ensure_not_example(row)
     for k, v in body.model_dump().items():
         setattr(row, k, v)
     audit(db, "portfolio", row.id, "update", actor, {"name": body.name})
@@ -183,7 +184,7 @@ def _project_row(p: Project, db: Session, names: dict, status_map: dict, with_me
         "planned_start": p.planned_start, "planned_end": p.planned_end,
         "actual_start": p.actual_start, "actual_end": p.actual_end,
         "portfolio_id": p.portfolio_id, "portfolio_name": p.portfolio.name if p.portfolio else None,
-        "budget_10k": p.budget_10k, "latest_update": p.latest_update,
+        "budget_10k": p.budget_10k, "latest_update": p.latest_update, "is_example": p.is_example,
     }
     if with_metrics:
         row.update(compute_metrics(db, p))
@@ -205,7 +206,7 @@ def list_projects(
         query = query.filter(Project.portfolio_id == portfolio_id)
     if scope == "mine" and user.person_id:
         query = query.filter(Project.pm == user.person_id)
-    items, total = paginate(query.order_by(Project.created_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(Project.is_example.desc(), Project.created_at.desc()), page, page_size)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     status_map = status_names(db, "project")
     return ok([_project_row(p, db, names, status_map) for p in items], total=total, page=page)
@@ -250,12 +251,12 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
     detail.update({
         "description": p.description,
         "service_item_id": p.service_item_id,
-        "allowed_transitions": [
+        "allowed_transitions": [] if p.is_example else [
             {"to": code, "to_name": status_map.get(code, code)}
             for code in allowed_targets(db, "project", p.status, user)
         ],
         "process": process_engine.instance_view(db, "project", p.id),
-        "can_edit": has_perm(db, user, "projects", "edit"),
+        "can_edit": (not p.is_example) and has_perm(db, user, "projects", "edit"),
     })
     # 关联需求（PRD §6.2 概述页）：M5 需求经 project_id 挂接
     from app.models import Requirement
@@ -281,6 +282,7 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     p = db.get(Project, project_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(p)
     if p.status in ("closed", "cancelled"):
         raise AppError("PROJECT_FINAL", "终态项目不可编辑")
     data = body.model_dump(exclude_unset=True)
@@ -298,6 +300,7 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
     p = db.get(Project, project_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(p)
     from_code, to = wf_transition(db, p, "project", body.to, body.fields, actor)
     today = date.today()
     if to == "active" and not p.actual_start:
@@ -408,6 +411,7 @@ def create_wbs(project_id: str, body: WbsIn, db: Session = Depends(get_db), acto
     p = db.get(Project, project_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(p)
     if body.end_date < body.start_date:
         raise AppError("INVALID_DATES", "结束日期不能早于开始日期")
     if body.parent_task_id:
@@ -433,6 +437,7 @@ def update_wbs(task_id: str, body: WbsUpdate, db: Session = Depends(get_db), use
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
+    ensure_not_example(db.get(Project, task.project_id))
     data = body.model_dump(exclude_unset=True)
     # 数据范围规则：任务负责人可更新自己任务的状态；其余字段需 projects.edit
     is_assignee = user.person_id and task.assignee == user.person_id
@@ -460,6 +465,7 @@ def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(requir
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
+    ensure_not_example(db.get(Project, task.project_id))
     if db.query(WbsTask).filter(WbsTask.parent_task_id == task.id, WbsTask.is_deleted.is_(False)).first():
         raise AppError("HAS_CHILDREN", "请先删除子任务")
     task.is_deleted = True
@@ -491,6 +497,8 @@ def list_milestones(project_id: str, db: Session = Depends(get_db), _=Depends(ge
 def create_milestone(project_id: str, body: MilestoneIn, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
     if not db.get(Project, project_id):
         raise AppError("NOT_FOUND", "项目不存在", 404)
+    _p = db.get(Project, project_id)
+    ensure_not_example(_p)
     m = Milestone(**body.model_dump(), project_id=project_id)
     db.add(m)
     db.flush()
@@ -504,6 +512,7 @@ def achieve_milestone(milestone_id: str, db: Session = Depends(get_db), actor=De
     m = db.get(Milestone, milestone_id)
     if not m or m.is_deleted:
         raise AppError("NOT_FOUND", "里程碑不存在", 404)
+    ensure_not_example(db.get(Project, m.project_id))
     if m.achieved_at:
         raise AppError("ALREADY_DONE", "里程碑已达成")
     m.achieved_at = date.today()
@@ -518,6 +527,7 @@ def delete_milestone(milestone_id: str, db: Session = Depends(get_db), actor=Dep
     m = db.get(Milestone, milestone_id)
     if not m or m.is_deleted:
         raise AppError("NOT_FOUND", "里程碑不存在", 404)
+    ensure_not_example(db.get(Project, m.project_id))
     m.is_deleted = True
     audit(db, "milestone", m.id, "delete", actor, {"name": m.name})
     db.commit()
@@ -540,6 +550,8 @@ def list_risks(project_id: str, db: Session = Depends(get_db), _=Depends(get_cur
 def create_risk(project_id: str, body: RiskIn, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
     if not db.get(Project, project_id):
         raise AppError("NOT_FOUND", "项目不存在", 404)
+    _p = db.get(Project, project_id)
+    ensure_not_example(_p)
     r = Risk(**body.model_dump(), project_id=project_id)
     db.add(r)
     db.flush()
@@ -553,6 +565,7 @@ def update_risk(risk_id: str, body: RiskUpdate, db: Session = Depends(get_db), a
     r = db.get(Risk, risk_id)
     if not r or r.is_deleted:
         raise AppError("NOT_FOUND", "风险不存在", 404)
+    ensure_not_example(db.get(Project, r.project_id))
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(r, k, v)
@@ -581,6 +594,8 @@ def list_costs(project_id: str, db: Session = Depends(get_db), _=Depends(get_cur
 def create_cost(project_id: str, body: CostIn, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
     if not db.get(Project, project_id):
         raise AppError("NOT_FOUND", "项目不存在", 404)
+    _p = db.get(Project, project_id)
+    ensure_not_example(_p)
     c = CostEntry(**body.model_dump(), project_id=project_id, created_by=actor.id)
     db.add(c)
     db.flush()
@@ -594,6 +609,7 @@ def delete_cost(cost_id: str, db: Session = Depends(get_db), actor=Depends(requi
     c = db.get(CostEntry, cost_id)
     if not c or c.is_deleted:
         raise AppError("NOT_FOUND", "成本记录不存在", 404)
+    ensure_not_example(db.get(Project, c.project_id))
     c.is_deleted = True
     audit(db, "cost_entry", c.id, "delete", actor, {"amount_10k": c.amount_10k})
     db.commit()

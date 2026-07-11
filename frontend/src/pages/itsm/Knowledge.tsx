@@ -6,6 +6,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, EyeOutlined, ImportOutlined, LikeOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import type { KnowledgeImportResult, KnowledgeRow, KnowledgeStatus } from '../../api/types';
 
 export default function Knowledge() {
@@ -71,7 +72,12 @@ export default function Knowledge() {
       dataIndex: 'title',
       width: 280,
       ellipsis: true,
-      render: (v: string, r) => <Link to={`/itsm/knowledge/${r.id}`}>{v}</Link>,
+      render: (v: string, r) => (
+        <Space size={4}>
+          <Link to={`/itsm/knowledge/${r.id}`}>{v}</Link>
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
     },
     {
       title: '标签',

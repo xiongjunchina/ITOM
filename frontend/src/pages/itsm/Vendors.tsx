@@ -3,6 +3,7 @@ import { Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message } 
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type { Vendor, VendorRating } from '../../api/types';
@@ -111,7 +112,18 @@ export default function Vendors() {
 
   const columns: ColumnsType<Vendor> = [
     { title: '编号', dataIndex: 'code', width: 120, fixed: 'left' },
-    { title: '名称', dataIndex: 'name', width: 200, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 200,
+      ellipsis: true,
+      render: (v: string, r) => (
+        <Space size={4}>
+          {v}
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
+    },
     { title: '联系人', dataIndex: 'contact', width: 100, render: (v) => v || '-' },
     { title: '电话', dataIndex: 'phone', width: 130, render: (v) => v || '-' },
     { title: '邮箱', dataIndex: 'email', width: 180, ellipsis: true, render: (v) => v || '-' },
@@ -136,11 +148,12 @@ export default function Vendors() {
             title: '操作',
             key: 'actions',
             width: 80,
-            render: (_: unknown, r: Vendor) => (
-              <Button type="link" size="small" onClick={() => openEdit(r)}>
-                编辑
-              </Button>
-            ),
+            render: (_: unknown, r: Vendor) =>
+              r.is_example ? null : (
+                <Button type="link" size="small" onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
+              ),
           } as ColumnsType<Vendor>[number],
         ]
       : []),

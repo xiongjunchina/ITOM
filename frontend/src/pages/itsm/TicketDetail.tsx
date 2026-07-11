@@ -20,6 +20,7 @@ import {
 import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import type {
@@ -258,17 +259,20 @@ export default function TicketDetail() {
     );
   }
 
+  /** 示例数据只读：隐藏改派/升级/沉淀/满意度等残余写入口（allowed_transitions 后端已置空） */
+  const isExample = detail.is_example === true;
   const isChange = detail.ticket_type === 'change';
   const isSubmitter = !!user && !!detail.submitter && detail.submitter === user.id;
-  const canRate = detail.status === 'closed' && isSubmitter && detail.satisfaction == null;
+  const canRate = !isExample && detail.status === 'closed' && isSubmitter && detail.satisfaction == null;
   const process = detail.process;
   // M3：非 requester（拥有任一内部角色）可升级为问题
   const isStaff = !!user && user.roles.some((r) => r !== 'requester');
-  const canEscalate = isStaff && detail.status !== 'new' && detail.status !== 'closed';
-  const canToKnowledge = detail.status === 'resolved' || detail.status === 'closed';
+  const canEscalate = !isExample && isStaff && detail.status !== 'new' && detail.status !== 'closed';
+  const canToKnowledge = !isExample && (detail.status === 'resolved' || detail.status === 'closed');
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {isExample && <ExampleAlert />}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
@@ -332,7 +336,7 @@ export default function TicketDetail() {
                     </Typography.Text>
                   )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
-                  {s.task_status === '待处理' && s.task_id != null && (
+                  {s.task_status === '待处理' && s.task_id != null && !isExample && (
                     <Button
                       size="small"
                       type="link"
@@ -363,18 +367,20 @@ export default function TicketDetail() {
           <Descriptions.Item label="受理人">
             <Space>
               {detail.assignee_name ?? '-'}
-              <Button
-                type="link"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => {
-                  loadMembers();
-                  setReassignTo(detail.assignee ?? undefined);
-                  setReassignOpen(true);
-                }}
-              >
-                改派
-              </Button>
+              {!isExample && (
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<EditOutlined />}
+                  onClick={() => {
+                    loadMembers();
+                    setReassignTo(detail.assignee ?? undefined);
+                    setReassignOpen(true);
+                  }}
+                >
+                  改派
+                </Button>
+              )}
             </Space>
           </Descriptions.Item>
           <Descriptions.Item label="提交时间">{fmt(detail.submitted_at)}</Descriptions.Item>

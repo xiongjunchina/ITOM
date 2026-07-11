@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, Contract, OrgMember, Vendor
@@ -68,7 +68,7 @@ def _vendor_row(v: Vendor, db: Session) -> dict:
     contracts = db.query(Contract).filter(Contract.vendor_id == v.id, Contract.is_deleted.is_(False)).count()
     cis = db.query(Ci).filter(Ci.vendor_id == v.id, Ci.is_deleted.is_(False)).count()
     return {
-        "id": v.id, "code": v.code, "name": v.name, "contact": v.contact, "phone": v.phone,
+        "id": v.id, "code": v.code, "name": v.name, "is_example": v.is_example, "contact": v.contact, "phone": v.phone,
         "email": v.email, "service_scope": v.service_scope, "rating": v.rating,
         "status": v.status, "remarks": v.remarks,
         "contract_count": contracts, "ci_count": cis,
@@ -78,7 +78,7 @@ def _vendor_row(v: Vendor, db: Session) -> dict:
 def _contract_row(c: Contract, db: Session) -> dict:
     owner = db.get(OrgMember, c.owner) if c.owner else None
     return {
-        "id": c.id, "code": c.code, "name": c.name,
+        "id": c.id, "code": c.code, "name": c.name, "is_example": c.is_example,
         "vendor_id": c.vendor_id, "vendor_name": c.vendor.name if c.vendor else None,
         "amount_10k": c.amount_10k, "start_date": c.start_date, "end_date": c.end_date,
         "owner": c.owner, "owner_name": owner.name if owner else None,
@@ -92,7 +92,7 @@ def list_vendors(page: int = 1, page_size: int = 20, q: str = "", db: Session = 
     query = db.query(Vendor).filter(Vendor.is_deleted.is_(False))
     if q:
         query = query.filter(Vendor.name.ilike(f"%{q}%"))
-    items, total = paginate(query.order_by(Vendor.created_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(Vendor.is_example.desc(), Vendor.created_at.desc()), page, page_size)
     return ok([_vendor_row(v, db) for v in items], total=total, page=page)
 
 
@@ -111,6 +111,7 @@ def update_vendor(vendor_id: str, body: VendorUpdate, db: Session = Depends(get_
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.is_deleted:
         raise AppError("NOT_FOUND", "供应商不存在", 404)
+    ensure_not_example(vendor)
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(vendor, k, v)
@@ -126,7 +127,7 @@ def list_contracts(page: int = 1, page_size: int = 20, q: str = "", vendor_id: s
         query = query.filter(Contract.name.ilike(f"%{q}%"))
     if vendor_id:
         query = query.filter(Contract.vendor_id == vendor_id)
-    items, total = paginate(query.order_by(Contract.end_date), page, page_size)
+    items, total = paginate(query.order_by(Contract.is_example.desc(), Contract.end_date), page, page_size)
     return ok([_contract_row(c, db) for c in items], total=total, page=page)
 
 
@@ -149,6 +150,7 @@ def update_contract(contract_id: str, body: ContractUpdate, db: Session = Depend
     contract = db.get(Contract, contract_id)
     if not contract or contract.is_deleted:
         raise AppError("NOT_FOUND", "合同不存在", 404)
+    ensure_not_example(contract)
     data = body.model_dump(exclude_unset=True)
     if "end_date" in data and data["end_date"] != contract.end_date:
         contract.expiry_warned = False  # 续签后重置预警

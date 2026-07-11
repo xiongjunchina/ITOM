@@ -33,6 +33,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -86,6 +87,8 @@ export default function RequirementDetail() {
 
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
+  /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/转出按钮） */
+  const isExample = detail?.is_example === true;
   useEffect(() => {
     if (!canEdit) return;
     api
@@ -356,7 +359,7 @@ export default function RequirementDetail() {
   const pendingAcceptance = criteria.length - checkedCount;
 
   const canChangeTaskStatus = (t: RequirementTask): boolean =>
-    !isFinal && (canEdit || (!!user?.person_id && user.person_id === t.assignee));
+    !isExample && !isFinal && (canEdit || (!!user?.person_id && user.person_id === t.assignee));
 
   // ----- 阶段进度条 -----
   const currentStep = st === 'closed' ? 3 : reachedImplementing ? 2 : reachedAnalyzing ? 1 : 0;
@@ -420,6 +423,7 @@ export default function RequirementDetail() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {isExample && <ExampleAlert />}
       {/* 头部 */}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
@@ -740,7 +744,7 @@ export default function RequirementDetail() {
       {/* 关闭收尾（实现中/已关闭显示） */}
       {showClosure && (
         <Card title="关闭收尾" size="small">
-          {canEdit && (
+          {canEdit && !isExample && (
             <Space wrap style={{ marginBottom: 16 }}>
               <Button
                 icon={<ExportOutlined />}

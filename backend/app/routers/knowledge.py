@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events.bus import publish
@@ -37,7 +37,7 @@ def _row(a: KnowledgeArticle, brief: bool = True) -> dict:
         "id": a.id, "article_code": a.article_code, "title": a.title,
         "tags": a.tags or [], "status": a.status,
         "author_name": a.author_name, "view_count": a.view_count, "helpful_count": a.helpful_count,
-        "content_format": a.content_format,
+        "content_format": a.content_format, "is_example": a.is_example,
         "created_at": a.created_at, "updated_at": a.updated_at,
     }
     if not brief:
@@ -60,7 +60,7 @@ def list_articles(
         query = query.filter(KnowledgeArticle.status == status)
     if q:
         query = query.filter(or_(KnowledgeArticle.title.ilike(f"%{q}%"), KnowledgeArticle.content.ilike(f"%{q}%")))
-    items, total = paginate(query.order_by(KnowledgeArticle.updated_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(KnowledgeArticle.is_example.desc(), KnowledgeArticle.updated_at.desc()), page, page_size)
     rows = [_row(a) for a in items]
     if tag:
         rows = [r for r in rows if tag in r["tags"]]
@@ -111,6 +111,7 @@ def update_article(article_id: str, body: ArticleUpdate, db: Session = Depends(g
     a = db.get(KnowledgeArticle, article_id)
     if not a or a.is_deleted:
         raise AppError("NOT_FOUND", "文章不存在", 404)
+    ensure_not_example(a)
     from app.core.rbac import ADMIN, CIO
 
     from app.services.rbac import effective_roles
@@ -163,6 +164,7 @@ def vote(article_id: str, db: Session = Depends(get_db), user: AuthUser = Depend
     a = db.get(KnowledgeArticle, article_id)
     if not a or a.is_deleted or a.status != "published":
         raise AppError("NOT_FOUND", "文章不存在", 404)
+    ensure_not_example(a)
     if a.author == user.id:
         raise AppError("SELF_VOTE", "不能给自己的文章点有用")
     dup = db.query(KnowledgeVote).filter_by(article_id=a.id, person=user.id).filter(KnowledgeVote.is_deleted.is_(False)).first()

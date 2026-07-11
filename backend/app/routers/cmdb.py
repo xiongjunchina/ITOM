@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, CiRelationship, OrgMember, Ticket, Vendor
@@ -57,7 +57,7 @@ def _row(c: Ci, db: Session) -> dict:
     owner = db.get(OrgMember, c.owner) if c.owner else None
     vendor = db.get(Vendor, c.vendor_id) if c.vendor_id else None
     return {
-        "id": c.id, "ci_code": c.ci_code, "name": c.name, "category": c.category,
+        "id": c.id, "ci_code": c.ci_code, "is_example": c.is_example, "name": c.name, "category": c.category,
         "status": c.status, "owner": c.owner, "owner_name": owner.name if owner else None,
         "environment": c.environment, "business_owner": c.business_owner,
         "vendor_id": c.vendor_id, "vendor_name": vendor.name if vendor else None,
@@ -80,7 +80,7 @@ def list_cis(
         query = query.filter(Ci.status == status)
     if environment:
         query = query.filter(Ci.environment == environment)
-    items, total = paginate(query.order_by(Ci.created_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(Ci.is_example.desc(), Ci.created_at.desc()), page, page_size)
     return ok([_row(c, db) for c in items], total=total, page=page)
 
 
@@ -99,6 +99,7 @@ def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=D
     ci = db.get(Ci, ci_id)
     if not ci or ci.is_deleted:
         raise AppError("NOT_FOUND", "配置项不存在", 404)
+    ensure_not_example(ci)
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(ci, k, v)
@@ -164,8 +165,10 @@ def create_relation(body: RelationIn, db: Session = Depends(get_db), actor=Depen
     if body.source_ci_id == body.target_ci_id:
         raise AppError("INVALID_RELATION", "不能与自身建立关系")
     for cid in (body.source_ci_id, body.target_ci_id):
-        if not db.get(Ci, cid):
+        ci_obj = db.get(Ci, cid)
+        if not ci_obj:
             raise AppError("NOT_FOUND", "配置项不存在", 404)
+        ensure_not_example(ci_obj)
     dup = (
         db.query(CiRelationship)
         .filter_by(source_ci_id=body.source_ci_id, target_ci_id=body.target_ci_id, relation_type=body.relation_type)

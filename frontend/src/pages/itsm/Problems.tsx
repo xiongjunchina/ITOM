@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import type { Member, ProblemRow, ServiceItem, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS, PROBLEM_STATUS_LABELS } from '../../api/types';
 
@@ -116,7 +117,12 @@ export default function Problems() {
       dataIndex: 'problem_code',
       width: 140,
       fixed: 'left',
-      render: (v: string, r) => <Link to={`/itsm/problems/${r.id}`}>{v}</Link>,
+      render: (v: string, r) => (
+        <Space size={4}>
+          <Link to={`/itsm/problems/${r.id}`}>{v}</Link>
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
     },
     { title: '标题', dataIndex: 'title', width: 260, ellipsis: true },
     {

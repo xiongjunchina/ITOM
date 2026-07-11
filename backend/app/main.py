@@ -32,6 +32,7 @@ from app.routers import (
 from app.services import scheduler
 from app.services.migrate import run_migrations
 from app.services.seed import run_seed
+from app.services.seed_examples import run_seed_examples
 from app.services.seed_itsm import run_seed_itsm
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
         run_migrations(db)
         run_seed(db)
         run_seed_itsm(db)
+        run_seed_examples(db)
     task = asyncio.create_task(scheduler.run_forever())
     yield
     task.cancel()

@@ -5,6 +5,7 @@ import { ArrowLeftOutlined, EditOutlined, EyeOutlined, LikeOutlined } from '@ant
 import dayjs from 'dayjs';
 import DOMPurify from 'dompurify';
 import { api } from '../../api/client';
+import { ExampleAlert } from '../../components/ExampleTag';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type { KnowledgeDetail as KnowledgeDetailData } from '../../api/types';
 import './knowledge-html.css';
@@ -157,11 +158,15 @@ export default function KnowledgeDetail() {
     );
   }
 
+  /** 示例数据只读：隐藏编辑/有用按钮 */
+  const isExample = detail.is_example === true;
   const canEdit =
-    hasAnyRole(user, ['admin', 'cio']) || (!!user && !!detail.author && detail.author === user.id);
+    !isExample &&
+    (hasAnyRole(user, ['admin', 'cio']) || (!!user && !!detail.author && detail.author === user.id));
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {isExample && <ExampleAlert />}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
@@ -174,14 +179,16 @@ export default function KnowledgeDetail() {
             {detail.status === 'draft' && <Tag>草稿</Tag>}
           </Space>
           <Space wrap>
-            <Button
-              icon={<LikeOutlined />}
-              disabled={detail.voted || detail.status === 'draft'}
-              loading={voting}
-              onClick={() => void vote()}
-            >
-              有用（{detail.helpful_count}）
-            </Button>
+            {!isExample && (
+              <Button
+                icon={<LikeOutlined />}
+                disabled={detail.voted || detail.status === 'draft'}
+                loading={voting}
+                onClick={() => void vote()}
+              >
+                有用（{detail.helpful_count}）
+              </Button>
+            )}
             {canEdit && (
               <Button icon={<EditOutlined />} onClick={() => navigate(`/itsm/knowledge/${detail.id}/edit`)}>
                 编辑

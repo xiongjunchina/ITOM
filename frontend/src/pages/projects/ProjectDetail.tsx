@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -180,6 +181,8 @@ export default function ProjectDetail() {
   }, []);
 
   const canEdit = detail?.can_edit ?? false;
+  /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/最新动态/附件上传） */
+  const isExample = detail?.is_example === true;
   const isFinal = detail?.status === 'closed' || detail?.status === 'cancelled';
   const memberOptions = useMemo(
     () =>
@@ -403,9 +406,9 @@ export default function ProjectDetail() {
     }
   };
 
-  /** 任务状态可编辑：有 projects.edit 或本人是任务负责人 */
+  /** 任务状态可编辑：有 projects.edit 或本人是任务负责人；示例数据一律只读 */
   const canChangeStatus = (task: WbsTask): boolean =>
-    canEdit || (!!user?.person_id && user.person_id === task.assignee);
+    !isExample && (canEdit || (!!user?.person_id && user.person_id === task.assignee));
 
   // ---------- 成本 ----------
   const [costModalOpen, setCostModalOpen] = useState(false);
@@ -557,7 +560,7 @@ export default function ProjectDetail() {
         <Typography.Paragraph
           style={{ marginBottom: 0 }}
           editable={
-            canEdit
+            canEdit && !isExample
               ? {
                   text: detail.latest_update ?? '',
                   maxLength: 200,
@@ -1010,23 +1013,25 @@ export default function ProjectDetail() {
         title="附件"
         size="small"
         extra={
-          <Upload
-            showUploadList={false}
-            customRequest={({ file, onSuccess, onError }) => {
-              api
-                .upload<AttachmentItem>(`/attachments?entity_type=project&entity_id=${id}`, file as File)
-                .then((r) => {
-                  onSuccess?.(r);
-                  message.success('附件已上传');
-                  void loadAttachments();
-                })
-                .catch((e) => onError?.(e as Error));
-            }}
-          >
-            <Button size="small" type="primary" icon={<UploadOutlined />}>
-              上传附件
-            </Button>
-          </Upload>
+          !isExample && (
+            <Upload
+              showUploadList={false}
+              customRequest={({ file, onSuccess, onError }) => {
+                api
+                  .upload<AttachmentItem>(`/attachments?entity_type=project&entity_id=${id}`, file as File)
+                  .then((r) => {
+                    onSuccess?.(r);
+                    message.success('附件已上传');
+                    void loadAttachments();
+                  })
+                  .catch((e) => onError?.(e as Error));
+              }}
+            >
+              <Button size="small" type="primary" icon={<UploadOutlined />}>
+                上传附件
+              </Button>
+            </Upload>
+          )
         }
       >
         <Table<AttachmentItem>
@@ -1043,6 +1048,7 @@ export default function ProjectDetail() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {isExample && <ExampleAlert />}
       {/* 头部 */}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>

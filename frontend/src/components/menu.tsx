@@ -51,16 +51,6 @@ export const MENU_TREE: MenuNode[] = [
   { key: '/projects', path: '/projects', label: '项目管理', icon: <ProjectOutlined />, module: 'projects', roles: STAFF },
   { key: '/requirements', path: '/requirements', label: '需求管理', icon: <FileTextOutlined />, module: 'requirements' },
   {
-    key: 'process',
-    label: '流程中心',
-    icon: <ApartmentOutlined />,
-    roles: ['admin', 'cio', 'it_tm'],
-    children: [
-      { key: '/process/definitions', path: '/process/definitions', label: '流程定义', module: 'process_definitions' },
-      { key: '/process/monitor', path: '/process/monitor', label: '流程监控', module: 'process_monitor' },
-    ],
-  },
-  {
     key: 'team',
     label: '团队管理',
     icon: <TeamOutlined />,
@@ -72,6 +62,16 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/team/activities', path: '/team/activities', label: '培训发展', module: 'activities' },
       { key: '/team/ideas', path: '/team/ideas', label: '建言献策', module: 'ideas' },
       { key: '/team/charter', path: '/team/charter', label: '团队文化', module: 'charter' },
+    ],
+  },
+  {
+    key: 'process',
+    label: '流程中心',
+    icon: <ApartmentOutlined />,
+    roles: ['admin', 'cio', 'it_tm'],
+    children: [
+      { key: '/process/definitions', path: '/process/definitions', label: '流程定义', module: 'process_definitions' },
+      { key: '/process/monitor', path: '/process/monitor', label: '流程监控', module: 'process_monitor' },
     ],
   },
   {

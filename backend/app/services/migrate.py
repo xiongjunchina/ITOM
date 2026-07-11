@@ -48,6 +48,21 @@ ENSURE_COLUMNS = {
 }
 
 
+def ensure_is_example_everywhere(db: Session):
+    """GlidBase 新增 is_example：为存量所有业务表补列（create_all 不加列）。"""
+    from app.db import Base
+
+    inspector = inspect(db.get_bind())
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.tables:
+        if table not in existing_tables:
+            continue
+        if "is_example" not in _columns(db, table):
+            db.execute(text(f"ALTER TABLE {table} ADD COLUMN is_example BOOLEAN NOT NULL DEFAULT false"))
+            logger.info("added column %s.is_example", table)
+    db.commit()
+
+
 def ensure_columns(db: Session):
     for table, columns in ENSURE_COLUMNS.items():
         existing = _columns(db, table)
@@ -62,6 +77,7 @@ def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
     ensure_columns(db)
+    ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 
     if "dept" in cols:

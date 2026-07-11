@@ -222,6 +222,8 @@ export interface TicketRow {
   sla_resolution_met: boolean | null;
   sla_warned: boolean;
   satisfaction: number | null;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 可执行的状态流转 */
@@ -520,6 +522,8 @@ export interface Catalog {
   sort?: number | null;
   status: '上架' | '下架';
   item_count: number;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 服务项 */
@@ -537,6 +541,8 @@ export interface ServiceItem {
   sla_resolution_hours?: number | null;
   target_audience?: string | null;
   status: '上架' | '下架';
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 // ============ SLA ============
@@ -576,6 +582,8 @@ export interface ProblemRow {
   owner_name: string | null;
   linked_ticket_count: number;
   created_at: string;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 关联工单摘要 */
@@ -626,6 +634,8 @@ export interface CiRow {
   launch_date: string | null;
   attrs: Record<string, unknown>;
   remarks: string | null;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** CI 摘要（影响分析中的关联方） */
@@ -683,6 +693,8 @@ export interface Vendor {
   remarks: string | null;
   contract_count: number;
   ci_count: number;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 export type ContractStatus = '未生效' | '生效' | '临期' | '已过期';
@@ -709,6 +721,8 @@ export interface Contract {
   status: ContractStatus;
   remarks: string | null;
   days_to_expiry: number | null;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 // ============ M3 知识库 ============
@@ -731,6 +745,8 @@ export interface KnowledgeRow {
   helpful_count: number;
   created_at: string;
   updated_at: string;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 知识文章详情 */
@@ -802,6 +818,8 @@ export interface Portfolio {
   description: string | null;
   sort: number;
   project_count: number;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 项目列表行（含后端实时计算的派生指标） */
@@ -838,6 +856,8 @@ export interface ProjectRow {
   milestone_overdue: number;
   open_risks: number;
   red_risks: number;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 项目详情 */
@@ -1075,6 +1095,8 @@ export interface RequirementRow {
   task_done: number;
   /** 任务完成比 0-100；无任务时 null */
   progress: number | null;
+  /** 示例数据（列表置顶返回，后端强制只读） */
+  is_example?: boolean;
 }
 
 /** 需求详情 */

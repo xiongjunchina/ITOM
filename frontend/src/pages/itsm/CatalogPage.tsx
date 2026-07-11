@@ -20,6 +20,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { useAuthStore, hasAnyRole } from '../../stores/auth';
 import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
@@ -208,7 +209,18 @@ export default function CatalogPage() {
 
   const columns: ColumnsType<ServiceItem> = [
     { title: '编号', dataIndex: 'item_code', width: 120 },
-    { title: '名称', dataIndex: 'name', width: 180, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 180,
+      ellipsis: true,
+      render: (v: string, r) => (
+        <Space size={4}>
+          {v}
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
+    },
     { title: '类型', dataIndex: 'service_type', width: 110, render: (v) => v || '-' },
     { title: '负责人', dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
     {
@@ -233,11 +245,12 @@ export default function CatalogPage() {
             title: '操作',
             key: 'action',
             width: 80,
-            render: (_: unknown, record: ServiceItem) => (
-              <Button type="link" size="small" onClick={() => openItemEdit(record)}>
-                编辑
-              </Button>
-            ),
+            render: (_: unknown, record: ServiceItem) =>
+              record.is_example ? null : (
+                <Button type="link" size="small" onClick={() => openItemEdit(record)}>
+                  编辑
+                </Button>
+              ),
           } as ColumnsType<ServiceItem>[number],
         ]
       : []),
@@ -278,6 +291,7 @@ export default function CatalogPage() {
                   <Space direction="vertical" size={2}>
                     <Space size={6}>
                       <Typography.Text strong>{c.name}</Typography.Text>
+                      {c.is_example && <ExampleTag />}
                       <Tag color={TIER_COLORS[c.tier]}>{TIER_LABELS[c.tier] ?? c.tier}</Tag>
                     </Space>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -286,7 +300,7 @@ export default function CatalogPage() {
                       <Badge status={c.status === '上架' ? 'success' : 'default'} text={c.status} />
                     </Typography.Text>
                   </Space>
-                  {canManage && (
+                  {canManage && !c.is_example && (
                     <Button
                       type="text"
                       size="small"

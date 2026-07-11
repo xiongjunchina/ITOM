@@ -32,6 +32,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type {
@@ -286,7 +287,18 @@ export default function Cmdb() {
       fixed: 'left',
       render: (v: string, r) => <a onClick={() => openImpact(r)}>{v}</a>,
     },
-    { title: '名称', dataIndex: 'name', width: 200, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 200,
+      ellipsis: true,
+      render: (v: string, r) => (
+        <Space size={4}>
+          {v}
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
+    },
     { title: '类别', dataIndex: 'category', width: 120, render: (v: string) => categoryName(v) },
     { title: '环境', dataIndex: 'environment', width: 80, render: (v) => v || '-' },
     {
@@ -306,7 +318,7 @@ export default function Cmdb() {
           <Button type="link" size="small" icon={<ApartmentOutlined />} onClick={() => openImpact(r)}>
             影响分析
           </Button>
-          {canWrite && (
+          {canWrite && !r.is_example && (
             <Button type="link" size="small" onClick={() => openEdit(r)}>
               编辑
             </Button>
@@ -328,7 +340,7 @@ export default function Cmdb() {
         renderItem={(e) => (
           <List.Item
             actions={
-              canWrite
+              canWrite && !impactCi?.is_example
                 ? [
                     <Popconfirm
                       key="del"
@@ -603,7 +615,7 @@ export default function Cmdb() {
               '暂无下游关系',
             )}
 
-            {canWrite && (
+            {canWrite && !impactCi?.is_example && (
               <>
                 <Divider style={{ margin: '8px 0' }} />
                 <Typography.Text strong>添加关系</Typography.Text>

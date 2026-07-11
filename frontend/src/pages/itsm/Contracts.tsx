@@ -18,6 +18,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import type { Contract, ContractStatus, Member, Vendor } from '../../api/types';
@@ -144,7 +145,18 @@ export default function Contracts() {
 
   const columns: ColumnsType<Contract> = [
     { title: '编号', dataIndex: 'code', width: 120, fixed: 'left' },
-    { title: '名称', dataIndex: 'name', width: 220, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 220,
+      ellipsis: true,
+      render: (v: string, r) => (
+        <Space size={4}>
+          {v}
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
+    },
     { title: '供应商', dataIndex: 'vendor_name', width: 160, ellipsis: true, render: (v) => v || '-' },
     {
       title: '金额（万元）',
@@ -189,11 +201,12 @@ export default function Contracts() {
             title: '操作',
             key: 'actions',
             width: 80,
-            render: (_: unknown, r: Contract) => (
-              <Button type="link" size="small" onClick={() => openEdit(r)}>
-                编辑
-              </Button>
-            ),
+            render: (_: unknown, r: Contract) =>
+              r.is_example ? null : (
+                <Button type="link" size="small" onClick={() => openEdit(r)}>
+                  编辑
+                </Button>
+              ),
           } as ColumnsType<Contract>[number],
         ]
       : []),

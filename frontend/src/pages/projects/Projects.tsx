@@ -22,6 +22,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { ImportOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type { Member, Portfolio, ProjectRow, ProjectStatus, ServiceItem } from '../../api/types';
 import { PROJECT_STATUS } from '../../api/types';
@@ -168,7 +169,12 @@ function ProjectList() {
       dataIndex: 'project_code',
       width: 110,
       fixed: 'left',
-      render: (v: string, r) => <Link to={`/projects/${r.id}`}>{v}</Link>,
+      render: (v: string, r) => (
+        <Space size={4}>
+          <Link to={`/projects/${r.id}`}>{v}</Link>
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
     },
     { title: '名称', dataIndex: 'name', width: 220, ellipsis: true },
     { title: '组合', dataIndex: 'portfolio_name', width: 140, ellipsis: true, render: (v) => v || '-' },
@@ -474,7 +480,18 @@ function PortfolioPane() {
   };
 
   const columns: ColumnsType<Portfolio> = [
-    { title: '名称', dataIndex: 'name', width: 220, ellipsis: true },
+    {
+      title: '名称',
+      dataIndex: 'name',
+      width: 220,
+      ellipsis: true,
+      render: (v: string, r) => (
+        <Space size={4}>
+          {v}
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
+    },
     { title: '负责人', dataIndex: 'owner_name', width: 120, render: (v) => v || '-' },
     { title: '年度', dataIndex: 'year', width: 100, render: (v) => v || '-' },
     {
@@ -491,11 +508,12 @@ function PortfolioPane() {
             title: '操作',
             key: 'action',
             width: 90,
-            render: (_: unknown, r: Portfolio) => (
-              <Button type="link" size="small" onClick={() => openModal(r)}>
-                编辑
-              </Button>
-            ),
+            render: (_: unknown, r: Portfolio) =>
+              r.is_example ? null : (
+                <Button type="link" size="small" onClick={() => openModal(r)}>
+                  编辑
+                </Button>
+              ),
           } as ColumnsType<Portfolio>[number],
         ]
       : []),

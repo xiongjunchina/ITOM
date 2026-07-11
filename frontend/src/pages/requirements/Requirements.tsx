@@ -22,6 +22,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { AppstoreOutlined, PlusOutlined, ReloadOutlined, TableOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type {
   BusinessDomain,
@@ -72,6 +73,7 @@ function BoardCard({ row, onClick }: { row: RequirementRow; onClick: () => void 
         {row.requirement_code}
       </Typography.Text>
       <Typography.Paragraph strong ellipsis={{ rows: 2, tooltip: row.title }} style={{ margin: '2px 0 6px' }}>
+        {row.is_example && <ExampleTag style={{ marginInlineEnd: 4 }} />}
         {row.title}
       </Typography.Paragraph>
       <Space size={4} wrap>
@@ -223,7 +225,12 @@ export default function Requirements() {
       dataIndex: 'requirement_code',
       width: 110,
       fixed: 'left',
-      render: (v: string, r) => <Link to={`/requirements/${r.id}`}>{v}</Link>,
+      render: (v: string, r) => (
+        <Space size={4}>
+          <Link to={`/requirements/${r.id}`}>{v}</Link>
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
     },
     { title: '标题', dataIndex: 'title', width: 240, ellipsis: true },
     { title: '类型', dataIndex: 'req_type', width: 80 },

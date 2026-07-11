@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events.bus import publish
@@ -56,7 +56,7 @@ def _row(p: Problem, db: Session, names: dict) -> dict:
     )
     return {
         "id": p.id, "problem_code": p.problem_code, "title": p.title,
-        "priority": p.priority, "status": p.status, "status_name": names.get(p.status, p.status),
+        "priority": p.priority, "status": p.status, "is_example": p.is_example, "status_name": names.get(p.status, p.status),
         "service_item_id": p.service_item_id, "service_item_name": item.name if item else None,
         "owner": p.owner, "owner_name": owner.name if owner else None,
         "linked_ticket_count": ticket_count,
@@ -93,7 +93,7 @@ def list_problems(
         query = query.filter(Problem.status == status)
     if priority:
         query = query.filter(Problem.priority == priority)
-    items, total = paginate(query.order_by(Problem.created_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(Problem.is_example.desc(), Problem.created_at.desc()), page, page_size)
     names = status_names(db, "problem")
     return ok([_row(p, db, names) for p in items], total=total, page=page)
 
@@ -140,6 +140,7 @@ def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(g
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
+    ensure_not_example(p)
     data = body.model_dump(exclude_unset=True)
     root_cause_filled = data.get("root_cause") and not p.root_cause
     for k, v in data.items():
@@ -156,6 +157,7 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
+    ensure_not_example(p)
     had_root_cause = bool(p.root_cause)
     wf_transition(db, p, "problem", body.to, body.fields, user)
     if not had_root_cause and p.root_cause:
@@ -172,6 +174,8 @@ def link_ticket(problem_id: str, body: LinkTicketIn, db: Session = Depends(get_d
     t = db.get(Ticket, body.ticket_id)
     if not p or p.is_deleted or not t or t.is_deleted:
         raise AppError("NOT_FOUND", "问题或工单不存在", 404)
+    ensure_not_example(p)
+    ensure_not_example(t)
     exists = (
         db.query(ProblemTicket)
         .filter(ProblemTicket.problem_id == p.id, ProblemTicket.ticket_id == t.id, ProblemTicket.is_deleted.is_(False))

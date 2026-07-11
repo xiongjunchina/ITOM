@@ -29,6 +29,7 @@ class GlidBase(Base):
         DateTime, server_default=func.now(), onupdate=func.now()
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_example: Mapped[bool] = mapped_column(Boolean, default=False, comment="示例数据：置顶展示且只读")
 
 
 def get_db():

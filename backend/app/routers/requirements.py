@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.core.rbac import IT_PDM, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
@@ -106,7 +106,7 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
     if r.closed_at and r.registered_at:
         lead_days = round((r.closed_at - r.registered_at).total_seconds() / 86400, 1)
     return {
-        "id": r.id, "requirement_code": r.requirement_code, "title": r.title,
+        "id": r.id, "requirement_code": r.requirement_code, "title": r.title, "is_example": r.is_example,
         "req_type": r.req_type, "business_domain_id": r.business_domain_id,
         "business_domain_name": domains.get(r.business_domain_id),
         "source": r.source, "requester_name": r.requester_name,
@@ -139,7 +139,7 @@ def list_requirements(
         query = query.filter(Requirement.business_domain_id == business_domain_id)
     if moscow:
         query = query.filter(Requirement.moscow == moscow)
-    items, total = paginate(query.order_by(Requirement.created_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(Requirement.is_example.desc(), Requirement.created_at.desc()), page, page_size)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
@@ -225,12 +225,12 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             "problems": [{"id": p.id, "problem_code": p.problem_code, "title": p.title} for p in linked_problems],
             "articles": [{"id": a.id, "article_code": a.article_code, "title": a.title} for a in linked_articles],
         },
-        "allowed_transitions": [
+        "allowed_transitions": [] if r.is_example else [
             {"to": code, "to_name": status_map.get(code, code)}
             for code in allowed_targets(db, "requirement", r.status, user)
         ],
         "process": process_engine.instance_view(db, "requirement", r.id),
-        "can_edit": has_perm(db, user, "requirements", "edit"),
+        "can_edit": (not r.is_example) and has_perm(db, user, "requirements", "edit"),
     })
     return ok(detail)
 
@@ -238,6 +238,7 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
 @router.patch("/{requirement_id}")
 def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
     if r.status in ("closed", "cancelled"):
         raise AppError("REQ_FINAL", "终态需求不可编辑")
     data = body.model_dump(exclude_unset=True)
@@ -261,6 +262,7 @@ def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session
 @router.post("/{requirement_id}/transition")
 def transition_requirement(requirement_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
     # 阶段门校验
     if body.to == "implementing":
         moscow = body.fields.get("moscow") or r.moscow
@@ -299,6 +301,7 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
 @router.post("/{requirement_id}/tasks")
 def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
     from datetime import date as _date
 
     task = RequirementTask(
@@ -320,6 +323,7 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
+    ensure_not_example(db.get(Requirement, task.requirement_id))
     data = body.model_dump(exclude_unset=True)
     is_assignee = user.person_id and task.assignee == user.person_id
     if not has_perm(db, user, "requirements", "edit"):
@@ -346,6 +350,7 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = De
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
+    ensure_not_example(db.get(Requirement, task.requirement_id))
     task.is_deleted = True
     audit(db, "requirement_task", task.id, "delete", user, {"name": task.name})
     db.commit()
@@ -358,6 +363,7 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = De
 def handover_problem(requirement_id: str, body: ToProblemIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     """转出是需求收尾动作，随需求编辑权（不要求问题域权限）。"""
     r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
     problem = Problem(
         problem_code=gen_code(db, Problem, "problem_code", "PB"),
         title=body.title or f"[需求遗留] {r.title}"[:200],
@@ -376,6 +382,7 @@ def handover_problem(requirement_id: str, body: ToProblemIn, db: Session = Depen
 @router.post("/{requirement_id}/to-knowledge")
 def handover_knowledge(requirement_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
     person = db.get(OrgMember, user.person_id) if user.person_id else None
     criteria_md = "\n".join(f"- [{'x' if c.get('checked') else ' '}] {c.get('text', '')}" for c in (r.acceptance_criteria or []))
     content = (

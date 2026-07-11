@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import OrgMember, ServiceCatalog, ServiceItem, SlaPolicy, Ticket
@@ -27,7 +27,7 @@ router = APIRouter(tags=["itsm"])
 
 @router.get("/api/catalogs")
 def list_catalogs(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    rows = db.query(ServiceCatalog).filter(ServiceCatalog.is_deleted.is_(False)).order_by(ServiceCatalog.sort).all()
+    rows = db.query(ServiceCatalog).filter(ServiceCatalog.is_deleted.is_(False)).order_by(ServiceCatalog.is_example.desc(), ServiceCatalog.sort).all()
     item_counts = dict(
         db.query(ServiceItem.catalog_id, func.count(ServiceItem.id))
         .filter(ServiceItem.is_deleted.is_(False))
@@ -37,7 +37,7 @@ def list_catalogs(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return ok(
         [
             {
-                "id": c.id, "code": c.code, "name": c.name, "tier": c.tier,
+                "id": c.id, "code": c.code, "name": c.name, "tier": c.tier, "is_example": c.is_example,
                 "description": c.description, "sort": c.sort, "status": c.status,
                 "item_count": item_counts.get(c.id, 0),
             }
@@ -62,6 +62,7 @@ def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(g
     catalog = db.get(ServiceCatalog, catalog_id)
     if not catalog or catalog.is_deleted:
         raise AppError("NOT_FOUND", "目录不存在", 404)
+    ensure_not_example(catalog)
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(catalog, k, v)
@@ -75,7 +76,7 @@ def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(g
 def _item_row(i: ServiceItem, db: Session) -> dict:
     owner = db.get(OrgMember, i.owner) if i.owner else None
     return {
-        "id": i.id, "item_code": i.item_code, "name": i.name,
+        "id": i.id, "item_code": i.item_code, "name": i.name, "is_example": i.is_example,
         "catalog_id": i.catalog_id, "catalog_name": i.catalog.name if i.catalog else None,
         "service_type": i.service_type, "owner": i.owner, "owner_name": owner.name if owner else None,
         "description": i.description,
@@ -91,7 +92,7 @@ def list_items(catalog_id: str = "", q: str = "", db: Session = Depends(get_db),
         query = query.filter(ServiceItem.catalog_id == catalog_id)
     if q:
         query = query.filter(ServiceItem.name.ilike(f"%{q}%"))
-    rows = query.order_by(ServiceItem.created_at).all()
+    rows = query.order_by(ServiceItem.is_example.desc(), ServiceItem.created_at).all()
     return ok([_item_row(i, db) for i in rows], total=len(rows))
 
 
@@ -112,6 +113,7 @@ def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get
     item = db.get(ServiceItem, item_id)
     if not item or item.is_deleted:
         raise AppError("NOT_FOUND", "服务项不存在", 404)
+    ensure_not_example(item)
     data = body.model_dump(exclude_unset=True)
     for k, v in data.items():
         setattr(item, k, v)

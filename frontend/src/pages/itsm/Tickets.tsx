@@ -21,6 +21,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleTag } from '../../components/ExampleTag';
 import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS, TICKET_TYPE_COLORS, TICKET_TYPE_LABELS } from '../../api/types';
 
@@ -179,7 +180,12 @@ export default function Tickets() {
       dataIndex: 'ticket_code',
       width: 140,
       fixed: 'left',
-      render: (v: string, r) => <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>,
+      render: (v: string, r) => (
+        <Space size={4}>
+          <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>
+          {r.is_example && <ExampleTag />}
+        </Space>
+      ),
     },
     { title: '标题', dataIndex: 'title', width: 220, ellipsis: true },
     {

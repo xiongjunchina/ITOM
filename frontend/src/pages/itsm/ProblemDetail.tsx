@@ -21,6 +21,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { ArrowLeftOutlined, LinkOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { ExampleAlert } from '../../components/ExampleTag';
 import type {
   AllowedTransition,
   LinkedTicketBrief,
@@ -189,6 +190,8 @@ export default function ProblemDetail() {
     );
   }
 
+  /** 示例数据只读：隐藏关联工单/完成步骤等残余写入口（allowed_transitions 后端已置空） */
+  const isExample = detail.is_example === true;
   const process = detail.process;
 
   const linkedColumns: ColumnsType<LinkedTicketBrief> = [
@@ -204,6 +207,7 @@ export default function ProblemDetail() {
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {isExample && <ExampleAlert />}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
@@ -249,7 +253,7 @@ export default function ProblemDetail() {
                     </Typography.Text>
                   )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
-                  {s.task_status === '待处理' && s.task_id != null && (
+                  {s.task_status === '待处理' && s.task_id != null && !isExample && (
                     <Button
                       size="small"
                       type="link"
@@ -318,9 +322,11 @@ export default function ProblemDetail() {
         title={`关联工单（${detail.linked_tickets.length}）`}
         size="small"
         extra={
-          <Button icon={<LinkOutlined />} onClick={openLink}>
-            关联工单
-          </Button>
+          !isExample && (
+            <Button icon={<LinkOutlined />} onClick={openLink}>
+              关联工单
+            </Button>
+          )
         }
       >
         <Table<LinkedTicketBrief>

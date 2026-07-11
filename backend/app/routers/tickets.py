@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_not_example
 from app.core.rbac import REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
@@ -40,6 +40,7 @@ def _row(t: Ticket, db: Session, names: dict) -> dict:
         "sla_resolution_hours": t.sla_resolution_hours,
         "sla_response_met": t.sla_response_met, "sla_resolution_met": t.sla_resolution_met,
         "sla_warned": t.sla_warned, "satisfaction": t.satisfaction,
+        "is_example": t.is_example,
     }
 
 
@@ -69,7 +70,7 @@ def list_tickets(
         query = query.filter(Ticket.priority == priority)
     if assignee:
         query = query.filter(Ticket.assignee == assignee)
-    items, total = paginate(query.order_by(Ticket.submitted_at.desc()), page, page_size)
+    items, total = paginate(query.order_by(Ticket.is_example.desc(), Ticket.submitted_at.desc()), page, page_size)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
     return ok([_row(t, db, names) for t in items], total=total, page=page)
 
@@ -111,7 +112,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "first_time_fix": t.first_time_fix,
             "sla_response_min": t.sla_response_min,
             "actual_response_min": t.actual_response_min, "actual_resolution_hours": t.actual_resolution_hours,
-            "allowed_transitions": [
+            "allowed_transitions": [] if t.is_example else [
                 {"to": code, "to_name": names.get(code, code)}
                 for code in allowed_targets(db, etype, t.status, user)
             ],
@@ -124,6 +125,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
 @router.patch("/{ticket_id}")
 def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "edit"))):
     t = _get_ticket(db, ticket_id, user)
+    ensure_not_example(t)
     if t.status in ("closed", "rejected"):
         raise AppError("TICKET_FINAL", "终态工单不可编辑")
     data = body.model_dump(exclude_unset=True)
@@ -145,6 +147,7 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
 @router.post("/{ticket_id}/transition")
 def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "edit"))):
     t = _get_ticket(db, ticket_id, user)
+    ensure_not_example(t)
     svc.do_transition(db, t, body.to, body.fields, user)
     return ok({"id": t.id, "status": t.status})
 
@@ -152,6 +155,7 @@ def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(
 @router.post("/{ticket_id}/satisfaction")
 def rate(ticket_id: str, body: SatisfactionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
+    ensure_not_example(t)
     svc.rate_satisfaction(db, t, body.score, user)
     return ok({"id": t.id, "satisfaction": t.satisfaction})
 
@@ -160,6 +164,7 @@ def rate(ticket_id: str, body: SatisfactionIn, db: Session = Depends(get_db), us
 def escalate_problem(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "create"))):
     """一键升级为问题：自动带工单上下文并双向关联。"""
     t = _get_ticket(db, ticket_id, user)
+    ensure_not_example(t)
     if t.problem_id:
         raise AppError("ALREADY_ESCALATED", "该工单已关联问题")
     from app.routers.problems import _create_problem
