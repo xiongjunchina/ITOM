@@ -25,6 +25,8 @@ import KnowledgeDetail from './pages/itsm/KnowledgeDetail';
 import KnowledgeEdit from './pages/itsm/KnowledgeEdit';
 import Projects from './pages/projects/Projects';
 import ProjectDetail from './pages/projects/ProjectDetail';
+import Requirements from './pages/requirements/Requirements';
+import RequirementDetail from './pages/requirements/RequirementDetail';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -54,7 +56,9 @@ export const router = createBrowserRouter([
       { path: 'projects', element: <Projects /> },
       { path: 'projects/:id', element: <ProjectDetail /> },
 
-      { path: 'requirements', element: <PlaceholderPage title="需求管理" /> },
+      // 需求管理（M5 交付）
+      { path: 'requirements', element: <Requirements /> },
+      { path: 'requirements/:id', element: <RequirementDetail /> },
 
       // 流程中心
       { path: 'process/definitions', element: <Definitions /> },

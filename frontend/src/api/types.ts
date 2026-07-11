@@ -970,6 +970,127 @@ export interface AttachmentItem {
   created_at: string;
 }
 
+// ============ M5 需求管理 ============
+
+/** 需求状态 */
+export type RequirementStatus =
+  | 'registered'
+  | 'analyzing'
+  | 'implementing'
+  | 'closed'
+  | 'on_hold'
+  | 'cancelled';
+
+/** 需求状态 → 中文名 + Badge 展示（与 PROJECT_STATUS 同构：color 优先于 badge） */
+export const REQ_STATUS: Record<
+  RequirementStatus,
+  { label: string; badge: 'default' | 'processing' | 'success' | 'warning'; color?: string }
+> = {
+  registered: { label: '已登记', badge: 'default', color: 'blue' },
+  analyzing: { label: '分析中', badge: 'processing' },
+  implementing: { label: '实现中', badge: 'processing', color: 'purple' },
+  closed: { label: '已关闭', badge: 'success' },
+  on_hold: { label: '已搁置', badge: 'warning', color: 'orange' },
+  cancelled: { label: '已取消', badge: 'default' },
+};
+
+/** 需求类型（后端白名单） */
+export const REQ_TYPES = ['业务', '功能', '数据', '集成', '合规'] as const;
+
+/** MoSCoW 优先级 */
+export type Moscow = 'M' | 'S' | 'C' | 'W';
+
+export const MOSCOW_KEYS: Moscow[] = ['M', 'S', 'C', 'W'];
+
+/** MoSCoW 标签：M红 / S橙 / C蓝 / W灰 */
+export const MOSCOW_META: Record<Moscow, { color: string; label: string }> = {
+  M: { color: 'red', label: 'M 必须' },
+  S: { color: 'orange', label: 'S 应该' },
+  C: { color: 'blue', label: 'C 可以' },
+  W: { color: 'default', label: 'W 暂缓' },
+};
+
+/** 验收标准条目（PATCH acceptance_criteria 时全量提交） */
+export interface AcceptanceCriterion {
+  text: string;
+  checked: boolean;
+}
+
+/** 需求任务状态 */
+export type RequirementTaskStatus = '待处理' | '进行中' | '已完成';
+
+export const REQ_TASK_STATUSES: RequirementTaskStatus[] = ['待处理', '进行中', '已完成'];
+
+export const REQ_TASK_STATUS_COLORS: Record<RequirementTaskStatus, string> = {
+  待处理: 'default',
+  进行中: 'processing',
+  已完成: 'success',
+};
+
+/** 需求任务（实现阶段分解） */
+export interface RequirementTask {
+  id: string;
+  name: string;
+  /** 负责人（人员主数据 id） */
+  assignee: string;
+  assignee_name: string | null;
+  plan_date: string | null;
+  status: RequirementTaskStatus;
+  done_at: string | null;
+}
+
+/** 需求列表行 */
+export interface RequirementRow {
+  id: string;
+  requirement_code: string;
+  title: string;
+  req_type: string;
+  business_domain_id: string;
+  business_domain_name: string | null;
+  source: string | null;
+  requester_name: string | null;
+  moscow: Moscow | null;
+  owner: string | null;
+  owner_name: string | null;
+  target_date: string | null;
+  status: RequirementStatus | string;
+  status_name: string;
+  registered_at: string;
+  closed_at: string | null;
+  /** 交付周期（天，closed 后才有） */
+  lead_days: number | null;
+  project_id: string | null;
+  task_total: number;
+  task_done: number;
+  /** 任务完成比 0-100；无任务时 null */
+  progress: number | null;
+}
+
+/** 需求详情 */
+export interface RequirementDetail extends RequirementRow {
+  description: string;
+  solution: string | null;
+  acceptance_criteria: AcceptanceCriterion[];
+  closure_note: string | null;
+  remarks: string | null;
+  /** 提出人 auth_user.id */
+  requester: string | null;
+  analyzing_at: string | null;
+  implementing_at: string | null;
+  project_name: string | null;
+  tasks: RequirementTask[];
+  /** 关闭收尾已转出清单 */
+  handover: {
+    problems: { id: string; problem_code: string; title: string }[];
+    articles: { id: string; article_code: string; title: string }[];
+  };
+  allowed_transitions: AllowedTransition[];
+  /** 需求流程实例视图（结构同工单流程） */
+  process: TicketProcess | null;
+  /** 当前用户是否有 requirements.edit 权限 */
+  can_edit: boolean;
+}
+
 /** SLA 看板 */
 export interface SlaDashboard {
   month: string;
