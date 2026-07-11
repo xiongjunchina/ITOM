@@ -10,6 +10,8 @@ from app.models.itsm_assets import (
     Vendor,
 )
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
+from app.models.project import CostEntry, Milestone, Portfolio, Project, Risk, WbsTask
+from app.models.requirement import Requirement, RequirementTask
 from app.models.support import (
     Attachment,
     BusinessDomain,
@@ -39,6 +41,7 @@ __all__ = [
     "ProvisionRule",
     "AuditLog",
     "Ci",
+    "CostEntry",
     "CiRelationship",
     "Contract",
     "KnowledgeArticle",
@@ -46,12 +49,18 @@ __all__ = [
     "Problem",
     "ProblemTicket",
     "Vendor",
+    "WbsTask",
     "AuthUser",
     "InAppNotification",
     "MasterData",
+    "Milestone",
     "NotificationOutbox",
     "OrgMember",
+    "Portfolio",
     "Position",
+    "Project",
+    "Requirement",
+    "RequirementTask",
     "ProcessDefinition",
     "ProcessInstance",
     "ProcessStep",
@@ -60,6 +69,7 @@ __all__ = [
     "ServiceItem",
     "SlaPolicy",
     "Ticket",
+    "Risk",
     "Role",
     "RolePermission",
     "UserGroup",

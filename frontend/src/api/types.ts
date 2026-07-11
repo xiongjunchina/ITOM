@@ -765,6 +765,211 @@ export interface ImportResult {
   failed: ImportFailedRow[];
 }
 
+// ============ M4 项目管理 ============
+
+/** 项目状态 */
+export type ProjectStatus = 'planning' | 'active' | 'paused' | 'completed' | 'closed' | 'cancelled';
+
+/** 项目状态 → 中文名 + Badge 展示（planning 蓝 / active 处理中 / paused 橙 / completed 绿 / closed·cancelled 灰） */
+export const PROJECT_STATUS: Record<
+  ProjectStatus,
+  { label: string; badge: 'default' | 'processing' | 'success' | 'warning'; color?: string }
+> = {
+  planning: { label: '规划中', badge: 'default', color: 'blue' },
+  active: { label: '进行中', badge: 'processing' },
+  paused: { label: '已暂停', badge: 'warning', color: 'orange' },
+  completed: { label: '已完成', badge: 'success' },
+  closed: { label: '已关闭', badge: 'default' },
+  cancelled: { label: '已取消', badge: 'default' },
+};
+
+/** 项目健康度 */
+export type ProjectHealth = 'green' | 'yellow' | 'red';
+
+export const HEALTH_META: Record<ProjectHealth, { color: string; label: string }> = {
+  green: { color: '#52c41a', label: '正常' },
+  yellow: { color: '#faad14', label: '预警' },
+  red: { color: '#ff4d4f', label: '风险' },
+};
+
+/** 项目组合 */
+export interface Portfolio {
+  id: string;
+  name: string;
+  owner_id: string | null;
+  owner_name: string | null;
+  year: string | null;
+  description: string | null;
+  sort: number;
+  project_count: number;
+}
+
+/** 项目列表行（含后端实时计算的派生指标） */
+export interface ProjectRow {
+  id: string;
+  project_code: string;
+  name: string;
+  pm: string;
+  pm_name: string | null;
+  status: ProjectStatus | string;
+  status_name: string;
+  planned_start: string;
+  planned_end: string;
+  actual_start: string | null;
+  actual_end: string | null;
+  portfolio_id: string | null;
+  portfolio_name: string | null;
+  budget_10k: number | null;
+  latest_update: string | null;
+  /** 进度 0-100；无 WBS 任务时为 null */
+  progress: number | null;
+  planned_progress: number | null;
+  spi: number | null;
+  cpi: number | null;
+  /** 进度偏差（计划-实际，百分点） */
+  deviation: number | null;
+  health: ProjectHealth;
+  actual_cost_10k: number;
+  /** 预算执行率 %；无预算时 null */
+  budget_usage: number | null;
+  task_total: number;
+  task_done: number;
+  milestone_total: number;
+  milestone_overdue: number;
+  open_risks: number;
+  red_risks: number;
+}
+
+/** 项目详情 */
+export interface ProjectDetail extends ProjectRow {
+  description: string | null;
+  service_item_id: string | null;
+  allowed_transitions: AllowedTransition[];
+  /** 项目流程实例视图（结构同工单流程） */
+  process: TicketProcess | null;
+  /** 当前用户是否有 projects.edit 权限（写操作按钮显隐） */
+  can_edit: boolean;
+}
+
+/** WBS 任务状态 */
+export type WbsStatus = '未开始' | '进行中' | '已完成';
+
+export const WBS_STATUS_COLORS: Record<WbsStatus, string> = {
+  未开始: '#bfbfbf',
+  进行中: '#1677ff',
+  已完成: '#52c41a',
+};
+
+/** WBS 任务 */
+export interface WbsTask {
+  id: string;
+  wbs_code: string;
+  name: string;
+  parent_task_id: string | null;
+  assignee: string;
+  assignee_name: string | null;
+  start_date: string;
+  end_date: string;
+  status: WbsStatus;
+  completed_at: string | null;
+  description: string | null;
+  deliverable: string | null;
+  predecessor_ids: string[];
+  sort: number;
+}
+
+/** 里程碑 */
+export interface Milestone {
+  id: string;
+  name: string;
+  target_date: string;
+  description: string | null;
+  achieved_at: string | null;
+  overdue: boolean;
+}
+
+/** 风险概率/影响档位 */
+export type RiskGrade = '高' | '中' | '低';
+
+export const RISK_GRADES: RiskGrade[] = ['高', '中', '低'];
+
+/** 项目风险 */
+export interface Risk {
+  id: string;
+  title: string;
+  probability: RiskGrade;
+  impact: RiskGrade;
+  mitigation: string | null;
+  status: '开放' | '已关闭';
+}
+
+/** 成本明细 */
+export interface CostEntry {
+  id: string;
+  entry_date: string;
+  amount_10k: number;
+  note: string | null;
+}
+
+/** 章程解析：WBS 草稿行 */
+export interface CharterWbsDraft {
+  code?: string | null;
+  name: string;
+  description?: string | null;
+  deliverable?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+/** 章程解析：里程碑草稿行 */
+export interface CharterMilestoneDraft {
+  name: string;
+  target_date?: string | null;
+}
+
+/** 章程解析：风险草稿行 */
+export interface CharterRiskDraft {
+  title: string;
+  probability?: string | null;
+  impact?: string | null;
+  mitigation?: string | null;
+}
+
+/** 章程解析结果（POST /projects/charter/parse） */
+export interface CharterParseResult {
+  fields: {
+    name: string | null;
+    /** 解析到的项目经理姓名匹配到的人员 id；匹配失败为 null */
+    pm: string | null;
+    pm_name: string | null;
+    planned_start: string | null;
+    planned_end: string | null;
+    budget_10k: number | null;
+    description: string | null;
+  };
+  drafts: {
+    wbs: CharterWbsDraft[];
+    milestones: CharterMilestoneDraft[];
+    risks: CharterRiskDraft[];
+  };
+  warnings: string[];
+}
+
+/** 章程确认创建结果 */
+export interface CharterCreateResult {
+  project_id: string;
+  project_code: string;
+  created: { wbs: number; milestones: number; risks: number };
+}
+
+/** 附件条目（GET /attachments） */
+export interface AttachmentItem {
+  id: string;
+  filename: string;
+  size: number;
+  created_at: string;
+}
+
 /** SLA 看板 */
 export interface SlaDashboard {
   month: string;

@@ -88,7 +88,40 @@ def scan_contract_expiry():
         db.commit()
 
 
-SCANNERS = [scan_sla_warnings, scan_contract_expiry]
+def scan_overdue_milestones():
+    from datetime import date
+
+    from app.models import Milestone, Project
+
+    with SessionLocal() as db:
+        today = date.today()
+        rows = (
+            db.query(Milestone, Project)
+            .join(Project, Project.id == Milestone.project_id)
+            .filter(
+                Milestone.achieved_at.is_(None),
+                Milestone.target_date < today,
+                Milestone.overdue_warned.is_(False),
+                Milestone.is_deleted.is_(False),
+                Project.status.in_(["planning", "active", "paused"]),
+                Project.is_deleted.is_(False),
+            )
+            .all()
+        )
+        for m, p in rows:
+            m.overdue_warned = True
+            recipients = [r for r in {p.pm} if r]
+            if recipients:
+                notifier.notify(
+                    db, "milestone.overdue", "project", p.id,
+                    recipients,
+                    f"里程碑逾期：{p.name} / {m.name}（目标 {m.target_date}）",
+                    link=f"/projects/{p.id}",
+                )
+        db.commit()
+
+
+SCANNERS = [scan_sla_warnings, scan_contract_expiry, scan_overdue_milestones]
 
 
 async def run_forever():

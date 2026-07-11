@@ -1,7 +1,7 @@
 """M2 种子：工单两套状态机、SLA 策略、流程定义、示例目录/服务项。幂等。"""
 from sqlalchemy.orm import Session
 
-from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_TM
+from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_PM, IT_TM
 from app.models import (
     ProcessDefinition,
     ProcessStep,
@@ -41,6 +41,47 @@ CI_CATEGORIES = [
     ("ci_category", "euc", "终端", 7),
     ("ci_category", "infra", "基础设施", 8),
     ("ci_category", "consulting", "咨询服务", 9),
+]
+
+PROJECT_STATUSES = [
+    ("project", "planning", "规划中", True, False, 1),
+    ("project", "active", "进行中", False, False, 2),
+    ("project", "paused", "已暂停", False, False, 3),
+    ("project", "completed", "已完成", False, False, 4),
+    ("project", "closed", "已关闭", False, True, 5),
+    ("project", "cancelled", "已取消", False, True, 6),
+]
+
+PROJECT_TRANSITIONS = [
+    ("project", "planning", "active", []),
+    ("project", "active", "paused", []),
+    ("project", "paused", "active", []),
+    ("project", "active", "completed", []),
+    ("project", "completed", "closed", []),
+    ("project", "planning", "cancelled", []),
+    ("project", "active", "cancelled", []),
+]
+
+REQUIREMENT_STATUSES = [
+    ("requirement", "registered", "已登记", True, False, 1),
+    ("requirement", "analyzing", "分析中", False, False, 2),
+    ("requirement", "implementing", "实现中", False, False, 3),
+    ("requirement", "closed", "已关闭", False, True, 4),
+    ("requirement", "on_hold", "已搁置", False, False, 5),
+    ("requirement", "cancelled", "已取消", False, True, 6),
+]
+
+REQUIREMENT_TRANSITIONS = [
+    ("requirement", "registered", "analyzing", []),
+    ("requirement", "analyzing", "implementing", []),
+    ("requirement", "implementing", "closed", []),
+    ("requirement", "registered", "on_hold", []),
+    ("requirement", "analyzing", "on_hold", []),
+    ("requirement", "implementing", "on_hold", []),
+    ("requirement", "on_hold", "analyzing", []),
+    ("requirement", "registered", "cancelled", []),
+    ("requirement", "analyzing", "cancelled", []),
+    ("requirement", "on_hold", "cancelled", []),
 ]
 
 TICKET_STATUSES = [
@@ -128,6 +169,15 @@ PROCESS_DEFS = [
         ],
     },
     {
+        "code": "project_flow", "name": "项目关键节点流程", "entity_type": "project",
+        "trigger": None,
+        "steps": [
+            ("立项启动", IT_PM, "L3", 72, [CIO, IT_BM]),
+            ("执行监控", IT_PM, "L3", None, []),
+            ("收尾复盘", IT_PM, "L2", 72, [CIO, IT_TM]),
+        ],
+    },
+    {
         "code": "requirement_flow", "name": "需求交付流程", "entity_type": "requirement",
         "trigger": None,
         "steps": [
@@ -147,10 +197,10 @@ def run_seed_itsm(db: Session):
     for category, code, name, sort in CI_CATEGORIES:
         if not db.query(MasterData).filter_by(category=category, code=code).first():
             db.add(MasterData(category=category, code=code, name=name, sort=sort))
-    for etype, code, name, initial, terminal, sort in PROBLEM_STATUSES + TICKET_STATUSES:
+    for etype, code, name, initial, terminal, sort in PROBLEM_STATUSES + TICKET_STATUSES + PROJECT_STATUSES + REQUIREMENT_STATUSES:
         if not db.query(WorkflowStatus).filter_by(entity_type=etype, code=code).first():
             db.add(WorkflowStatus(entity_type=etype, code=code, name=name, is_initial=initial, is_terminal=terminal, sort=sort))
-    for etype, frm, to, roles in PROBLEM_TRANSITIONS + TICKET_TRANSITIONS:
+    for etype, frm, to, roles in PROBLEM_TRANSITIONS + TICKET_TRANSITIONS + PROJECT_TRANSITIONS + REQUIREMENT_TRANSITIONS:
         if not db.query(WorkflowTransition).filter_by(entity_type=etype, from_code=frm, to_code=to).first():
             db.add(WorkflowTransition(entity_type=etype, from_code=frm, to_code=to, allowed_roles=roles))
     for priority, resp, reso in SLA_POLICIES:

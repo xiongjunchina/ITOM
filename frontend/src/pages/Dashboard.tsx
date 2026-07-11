@@ -84,6 +84,7 @@ export default function Dashboard() {
               <ProjectOutlined /> 项目
             </span>
           }
+          extra={<Link to="/projects">查看</Link>}
         >
           <Row gutter={16}>
             <Col span={6}>
@@ -92,14 +93,31 @@ export default function Dashboard() {
             <Col span={6}>
               <Statistic
                 title="健康度(绿/黄/红)"
-                value={`${project?.health.green ?? 0} / ${project?.health.yellow ?? 0} / ${project?.health.red ?? 0}`}
+                valueRender={() => (
+                  <span>
+                    <span style={{ color: '#52c41a' }}>{project?.health.green ?? 0}</span>
+                    <span style={{ color: 'rgba(0,0,0,0.25)' }}> / </span>
+                    <span style={{ color: '#faad14' }}>{project?.health.yellow ?? 0}</span>
+                    <span style={{ color: 'rgba(0,0,0,0.25)' }}> / </span>
+                    <span style={{ color: '#ff4d4f' }}>{project?.health.red ?? 0}</span>
+                  </span>
+                )}
               />
             </Col>
             <Col span={6}>
-              <Statistic title="逾期里程碑" value={project?.overdue_milestones ?? 0} />
+              <Statistic
+                title="逾期里程碑"
+                value={project?.overdue_milestones ?? 0}
+                valueStyle={(project?.overdue_milestones ?? 0) > 0 ? { color: '#ff4d4f' } : undefined}
+              />
             </Col>
             <Col span={6}>
-              <Statistic title="预算使用率" value={project?.budget_usage ?? 0} suffix="%" />
+              <Statistic
+                title="预算使用率"
+                value={project?.budget_usage ?? 0}
+                suffix="%"
+                valueStyle={(project?.budget_usage ?? 0) > 100 ? { color: '#ff4d4f' } : undefined}
+              />
             </Col>
           </Row>
         </Card>

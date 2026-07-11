@@ -23,6 +23,8 @@ import Contracts from './pages/itsm/Contracts';
 import Knowledge from './pages/itsm/Knowledge';
 import KnowledgeDetail from './pages/itsm/KnowledgeDetail';
 import KnowledgeEdit from './pages/itsm/KnowledgeEdit';
+import Projects from './pages/projects/Projects';
+import ProjectDetail from './pages/projects/ProjectDetail';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -48,7 +50,10 @@ export const router = createBrowserRouter([
       { path: 'itsm/knowledge/:id', element: <KnowledgeDetail /> },
       { path: 'itsm/knowledge/:id/edit', element: <KnowledgeEdit /> },
 
-      { path: 'projects', element: <PlaceholderPage title="项目管理" /> },
+      // 项目管理（M4 交付）
+      { path: 'projects', element: <Projects /> },
+      { path: 'projects/:id', element: <ProjectDetail /> },
+
       { path: 'requirements', element: <PlaceholderPage title="需求管理" /> },
 
       // 流程中心
