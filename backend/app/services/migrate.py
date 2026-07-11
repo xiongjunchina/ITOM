@@ -31,6 +31,7 @@ ENSURE_COLUMNS = {
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("owner_id", "VARCHAR(26)"),
     ],
 }
 

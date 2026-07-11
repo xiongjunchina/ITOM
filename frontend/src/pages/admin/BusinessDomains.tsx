@@ -8,8 +8,10 @@ import {
   InputNumber,
   Modal,
   Select,
+  Space,
   Switch,
   Table,
+  Tag,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -35,6 +37,10 @@ export default function BusinessDomains() {
   const [editing, setEditing] = useState<BusinessDomain | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<DomainForm>();
+
+  const [teamTarget, setTeamTarget] = useState<BusinessDomain | null>(null);
+  const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [savingTeam, setSavingTeam] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,6 +120,28 @@ export default function BusinessDomains() {
     }
   };
 
+  const openTeam = (record: BusinessDomain) => {
+    setTeamTarget(record);
+    setTeamIds((record.members ?? []).map((m) => m.id));
+  };
+
+  const handleSaveTeam = async () => {
+    if (!teamTarget) return;
+    setSavingTeam(true);
+    try {
+      await api.put(`/admin/business-domains/${teamTarget.id}/members`, {
+        person_ids: teamIds,
+      });
+      message.success('服务团队已更新');
+      setTeamTarget(null);
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setSavingTeam(false);
+    }
+  };
+
   const toggleActive = async (record: BusinessDomain, checked: boolean) => {
     try {
       await api.patch(`/admin/business-domains/${record.id}`, { active: checked });
@@ -130,16 +158,30 @@ export default function BusinessDomains() {
     { title: '编码', dataIndex: 'code', width: 140 },
     { title: '名称', dataIndex: 'name', width: 180 },
     {
-      title: '负责人（BP）',
+      title: '负责人（BM）',
       dataIndex: 'owner_name',
-      width: 140,
+      width: 130,
       render: (v: string | null | undefined) => v || '-',
     },
     {
       title: '备份负责人',
       dataIndex: 'backup_owner_name',
-      width: 140,
+      width: 120,
       render: (v: string | null | undefined) => v || '-',
+    },
+    {
+      title: '服务团队',
+      dataIndex: 'members',
+      render: (list: BusinessDomain['members']) =>
+        (list ?? []).length === 0 ? (
+          '-'
+        ) : (
+          <>
+            {(list ?? []).map((m) => (
+              <Tag key={m.id}>{m.name}</Tag>
+            ))}
+          </>
+        ),
     },
     {
       title: '描述',
@@ -163,11 +205,16 @@ export default function BusinessDomains() {
     {
       title: '操作',
       key: 'action',
-      width: 90,
+      width: 160,
       render: (_, record) => (
-        <Button type="link" size="small" onClick={() => openEdit(record)}>
-          编辑
-        </Button>
+        <Space>
+          <Button type="link" size="small" onClick={() => openEdit(record)}>
+            编辑
+          </Button>
+          <Button type="link" size="small" onClick={() => openTeam(record)}>
+            管理团队
+          </Button>
+        </Space>
       ),
     },
   ];
@@ -185,7 +232,7 @@ export default function BusinessDomains() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="业务域负责人是数据字段而非角色：it_bp 角色给权限，此处指定某人负责哪条业务线"
+        message="横向服务线：负责人(BM)总体负责该业务域 IT 支持，服务团队为跟随的 BP/开发等成员；负责人是数据字段而非角色"
       />
       <Table<BusinessDomain>
         rowKey="id"
@@ -221,7 +268,7 @@ export default function BusinessDomains() {
           >
             <Input maxLength={50} />
           </Form.Item>
-          <Form.Item name="owner_id" label="负责人（BP）">
+          <Form.Item name="owner_id" label="负责人（BM）">
             <Select
               allowClear
               showSearch
@@ -246,6 +293,28 @@ export default function BusinessDomains() {
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`管理服务团队：${teamTarget?.name ?? ''}`}
+        open={!!teamTarget}
+        onOk={() => void handleSaveTeam()}
+        confirmLoading={savingTeam}
+        onCancel={() => setTeamTarget(null)}
+        destroyOnClose
+      >
+        <Select
+          mode="multiple"
+          style={{ width: '100%' }}
+          value={teamIds}
+          onChange={setTeamIds}
+          optionFilterProp="label"
+          placeholder="从人员主数据中选择服务团队成员"
+          options={members.map((m) => ({
+            value: m.id,
+            label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+          }))}
+        />
       </Modal>
     </Card>
   );

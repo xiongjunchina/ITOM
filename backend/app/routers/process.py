@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm
 from app.models import AuthUser, ProcessDefinition, ProcessInstance, ProcessStep
 from app.schemas.common import ok
 from app.services import process_engine
@@ -110,7 +110,7 @@ def _check_trigger_conflict(db: Session, entity_type: str, trigger: dict | None,
 
 
 @router.get("/api/admin/process-definitions")
-def list_definitions(db: Session = Depends(get_db), _=Depends(require_roles())):
+def list_definitions(db: Session = Depends(get_db), _=Depends(require_perm("process_definitions", "view"))):
     rows = (
         db.query(ProcessDefinition)
         .filter(ProcessDefinition.is_deleted.is_(False))
@@ -121,7 +121,7 @@ def list_definitions(db: Session = Depends(get_db), _=Depends(require_roles())):
 
 
 @router.post("/api/admin/process-definitions")
-def create_definition(body: DefinitionCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def create_definition(body: DefinitionCreate, db: Session = Depends(get_db), actor=Depends(require_perm("process_definitions", "create"))):
     if db.query(ProcessDefinition).filter(ProcessDefinition.code == body.code, ProcessDefinition.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "流程代码已存在")
     _validate_steps(body.steps)
@@ -140,7 +140,7 @@ def create_definition(body: DefinitionCreate, db: Session = Depends(get_db), act
 
 
 @router.patch("/api/admin/process-definitions/{def_id}")
-def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("process_definitions", "edit"))):
     definition = db.get(ProcessDefinition, def_id)
     if not definition or definition.is_deleted:
         raise AppError("NOT_FOUND", "流程定义不存在", 404)
@@ -175,7 +175,7 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
 
 
 @router.post("/api/admin/process-definitions/{def_id}/new-version")
-def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("process_definitions", "edit"))):
     """复制为新版本并停用旧版：老单据沿用旧版步骤，新单据走新版。"""
     old = db.get(ProcessDefinition, def_id)
     if not old or old.is_deleted:

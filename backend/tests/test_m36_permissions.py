@@ -1,0 +1,112 @@
+"""M3.6：权限矩阵/角色改名/模板复制/矩阵组织（域团队+组负责人）。"""
+import pytest
+
+
+@pytest.fixture(scope="module")
+def ctx(client, admin_headers):
+    def member_and_user(name, username, roles):
+        m = client.post("/api/members", json={"name": name}, headers=admin_headers).json()["data"]
+        client.post(
+            "/api/admin/users",
+            json={"username": username, "password": "pass123", "roles": roles, "person_id": m["id"]},
+            headers=admin_headers,
+        )
+        token = client.post("/api/auth/login", json={"username": username, "password": "pass123"}).json()["data"]["token"]
+        return m["id"], {"Authorization": f"Bearer {token}"}
+
+    return {"member_and_user": member_and_user}
+
+
+def test_login_returns_permissions(client, admin_headers, ctx):
+    _, h = ctx["member_and_user"]("开发甲", "dev_a", ["it_dev"])
+    me = client.get("/api/auth/me", headers=h).json()["data"]
+    assert "permissions" in me
+    assert "view" in me["permissions"]["tickets"] and "create" in me["permissions"]["tickets"]
+    assert "cmdb" in me["permissions"] and me["permissions"]["cmdb"] == ["view"]
+
+    admin_me = client.get("/api/auth/me", headers=admin_headers).json()["data"]
+    assert admin_me["permissions"] == {"*": ["view", "create", "edit", "delete"]}
+
+
+def test_matrix_edit_changes_access(client, admin_headers, ctx):
+    """把 it_dev 的 vendors 权限从 view 提到 create，再撤销——矩阵实时生效。"""
+    _, h = ctx["member_and_user"]("开发乙", "dev_b", ["it_dev"])
+    r = client.post("/api/vendors", json={"name": "矩阵测试供应商"}, headers=h)
+    assert r.status_code == 403  # 默认 it_dev 无 vendors.create
+
+    rows = client.get("/api/admin/permissions?role=it_dev", headers=admin_headers).json()["data"]
+    entries = [{"module": x["module"], "actions": x["actions"]} for x in rows]
+    for e in entries:
+        if e["module"] == "vendors":
+            e["actions"] = ["view", "create"]
+    client.put("/api/admin/permissions", json={"role_code": "it_dev", "entries": entries}, headers=admin_headers)
+
+    r = client.post("/api/vendors", json={"name": "矩阵测试供应商"}, headers=h)
+    assert r.json()["success"], r.text
+
+    # admin 矩阵不可配
+    r = client.put("/api/admin/permissions", json={"role_code": "admin", "entries": []}, headers=admin_headers)
+    assert r.json()["error"]["code"] == "ADMIN_LOCKED"
+
+
+def test_new_matrix_roles_seeded(client, admin_headers):
+    roles = {r["code"]: r for r in client.get("/api/admin/roles", headers=admin_headers).json()["data"]}
+    assert {"cio", "it_bm", "it_tm"} <= set(roles)
+    perms = client.get("/api/admin/permissions?role=cio", headers=admin_headers).json()["data"]
+    cio_modules = {p["module"]: p["actions"] for p in perms}
+    assert "edit" in cio_modules["projects"] and "view" in cio_modules["performance"]
+
+
+def test_custom_role_copies_template_matrix(client, admin_headers, ctx):
+    client.post(
+        "/api/admin/roles",
+        json={"code": "ai_eng", "name": "AI工程师", "base_role": "it_dev", "description": "AI 专业线"},
+        headers=admin_headers,
+    )
+    perms = client.get("/api/admin/permissions?role=ai_eng", headers=admin_headers).json()["data"]
+    assert perms, "模板矩阵应被复制"
+    modules = {p["module"]: p["actions"] for p in perms}
+    assert "create" in modules["tickets"]
+
+    # 复制后独立：改 ai_eng 不影响 it_dev
+    entries = [{"module": m, "actions": a} for m, a in modules.items() if m != "knowledge"]
+    client.put("/api/admin/permissions", json={"role_code": "ai_eng", "entries": entries}, headers=admin_headers)
+    _, h = ctx["member_and_user"]("AI小哥", "ai01", ["ai_eng"])
+    r = client.post("/api/knowledge", json={"title": "AI 知识", "content": "x"}, headers=h)
+    assert r.status_code == 403
+    it_dev_perms = {p["module"] for p in client.get("/api/admin/permissions?role=it_dev", headers=admin_headers).json()["data"]}
+    assert "knowledge" in it_dev_perms
+
+
+def test_domain_members_and_group_owner(client, admin_headers, ctx):
+    bm, _ = ctx["member_and_user"]("业务线负责人", "bm01", ["it_bm"])
+    bp, _ = ctx["member_and_user"]("BP小姐", "bp02", ["it_bp"])
+    dev, _ = ctx["member_and_user"]("随队开发", "dev_c", ["it_dev"])
+
+    # 业务域：BM 负责人 + 服务团队成员
+    d = client.post(
+        "/api/admin/business-domains",
+        json={"code": "hr_line", "name": "人力业务线", "owner_id": bm},
+        headers=admin_headers,
+    ).json()["data"]
+    r = client.put(f"/api/admin/business-domains/{d['id']}/members", json={"person_ids": [bp, dev]}, headers=admin_headers)
+    assert r.json()["data"]["count"] == 2
+    domains = client.get("/api/admin/business-domains", headers=admin_headers).json()["data"]
+    row = next(x for x in domains if x["code"] == "hr_line")
+    assert row["owner_name"] == "业务线负责人"
+    assert {m["name"] for m in row["members"]} == {"BP小姐", "随队开发"}
+
+    # 用户组（专业线资源池）：负责人 TM + 授予角色
+    tm, _ = ctx["member_and_user"]("开发TM", "tm01", ["it_tm"])
+    g = client.post(
+        "/api/admin/groups",
+        json={"code": "dev_pool", "name": "开发资源池", "roles": ["it_dev"], "owner_id": tm},
+        headers=admin_headers,
+    ).json()["data"]
+    assert g["owner_name"] == "开发TM" and g["roles"] == ["it_dev"]
+
+
+def test_member_row_no_groups_field(client, admin_headers, ctx):
+    """①人员主数据与用户组解耦：行数据不再返回 groups。"""
+    rows = client.get("/api/members", headers=admin_headers).json()["data"]
+    assert rows and "groups" not in rows[0]

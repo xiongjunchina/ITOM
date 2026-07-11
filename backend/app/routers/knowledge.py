@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_perm
 from app.events.bus import publish
 from app.models import AuthUser, KnowledgeArticle, KnowledgeVote, OrgMember, Ticket
 from app.schemas.common import ok, paginate
@@ -67,7 +67,7 @@ def list_articles(
 
 
 @router.post("")
-def create_article(body: ArticleCreate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def create_article(body: ArticleCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("knowledge", "create"))):
     person = db.get(OrgMember, user.person_id) if user.person_id else None
     article = KnowledgeArticle(
         **body.model_dump(),
@@ -106,7 +106,7 @@ def get_article(article_id: str, db: Session = Depends(get_db), user: AuthUser =
 
 
 @router.patch("/{article_id}")
-def update_article(article_id: str, body: ArticleUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def update_article(article_id: str, body: ArticleUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("knowledge", "edit"))):
     a = db.get(KnowledgeArticle, article_id)
     if not a or a.is_deleted:
         raise AppError("NOT_FOUND", "文章不存在", 404)

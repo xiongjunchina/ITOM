@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import MANAGER
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm
 from app.models import AuthUser, OrgMember, Position
 from app.schemas.common import ok, paginate
 from app.schemas.support import (
@@ -18,7 +17,7 @@ from app.services.audit import audit
 router = APIRouter(tags=["team"])
 
 
-def _member_row(m: OrgMember, groups_by_person: dict[str, list] | None = None) -> dict:
+def _member_row(m: OrgMember) -> dict:
     return {
         "id": m.id,
         "name": m.name,
@@ -34,7 +33,6 @@ def _member_row(m: OrgMember, groups_by_person: dict[str, list] | None = None) -
         "external_source": m.external_source,
         "skills": m.skills or [],
         "remarks": m.remarks,
-        "groups": (groups_by_person or {}).get(m.id, []),
     }
 
 
@@ -50,22 +48,11 @@ def list_members(
     if q:
         query = query.filter(OrgMember.name.ilike(f"%{q}%"))
     items, total = paginate(query.order_by(OrgMember.created_at.desc()), page, page_size)
-    from app.models import UserGroup, UserGroupMember
-
-    groups_by_person: dict[str, list] = {}
-    rows = (
-        db.query(UserGroupMember.person_id, UserGroup.name)
-        .join(UserGroup, UserGroup.id == UserGroupMember.group_id)
-        .filter(UserGroupMember.is_deleted.is_(False), UserGroup.is_deleted.is_(False))
-        .all()
-    )
-    for person_id, group_name in rows:
-        groups_by_person.setdefault(person_id, []).append(group_name)
-    return ok([_member_row(m, groups_by_person) for m in items], total=total, page=page)
+    return ok([_member_row(m) for m in items], total=total, page=page)
 
 
 @router.post("/api/members")
-def create_member(body: MemberCreate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def create_member(body: MemberCreate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_members", "create"))):
     member = OrgMember(**body.model_dump())
     db.add(member)
     db.flush()
@@ -76,7 +63,7 @@ def create_member(body: MemberCreate, db: Session = Depends(get_db), actor=Depen
 
 @router.patch("/api/members/{member_id}")
 def update_member(
-    member_id: str, body: MemberUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))
+    member_id: str, body: MemberUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_members", "edit"))
 ):
     member = db.get(OrgMember, member_id)
     if not member or member.is_deleted:
@@ -115,7 +102,7 @@ def list_positions(db: Session = Depends(get_db), _: AuthUser = Depends(get_curr
 
 
 @router.post("/api/positions")
-def create_position(body: PositionCreate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def create_position(body: PositionCreate, db: Session = Depends(get_db), actor=Depends(require_perm("positions", "create"))):
     pos = Position(**body.model_dump())
     db.add(pos)
     db.flush()
@@ -126,7 +113,7 @@ def create_position(body: PositionCreate, db: Session = Depends(get_db), actor=D
 
 @router.patch("/api/positions/{position_id}")
 def update_position(
-    position_id: str, body: PositionUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))
+    position_id: str, body: PositionUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("positions", "edit"))
 ):
     pos = db.get(Position, position_id)
     if not pos or pos.is_deleted:

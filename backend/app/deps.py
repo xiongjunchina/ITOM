@@ -24,7 +24,7 @@ def get_current_user(
 
 
 def require_roles(*roles: str):
-    """角色守卫：admin 隐式放行；自定义角色经 base_role 继承内置权限。"""
+    """角色守卫：admin 隐式放行（保留给业务硬规则；功能开关请用 require_perm）。"""
 
     def guard(
         user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)
@@ -35,5 +35,20 @@ def require_roles(*roles: str):
         if ADMIN in held or held & set(roles):
             return user
         raise AppError("FORBIDDEN", "没有执行此操作的权限", 403)
+
+    return guard
+
+
+def require_perm(module: str, action: str):
+    """功能权限守卫：按权限矩阵判定（admin 隐式全权）。"""
+
+    def guard(
+        user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)
+    ) -> AuthUser:
+        from app.services.permissions import has_perm
+
+        if has_perm(db, user, module, action):
+            return user
+        raise AppError("FORBIDDEN", "没有该功能的操作权限，请联系管理员配置", 403)
 
     return guard

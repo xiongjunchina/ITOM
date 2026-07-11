@@ -4,10 +4,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import MANAGER
 from app.db import get_db
-from app.deps import get_current_user, require_roles
-from app.models import BusinessDomain, Department, OrgMember, ProvisionRule
+from app.deps import get_current_user, require_perm, require_roles
+from app.models import BusinessDomain, BusinessDomainMember, Department, OrgMember, ProvisionRule
 from app.schemas.common import ok
 from app.services.audit import audit
 from app.services.rbac import valid_role_codes
@@ -82,7 +81,7 @@ def list_departments(db: Session = Depends(get_db), _=Depends(get_current_user))
 
 
 @router.post("/departments")
-def create_department(body: DeptIn, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def create_department(body: DeptIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_departments", "create"))):
     if body.dept_type not in DEPT_TYPES:
         raise AppError("INVALID_TYPE", "部门类型必须为 it/business/audit")
     if db.query(Department).filter(Department.code == body.code, Department.is_deleted.is_(False)).first():
@@ -96,7 +95,7 @@ def create_department(body: DeptIn, db: Session = Depends(get_db), actor=Depends
 
 
 @router.patch("/departments/{dept_id}")
-def update_department(dept_id: str, body: DeptUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def update_department(dept_id: str, body: DeptUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_departments", "edit"))):
     dept = db.get(Department, dept_id)
     if not dept or dept.is_deleted:
         raise AppError("NOT_FOUND", "部门不存在", 404)
@@ -113,7 +112,7 @@ def update_department(dept_id: str, body: DeptUpdate, db: Session = Depends(get_
 
 
 @router.delete("/departments/{dept_id}")
-def delete_department(dept_id: str, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def delete_department(dept_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_departments", "delete"))):
     dept = db.get(Department, dept_id)
     if not dept or dept.is_deleted:
         raise AppError("NOT_FOUND", "部门不存在", 404)
@@ -129,16 +128,24 @@ def delete_department(dept_id: str, db: Session = Depends(get_db), actor=Depends
 
 # ---------- 业务域 / 服务线 ----------
 
+class DomainMembersIn(BaseModel):
+    person_ids: list[str]
+
+
 @router.get("/business-domains")
 def list_domains(db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False)).order_by(BusinessDomain.sort).all()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False)).all()}
+    members_by_domain: dict[str, list] = {}
+    for dm in db.query(BusinessDomainMember).filter(BusinessDomainMember.is_deleted.is_(False)).all():
+        members_by_domain.setdefault(dm.domain_id, []).append({"id": dm.person_id, "name": names.get(dm.person_id)})
     return ok(
         [
             {
                 "id": d.id, "code": d.code, "name": d.name, "description": d.description,
                 "owner_id": d.owner_id, "owner_name": names.get(d.owner_id),
                 "backup_owner_id": d.backup_owner_id, "backup_owner_name": names.get(d.backup_owner_id),
+                "members": members_by_domain.get(d.id, []),
                 "sort": d.sort, "active": d.active,
             }
             for d in rows
@@ -147,8 +154,26 @@ def list_domains(db: Session = Depends(get_db), _=Depends(get_current_user)):
     )
 
 
+@router.put("/business-domains/{domain_id}/members")
+def set_domain_members(domain_id: str, body: DomainMembersIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "edit"))):
+    """服务团队成员：BM 带领的 BP/开发等（矩阵组织横向服务线）。"""
+    domain = db.get(BusinessDomain, domain_id)
+    if not domain or domain.is_deleted:
+        raise AppError("NOT_FOUND", "业务域不存在", 404)
+    valid = {m.id for m in db.query(OrgMember).filter(OrgMember.id.in_(body.person_ids or ["-"])).all()}
+    bad = set(body.person_ids) - valid
+    if bad:
+        raise AppError("INVALID_MEMBER", "包含不存在的人员")
+    db.query(BusinessDomainMember).filter(BusinessDomainMember.domain_id == domain.id).delete()
+    for pid in body.person_ids:
+        db.add(BusinessDomainMember(domain_id=domain.id, person_id=pid))
+    audit(db, "business_domain", domain.id, "set_members", actor, {"count": len(body.person_ids)})
+    db.commit()
+    return ok({"id": domain.id, "count": len(body.person_ids)})
+
+
 @router.post("/business-domains")
-def create_domain(body: DomainIn, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def create_domain(body: DomainIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "create"))):
     if db.query(BusinessDomain).filter(BusinessDomain.code == body.code, BusinessDomain.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "业务域编码已存在")
     domain = BusinessDomain(**body.model_dump())
@@ -160,7 +185,7 @@ def create_domain(body: DomainIn, db: Session = Depends(get_db), actor=Depends(r
 
 
 @router.patch("/business-domains/{domain_id}")
-def update_domain(domain_id: str, body: DomainUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def update_domain(domain_id: str, body: DomainUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "edit"))):
     domain = db.get(BusinessDomain, domain_id)
     if not domain or domain.is_deleted:
         raise AppError("NOT_FOUND", "业务域不存在", 404)
@@ -175,7 +200,7 @@ def update_domain(domain_id: str, body: DomainUpdate, db: Session = Depends(get_
 # ---------- 开通规则 ----------
 
 @router.get("/provision-rules")
-def list_rules(db: Session = Depends(get_db), _=Depends(require_roles())):
+def list_rules(db: Session = Depends(get_db), _=Depends(require_perm("admin_provision", "view"))):
     rows = db.query(ProvisionRule).filter(ProvisionRule.is_deleted.is_(False)).order_by(ProvisionRule.sort).all()
     dept_names = {d.id: d.name for d in db.query(Department).filter(Department.is_deleted.is_(False)).all()}
     return ok(
@@ -192,7 +217,7 @@ def list_rules(db: Session = Depends(get_db), _=Depends(require_roles())):
 
 
 @router.put("/provision-rules")
-def replace_rules(body: list[RuleIn], db: Session = Depends(get_db), actor=Depends(require_roles())):
+def replace_rules(body: list[RuleIn], db: Session = Depends(get_db), actor=Depends(require_perm("admin_provision", "edit"))):
     valid_roles = valid_role_codes(db)
     for r in body:
         if r.match_type not in ("dept_type", "department"):

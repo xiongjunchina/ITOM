@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.core.rbac import REQUESTER
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_perm
 from app.models import AuthUser, OrgMember, Ticket
 from app.schemas.common import ok, paginate
 from app.schemas.itsm import SatisfactionIn, TicketCreate, TicketUpdate, TransitionIn
@@ -75,7 +75,7 @@ def list_tickets(
 
 
 @router.post("")
-def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "create"))):
     ticket = svc.create_ticket(db, body.model_dump(exclude_none=True), user)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
     return ok(_row(ticket, db, names))
@@ -122,7 +122,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
 
 
 @router.patch("/{ticket_id}")
-def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "edit"))):
     t = _get_ticket(db, ticket_id, user)
     if t.status in ("closed", "rejected"):
         raise AppError("TICKET_FINAL", "终态工单不可编辑")
@@ -143,7 +143,7 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
 
 
 @router.post("/{ticket_id}/transition")
-def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "edit"))):
     t = _get_ticket(db, ticket_id, user)
     svc.do_transition(db, t, body.to, body.fields, user)
     return ok({"id": t.id, "status": t.status})
@@ -157,7 +157,7 @@ def rate(ticket_id: str, body: SatisfactionIn, db: Session = Depends(get_db), us
 
 
 @router.post("/{ticket_id}/escalate-problem")
-def escalate_problem(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def escalate_problem(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "create"))):
     """一键升级为问题：自动带工单上下文并双向关联。"""
     t = _get_ticket(db, ticket_id, user)
     if t.problem_id:

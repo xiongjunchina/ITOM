@@ -6,9 +6,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import MANAGER
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm
 from app.models import OrgMember, ServiceCatalog, ServiceItem, SlaPolicy, Ticket
 from app.schemas.common import ok
 from app.schemas.itsm import (
@@ -49,7 +48,7 @@ def list_catalogs(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
 
 @router.post("/api/catalogs")
-def create_catalog(body: CatalogCreate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def create_catalog(body: CatalogCreate, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "create"))):
     catalog = ServiceCatalog(**body.model_dump(), code=gen_code(db, ServiceCatalog, "code", "SC"))
     db.add(catalog)
     db.flush()
@@ -59,7 +58,7 @@ def create_catalog(body: CatalogCreate, db: Session = Depends(get_db), actor=Dep
 
 
 @router.patch("/api/catalogs/{catalog_id}")
-def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "edit"))):
     catalog = db.get(ServiceCatalog, catalog_id)
     if not catalog or catalog.is_deleted:
         raise AppError("NOT_FOUND", "目录不存在", 404)
@@ -97,7 +96,7 @@ def list_items(catalog_id: str = "", q: str = "", db: Session = Depends(get_db),
 
 
 @router.post("/api/service-items")
-def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "create"))):
     if not db.get(ServiceCatalog, body.catalog_id):
         raise AppError("NOT_FOUND", "目录不存在", 404)
     item = ServiceItem(**body.model_dump(), item_code=gen_code(db, ServiceItem, "item_code", "SI"))
@@ -109,7 +108,7 @@ def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=De
 
 
 @router.patch("/api/service-items/{item_id}")
-def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(MANAGER))):
+def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "edit"))):
     item = db.get(ServiceItem, item_id)
     if not item or item.is_deleted:
         raise AppError("NOT_FOUND", "服务项不存在", 404)
@@ -136,7 +135,7 @@ def list_sla_policies(db: Session = Depends(get_db), _=Depends(get_current_user)
 
 
 @router.put("/api/admin/sla-policies")
-def upsert_sla_policies(body: list[SlaPolicyIn], db: Session = Depends(get_db), actor=Depends(require_roles())):
+def upsert_sla_policies(body: list[SlaPolicyIn], db: Session = Depends(get_db), actor=Depends(require_perm("sla", "edit"))):
     for entry in body:
         row = db.query(SlaPolicy).filter(SlaPolicy.priority == entry.priority).first()
         if row:

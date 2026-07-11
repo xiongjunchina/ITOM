@@ -7,9 +7,8 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import IS_MGR, IT_OPS, MANAGER
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, CiRelationship, OrgMember, Ticket, Vendor
 from app.schemas.common import ok, paginate
 from app.services.audit import audit
@@ -86,7 +85,7 @@ def list_cis(
 
 
 @router.post("/api/cis")
-def create_ci(body: CiCreate, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, IS_MGR, MANAGER))):
+def create_ci(body: CiCreate, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "create"))):
     ci = Ci(**body.model_dump(), ci_code=gen_code(db, Ci, "ci_code", "CI"))
     db.add(ci)
     db.flush()
@@ -96,7 +95,7 @@ def create_ci(body: CiCreate, db: Session = Depends(get_db), actor=Depends(requi
 
 
 @router.patch("/api/cis/{ci_id}")
-def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, IS_MGR, MANAGER))):
+def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "edit"))):
     ci = db.get(Ci, ci_id)
     if not ci or ci.is_deleted:
         raise AppError("NOT_FOUND", "配置项不存在", 404)
@@ -159,7 +158,7 @@ def impact_analysis(ci_id: str, db: Session = Depends(get_db), _: AuthUser = Dep
 
 
 @router.post("/api/ci-relationships")
-def create_relation(body: RelationIn, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, IS_MGR, MANAGER))):
+def create_relation(body: RelationIn, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "edit"))):
     if body.relation_type not in RELATION_TYPES:
         raise AppError("INVALID_RELATION", f"关系类型须为：{'/'.join(RELATION_TYPES)}")
     if body.source_ci_id == body.target_ci_id:
@@ -184,7 +183,7 @@ def create_relation(body: RelationIn, db: Session = Depends(get_db), actor=Depen
 
 
 @router.delete("/api/ci-relationships/{relation_id}")
-def delete_relation(relation_id: str, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, IS_MGR, MANAGER))):
+def delete_relation(relation_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "edit"))):
     rel = db.get(CiRelationship, relation_id)
     if not rel or rel.is_deleted:
         raise AppError("NOT_FOUND", "关系不存在", 404)

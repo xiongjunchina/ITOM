@@ -29,3 +29,14 @@ export function hasAnyRole(user: AuthUser | null, roles?: Role[]): boolean {
   if (!user) return false;
   return user.roles.some((r) => roles.includes(r));
 }
+
+/**
+ * 功能权限判断：permissions["*"]（admin 隐式全权）或 permissions[module] 含该动作。
+ * 仅当 user.permissions 存在时有意义；存量会话缺失 permissions 时调用方应回退角色逻辑。
+ */
+export function hasPermission(user: AuthUser | null, module: string, action = 'view'): boolean {
+  const perms = user?.permissions;
+  if (!perms) return false;
+  if (perms['*']) return true;
+  return (perms[module] ?? []).includes(action);
+}

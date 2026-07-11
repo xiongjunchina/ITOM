@@ -15,14 +15,16 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _user_payload(db: Session, user: AuthUser) -> dict:
+    from app.services.permissions import user_permissions
     from app.services.rbac import effective_roles
 
     return {
         "id": user.id,
         "username": user.username,
         "name": user.person.name if user.person else user.username,
-        "roles": sorted(effective_roles(db, user)),  # 有效角色=直接∪组授予∪继承，前端菜单以此渲染
+        "roles": sorted(effective_roles(db, user)),  # 有效角色=直接∪组授予∪继承
         "direct_roles": user.roles or [],
+        "permissions": user_permissions(db, user),  # {module:[actions]}，admin 为 {"*":[...]}；前端菜单/按钮以此渲染
         "auth_source": user.auth_source,
         "person_id": user.person_id,
     }

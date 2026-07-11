@@ -20,7 +20,7 @@ def ctx(client, admin_headers):
 
 def test_builtin_roles_seeded(client, admin_headers):
     roles = client.get("/api/admin/roles", headers=admin_headers).json()["data"]
-    assert sum(1 for r in roles if r["is_builtin"]) == 10  # 含 auditor
+    assert sum(1 for r in roles if r["is_builtin"]) == 13  # 含 auditor + cio/it_bm/it_tm
 
 
 def test_custom_role_inherits_permissions(client, admin_headers, ctx):
@@ -37,10 +37,11 @@ def test_custom_role_inherits_permissions(client, admin_headers, ctx):
     listing = client.get("/api/tickets", headers=dba_headers)
     assert listing.status_code == 200
 
-    # 内置角色不可改/删
+    # 内置角色：名称/描述可改，继承关系不可改，不可删
     roles = client.get("/api/admin/roles", headers=admin_headers).json()["data"]
     builtin_id = next(r["id"] for r in roles if r["code"] == "it_ops")
-    assert client.patch(f"/api/admin/roles/{builtin_id}", json={"name": "x"}, headers=admin_headers).json()["error"]["code"] == "BUILTIN_ROLE"
+    assert client.patch(f"/api/admin/roles/{builtin_id}", json={"name": "IT运维工程师"}, headers=admin_headers).json()["success"]
+    assert client.patch(f"/api/admin/roles/{builtin_id}", json={"base_role": "it_dev"}, headers=admin_headers).json()["error"]["code"] == "BUILTIN_ROLE"
     assert client.delete(f"/api/admin/roles/{builtin_id}", headers=admin_headers).json()["error"]["code"] == "BUILTIN_ROLE"
 
     # 被用户持有的自定义角色不可删

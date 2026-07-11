@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm, require_roles
 from app.models import (
     AuthUser,
     OrgMember,
@@ -44,12 +44,14 @@ class GroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     description: str | None = None
     roles: list[str] = []
+    owner_id: str | None = None
 
 
 class GroupUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     roles: list[str] | None = None
+    owner_id: str | None = None
 
 
 class GroupMembersIn(BaseModel):
@@ -88,26 +90,36 @@ def _validate_base(db: Session, base_role: str):
 
 
 @router.post("/roles")
-def create_role(body: RoleCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def create_role(body: RoleCreate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_roles", "create"))):
     if db.query(Role).filter(Role.code == body.code, Role.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "角色代码已存在")
     _validate_base(db, body.base_role)
     role = Role(**body.model_dump(), is_builtin=False)
     db.add(role)
     db.flush()
-    audit(db, "role", role.id, "create", actor, {"code": body.code, "base_role": body.base_role})
+    # 复制模板角色（base_role）的权限矩阵为初始值，之后独立编辑
+    from app.models import RolePermission
+
+    template_rows = (
+        db.query(RolePermission)
+        .filter(RolePermission.role_code == body.base_role, RolePermission.is_deleted.is_(False))
+        .all()
+    )
+    for row in template_rows:
+        db.add(RolePermission(role_code=role.code, module=row.module, actions=list(row.actions or [])))
+    audit(db, "role", role.id, "create", actor, {"code": body.code, "base_role": body.base_role, "perms_copied": len(template_rows)})
     db.commit()
     return ok({"id": role.id})
 
 
 @router.patch("/roles/{role_id}")
-def update_role(role_id: str, body: RoleUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def update_role(role_id: str, body: RoleUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_roles", "edit"))):
     role = db.get(Role, role_id)
     if not role or role.is_deleted:
         raise AppError("NOT_FOUND", "角色不存在", 404)
-    if role.is_builtin:
-        raise AppError("BUILTIN_ROLE", "内置角色不可修改")
     data = body.model_dump(exclude_unset=True)
+    if role.is_builtin and "base_role" in data:
+        raise AppError("BUILTIN_ROLE", "内置角色的代码与继承关系不可修改（名称/描述可以）")
     if data.get("base_role"):
         _validate_base(db, data["base_role"])
     for k, v in data.items():
@@ -131,7 +143,7 @@ def _role_in_use(db: Session, code: str) -> str | None:
 
 
 @router.delete("/roles/{role_id}")
-def delete_role(role_id: str, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def delete_role(role_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_roles", "delete"))):
     role = db.get(Role, role_id)
     if not role or role.is_deleted:
         raise AppError("NOT_FOUND", "角色不存在", 404)
@@ -155,9 +167,11 @@ def _group_row(g: UserGroup, db: Session) -> dict:
         .filter(UserGroupMember.group_id == g.id, UserGroupMember.is_deleted.is_(False))
         .all()
     )
+    owner = db.get(OrgMember, g.owner_id) if g.owner_id else None
     return {
         "id": g.id, "code": g.code, "name": g.name, "description": g.description,
         "roles": g.roles or [],
+        "owner_id": g.owner_id, "owner_name": owner.name if owner else None,
         "members": [{"id": m.id, "name": m.name} for m in members],
     }
 
@@ -179,7 +193,7 @@ def _check_group_roles(db: Session, roles: list[str]):
 
 
 @router.post("/groups")
-def create_group(body: GroupCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def create_group(body: GroupCreate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_groups", "create"))):
     if db.query(UserGroup).filter(UserGroup.code == body.code, UserGroup.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "用户组代码已存在")
     _check_group_roles(db, body.roles)
@@ -192,7 +206,7 @@ def create_group(body: GroupCreate, db: Session = Depends(get_db), actor=Depends
 
 
 @router.patch("/groups/{group_id}")
-def update_group(group_id: str, body: GroupUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def update_group(group_id: str, body: GroupUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_groups", "edit"))):
     group = db.get(UserGroup, group_id)
     if not group or group.is_deleted:
         raise AppError("NOT_FOUND", "用户组不存在", 404)
@@ -207,7 +221,7 @@ def update_group(group_id: str, body: GroupUpdate, db: Session = Depends(get_db)
 
 
 @router.put("/groups/{group_id}/members")
-def set_group_members(group_id: str, body: GroupMembersIn, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def set_group_members(group_id: str, body: GroupMembersIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_groups", "edit"))):
     group = db.get(UserGroup, group_id)
     if not group or group.is_deleted:
         raise AppError("NOT_FOUND", "用户组不存在", 404)
@@ -262,7 +276,7 @@ def set_person_groups(person_id: str, body: PersonGroupsIn, db: Session = Depend
 
 
 @router.delete("/groups/{group_id}")
-def delete_group(group_id: str, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def delete_group(group_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_groups", "delete"))):
     group = db.get(UserGroup, group_id)
     if not group or group.is_deleted:
         raise AppError("NOT_FOUND", "用户组不存在", 404)
@@ -278,3 +292,65 @@ def delete_group(group_id: str, db: Session = Depends(get_db), actor=Depends(req
     audit(db, "user_group", group.id, "delete", actor, {"code": group.code})
     db.commit()
     return ok({"id": group.id})
+
+
+# ---------- 权限矩阵 ----------
+
+class PermEntry(BaseModel):
+    module: str
+    actions: list[str]
+
+
+class PermPut(BaseModel):
+    role_code: str
+    entries: list[PermEntry]
+
+
+@router.get("/permission-modules")
+def permission_modules(_=Depends(get_current_user)):
+    """模块注册表（矩阵网格用）。"""
+    from app.services.permissions import ACTIONS, MODULES
+
+    return ok({
+        "actions": list(ACTIONS),
+        "modules": [{"code": c, "name": n, "group": g} for c, n, g in MODULES],
+    })
+
+
+@router.get("/permissions")
+def get_role_permissions(role: str = "", db: Session = Depends(get_db), _=Depends(require_perm("admin_permissions", "view"))):
+    from app.models import RolePermission
+
+    query = db.query(RolePermission).filter(RolePermission.is_deleted.is_(False))
+    if role:
+        query = query.filter(RolePermission.role_code == role)
+    return ok([
+        {"role_code": r.role_code, "module": r.module, "actions": r.actions or []}
+        for r in query.all()
+    ])
+
+
+@router.put("/permissions")
+def put_role_permissions(body: PermPut, db: Session = Depends(get_db), actor=Depends(require_perm("admin_permissions", "edit"))):
+    """整体替换某角色的权限矩阵。admin 不可配置（隐式全权）。"""
+    from app.services.permissions import ACTIONS, MODULE_CODES
+    from app.models import RolePermission
+
+    if body.role_code == "admin":
+        raise AppError("ADMIN_LOCKED", "admin 隐式全权，不可配置")
+    role = db.query(Role).filter(Role.code == body.role_code, Role.is_deleted.is_(False)).first()
+    if not role:
+        raise AppError("NOT_FOUND", "角色不存在", 404)
+    for e in body.entries:
+        if e.module not in MODULE_CODES:
+            raise AppError("INVALID_MODULE", f"未知模块: {e.module}")
+        bad = set(e.actions) - set(ACTIONS)
+        if bad:
+            raise AppError("INVALID_ACTION", f"未知动作: {','.join(bad)}")
+    db.query(RolePermission).filter(RolePermission.role_code == body.role_code).delete()
+    for e in body.entries:
+        if e.actions:
+            db.add(RolePermission(role_code=body.role_code, module=e.module, actions=e.actions))
+    audit(db, "role_permission", body.role_code, "replace", actor, {"modules": len(body.entries)})
+    db.commit()
+    return ok({"role_code": body.role_code})

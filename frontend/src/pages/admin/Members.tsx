@@ -10,12 +10,11 @@ import {
   Space,
   Table,
   Tag,
-  Tooltip,
   TreeSelect,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import type { Department, Member, Position } from '../../api/types';
@@ -195,30 +194,6 @@ export default function Members() {
         ),
     },
     {
-      title: (
-        <Space size={4}>
-          所属用户组
-          <Tooltip title="团队归属请在用户组维护">
-            <QuestionCircleOutlined style={{ color: 'rgba(0,0,0,0.45)' }} />
-          </Tooltip>
-        </Space>
-      ),
-      dataIndex: 'groups',
-      width: 180,
-      render: (groups: string[] | undefined) =>
-        (groups ?? []).length === 0 ? (
-          '-'
-        ) : (
-          <>
-            {(groups ?? []).map((g) => (
-              <Tag key={g} color="purple">
-                {g}
-              </Tag>
-            ))}
-          </>
-        ),
-    },
-    {
       title: '同步来源',
       dataIndex: 'external_source',
       width: 100,
@@ -262,7 +237,7 @@ export default function Members() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        scroll={{ x: 1480 }}
+        scroll={{ x: 1300 }}
         pagination={{
           current: page,
           pageSize,

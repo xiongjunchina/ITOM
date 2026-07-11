@@ -6,9 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import IT_OPS, MANAGER
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, Contract, OrgMember, Vendor
 from app.schemas.common import ok, paginate
 from app.services.audit import audit
@@ -98,7 +97,7 @@ def list_vendors(page: int = 1, page_size: int = 20, q: str = "", db: Session = 
 
 
 @router.post("/api/vendors")
-def create_vendor(body: VendorCreate, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, MANAGER))):
+def create_vendor(body: VendorCreate, db: Session = Depends(get_db), actor=Depends(require_perm("vendors", "create"))):
     vendor = Vendor(**body.model_dump(), code=gen_code(db, Vendor, "code", "VD"))
     db.add(vendor)
     db.flush()
@@ -108,7 +107,7 @@ def create_vendor(body: VendorCreate, db: Session = Depends(get_db), actor=Depen
 
 
 @router.patch("/api/vendors/{vendor_id}")
-def update_vendor(vendor_id: str, body: VendorUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, MANAGER))):
+def update_vendor(vendor_id: str, body: VendorUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("vendors", "edit"))):
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.is_deleted:
         raise AppError("NOT_FOUND", "供应商不存在", 404)
@@ -132,7 +131,7 @@ def list_contracts(page: int = 1, page_size: int = 20, q: str = "", vendor_id: s
 
 
 @router.post("/api/contracts")
-def create_contract(body: ContractCreate, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, MANAGER))):
+def create_contract(body: ContractCreate, db: Session = Depends(get_db), actor=Depends(require_perm("contracts", "create"))):
     if body.end_date <= body.start_date:
         raise AppError("INVALID_DATES", "结束日期必须晚于开始日期")
     if not db.get(Vendor, body.vendor_id):
@@ -146,7 +145,7 @@ def create_contract(body: ContractCreate, db: Session = Depends(get_db), actor=D
 
 
 @router.patch("/api/contracts/{contract_id}")
-def update_contract(contract_id: str, body: ContractUpdate, db: Session = Depends(get_db), actor=Depends(require_roles(IT_OPS, MANAGER))):
+def update_contract(contract_id: str, body: ContractUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("contracts", "edit"))):
     contract = db.get(Contract, contract_id)
     if not contract or contract.is_deleted:
         raise AppError("NOT_FOUND", "合同不存在", 404)

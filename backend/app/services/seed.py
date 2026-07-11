@@ -11,14 +11,17 @@ from app.models import AuthUser, MasterData, Role
 logger = logging.getLogger("aom.seed")
 
 BUILTIN_ROLES = [
-    ("admin", "系统管理员", "全部功能与系统配置"),
-    ("manager", "团队负责人", "全部业务 + 团队管理 + 变更审批 + 建言采纳"),
-    ("it_pdm", "IT产品经理", "侧重需求域：需求分析/排期/验收/关闭"),
-    ("it_pm", "IT项目经理", "侧重项目域：项目创建与管理"),
-    ("it_dev", "IT开发", "侧重交付：需求任务/WBS 任务/工单处理"),
-    ("it_ops", "IT运维", "侧重运维：工单/变更实施/问题/CMDB/SLA"),
-    ("is_mgr", "信息安全管理员", "安全治理：安全工单/变更风险评估/审计查看"),
-    ("it_bp", "IT业务合作伙伴", "业务接口：需求登记与业务对齐/代提单"),
+    ("admin", "系统管理员", "全部功能与系统配置（不入权限矩阵，隐式全权）"),
+    ("cio", "CIO(IT总负责人)", "IT 整体负责：全业务读写、审批、团队管理域"),
+    ("manager", "团队负责人(通用)", "通用管理角色，兼容保留；矩阵组织下建议使用 CIO/IT BM/IT TM"),
+    ("it_bm", "IT业务线负责人", "横向服务线：总体负责某业务域 IT 支持，对接需求/协调资源/过程管理（业务域负责人通常持此角色）"),
+    ("it_tm", "IT专业线负责人", "纵向专业线：资源池统一管理/资源配置/培训与技能提升（用户组负责人通常持此角色）"),
+    ("it_pdm", "IT产品经理", "专业线：需求分析/系统解决方案/排期/验收"),
+    ("it_pm", "IT项目经理", "专业线：项目创建与管理"),
+    ("it_dev", "IT开发", "专业线：需求任务/WBS 任务/工单处理"),
+    ("it_ops", "IT运维", "专业线：工单/变更实施/问题/CMDB/SLA"),
+    ("is_mgr", "信息安全管理员", "专业线：安全工单/变更风险评估/审计查看"),
+    ("it_bp", "IT业务合作伙伴", "服务线成员：需求登记与业务对齐/代提单"),
     ("auditor", "审计员", "全模块只读 + 审计日志查看，不可修改任何单据"),
     ("requester", "业务用户", "提交工单和需求、查询自己的单据、满意度评价"),
 ]
@@ -56,6 +59,9 @@ def run_seed(db: Session):
     if not db.query(ProvisionRule).first():
         for match_type, match_value, roles, sort in DEFAULT_PROVISION_RULES:
             db.add(ProvisionRule(match_type=match_type, match_value=match_value, default_roles=roles, sort=sort))
+    from app.services.permissions import seed_permissions
+
+    seed_permissions(db)
     if not db.query(AuthUser).filter(AuthUser.username == "admin").first():
         db.add(
             AuthUser(

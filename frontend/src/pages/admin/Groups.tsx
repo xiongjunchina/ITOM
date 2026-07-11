@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Form,
@@ -22,6 +23,7 @@ interface GroupForm {
   code: string;
   name: string;
   description?: string;
+  owner_id?: string | null;
   roles?: string[];
 }
 
@@ -82,6 +84,16 @@ export default function Groups() {
     return map;
   }, [roleDefs]);
 
+  /** 负责人（专业线 TM）候选：人员主数据，"姓名（部门）" */
+  const ownerOptions = useMemo(
+    () =>
+      members.map((m) => ({
+        value: m.id,
+        label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+      })),
+    [members],
+  );
+
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
@@ -94,6 +106,7 @@ export default function Groups() {
       code: record.code,
       name: record.name,
       description: record.description ?? undefined,
+      owner_id: record.owner_id ?? undefined,
       roles: record.roles ?? [],
     });
     setModalOpen(true);
@@ -107,6 +120,7 @@ export default function Groups() {
         await api.patch(`/admin/groups/${editing.id}`, {
           name: values.name,
           description: values.description ?? null,
+          owner_id: values.owner_id ?? null,
           roles: values.roles ?? [],
         });
         message.success('用户组已更新');
@@ -115,6 +129,7 @@ export default function Groups() {
           code: values.code,
           name: values.name,
           description: values.description ?? null,
+          owner_id: values.owner_id ?? null,
           roles: values.roles ?? [],
         });
         message.success('用户组已创建');
@@ -161,8 +176,14 @@ export default function Groups() {
   };
 
   const columns: ColumnsType<UserGroup> = [
-    { title: '代码', dataIndex: 'code', width: 160 },
-    { title: '名称', dataIndex: 'name', width: 180 },
+    { title: '代码', dataIndex: 'code', width: 140 },
+    { title: '名称', dataIndex: 'name', width: 160 },
+    {
+      title: '负责人',
+      dataIndex: 'owner_name',
+      width: 110,
+      render: (v: string | null | undefined) => v || '-',
+    },
     {
       title: '授予角色',
       dataIndex: 'roles',
@@ -229,6 +250,12 @@ export default function Groups() {
         </Button>
       }
     >
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="用户组既是派单/协作单位，也是矩阵组织的纵向专业线（资源池）：指定负责人(TM)、配置组授予角色（如开发资源池授予 it_dev），人进组自动继承"
+      />
       <Table<UserGroup>
         rowKey="id"
         loading={loading}
@@ -265,6 +292,15 @@ export default function Groups() {
             rules={[{ required: true, message: '请输入组名称' }]}
           >
             <Input maxLength={50} />
+          </Form.Item>
+          <Form.Item name="owner_id" label="负责人（专业线 TM）">
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder="从人员主数据中选择"
+              options={ownerOptions}
+            />
           </Form.Item>
           <Form.Item
             name="roles"

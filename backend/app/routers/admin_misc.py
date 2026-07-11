@@ -3,9 +3,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import AUDITOR, IS_MGR
 from app.db import get_db
-from app.deps import get_current_user, require_roles
+from app.deps import get_current_user, require_perm
 from app.models import AuditLog, AuthUser, MasterData, WorkflowStatus, WorkflowTransition
 from app.schemas.common import ok, paginate
 from app.schemas.support import MasterDataCreate, MasterDataUpdate
@@ -39,7 +38,7 @@ def list_master_data(
 
 
 @router.post("/master-data")
-def create_master_data(body: MasterDataCreate, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def create_master_data(body: MasterDataCreate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_master_data", "create"))):
     dup = (
         db.query(MasterData)
         .filter(MasterData.category == body.category, MasterData.code == body.code, MasterData.is_deleted.is_(False))
@@ -57,7 +56,7 @@ def create_master_data(body: MasterDataCreate, db: Session = Depends(get_db), ac
 
 @router.patch("/master-data/{item_id}")
 def update_master_data(
-    item_id: str, body: MasterDataUpdate, db: Session = Depends(get_db), actor=Depends(require_roles())
+    item_id: str, body: MasterDataUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_master_data", "edit"))
 ):
     item = db.get(MasterData, item_id)
     if not item or item.is_deleted:
@@ -94,7 +93,7 @@ class WorkflowConfigIn(BaseModel):
 
 
 @router.put("/workflow-config")
-def put_workflow_config(body: WorkflowConfigIn, db: Session = Depends(get_db), actor=Depends(require_roles())):
+def put_workflow_config(body: WorkflowConfigIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_workflow", "edit"))):
     """整体替换某单据类型的状态机配置（校验后生效）。"""
     codes = [s.code for s in body.statuses]
     if len(codes) != len(set(codes)):
@@ -135,7 +134,7 @@ def put_workflow_config(body: WorkflowConfigIn, db: Session = Depends(get_db), a
 
 
 @router.get("/workflow-config")
-def get_workflow_config(entity_type: str = "", db: Session = Depends(get_db), _=Depends(require_roles())):
+def get_workflow_config(entity_type: str = "", db: Session = Depends(get_db), _=Depends(require_perm("admin_workflow", "view"))):
     sq = db.query(WorkflowStatus).filter(WorkflowStatus.is_deleted.is_(False))
     tq = db.query(WorkflowTransition).filter(WorkflowTransition.is_deleted.is_(False))
     if entity_type:
@@ -175,7 +174,7 @@ def list_audit_logs(
     page_size: int = 20,
     entity_type: str = "",
     db: Session = Depends(get_db),
-    _=Depends(require_roles(IS_MGR, AUDITOR)),  # 信息安全管理员与审计员可查
+    _=Depends(require_perm("admin_audit", "view")),
 ):
     query = db.query(AuditLog)
     if entity_type:

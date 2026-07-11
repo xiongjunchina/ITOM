@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_perm
 from app.events.bus import publish
 from app.models import AuthUser, OrgMember, Problem, ProblemTicket, ServiceItem, Ticket
 from app.schemas.common import ok, paginate
@@ -99,7 +99,7 @@ def list_problems(
 
 
 @router.post("/api/problems")
-def create_problem(body: ProblemCreate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def create_problem(body: ProblemCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "create"))):
     problem = _create_problem(db, body.model_dump(), user)
     db.commit()
     return ok(_row(problem, db, status_names(db, "problem")))
@@ -136,7 +136,7 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
 
 
 @router.patch("/api/problems/{problem_id}")
-def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "edit"))):
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
@@ -152,7 +152,7 @@ def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(g
 
 
 @router.post("/api/problems/{problem_id}/transition")
-def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "edit"))):
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
@@ -167,7 +167,7 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
 
 
 @router.post("/api/problems/{problem_id}/link-ticket")
-def link_ticket(problem_id: str, body: LinkTicketIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def link_ticket(problem_id: str, body: LinkTicketIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "edit"))):
     p = db.get(Problem, problem_id)
     t = db.get(Ticket, body.ticket_id)
     if not p or p.is_deleted or not t or t.is_deleted:

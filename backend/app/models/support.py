@@ -67,6 +67,16 @@ class BusinessDomain(GlidBase):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class BusinessDomainMember(GlidBase):
+    """业务域服务团队（矩阵组织的横向服务线成员：BM 带领的 BP/开发等）。"""
+
+    __tablename__ = "business_domain_member"
+    __table_args__ = (UniqueConstraint("domain_id", "person_id"),)
+
+    domain_id: Mapped[str] = mapped_column(ForeignKey("business_domain.id"), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+
+
 class ProvisionRule(GlidBase):
     """账号首次开通的默认角色映射（仅首次生效，之后角色自由增减，绝不绑死）。"""
 
@@ -92,13 +102,27 @@ class Role(GlidBase):
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class RolePermission(GlidBase):
+    """功能权限矩阵：角色 × 模块 → 动作集（view/create/edit/delete）。admin 不入矩阵隐式全权。"""
+
+    __tablename__ = "role_permission"
+    __table_args__ = (UniqueConstraint("role_code", "module"),)
+
+    role_code: Mapped[str] = mapped_column(String(32), index=True)
+    module: Mapped[str] = mapped_column(String(48))
+    actions: Mapped[list] = mapped_column(JsonCol, default=list)
+
+
 class UserGroup(GlidBase):
+    """用户组=团队/派单单位/资源池（矩阵组织的纵向专业线用它表达）。"""
+
     __tablename__ = "user_group"
 
     code: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str | None] = mapped_column(Text)
     roles: Mapped[list | None] = mapped_column(JsonCol, default=list, comment="组授予的角色（人进组自动继承）")
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="组负责人/专业线 TM")
 
 
 class UserGroupMember(GlidBase):

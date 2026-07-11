@@ -1,0 +1,161 @@
+"""功能权限矩阵（docs/06 §七，M3.6）。
+
+- 粒度：模块 × 动作（view 可见含查看 / create 新建 / edit 修改 / delete 删除）
+- 矩阵只管"功能开关"；数据范围规则（如 requester 仅见自己的工单）仍由业务代码内置
+- admin 永远全权且不可配置（防锁死）；仅持 auditor 的用户另受全局只读中间件约束
+- 权限取用户 直接角色∪组授予角色 的矩阵并集（不含 base_role 运行时继承——
+  自定义角色在创建时复制模板角色的矩阵，之后独立编辑）
+- 流程/状态机的角色引用是另一层（workflow allowed_roles / process default_role），与本矩阵无关
+"""
+from sqlalchemy.orm import Session
+
+from app.models import AuthUser, RolePermission, UserGroup, UserGroupMember
+
+ACTIONS = ("view", "create", "edit", "delete")
+
+# (module, 中文名, 分组)
+MODULES = [
+    ("dashboard", "总览", "总览"),
+    ("tickets", "工单", "ITSM"),
+    ("catalog", "服务目录", "ITSM"),
+    ("cmdb", "CMDB", "ITSM"),
+    ("sla", "SLA 看板", "ITSM"),
+    ("problems", "问题", "ITSM"),
+    ("vendors", "供应商", "ITSM"),
+    ("contracts", "合同", "ITSM"),
+    ("knowledge", "知识库", "ITSM"),
+    ("projects", "项目管理", "项目"),
+    ("requirements", "需求管理", "需求"),
+    ("process_definitions", "流程定义", "流程"),
+    ("process_monitor", "流程监控", "流程"),
+    ("team_overview", "团队总览", "团队"),
+    ("performance", "人效评分", "团队"),
+    ("positions", "岗位编制", "团队"),
+    ("activities", "培训发展", "团队"),
+    ("ideas", "建言献策", "团队"),
+    ("charter", "团队文化", "团队"),
+    ("admin_users", "用户管理", "系统管理"),
+    ("admin_roles", "角色管理", "系统管理"),
+    ("admin_groups", "用户组", "系统管理"),
+    ("admin_permissions", "权限配置", "系统管理"),
+    ("admin_provision", "开通规则", "系统管理"),
+    ("admin_departments", "部门管理", "系统管理"),
+    ("admin_members", "人员主数据", "系统管理"),
+    ("admin_business_domains", "业务域", "系统管理"),
+    ("admin_master_data", "数据字典", "系统管理"),
+    ("admin_workflow", "状态机配置", "系统管理"),
+    ("admin_audit", "审计日志", "系统管理"),
+]
+MODULE_CODES = {m[0] for m in MODULES}
+
+# 动作缩写：v=view c=create e=edit d=delete
+_BUSINESS_VIEW = [
+    "dashboard", "tickets", "catalog", "cmdb", "sla", "problems", "vendors", "contracts",
+    "knowledge", "projects", "requirements", "team_overview", "positions", "activities",
+    "ideas", "charter",
+]
+
+def _staff_base() -> dict[str, str]:
+    matrix = {m: "v" for m in _BUSINESS_VIEW}
+    matrix.update({"tickets": "vce", "knowledge": "vce", "requirements": "vc",
+                   "activities": "vc", "ideas": "vc"})
+    return matrix
+
+
+def _merge(base: dict[str, str], extra: dict[str, str]) -> dict[str, str]:
+    out = dict(base)
+    for k, v in extra.items():
+        out[k] = "".join(sorted(set(out.get(k, "") + v)))
+    return out
+
+
+# 内置角色默认矩阵（编码当前系统行为；admin 不在矩阵中——隐式全权）
+DEFAULT_MATRIX: dict[str, dict[str, str]] = {
+    "requester": {"dashboard": "v", "tickets": "vc", "knowledge": "v", "requirements": "vc"},
+    "auditor": _merge(
+        {m: "v" for m in _BUSINESS_VIEW},
+        {"performance": "v", "process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},
+    ),
+    "it_dev": _staff_base(),
+    "it_bp": _merge(_staff_base(), {"requirements": "e"}),
+    "it_pdm": _merge(_staff_base(), {"requirements": "e"}),
+    "it_pm": _merge(_staff_base(), {"projects": "ce"}),
+    "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
+    "is_mgr": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "admin_audit": "v"}),
+    "manager": _merge(_staff_base(), {
+        "catalog": "ce", "cmdb": "ce", "problems": "ce", "vendors": "ce", "contracts": "ce",
+        "projects": "ce", "requirements": "e", "positions": "ce", "charter": "e",
+        "performance": "v", "process_definitions": "v", "process_monitor": "v",
+        "admin_business_domains": "vce", "admin_members": "vce",
+    }),
+    # 矩阵式组织三角色（docs/06 §七）——默认值是起点，全部可在权限配置页调整
+    "cio": _merge(_staff_base(), {
+        "catalog": "ce", "cmdb": "ce", "problems": "ce", "vendors": "ce", "contracts": "ce",
+        "projects": "ce", "requirements": "e", "positions": "ce", "activities": "e",
+        "ideas": "e", "charter": "e", "sla": "e",
+        "performance": "v", "process_definitions": "v", "process_monitor": "v",
+        "admin_business_domains": "vce", "admin_members": "vce", "admin_audit": "v",
+    }),
+    "it_bm": _merge(_staff_base(), {
+        "requirements": "e", "projects": "ce", "admin_business_domains": "v",
+        "process_monitor": "v",
+    }),
+    "it_tm": _merge(_staff_base(), {
+        "positions": "ce", "activities": "e", "performance": "v", "charter": "e",
+        "process_monitor": "v", "admin_members": "vce",
+    }),
+}
+
+_FLAG = {"v": "view", "c": "create", "e": "edit", "d": "delete"}
+
+
+def flags_to_actions(flags: str) -> list[str]:
+    return [_FLAG[f] for f in flags if f in _FLAG]
+
+
+def seed_permissions(db: Session):
+    """首次启动写入默认矩阵（表非空则跳过，尊重用户已有配置）。"""
+    if db.query(RolePermission).first():
+        return
+    for role_code, modules in DEFAULT_MATRIX.items():
+        for module, flags in modules.items():
+            db.add(RolePermission(role_code=role_code, module=module, actions=flags_to_actions(flags)))
+    db.commit()
+
+
+def user_permissions(db: Session, user: AuthUser) -> dict[str, list[str]]:
+    """{module: [actions]}；admin 返回 {"*": 全部}。取直接角色∪组授予角色的矩阵并集。"""
+    roles: set[str] = set(user.roles or [])
+    if user.person_id:
+        groups = (
+            db.query(UserGroup)
+            .join(UserGroupMember, UserGroupMember.group_id == UserGroup.id)
+            .filter(
+                UserGroupMember.person_id == user.person_id,
+                UserGroupMember.is_deleted.is_(False),
+                UserGroup.is_deleted.is_(False),
+            )
+            .all()
+        )
+        for g in groups:
+            roles |= set(g.roles or [])
+    if "admin" in roles:
+        return {"*": list(ACTIONS)}
+    if not roles:
+        return {}
+    rows = (
+        db.query(RolePermission)
+        .filter(RolePermission.role_code.in_(roles), RolePermission.is_deleted.is_(False))
+        .all()
+    )
+    merged: dict[str, set[str]] = {}
+    for r in rows:
+        merged.setdefault(r.module, set()).update(r.actions or [])
+    return {m: sorted(a) for m, a in merged.items()}
+
+
+def has_perm(db: Session, user: AuthUser, module: str, action: str) -> bool:
+    perms = user_permissions(db, user)
+    if "*" in perms:
+        return True
+    return action in perms.get(module, [])

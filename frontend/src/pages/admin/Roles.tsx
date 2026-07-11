@@ -22,11 +22,11 @@ import type { Role, RoleDef } from '../../api/types';
 interface RoleForm {
   code: string;
   name: string;
-  base_role: Role;
+  base_role?: Role;
   description?: string;
 }
 
-/** 可继承的内置角色：排除 admin */
+/** 可作为权限模板的内置角色：排除 admin（隐式全权，无矩阵可复制） */
 const BASE_ROLE_OPTIONS = ALL_ROLES.filter((r) => r !== 'admin').map((r) => ({
   value: r,
   label: ROLE_LABELS[r],
@@ -40,6 +40,8 @@ export default function Roles() {
   const [editing, setEditing] = useState<RoleDef | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<RoleForm>();
+
+  const editingBuiltin = !!editing?.is_builtin;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,11 +81,13 @@ export default function Roles() {
     setSaving(true);
     try {
       if (editing) {
-        await api.patch(`/admin/roles/${editing.id}`, {
+        // 内置角色仅可改名称/描述（携带 base_role 会被后端 BUILTIN_ROLE 拒绝）
+        const payload: Record<string, unknown> = {
           name: values.name,
-          base_role: values.base_role,
           description: values.description ?? null,
-        });
+        };
+        if (!editing.is_builtin) payload.base_role = values.base_role;
+        await api.patch(`/admin/roles/${editing.id}`, payload);
         message.success('角色已更新');
       } else {
         await api.post('/admin/roles', {
@@ -124,7 +128,7 @@ export default function Roles() {
         v ? <Tag color="blue">内置</Tag> : <Tag color="green">自定义</Tag>,
     },
     {
-      title: '继承自',
+      title: '权限模板',
       dataIndex: 'base_role',
       width: 160,
       render: (v: Role | null | undefined, record) =>
@@ -136,12 +140,12 @@ export default function Roles() {
       title: '操作',
       key: 'action',
       width: 140,
-      render: (_, record) =>
-        record.is_builtin ? null : (
-          <Space>
-            <Button type="link" size="small" onClick={() => openEdit(record)}>
-              编辑
-            </Button>
+      render: (_, record) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => openEdit(record)}>
+            编辑
+          </Button>
+          {!record.is_builtin && (
             <Popconfirm
               title="确定删除该角色？"
               onConfirm={() => void handleDelete(record)}
@@ -150,8 +154,9 @@ export default function Roles() {
                 删除
               </Button>
             </Popconfirm>
-          </Space>
-        ),
+          )}
+        </Space>
+      ),
     },
   ];
 
@@ -184,7 +189,11 @@ export default function Roles() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="自定义角色将继承所选内置角色的系统权限，并可在状态机与流程配置中被精确引用"
+          message={
+            editingBuiltin
+              ? '内置角色仅可修改名称与描述；代码与权限模板锁定，权限矩阵请在权限配置页调整'
+              : '将复制所选角色的权限矩阵作为初始值，之后可在权限配置页独立调整'
+          }
         />
         <Form<RoleForm> form={form} layout="vertical" preserve={false}>
           <Form.Item
@@ -207,13 +216,19 @@ export default function Roles() {
           >
             <Input maxLength={50} />
           </Form.Item>
-          <Form.Item
-            name="base_role"
-            label="继承自（内置角色）"
-            rules={[{ required: true, message: '请选择要继承的内置角色' }]}
-          >
-            <Select options={BASE_ROLE_OPTIONS} placeholder="选择内置角色" />
-          </Form.Item>
+          {editingBuiltin ? (
+            <Form.Item label="权限模板">
+              <Input disabled value="—（内置角色，无权限模板）" />
+            </Form.Item>
+          ) : (
+            <Form.Item
+              name="base_role"
+              label="权限模板（内置角色）"
+              rules={[{ required: true, message: '请选择权限模板角色' }]}
+            >
+              <Select options={BASE_ROLE_OPTIONS} placeholder="选择内置角色" />
+            </Form.Item>
+          )}
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} maxLength={200} />
           </Form.Item>

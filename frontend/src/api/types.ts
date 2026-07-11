@@ -7,10 +7,13 @@ export interface Envelope<T = unknown> {
   error?: { code: string; message: string };
 }
 
-/** 系统角色（10 个内置角色） */
+/** 系统角色（13 个内置角色，矩阵式 IT 组织） */
 export type Role =
   | 'admin'
+  | 'cio'
   | 'manager'
+  | 'it_bm'
+  | 'it_tm'
   | 'it_pdm'
   | 'it_pm'
   | 'it_dev'
@@ -22,7 +25,10 @@ export type Role =
 
 export const ROLE_LABELS: Record<Role, string> = {
   admin: '系统管理员',
-  manager: '团队负责人',
+  cio: 'CIO(IT总负责人)',
+  manager: '团队负责人(通用)',
+  it_bm: 'IT业务线负责人',
+  it_tm: 'IT专业线负责人',
   it_pdm: 'IT产品经理',
   it_pm: 'IT项目经理',
   it_dev: 'IT开发',
@@ -47,6 +53,11 @@ export interface AuthUser {
   roles: Role[];
   /** 直接授予的角色（不含组继承） */
   direct_roles?: Role[];
+  /**
+   * 合并后的功能权限矩阵 {模块: 动作[]}；admin 为 {"*": [四动作]}。
+   * 菜单可见性由它驱动；存量会话（未重新登录）可能缺失，此时回退旧的 roles 逻辑。
+   */
+  permissions?: Record<string, string[]>;
   auth_source?: AuthSource;
   person_id: string | null;
 }
@@ -84,8 +95,6 @@ export interface Member {
   /** 同步来源（本地维护为空） */
   external_source?: string | null;
   skills?: string[] | null;
-  /** 所属用户组名列表（只读，团队归属在用户组维护） */
-  groups?: string[];
   remarks?: string | null;
 }
 
@@ -264,27 +273,57 @@ export interface TicketDetail extends TicketRow {
 
 // ============ M2.5 自配置：角色 / 用户组 ============
 
-/** 角色定义（9 个内置角色 + 自定义角色） */
+/** 角色定义（13 个内置角色 + 自定义角色） */
 export interface RoleDef {
   id: string;
   code: string;
   name: string;
   description?: string | null;
-  /** 自定义角色继承的内置角色 code；内置角色为空 */
+  /** 自定义角色的权限模板（创建时复制其权限矩阵）；内置角色为空 */
   base_role?: Role | null;
   is_builtin: boolean;
   user_count: number;
 }
 
-/** 用户组（授权与流程指派对象，引用键格式 "group:组码"）；人进组自动继承组授予的角色 */
+/** 用户组 = 纵向专业线（资源池）：派单/协作单位，owner=TM；人进组自动继承组授予的角色 */
 export interface UserGroup {
   id: string;
   code: string;
   name: string;
   description?: string | null;
+  /** 组负责人（专业线 TM，人员主数据 id） */
+  owner_id?: string | null;
+  owner_name?: string | null;
   /** 组授予的角色 code 列表（不允许 admin） */
   roles: string[];
   members: { id: string; name: string }[];
+}
+
+// ============ M3.6 功能权限矩阵 ============
+
+/** 权限动作 */
+export type PermAction = 'view' | 'create' | 'edit' | 'delete';
+
+export const PERM_ACTION_LABELS: Record<PermAction, string> = {
+  view: '可见',
+  create: '新建',
+  edit: '修改',
+  delete: '删除',
+};
+
+/** 权限模块注册项（GET /admin/permission-modules） */
+export interface PermissionModule {
+  code: string;
+  name: string;
+  /** 分组名：总览/ITSM/项目/需求/流程/团队/系统管理 */
+  group: string;
+}
+
+/** 某角色在某模块上的权限条目（GET/PUT /admin/permissions） */
+export interface RolePermissionEntry {
+  role_code: string;
+  module: string;
+  actions: string[];
 }
 
 // ============ M3.5 身份与组织：部门 / 业务域 / 开通规则 ============
@@ -318,7 +357,7 @@ export interface Department {
   member_count: number;
 }
 
-/** 业务域（负责人是数据字段而非角色） */
+/** 业务域 = 横向服务线：owner=BM 总体负责，服务团队为跟随成员（负责人是数据字段而非角色） */
 export interface BusinessDomain {
   id: string;
   code: string;
@@ -328,6 +367,8 @@ export interface BusinessDomain {
   owner_name?: string | null;
   backup_owner_id?: string | null;
   backup_owner_name?: string | null;
+  /** 服务团队成员（跟随该业务线的 BP/开发等） */
+  members: { id: string; name: string }[];
   sort: number;
   active: boolean;
 }

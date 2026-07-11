@@ -7,6 +7,7 @@ import Positions from './pages/team/Positions';
 import Users from './pages/admin/Users';
 import Roles from './pages/admin/Roles';
 import Groups from './pages/admin/Groups';
+import Permissions from './pages/admin/Permissions';
 import ProvisionRules from './pages/admin/ProvisionRules';
 import Departments from './pages/admin/Departments';
 import Members from './pages/admin/Members';
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
       { path: 'admin/users', element: <Users /> },
       { path: 'admin/roles', element: <Roles /> },
       { path: 'admin/groups', element: <Groups /> },
+      { path: 'admin/permissions', element: <Permissions /> },
       { path: 'admin/provision-rules', element: <ProvisionRules /> },
       { path: 'admin/departments', element: <Departments /> },
       { path: 'admin/members', element: <Members /> },
