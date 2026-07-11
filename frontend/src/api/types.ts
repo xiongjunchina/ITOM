@@ -82,6 +82,19 @@ export interface Member {
   /** 中文姓名 */
   name: string;
   name_en?: string | null;
+  /** 工号 */
+  employee_no?: string | null;
+  /** 性别：男/女 */
+  gender?: string | null;
+  birth_date?: string | null;
+  /** 用工类型：正式/外包/实习 */
+  employment_type?: string | null;
+  /** 直属上级（人员主数据 id） */
+  supervisor_id?: string | null;
+  /** 直属上级姓名（org-tree 接口回显） */
+  supervisor_name?: string | null;
+  /** 办公地点 */
+  work_location?: string | null;
   department_id?: string | null;
   department_name?: string | null;
   position_id?: string | null;
@@ -355,6 +368,21 @@ export interface Department {
   /** 同步来源（本地维护为空） */
   external_source?: string | null;
   member_count: number;
+}
+
+/** 组织架构树：部门节点（含直属人员，GET /admin/org-tree） */
+export interface OrgTreeDept extends Omit<Department, 'member_count'> {
+  members: Member[];
+}
+
+/** 组织架构树数据（GET /admin/org-tree） */
+export interface OrgTreeData {
+  company: { name: string; master_data_id: string | null };
+  departments: OrgTreeDept[];
+  /** 未归属任何部门的人员 */
+  unassigned_members: Member[];
+  /** 已配置的外部同步源（如 feishu）；空数组=外部同步未配置 */
+  sync_sources: string[];
 }
 
 /** 业务域 = 横向服务线：owner=BM 总体负责，服务团队为跟随成员（负责人是数据字段而非角色） */

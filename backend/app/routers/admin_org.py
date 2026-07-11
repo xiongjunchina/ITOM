@@ -100,6 +100,15 @@ def update_department(dept_id: str, body: DeptUpdate, db: Session = Depends(get_
     if not dept or dept.is_deleted:
         raise AppError("NOT_FOUND", "部门不存在", 404)
     data = body.model_dump(exclude_unset=True)
+    if dept.external_source:
+        from app.services.org_sync import DEPT_LOCAL_FIELDS
+
+        locked = set(data) - DEPT_LOCAL_FIELDS
+        if locked:
+            raise AppError(
+                "SYNCED_READONLY",
+                f"该部门由 {dept.external_source} 同步，结构以外部源为准；本地仅可编辑：部门类型",
+            )
     if data.get("dept_type") and data["dept_type"] not in DEPT_TYPES:
         raise AppError("INVALID_TYPE", "部门类型必须为 it/business/audit")
     if data.get("parent_id") == dept.id:
@@ -120,6 +129,8 @@ def delete_department(dept_id: str, db: Session = Depends(get_db), actor=Depends
         raise AppError("DEPT_IN_USE", "无法删除：仍有人员归属该部门")
     if db.query(Department).filter(Department.parent_id == dept.id, Department.is_deleted.is_(False)).first():
         raise AppError("DEPT_IN_USE", "无法删除：存在下级部门")
+    if dept.external_source:
+        raise AppError("SYNCED_READONLY", "同步部门不可本地删除（外部源移除后自动停用）")
     dept.is_deleted = True
     audit(db, "department", dept.id, "delete", actor, {"code": dept.code})
     db.commit()
@@ -235,3 +246,72 @@ def replace_rules(body: list[RuleIn], db: Session = Depends(get_db), actor=Depen
     audit(db, "provision_rule", "batch", "replace", actor, {"count": len(body)})
     db.commit()
     return ok({"count": len(body)})
+
+
+# ---------- 组织架构树（公司→部门→人员）与同步 ----------
+
+@router.get("/org-tree")
+def org_tree(db: Session = Depends(get_db), _=Depends(require_perm("admin_departments", "view"))):
+    from app.models import MasterData
+    from app.services.org_sync import SYNC_PROVIDERS
+
+    company = (
+        db.query(MasterData)
+        .filter(MasterData.category == "sys_config", MasterData.code == "company_name")
+        .first()
+    )
+    depts = db.query(Department).filter(Department.is_deleted.is_(False)).order_by(Department.sort).all()
+    members = db.query(OrgMember).filter(OrgMember.is_deleted.is_(False)).order_by(OrgMember.name).all()
+    member_names = {m.id: m.name for m in members}
+
+    def member_row(m: OrgMember) -> dict:
+        return {
+            "id": m.id, "name": m.name, "name_en": m.name_en, "employee_no": m.employee_no,
+            "gender": m.gender, "birth_date": m.birth_date, "employment_type": m.employment_type,
+            "supervisor_id": m.supervisor_id, "supervisor_name": member_names.get(m.supervisor_id),
+            "work_location": m.work_location, "department_id": m.department_id,
+            "position_id": m.position_id, "position_name": m.position.name if m.position else None,
+            "status": m.status, "hire_date": m.hire_date, "email": m.email, "mobile": m.mobile,
+            "skills": m.skills or [], "remarks": m.remarks,
+            "external_source": m.external_source,
+        }
+
+    members_by_dept: dict = {}
+    unassigned = []
+    for m in members:
+        if m.department_id:
+            members_by_dept.setdefault(m.department_id, []).append(member_row(m))
+        else:
+            unassigned.append(member_row(m))
+
+    return ok(
+        {
+            "company": {
+                "name": company.name if company else "我的公司",
+                "master_data_id": company.id if company else None,
+            },
+            "departments": [
+                {
+                    "id": d.id, "code": d.code, "name": d.name, "parent_id": d.parent_id,
+                    "dept_type": d.dept_type, "sort": d.sort, "active": d.active,
+                    "external_source": d.external_source,
+                    "members": members_by_dept.get(d.id, []),
+                }
+                for d in depts
+            ],
+            "unassigned_members": unassigned,
+            "sync_sources": sorted(SYNC_PROVIDERS.keys()),  # 空=尚未配置外部同步
+        }
+    )
+
+
+@router.post("/org-sync")
+def trigger_org_sync(body: dict, db: Session = Depends(get_db), actor=Depends(require_perm("admin_departments", "edit"))):
+    """手动触发组织同步（飞书凭据上线前返回 501）。"""
+    from app.services.org_sync import run_sync
+
+    source = (body or {}).get("source", "feishu")
+    stats = run_sync(db, source)
+    audit(db, "org_sync", source, "run", actor, stats)
+    db.commit()
+    return ok(stats)

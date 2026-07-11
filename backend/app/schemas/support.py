@@ -26,6 +26,12 @@ class UserUpdate(BaseModel):
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     name_en: str | None = None
+    employee_no: str | None = None
+    gender: str | None = None
+    birth_date: date | None = None
+    employment_type: str | None = None
+    supervisor_id: str | None = None
+    work_location: str | None = None
     department_id: str | None = None
     position_id: str | None = None
     status: str = "在岗"
@@ -39,6 +45,12 @@ class MemberCreate(BaseModel):
 class MemberUpdate(BaseModel):
     name: str | None = None
     name_en: str | None = None
+    employee_no: str | None = None
+    gender: str | None = None
+    birth_date: date | None = None
+    employment_type: str | None = None
+    supervisor_id: str | None = None
+    work_location: str | None = None
     department_id: str | None = None
     position_id: str | None = None
     status: str | None = None

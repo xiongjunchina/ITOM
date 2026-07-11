@@ -18,6 +18,8 @@ export interface MenuNode {
   icon?: ReactNode;
   /** 功能权限模块码：user.permissions[module] 含 "view"（或 "*" 全权）则可见 */
   module?: string;
+  /** 多模块绑定（复合页）：任一模块有 view 权限即可见；与 module 并存时二者取并集 */
+  modules?: string[];
   /** 回退角色（仅当存量会话的 user.permissions 缺失时生效） */
   roles?: Role[];
   children?: MenuNode[];
@@ -78,14 +80,18 @@ export const MENU_TREE: MenuNode[] = [
     icon: <SettingOutlined />,
     roles: ['admin', 'is_mgr'],
     children: [
-      { key: '/admin/users', path: '/admin/users', label: '用户管理', module: 'admin_users', roles: ['admin'] },
-      { key: '/admin/roles', path: '/admin/roles', label: '角色管理', module: 'admin_roles', roles: ['admin'] },
-      { key: '/admin/groups', path: '/admin/groups', label: '用户组', module: 'admin_groups', roles: ['admin'] },
-      { key: '/admin/permissions', path: '/admin/permissions', label: '权限配置', module: 'admin_permissions', roles: ['admin'] },
-      { key: '/admin/provision-rules', path: '/admin/provision-rules', label: '开通规则', module: 'admin_provision', roles: ['admin'] },
-      { key: '/admin/departments', path: '/admin/departments', label: '部门管理', module: 'admin_departments', roles: ['admin'] },
-      { key: '/admin/members', path: '/admin/members', label: '人员主数据', module: 'admin_members', roles: ['admin'] },
-      { key: '/admin/business-domains', path: '/admin/business-domains', label: '业务域', module: 'admin_business_domains', roles: ['admin'] },
+      {
+        key: '/admin/org', path: '/admin/org', label: '组织管理',
+        modules: ['admin_departments', 'admin_members', 'admin_business_domains'], roles: ['admin'],
+      },
+      {
+        key: '/admin/identity', path: '/admin/identity', label: '用户与组管理',
+        modules: ['admin_users', 'admin_groups'], roles: ['admin'],
+      },
+      {
+        key: '/admin/access', path: '/admin/access', label: '角色与权限',
+        modules: ['admin_roles', 'admin_provision', 'admin_permissions'], roles: ['admin'],
+      },
       { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典', module: 'admin_master_data', roles: ['admin'] },
       { key: '/admin/workflow-config', path: '/admin/workflow-config', label: '状态机配置', module: 'admin_workflow', roles: ['admin'] },
       { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', module: 'admin_audit', roles: ['admin', 'is_mgr'] },
@@ -93,10 +99,16 @@ export const MENU_TREE: MenuNode[] = [
   },
 ];
 
-/** 节点可见性：优先按权限矩阵（module + view），permissions 缺失的存量会话回退角色逻辑 */
+/** 节点绑定的全部模块码（module 与 modules 的并集） */
+export function nodeModules(node: Pick<MenuNode, 'module' | 'modules'>): string[] {
+  return [...(node.module ? [node.module] : []), ...(node.modules ?? [])];
+}
+
+/** 节点可见性：优先按权限矩阵（任一绑定 module 有 view 即可见），permissions 缺失的存量会话回退角色逻辑 */
 function nodeVisible(node: MenuNode, user: AuthUser | null): boolean {
-  if (node.module) {
-    if (user?.permissions) return hasPermission(user, node.module, 'view');
+  const mods = nodeModules(node);
+  if (mods.length > 0) {
+    if (user?.permissions) return mods.some((m) => hasPermission(user, m, 'view'));
     return hasAnyRole(user, node.roles); // 兼容未重新登录的存量会话
   }
   // 无 module 的分组节点：权限模式下由子节点过滤结果决定（此处先放行）

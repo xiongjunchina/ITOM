@@ -24,6 +24,12 @@ ENSURE_COLUMNS = {
         ("mobile", "VARCHAR(32)"),
         ("external_source", "VARCHAR(16)"),
         ("external_id", "VARCHAR(128)"),
+        ("employee_no", "VARCHAR(32)"),
+        ("gender", "VARCHAR(8)"),
+        ("birth_date", "DATE"),
+        ("employment_type", "VARCHAR(16)"),
+        ("supervisor_id", "VARCHAR(26)"),
+        ("work_location", "VARCHAR(64)"),
     ],
     "auth_user": [
         ("auth_source", "VARCHAR(16) NOT NULL DEFAULT 'local'"),

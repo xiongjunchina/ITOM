@@ -22,6 +22,12 @@ def _member_row(m: OrgMember) -> dict:
         "id": m.id,
         "name": m.name,
         "name_en": m.name_en,
+        "employee_no": m.employee_no,
+        "gender": m.gender,
+        "birth_date": m.birth_date,
+        "employment_type": m.employment_type,
+        "supervisor_id": m.supervisor_id,
+        "work_location": m.work_location,
         "department_id": m.department_id,
         "department_name": m.department.name if m.department else None,
         "position_id": m.position_id,
@@ -69,6 +75,15 @@ def update_member(
     if not member or member.is_deleted:
         raise AppError("NOT_FOUND", "人员不存在", 404)
     data = body.model_dump(exclude_unset=True)
+    if member.external_source:  # 同步记录：HR 基础信息以外部源为准，仅本地扩展可改
+        from app.services.org_sync import MEMBER_LOCAL_FIELDS
+
+        locked = set(data) - MEMBER_LOCAL_FIELDS
+        if locked:
+            raise AppError(
+                "SYNCED_READONLY",
+                f"该人员由 {member.external_source} 同步，基础信息以外部源为准；本地仅可编辑：岗位/技能/备注",
+            )
     for k, v in data.items():
         setattr(member, k, v)
     audit(db, "org_member", member.id, "update", actor, {"fields": list(data.keys())})

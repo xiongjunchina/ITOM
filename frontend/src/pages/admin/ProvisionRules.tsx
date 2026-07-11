@@ -117,7 +117,7 @@ export default function ProvisionRules() {
           active: r.active,
         })),
       );
-      message.success('开通规则已保存');
+      message.success('预分配规则已保存');
       void load();
     } catch {
       // 已统一提示
@@ -226,7 +226,7 @@ export default function ProvisionRules() {
 
   return (
     <Card
-      title="开通规则"
+      title="预分配规则"
       extra={
         <Button
           type="primary"

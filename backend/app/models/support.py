@@ -37,6 +37,12 @@ class OrgMember(GlidBase):
 
     name: Mapped[str] = mapped_column(String(64), comment="中文姓名")
     name_en: Mapped[str | None] = mapped_column(String(64), comment="英文姓名")
+    employee_no: Mapped[str | None] = mapped_column(String(32), comment="工号")
+    gender: Mapped[str | None] = mapped_column(String(8), comment="男/女")
+    birth_date: Mapped[date | None] = mapped_column(Date)
+    employment_type: Mapped[str | None] = mapped_column(String(16), comment="正式/外包/实习")
+    supervisor_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="直属上级")
+    work_location: Mapped[str | None] = mapped_column(String(64), comment="办公地点")
     department_id: Mapped[str | None] = mapped_column(ForeignKey("department.id"), index=True)
     position_id: Mapped[str | None] = mapped_column(ForeignKey("position.id"))
     status: Mapped[str] = mapped_column(String(16), default="在岗", comment="在岗/离职")

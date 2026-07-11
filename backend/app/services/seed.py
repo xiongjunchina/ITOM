@@ -46,6 +46,7 @@ MASTER_DATA = [
     ("requirement_source", "management", "管理层", 2),
     ("requirement_source", "team_internal", "团队内部", 3),
     ("requirement_source", "idea_adopted", "建言采纳", 4),
+    ("sys_config", "company_name", "我的公司", 1),
 ]
 
 

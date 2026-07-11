@@ -4,14 +4,9 @@ import PlaceholderPage from './components/PlaceholderPage';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Positions from './pages/team/Positions';
-import Users from './pages/admin/Users';
-import Roles from './pages/admin/Roles';
-import Groups from './pages/admin/Groups';
-import Permissions from './pages/admin/Permissions';
-import ProvisionRules from './pages/admin/ProvisionRules';
-import Departments from './pages/admin/Departments';
-import Members from './pages/admin/Members';
-import BusinessDomains from './pages/admin/BusinessDomains';
+import OrgManagement from './pages/admin/OrgManagement';
+import Identity from './pages/admin/Identity';
+import Access from './pages/admin/Access';
 import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
@@ -68,18 +63,23 @@ export const router = createBrowserRouter([
       { path: 'team/ideas', element: <PlaceholderPage title="建言献策" /> },
       { path: 'team/charter', element: <PlaceholderPage title="团队文化" /> },
 
-      // 系统管理（admin）
-      { path: 'admin/users', element: <Users /> },
-      { path: 'admin/roles', element: <Roles /> },
-      { path: 'admin/groups', element: <Groups /> },
-      { path: 'admin/permissions', element: <Permissions /> },
-      { path: 'admin/provision-rules', element: <ProvisionRules /> },
-      { path: 'admin/departments', element: <Departments /> },
-      { path: 'admin/members', element: <Members /> },
-      { path: 'admin/business-domains', element: <BusinessDomains /> },
+      // 系统管理（admin，M3.9 收敛为 6 项）
+      { path: 'admin/org', element: <OrgManagement /> },
+      { path: 'admin/identity', element: <Identity /> },
+      { path: 'admin/access', element: <Access /> },
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
+
+      // 旧路由 → 新复合页对应 Tab（M3.9 前的书签/外链兼容）
+      { path: 'admin/departments', element: <Navigate to="/admin/org?tab=architecture" replace /> },
+      { path: 'admin/members', element: <Navigate to="/admin/org?tab=architecture" replace /> },
+      { path: 'admin/business-domains', element: <Navigate to="/admin/org?tab=domains" replace /> },
+      { path: 'admin/users', element: <Navigate to="/admin/identity?tab=users" replace /> },
+      { path: 'admin/groups', element: <Navigate to="/admin/identity?tab=groups" replace /> },
+      { path: 'admin/roles', element: <Navigate to="/admin/access?tab=roles" replace /> },
+      { path: 'admin/provision-rules', element: <Navigate to="/admin/access?tab=provision" replace /> },
+      { path: 'admin/permissions', element: <Navigate to="/admin/access?tab=permissions" replace /> },
 
       { path: '*', element: <Navigate to="/dashboard" replace /> },
     ],
