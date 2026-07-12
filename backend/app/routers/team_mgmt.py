@@ -123,7 +123,7 @@ def put_charter(body: CharterIn, db: Session = Depends(get_db), user: AuthUser =
 # ---------- 招聘需求（岗位编制页） ----------
 
 @router.get("/api/hiring-needs")
-def list_hiring(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_hiring(db: Session = Depends(get_db), _=Depends(require_perm("positions", "view"))):
     rows = db.query(HiringNeed).filter(HiringNeed.is_deleted.is_(False)).order_by(HiringNeed.created_at.desc()).all()
     positions = {p.id: p.name for p in db.query(Position).filter(Position.is_deleted.is_(False))}
     return ok([
@@ -218,44 +218,4 @@ def team_overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
         "open_hirings": db.query(HiringNeed).filter(
             HiringNeed.is_deleted.is_(False), HiringNeed.status.in_(["待招聘", "面试中"])
         ).count(),
-    })
-
-
-# ---------- 人效评分框架 ----------
-
-@router.get("/api/team/performance")
-def team_performance(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("performance", "view"))):
-    """人效框架 v1：正式公式待产品定义。当前 总分 = 自动积分 + 专项活动折算分。"""
-    period = period or current_period()
-    members = db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗").all()
-    entries = db.query(PointEntry).filter(PointEntry.period == period, PointEntry.is_deleted.is_(False)).all()
-    ratios = {c.id: c.performance_ratio for c in db.query(ActivityCampaign).filter(ActivityCampaign.is_deleted.is_(False))}
-
-    per: dict[str, dict] = {}
-    for e in entries:
-        row = per.setdefault(e.person_id, {"auto_points": 0.0, "campaign_points": 0.0, "campaign_performance": 0.0,
-                                            "dimensions": {}})
-        if e.source_type == "campaign_award":
-            row["campaign_points"] += e.points
-            row["campaign_performance"] += e.points * ratios.get(e.campaign_id, 1.0)
-        else:
-            row["auto_points"] += e.points
-            row["dimensions"][e.source_type] = row["dimensions"].get(e.source_type, 0) + 1
-
-    rows = []
-    for m in members:
-        data = per.get(m.id, {"auto_points": 0.0, "campaign_points": 0.0, "campaign_performance": 0.0, "dimensions": {}})
-        rows.append({
-            "person_id": m.id, "person_name": m.name,
-            "auto_points": round(data["auto_points"], 1),
-            "campaign_points": round(data["campaign_points"], 1),
-            "campaign_performance": round(data["campaign_performance"], 2),
-            "dimensions": data["dimensions"],
-            "total_score": round(data["auto_points"] + data["campaign_performance"], 2),
-        })
-    rows.sort(key=lambda x: -x["total_score"])
-    return ok({
-        "period": period,
-        "formula": "总分 = 自动积分合计 + Σ(专项活动积分 × 活动折算系数)；正式人效公式待产品定义后在此配置",
-        "rows": rows,
     })

@@ -31,6 +31,13 @@ def _service_section(db: Session) -> tuple[dict, list]:
 
     open_by_priority = {p: sum(1 for t in open_tickets if t.priority == p) for p in ("P1", "P2", "P3", "P4")}
 
+    by_type = {
+        "service_request_open": sum(1 for t in open_tickets if t.ticket_type == "service_request"),
+        "incident_open": sum(1 for t in open_tickets if t.ticket_type == "incident"),
+        "change_pending_approval": sum(1 for t in tickets if t.ticket_type == "change" and t.status == "pending_approval"),
+        "change_implementing": sum(1 for t in tickets if t.ticket_type == "change" and t.status in ("approved", "implementing")),
+    }
+
     problems = db.query(Problem).filter(Problem.is_deleted.is_(False)).all()
     problem_close_rate = (
         round(sum(1 for p in problems if p.status == "closed") / len(problems) * 100, 1) if problems else None
@@ -67,6 +74,7 @@ def _service_section(db: Session) -> tuple[dict, list]:
         {
             "open_tickets": len(open_tickets),
             "open_by_priority": open_by_priority,
+            "by_type": by_type,
             "sla_rate": sla_rate,
             "change_success_rate": change_rate,
             "problem_close_rate": problem_close_rate,

@@ -102,3 +102,46 @@ def run_seed(db: Session):
         if not exists:
             db.add(MasterData(category=category, code=code, name=name, sort=sort))
     db.commit()
+
+
+def run_seed_perf(db):
+    """M6.1 人效计分方案参考模板（表空时写入一次，全部可编辑可删除）。"""
+    from app.models import PerfScheme, Position
+
+    if db.query(PerfScheme).first():
+        return
+    ops_pos = db.query(Position).filter(Position.name == "【示例】运维工程师", Position.is_deleted.is_(False)).first()
+    db.add(PerfScheme(
+        name="默认方案（兜底）", is_default=True,
+        description="填写指引：未被任何方案匹配到岗位的人员按此方案计分。建议保留一个均衡配置作为兜底。",
+        position_ids=[],
+        dimensions=[
+            {"code": "ticket_service", "weight": 20}, {"code": "change_compliance", "weight": 10},
+            {"code": "project_delivery", "weight": 15}, {"code": "requirement_delivery", "weight": 15},
+            {"code": "domain_satisfaction", "weight": 10}, {"code": "knowledge_contrib", "weight": 15},
+            {"code": "activity_points", "weight": 15},
+        ],
+    ))
+    db.add(PerfScheme(
+        name="运维序列（参考模板）",
+        description="填写指引：运维岗位以服务工单 + 变更合规为主，少量项目/需求参与。"
+                    "已示例绑定【示例】运维工程师岗位，请改绑真实运维岗位并按贵司口径调整权重。",
+        position_ids=[ops_pos.id] if ops_pos else [],
+        dimensions=[
+            {"code": "ticket_service", "weight": 40}, {"code": "change_compliance", "weight": 25},
+            {"code": "project_delivery", "weight": 10}, {"code": "requirement_delivery", "weight": 5},
+            {"code": "knowledge_contrib", "weight": 10}, {"code": "activity_points", "weight": 10},
+        ],
+    ))
+    db.add(PerfScheme(
+        name="研发/产品序列（参考模板）",
+        description="填写指引：产品经理与开发以需求/项目交付 + 所在业务域满意度为主。"
+                    "未绑定岗位前不生效，请在编辑中选择适用岗位（如产品经理/开发工程师）。",
+        position_ids=[],
+        dimensions=[
+            {"code": "requirement_delivery", "weight": 35}, {"code": "project_delivery", "weight": 25},
+            {"code": "domain_satisfaction", "weight": 15}, {"code": "knowledge_contrib", "weight": 10},
+            {"code": "activity_points", "weight": 15},
+        ],
+    ))
+    db.commit()

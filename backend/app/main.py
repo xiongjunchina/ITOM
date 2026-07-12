@@ -25,6 +25,7 @@ from app.routers import (
     problems,
     process,
     projects,
+    perf,
     requirements,
     team_activities,
     team_mgmt,
@@ -33,7 +34,7 @@ from app.routers import (
 )
 from app.services import scheduler
 from app.services.migrate import run_migrations
-from app.services.seed import run_seed
+from app.services.seed import run_seed, run_seed_perf
 from app.services.seed_examples import run_seed_examples, run_seed_team_examples
 from app.services.seed_itsm import run_seed_itsm
 
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
         run_seed_itsm(db)
         run_seed_examples(db)
         run_seed_team_examples(db)
+        run_seed_perf(db)
     from app.services.points import register_subscribers
 
     register_subscribers()
@@ -57,7 +59,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="New_AOM API", version="0.6.0-m6", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="New_AOM API", version="0.6.1-m6.1", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
@@ -115,7 +117,7 @@ async def auditor_readonly_guard(request: Request, call_next):
 
 
 for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
-          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, projects, requirements, team_activities, team_mgmt):
+          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, team_activities, team_mgmt):
     app.include_router(r.router)
 
 

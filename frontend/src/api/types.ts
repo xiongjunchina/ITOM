@@ -153,6 +153,13 @@ export interface DashboardData {
   service: {
     open_tickets: number;
     open_by_priority?: { P1: number; P2: number; P3: number; P4: number };
+    /** 分型统计：服务请求/事件未关闭数、变更待审批/实施中数 */
+    by_type?: {
+      service_request_open: number;
+      incident_open: number;
+      change_pending_approval: number;
+      change_implementing: number;
+    };
     sla_rate: number;
     change_success_rate: number;
     problem_close_rate: number;
@@ -1319,23 +1326,56 @@ export interface TeamOverviewData {
   open_hirings: number;
 }
 
-/** 人效评分行 */
+/** 评分维度（维度库，GET /perf/dimensions） */
+export interface PerfDimension {
+  code: string;
+  name: string;
+  /** 公共维度：无贡献计 0 分（非公共维度无数据则不计入、权重自动归一） */
+  public: boolean;
+  /** 口径说明（v1 默认实现） */
+  description: string;
+}
+
+/** 计分方案内的维度配置 */
+export interface PerfSchemeDimension {
+  code: string;
+  weight: number;
+}
+
+/** 计分方案（GET /perf/schemes） */
+export interface PerfScheme {
+  id: string;
+  name: string;
+  description: string | null;
+  position_ids: string[];
+  position_names: string[];
+  dimensions: PerfSchemeDimension[];
+  weight_total: number;
+  /** 默认兜底方案（全局唯一）：未匹配任何方案的人员按它计分 */
+  is_default: boolean;
+  active: boolean;
+}
+
+/** 人效评分行；score=null 该维度无数据不计入；total=null 未配置方案或全部维度无数据 */
 export interface PerformanceRow {
   person_id: string;
   person_name: string;
-  auto_points: number;
-  campaign_points: number;
-  campaign_performance: number;
-  /** 自动积分维度计数 {source_type: 次数} */
-  dimensions: Record<string, number>;
-  total_score: number;
+  position_name: string | null;
+  scheme_id: string | null;
+  scheme_name: string | null;
+  total: number | null;
+  /** 维度得分 {code: {score, weight}}，仅含所适用方案配置的维度 */
+  dims: Record<string, { score: number | null; weight: number }>;
 }
 
 /** 人效评分（GET /team/performance） */
 export interface PerformanceData {
   period: string;
-  formula: string;
   rows: PerformanceRow[];
+  /** 维度库（动态生成列与口径说明） */
+  dimensions: PerfDimension[];
+  /** 计分公式说明 */
+  note: string;
 }
 
 /** 流程实例（监控行） */

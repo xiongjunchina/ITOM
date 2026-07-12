@@ -51,7 +51,7 @@ MODULE_CODES = {m[0] for m in MODULES}
 # 动作缩写：v=view c=create e=edit d=delete
 _BUSINESS_VIEW = [
     "dashboard", "tickets", "catalog", "cmdb", "sla", "problems", "vendors", "contracts",
-    "knowledge", "projects", "requirements", "team_overview", "positions", "activities",
+    "knowledge", "projects", "requirements", "team_overview", "activities",
     "ideas", "charter",
 ]
 
@@ -74,7 +74,7 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "requester": {"dashboard": "v", "tickets": "vc", "knowledge": "v", "requirements": "vc"},
     "auditor": _merge(
         {m: "v" for m in _BUSINESS_VIEW},
-        {"performance": "v", "process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},
+        {"process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},
     ),
     "it_dev": _staff_base(),
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
@@ -85,17 +85,17 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     # 矩阵式组织三角色（docs/06 §七）——默认值是起点，全部可在权限配置页调整
     "cio": _merge(_staff_base(), {
         "catalog": "ce", "cmdb": "ce", "problems": "ce", "vendors": "ce", "contracts": "ce",
-        "projects": "ce", "requirements": "e", "positions": "ce", "activities": "e",
+        "projects": "ce", "requirements": "e", "positions": "vce", "activities": "e",
         "ideas": "e", "charter": "e", "sla": "e",
-        "performance": "v", "process_definitions": "v", "process_monitor": "v",
-        "admin_business_domains": "vce", "admin_members": "vce", "admin_audit": "v",
+        "performance": "vce", "process_definitions": "v", "process_monitor": "v",
+        "admin_business_domains": "vce", "admin_members": "vced", "admin_audit": "v",
     }),
     "it_bm": _merge(_staff_base(), {
         "requirements": "e", "projects": "ce", "admin_business_domains": "v",
         "process_monitor": "v",
     }),
     "it_tm": _merge(_staff_base(), {
-        "positions": "ce", "activities": "e", "performance": "v", "charter": "e",
+        "activities": "e", "charter": "e",
         "ideas": "e", "process_monitor": "v", "admin_members": "vce",
     }),
 }

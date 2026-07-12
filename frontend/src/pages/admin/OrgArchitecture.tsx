@@ -38,6 +38,7 @@ import {
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { hasPermission, useAuthStore } from '../../stores/auth';
 import { DEPT_TYPE_COLORS, DEPT_TYPE_LABELS } from '../../api/types';
 import type {
   Department,
@@ -106,6 +107,8 @@ function SourceTag({ source }: { source?: string | null }) {
 }
 
 export default function OrgArchitecture() {
+  const user = useAuthStore((s) => s.user);
+  const canDeleteMember = hasPermission(user, 'admin_members', 'delete');
   const [data, setData] = useState<OrgTreeData | null>(null);
   const [loading, setLoading] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
@@ -491,6 +494,18 @@ export default function OrgArchitecture() {
     }
   };
 
+  /** 删除人员（软删）：绑定账号一并停用；SYNCED_READONLY / MEMBER_HAS_OPEN_WORK 由拦截器提示 */
+  const handleMemberDelete = async (m: Member) => {
+    try {
+      const res = await api.delete<{ message?: string }>(`/members/${m.id}`);
+      message.success(res?.message || '人员已删除');
+      setSelectedKey(null);
+      void load();
+    } catch {
+      // 已统一提示
+    }
+  };
+
   const supervisorOptions = useMemo(
     () =>
       allMembers
@@ -611,9 +626,21 @@ export default function OrgArchitecture() {
           size="small"
           column={2}
           extra={
-            <Button icon={<EditOutlined />} onClick={() => openMemberEdit(m)}>
-              编辑
-            </Button>
+            <Space>
+              <Button icon={<EditOutlined />} onClick={() => openMemberEdit(m)}>
+                编辑
+              </Button>
+              {canDeleteMember && (
+                <Popconfirm
+                  title="删除后该人员将不可见，其绑定的登录账号会一并停用。确认删除？"
+                  onConfirm={() => void handleMemberDelete(m)}
+                >
+                  <Button danger icon={<DeleteOutlined />}>
+                    删除人员
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
           }
         >
           <Descriptions.Item label="姓名">{m.name}</Descriptions.Item>

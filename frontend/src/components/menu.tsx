@@ -35,10 +35,12 @@ export const MENU_TREE: MenuNode[] = [
   { key: '/dashboard', path: '/dashboard', label: '总览', icon: <DashboardOutlined />, module: 'dashboard' },
   {
     key: 'itsm',
-    label: 'ITSM 服务',
+    label: 'ITSM',
     icon: <CustomerServiceOutlined />,
     children: [
-      { key: '/itsm/tickets', path: '/itsm/tickets', label: '工单', module: 'tickets' },
+      { key: '/itsm/tickets', path: '/itsm/tickets', label: '服务请求', module: 'tickets' },
+      { key: '/itsm/incidents', path: '/itsm/incidents', label: '事件管理', module: 'tickets', roles: STAFF },
+      { key: '/itsm/changes', path: '/itsm/changes', label: '变更管理', module: 'tickets', roles: STAFF },
       { key: '/itsm/catalog', path: '/itsm/catalog', label: '服务目录', module: 'catalog', roles: STAFF },
       { key: '/itsm/cmdb', path: '/itsm/cmdb', label: 'CMDB', module: 'cmdb', roles: STAFF },
       { key: '/itsm/sla', path: '/itsm/sla', label: 'SLA 看板', module: 'sla', roles: STAFF },
@@ -57,8 +59,8 @@ export const MENU_TREE: MenuNode[] = [
     roles: STAFF,
     children: [
       { key: '/team/overview', path: '/team/overview', label: '团队总览', module: 'team_overview' },
-      { key: '/team/performance', path: '/team/performance', label: '人效评分', module: 'performance', roles: ['admin', 'cio', 'it_tm'] },
-      { key: '/team/positions', path: '/team/positions', label: '岗位编制', module: 'positions' },
+      { key: '/team/performance', path: '/team/performance', label: '人效评分', module: 'performance', roles: ['admin', 'cio'] },
+      { key: '/team/positions', path: '/team/positions', label: '岗位编制', module: 'positions', roles: ['admin', 'cio'] },
       { key: '/team/activities', path: '/team/activities', label: '培训发展', module: 'activities' },
       { key: '/team/ideas', path: '/team/ideas', label: '活动积分', module: 'ideas' },
       { key: '/team/charter', path: '/team/charter', label: '团队文化', module: 'charter' },

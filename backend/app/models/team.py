@@ -88,6 +88,19 @@ class PointEntry(GlidBase):
     created_by: Mapped[str | None] = mapped_column(String(26))
 
 
+class PerfScheme(GlidBase):
+    """人效计分方案（M6.1）：按岗位绑定「维度×权重」，全部用户可自定义。"""
+
+    __tablename__ = "perf_scheme"
+
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str | None] = mapped_column(Text)
+    position_ids: Mapped[list | None] = mapped_column(JsonCol, default=list, comment="适用岗位 id 列表")
+    dimensions: Mapped[list | None] = mapped_column(JsonCol, default=list, comment='[{"code","weight"}]')
+    is_default: Mapped[bool] = mapped_column(default=False, comment="未匹配岗位的兜底方案，全局唯一")
+    active: Mapped[bool] = mapped_column(default=True)
+
+
 class DevelopmentActivity(GlidBase):
     """培训发展活动（PRD §9.4）：登记即触发培训积分。"""
 

@@ -16,8 +16,9 @@ def ctx(client, admin_headers):
 
     dev_pid, dev_h = member_and_user("积分开发", "pt_dev", ["it_dev"])
     tm_pid, tm_h = member_and_user("积分组长", "pt_tm", ["it_tm"])
+    cio_pid, cio_h = member_and_user("积分总监", "pt_cio", ["cio"])
     return {"dev_pid": dev_pid, "dev_h": dev_h, "tm_pid": tm_pid, "tm_h": tm_h,
-            "member_and_user": member_and_user}
+            "cio_pid": cio_pid, "cio_h": cio_h, "member_and_user": member_and_user}
 
 
 def my_points(client, headers):
@@ -227,14 +228,14 @@ def test_team_overview_and_performance(client, admin_headers, ctx):
     assert any(w["person_name"] == "积分运维" for w in ov["workload"]) or ov["onboard_count"] > 0
     assert any(b["person_name"] == "积分开发" for b in ov["points_board"])
 
-    # 人效：it_dev 无 performance.view
+    # 人效（M6.1 收紧）：仅 admin/cio 可见，it_dev 与 it_tm 都 403
     assert client.get("/api/team/performance", headers=ctx["dev_h"]).status_code == 403
-    perf = client.get("/api/team/performance?period=2026-H2", headers=ctx["tm_h"]).json()["data"]
-    assert "总分 = 自动积分合计" in perf["formula"]
+    assert client.get("/api/team/performance", headers=ctx["tm_h"]).status_code == 403
+    perf = client.get("/api/team/performance?period=2026-H2", headers=ctx["cio_h"]).json()["data"]
+    assert perf["rows"] and perf["dimensions"]
     dev_row = next(r for r in perf["rows"] if r["person_name"] == "积分开发")
-    # campaign 35×0.2=7 折算入总分；自动分含建言 23+3(培训参与)
-    assert dev_row["campaign_points"] == 35 and dev_row["campaign_performance"] == 7.0
-    assert dev_row["total_score"] == dev_row["auto_points"] + 7.0
+    assert dev_row["scheme_name"] == "默认方案（兜底）"  # 未绑岗位走兜底方案
+    assert dev_row["dims"]["activity_points"]["score"] is not None
 
 
 def test_charter_and_hiring(client, admin_headers, ctx):
@@ -243,13 +244,16 @@ def test_charter_and_hiring(client, admin_headers, ctx):
     assert r.json()["success"]
     assert client.get("/api/team-charter", headers=ctx["dev_h"]).json()["data"]["vision"] == "稳定高效"
 
-    pos = client.post("/api/positions", json={"name": "DBA", "headcount": 1}, headers=admin_headers).json()["data"]
-    r = client.post("/api/hiring-needs", json={"position_id": pos["id"], "headcount": 2}, headers=ctx["tm_h"])
+    # 岗位编制（M6.1 收紧）：it_tm/it_dev 均不可见，cio 可管
+    assert client.get("/api/positions", headers=ctx["dev_h"]).status_code == 403
+    assert client.get("/api/hiring-needs", headers=ctx["tm_h"]).status_code == 403
+    pos = client.post("/api/positions", json={"name": "DBA", "headcount": 1}, headers=ctx["cio_h"]).json()["data"]
+    r = client.post("/api/hiring-needs", json={"position_id": pos["id"], "headcount": 2}, headers=ctx["cio_h"])
     hid = r.json()["data"]["id"]
     client.patch(f"/api/hiring-needs/{hid}", json={"position_id": pos["id"], "headcount": 2,
                                                    "status": "面试中", "progress_note": "已约 3 人"},
-                 headers=ctx["tm_h"])
-    rows = client.get("/api/hiring-needs", headers=ctx["dev_h"]).json()["data"]
+                 headers=ctx["cio_h"])
+    rows = client.get("/api/hiring-needs", headers=ctx["cio_h"]).json()["data"]
     assert rows[0]["status"] == "面试中" and rows[0]["position_name"] == "DBA"
 
 

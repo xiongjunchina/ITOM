@@ -91,6 +91,46 @@ def update_member(
     return ok(_member_row(member))
 
 
+@router.delete("/api/members/{member_id}")
+def delete_member(member_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_members", "delete"))):
+    """删除人员（软删）。同步人员不可删；名下有未完成工作先转移；绑定账号一并停用。"""
+    member = db.get(OrgMember, member_id)
+    if not member or member.is_deleted:
+        raise AppError("NOT_FOUND", "人员不存在", 404)
+    if member.external_source:
+        raise AppError("SYNCED_READONLY", f"该人员由 {member.external_source} 同步，请在源系统办理离职后同步，不能本地删除")
+
+    from app.models import RequirementTask, Ticket, WbsTask
+
+    open_tickets = db.query(Ticket).filter(
+        Ticket.assignee == member.id, Ticket.is_deleted.is_(False),
+        Ticket.status.notin_(["resolved", "closed", "rejected"]),
+    ).count()
+    open_wbs = db.query(WbsTask).filter(
+        WbsTask.assignee == member.id, WbsTask.is_deleted.is_(False), WbsTask.status != "已完成",
+    ).count()
+    open_req = db.query(RequirementTask).filter(
+        RequirementTask.assignee == member.id, RequirementTask.is_deleted.is_(False),
+        RequirementTask.status != "已完成",
+    ).count()
+    total_open = open_tickets + open_wbs + open_req
+    if total_open:
+        raise AppError(
+            "MEMBER_HAS_OPEN_WORK",
+            f"该人员名下还有 {total_open} 项未完成工作（工单 {open_tickets}/项目任务 {open_wbs}/需求任务 {open_req}），请先转移再删除",
+        )
+
+    disabled_accounts = []
+    for u in db.query(AuthUser).filter(AuthUser.person_id == member.id, AuthUser.is_deleted.is_(False)):
+        u.is_deleted = True
+        disabled_accounts.append(u.username)
+    member.is_deleted = True
+    audit(db, "org_member", member.id, "delete", actor, {"name": member.name, "accounts_disabled": disabled_accounts})
+    db.commit()
+    msg = f"已删除人员「{member.name}」" + (f"，并停用其账号：{'、'.join(disabled_accounts)}" if disabled_accounts else "")
+    return ok({"deleted": True, "accounts_disabled": disabled_accounts, "message": msg})
+
+
 # ---- 岗位（人员主数据依赖，M1 一并交付） ----
 
 
@@ -111,7 +151,7 @@ def _position_row(p: Position, db: Session) -> dict:
 
 
 @router.get("/api/positions")
-def list_positions(db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user)):
+def list_positions(db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("positions", "view"))):
     items = db.query(Position).filter(Position.is_deleted.is_(False)).order_by(Position.created_at).all()
     return ok([_position_row(p, db) for p in items], total=len(items))
 

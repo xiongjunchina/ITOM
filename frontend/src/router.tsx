@@ -42,9 +42,11 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: 'dashboard', element: <Dashboard /> },
 
-      // ITSM（M2 交付：工单/服务目录/SLA）
-      { path: 'itsm/tickets', element: <Tickets /> },
+      // ITSM（M2 交付；M6.1 工单按类型拆分三入口，key 隔离筛选/分页状态）
+      { path: 'itsm/tickets', element: <Tickets key="service_request" fixedType="service_request" /> },
       { path: 'itsm/tickets/:id', element: <TicketDetail /> },
+      { path: 'itsm/incidents', element: <Tickets key="incident" fixedType="incident" /> },
+      { path: 'itsm/changes', element: <Tickets key="change" fixedType="change" /> },
       { path: 'itsm/catalog', element: <CatalogPage /> },
       { path: 'itsm/sla', element: <SlaBoard /> },
       { path: 'itsm/cmdb', element: <Cmdb /> },

@@ -9,7 +9,6 @@ import {
   Drawer,
   Form,
   Input,
-  Radio,
   Select,
   Space,
   Switch,
@@ -23,16 +22,23 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
-import { PRIORITY_COLORS, TICKET_TYPE_COLORS, TICKET_TYPE_LABELS } from '../../api/types';
+import { PRIORITY_COLORS, TICKET_TYPE_LABELS } from '../../api/types';
 
-/** 状态 → Badge 样式（按语义猜测，未匹配用 processing） */
+/** 状态 → Badge 样式（按语义猜测，未匹配用 processing；含变更状态机 rejected/rolled_back） */
 function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning' | 'processing' {
   if (status === 'closed' || status === 'cancelled') return 'default';
   if (status === 'resolved' || status === 'approved') return 'success';
-  if (status === 'rejected') return 'error';
+  if (status === 'rejected' || status === 'rolled_back') return 'error';
   if (status === 'paused' || status === 'pending_approval') return 'warning';
   return 'processing';
 }
+
+/** 三个固定类型入口的页面标题 */
+const PAGE_TITLES: Record<TicketType, string> = {
+  service_request: '服务请求',
+  incident: '事件管理',
+  change: '变更管理',
+};
 
 /** SLA 达成状态渲染 */
 export function renderSla(row: {
@@ -47,7 +53,6 @@ export function renderSla(row: {
 
 interface TicketFormValues {
   title: string;
-  ticket_type: TicketType;
   priority: TicketPriority;
   description: string;
   service_item_id: number;
@@ -61,7 +66,7 @@ interface TicketFormValues {
   implementation_plan?: string;
 }
 
-export default function Tickets() {
+export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<TicketRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -69,10 +74,9 @@ export default function Tickets() {
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
 
-  // 筛选
+  // 筛选（类型固定为 fixedType，不再提供类型筛选）
   const [q, setQ] = useState('');
   const [status, setStatus] = useState<string | undefined>();
-  const [ticketType, setTicketType] = useState<TicketType | undefined>();
   const [priority, setPriority] = useState<TicketPriority | undefined>();
   const [mineOnly, setMineOnly] = useState(false);
   // 状态筛选选项：从已加载数据中累积（code → 中文名）
@@ -82,7 +86,6 @@ export default function Tickets() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<TicketFormValues>();
-  const watchType = Form.useWatch('ticket_type', form);
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
 
@@ -94,7 +97,7 @@ export default function Tickets() {
         page_size: pageSize,
         q: q || undefined,
         status: status || undefined,
-        ticket_type: ticketType || undefined,
+        ticket_type: fixedType,
         priority: priority || undefined,
         scope: mineOnly ? 'mine' : undefined,
       });
@@ -112,7 +115,7 @@ export default function Tickets() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, q, status, ticketType, priority, mineOnly]);
+  }, [page, pageSize, q, status, fixedType, priority, mineOnly]);
 
   useEffect(() => {
     void load();
@@ -139,14 +142,14 @@ export default function Tickets() {
     const values = await form.validateFields();
     const payload: Record<string, unknown> = {
       title: values.title,
-      ticket_type: values.ticket_type,
+      ticket_type: fixedType,
       priority: values.priority,
       description: values.description,
       service_item_id: values.service_item_id,
     };
     if (values.assignee != null) payload.assignee = values.assignee;
     if (values.remarks) payload.remarks = values.remarks;
-    if (values.ticket_type === 'change') {
+    if (fixedType === 'change') {
       payload.change_type = values.change_type;
       payload.risk_level = values.risk_level;
       if (values.change_reason) payload.change_reason = values.change_reason;
@@ -160,7 +163,7 @@ export default function Tickets() {
     setSaving(true);
     try {
       const created = await api.post<{ id: number }>('/tickets', payload);
-      message.success('工单已创建');
+      message.success(`${TICKET_TYPE_LABELS[fixedType]}已创建`);
       setDrawerOpen(false);
       if (created?.id) {
         navigate(`/itsm/tickets/${created.id}`);
@@ -188,12 +191,6 @@ export default function Tickets() {
       ),
     },
     { title: '标题', dataIndex: 'title', width: 220, ellipsis: true },
-    {
-      title: '类型',
-      dataIndex: 'ticket_type',
-      width: 100,
-      render: (v: TicketType) => <Tag color={TICKET_TYPE_COLORS[v]}>{TICKET_TYPE_LABELS[v] ?? v}</Tag>,
-    },
     {
       title: '优先级',
       dataIndex: 'priority',
@@ -225,10 +222,10 @@ export default function Tickets() {
 
   return (
     <Card
-      title="工单"
+      title={PAGE_TITLES[fixedType]}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建工单
+          {`新建${TICKET_TYPE_LABELS[fixedType]}`}
         </Button>
       }
     >
@@ -252,17 +249,6 @@ export default function Tickets() {
             setStatus(v);
           }}
           options={Object.entries(statusOptions).map(([value, label]) => ({ value, label }))}
-        />
-        <Select
-          placeholder="类型"
-          allowClear
-          style={{ width: 130 }}
-          value={ticketType}
-          onChange={(v) => {
-            setPage(1);
-            setTicketType(v);
-          }}
-          options={Object.entries(TICKET_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
         />
         <Select
           placeholder="优先级"
@@ -310,7 +296,7 @@ export default function Tickets() {
       />
 
       <Drawer
-        title="新建工单"
+        title={`新建${TICKET_TYPE_LABELS[fixedType]}`}
         open={drawerOpen}
         width={560}
         onClose={() => setDrawerOpen(false)}
@@ -328,17 +314,10 @@ export default function Tickets() {
           form={form}
           layout="vertical"
           preserve={false}
-          initialValues={{ ticket_type: 'service_request', priority: 'P3' }}
+          initialValues={{ priority: 'P3' }}
         >
           <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input maxLength={200} placeholder="简要描述问题或请求" />
-          </Form.Item>
-          <Form.Item name="ticket_type" label="类型" rules={[{ required: true }]}>
-            <Radio.Group>
-              <Radio.Button value="service_request">服务请求</Radio.Button>
-              <Radio.Button value="incident">事件</Radio.Button>
-              <Radio.Button value="change">变更</Radio.Button>
-            </Radio.Group>
           </Form.Item>
           <Form.Item name="priority" label="优先级" rules={[{ required: true, message: '请选择优先级' }]}>
             <Select
@@ -371,7 +350,7 @@ export default function Tickets() {
             />
           </Form.Item>
 
-          {watchType === 'change' && (
+          {fixedType === 'change' && (
             <Card size="small" title="变更信息" style={{ marginBottom: 16 }}>
               <Form.Item
                 name="change_type"

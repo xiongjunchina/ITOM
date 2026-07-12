@@ -75,6 +75,46 @@ export default function Dashboard() {
               <Statistic title="变更成功率" value={service?.change_success_rate ?? 0} suffix="%" />
             </Col>
           </Row>
+          {service?.by_type && (
+            <Row gutter={16} style={{ marginTop: 12 }}>
+              <Col span={6}>
+                <Link to="/itsm/tickets">
+                  <Statistic
+                    title="服务请求待处理"
+                    value={service.by_type.service_request_open}
+                    valueStyle={{ fontSize: 20 }}
+                  />
+                </Link>
+              </Col>
+              <Col span={6}>
+                <Link to="/itsm/incidents">
+                  <Statistic
+                    title="事件处理中"
+                    value={service.by_type.incident_open}
+                    valueStyle={{ fontSize: 20 }}
+                  />
+                </Link>
+              </Col>
+              <Col span={6}>
+                <Link to="/itsm/changes">
+                  <Statistic
+                    title="变更待审批"
+                    value={service.by_type.change_pending_approval}
+                    valueStyle={{ fontSize: 20 }}
+                  />
+                </Link>
+              </Col>
+              <Col span={6}>
+                <Link to="/itsm/changes">
+                  <Statistic
+                    title="变更实施中"
+                    value={service.by_type.change_implementing}
+                    valueStyle={{ fontSize: 20 }}
+                  />
+                </Link>
+              </Col>
+            </Row>
+          )}
         </Card>
       </Col>
       <Col xs={24} lg={12}>
