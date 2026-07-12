@@ -3,6 +3,7 @@ import tempfile
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mkdtemp()}/test.db"
 os.environ["ADMIN_INIT_PASSWORD"] = "test-admin-pw"
+os.environ["SEED_EXAMPLES"] = "1"  # 测试依赖示例数据（只读守卫/教学链用例）
 
 import pytest
 from fastapi.testclient import TestClient

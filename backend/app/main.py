@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -48,8 +49,10 @@ async def lifespan(app: FastAPI):
         run_migrations(db)
         run_seed(db)
         run_seed_itsm(db)
-        run_seed_examples(db)
-        run_seed_team_examples(db)
+        if os.getenv("SEED_EXAMPLES", "0") == "1":
+            # 示例教学数据：默认不种（2026-07-12 用户要求干净系统）；演示/测试环境置 1 开启
+            run_seed_examples(db)
+            run_seed_team_examples(db)
         run_seed_perf(db)
     from app.services.points import register_subscribers
 
