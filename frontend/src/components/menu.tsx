@@ -126,12 +126,12 @@ export function filterMenu(nodes: MenuNode[], user: AuthUser | null): MenuNode[]
     .filter((n) => !n.children || n.children.length > 0);
 }
 
-/** path → 面包屑标题链，如 /admin/users → ['系统管理','用户管理'] */
+/** path → 面包屑菜单 key 链（如 /itsm/tickets → ['itsm','/itsm/tickets']），由调用方经 t('menu.'+key) 翻译 */
 export function breadcrumbOf(pathname: string): string[] {
   for (const node of MENU_TREE) {
-    if (node.path === pathname) return [node.label];
+    if (node.path === pathname) return [node.key];
     for (const child of node.children ?? []) {
-      if (child.path === pathname) return [node.label, child.label];
+      if (child.path === pathname) return [node.key, child.key];
     }
   }
   return [];

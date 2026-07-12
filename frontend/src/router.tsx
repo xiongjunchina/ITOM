@@ -1,6 +1,7 @@
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 import MainLayout from './components/MainLayout';
 import Login from './pages/Login';
+import OnboardingPending from './pages/OnboardingPending';
 import Dashboard from './pages/Dashboard';
 import Positions from './pages/team/Positions';
 import Overview from './pages/team/Overview';
@@ -35,6 +36,8 @@ import RequirementDetail from './pages/requirements/RequirementDetail';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
+  // 飞书扫码未开通的过渡页：公开路由，与 /login 平级（不在 MainLayout 内）
+  { path: '/onboarding/pending', element: <OnboardingPending /> },
   {
     path: '/',
     element: <MainLayout />,

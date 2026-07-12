@@ -19,6 +19,8 @@ import { SaveOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { PERM_ACTION_LABELS } from '../../api/types';
 import type { PermAction, PermissionModule, RoleDef, RolePermissionEntry } from '../../api/types';
+import { translate } from '../../i18n';
+import { useLangStore } from '../../i18n/store';
 
 interface ModulesResp {
   actions: string[];
@@ -45,10 +47,23 @@ interface GridRow {
 }
 
 export default function Permissions() {
+  const lang = useLangStore((s) => s.lang);
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [modules, setModules] = useState<PermissionModule[]>([]);
   const [actions, setActions] = useState<string[]>(['view', 'create', 'edit', 'delete']);
   const [metaLoading, setMetaLoading] = useState(true);
+
+  // 优先用 dict 翻译（与左侧导航/后端 MODULES 一致）；无对应键时回退后端 name/分组名
+  const moduleLabel = (m: PermissionModule) => {
+    const key = 'module.' + m.code;
+    const v = translate(lang, key);
+    return v === key ? m.name : v;
+  };
+  const groupLabel = (g: string) => {
+    const key = 'group.' + g;
+    const v = translate(lang, key);
+    return v === key ? g : v;
+  };
 
   const [selected, setSelected] = useState<string>(''); // 角色 code
   const [matrix, setMatrix] = useState<Matrix>({});
@@ -182,10 +197,10 @@ export default function Permissions() {
         onCell: (row) => (row.groupHeader ? { colSpan: columnCount } : {}),
         render: (_, row) =>
           row.groupHeader ? (
-            <Typography.Text strong>{row.groupHeader}</Typography.Text>
-          ) : (
-            row.module?.name
-          ),
+            <Typography.Text strong>{groupLabel(row.groupHeader)}</Typography.Text>
+          ) : row.module ? (
+            moduleLabel(row.module)
+          ) : null,
       },
       {
         title: '全选',
@@ -228,7 +243,7 @@ export default function Permissions() {
     ];
     return cols;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actions, matrix, isAdmin, columnCount]);
+  }, [actions, matrix, isAdmin, columnCount, lang]);
 
   const selectedRole = roles.find((r) => r.code === selected);
 

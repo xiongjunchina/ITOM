@@ -48,6 +48,8 @@ export interface UserPreferences {
   dashboard_widgets?: string[];
   /** 团队总览页 widget 有序列表；语义同 dashboard_widgets */
   team_overview_widgets?: string[];
+  /** 显示语言 zh/en */
+  language?: 'zh' | 'en';
 }
 
 /** 登录用户 */
@@ -66,6 +68,8 @@ export interface AuthUser {
   permissions?: Record<string, string[]>;
   auth_source?: AuthSource;
   person_id: string | null;
+  /** 显示语言（登录/刷新载荷均含，登录后立即应用） */
+  language?: 'zh' | 'en';
   /** 个人偏好（登录响应不含；进入布局后由 GET /auth/me 刷新写入 store） */
   preferences?: UserPreferences;
 }
@@ -73,6 +77,35 @@ export interface AuthUser {
 export interface LoginResult {
   token: string;
   user: AuthUser;
+}
+
+// ============ M7 飞书登录 / 账号开通 ============
+
+export type OnboardingStatus = 'pending' | 'approved' | 'rejected';
+
+/** POST /auth/feishu/scan 结果：已开通直接登录 / 未开通进过渡页 */
+export type FeishuScanResult =
+  | { status: 'active'; token: string; user: AuthUser }
+  | { status: 'pending'; request_id: string; pending_token: string; display_name: string };
+
+/** GET /auth/onboarding/status（带 pending_token）结果 */
+export type OnboardingStatusResult =
+  | { status: 'pending'; display_name: string; requested_at: string }
+  | { status: 'approved'; token: string; user: AuthUser }
+  | { status: 'rejected'; note: string; display_name: string };
+
+/** 开通申请（管理端 GET /auth/onboarding/requests） */
+export interface OnboardingRequest {
+  id: string;
+  external_source: string;
+  external_id: string;
+  display_name: string;
+  email: string | null;
+  mobile: string | null;
+  status: OnboardingStatus;
+  note: string | null;
+  requested_at: string;
+  processed_at: string | null;
 }
 
 /** 系统用户（管理端） */

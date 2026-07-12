@@ -6,17 +6,20 @@ import { DownOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import { useAuthStore } from '../stores/auth';
+import { translate, useT } from '../i18n';
+import { useLangStore, type Lang } from '../i18n/store';
 import NotificationBell from './NotificationBell';
+import LangSwitch from './LangSwitch';
 import { MENU_TREE, breadcrumbOf, filterMenu, type MenuNode } from './menu';
 
 const { Header, Sider, Content } = Layout;
 
-function toAntdItems(nodes: MenuNode[]): NonNullable<MenuProps['items']> {
+function toAntdItems(nodes: MenuNode[], lang: Lang): NonNullable<MenuProps['items']> {
   return nodes.map((n) => ({
     key: n.key,
-    label: n.label,
+    label: translate(lang, 'menu.' + n.key),
     icon: n.icon,
-    children: n.children ? toAntdItems(n.children) : undefined,
+    children: n.children ? toAntdItems(n.children, lang) : undefined,
   }));
 }
 
@@ -25,6 +28,8 @@ export default function MainLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { token, user, setUser, logout } = useAuthStore();
+  const t = useT();
+  const lang = useLangStore((s) => s.lang);
   const {
     token: { colorBgContainer },
   } = theme.useToken();
@@ -39,7 +44,7 @@ export default function MainLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const menuItems = useMemo(() => toAntdItems(filterMenu(MENU_TREE, user)), [user]);
+  const menuItems = useMemo(() => toAntdItems(filterMenu(MENU_TREE, user), lang), [user, lang]);
 
   const openKey = useMemo(() => {
     const seg = location.pathname.split('/')[1];
@@ -61,7 +66,7 @@ export default function MainLayout() {
       {
         key: 'logout',
         icon: <LogoutOutlined />,
-        label: '退出登录',
+        label: t('header.logout'),
         onClick: () => {
           logout();
           navigate('/login', { replace: true });
@@ -86,7 +91,7 @@ export default function MainLayout() {
             overflow: 'hidden',
           }}
         >
-          {collapsed ? 'ITOM' : 'IT运营管理平台'}
+          {collapsed ? t('app.titleShort') : t('app.title')}
         </div>
         <Menu
           theme="dark"
@@ -108,13 +113,14 @@ export default function MainLayout() {
             justifyContent: 'space-between',
           }}
         >
-          <Breadcrumb items={crumbs.map((title) => ({ title }))} />
+          <Breadcrumb items={crumbs.map((key) => ({ title: t('menu.' + key) }))} />
           <Space size="middle">
+            <LangSwitch />
             <NotificationBell />
             <Dropdown menu={userMenu}>
               <Space style={{ cursor: 'pointer' }}>
                 <UserOutlined />
-                <Typography.Text>{user?.name || user?.username || '用户'}</Typography.Text>
+                <Typography.Text>{user?.name || user?.username || t('header.user')}</Typography.Text>
                 <DownOutlined style={{ fontSize: 10 }} />
               </Space>
             </Dropdown>

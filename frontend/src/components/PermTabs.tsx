@@ -6,7 +6,8 @@ import { hasAnyRole, hasPermission, useAuthStore } from '../stores/auth';
 export interface PermTabItem {
   /** ?tab= 查询参数取值 */
   key: string;
-  label: string;
+  /** Tab 标题（可含 Badge 等节点，如开通审批的待处理数量） */
+  label: ReactNode;
   /** 绑定的权限模块码：任一模块有 view 权限即显示该 Tab */
   modules: string[];
   children: ReactNode;

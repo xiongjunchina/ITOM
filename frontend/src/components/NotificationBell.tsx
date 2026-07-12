@@ -5,11 +5,13 @@ import { BellOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../api/client';
 import type { NotificationItem } from '../api/types';
+import { useT } from '../i18n';
 
 export default function NotificationBell() {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+  const t = useT();
 
   const load = useCallback(async () => {
     try {
@@ -44,7 +46,7 @@ export default function NotificationBell() {
   const content = (
     <div style={{ width: 320, maxHeight: 400, overflowY: 'auto' }}>
       {items.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无通知" />
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('header.noNotifications')} />
       ) : (
         <List
           size="small"
@@ -82,7 +84,7 @@ export default function NotificationBell() {
 
   return (
     <Popover
-      title="通知"
+      title={t('header.notifications')}
       trigger="click"
       placement="bottomRight"
       content={content}

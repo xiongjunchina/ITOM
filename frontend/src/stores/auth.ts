@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AuthUser, Role } from '../api/types';
+import { useLangStore } from '../i18n/store';
 
 interface AuthState {
   token: string | null;
@@ -10,13 +11,25 @@ interface AuthState {
   logout: () => void;
 }
 
+/** 登录/刷新时应用用户的显示语言（后端 payload.language 或 preferences.language）。 */
+function applyUserLanguage(user: AuthUser) {
+  const lang = user.language ?? user.preferences?.language;
+  if (lang === 'zh' || lang === 'en') useLangStore.getState().setLang(lang);
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
       token: null,
       user: null,
-      setAuth: (token, user) => set({ token, user }),
-      setUser: (user) => set({ user }),
+      setAuth: (token, user) => {
+        applyUserLanguage(user);
+        set({ token, user });
+      },
+      setUser: (user) => {
+        applyUserLanguage(user);
+        set({ user });
+      },
       logout: () => set({ token: null, user: null }),
     }),
     { name: 'new-aom-auth' },
