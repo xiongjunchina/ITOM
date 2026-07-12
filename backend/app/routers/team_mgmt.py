@@ -27,7 +27,7 @@ from app.models import (
 )
 from app.schemas.common import ok
 from app.services.audit import audit
-from app.services.points import award_by_rule, current_period
+from app.services.points import award_by_rule, current_period, period_clause
 
 router = APIRouter(tags=["team"])
 
@@ -193,7 +193,7 @@ def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_ov
     period = current_period()
     board = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(PointEntry.period == period, PointEntry.is_deleted.is_(False))
+        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False))
         .group_by(PointEntry.person_id)
         .order_by(func.sum(PointEntry.points).desc())
         .limit(10)

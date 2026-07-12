@@ -150,13 +150,13 @@ def _project_section(db: Session) -> tuple[dict, list]:
 
 def _team_section(db: Session) -> dict:
     from app.models import DevelopmentActivity, HiringNeed, PointEntry, OrgMember
-    from app.services.points import current_period
+    from app.services.points import current_period, period_clause
     from sqlalchemy import func as _f
 
     period = current_period()
     board = (
         db.query(PointEntry.person_id, _f.sum(PointEntry.points))
-        .filter(PointEntry.period == period, PointEntry.is_deleted.is_(False))
+        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False))
         .group_by(PointEntry.person_id)
         .order_by(_f.sum(PointEntry.points).desc())
         .limit(5)

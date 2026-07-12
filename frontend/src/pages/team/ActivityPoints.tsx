@@ -40,7 +40,7 @@ import { api } from '../../api/client';
 import PermTabs from '../../components/PermTabs';
 import { ExampleAlert, ExampleTag } from '../../components/ExampleTag';
 import { hasPermission, useAuthStore } from '../../stores/auth';
-import { currentPeriod } from '../../utils/period';
+import { currentPeriod, periodLabel } from '../../utils/period';
 import type {
   CampaignDetail,
   CampaignRow,
@@ -105,7 +105,7 @@ function MyPointsCard() {
     <Card loading={loading} style={{ marginBottom: 16 }}>
       <Space size={48} wrap align="center">
         <Statistic
-          title={`本期积分（${data?.period ?? currentPeriod()}）`}
+          title={`本期积分（${periodLabel(data?.period ?? currentPeriod())}）`}
           value={data?.period_total ?? 0}
           precision={1}
           prefix={<TrophyOutlined />}
@@ -598,8 +598,15 @@ function CampaignsTab() {
           </Form.Item>
           <Row gutter={16}>
             <Col span={8}>
-              <Form.Item name="period_label" label="考核期" rules={[{ required: true, message: '请输入考核期' }]}>
-                <Input maxLength={32} placeholder={`如 ${currentPeriod()}`} />
+              <Form.Item name="period_label" label="考核期" rules={[{ required: true, message: '请选择考核期' }]}>
+                <Select
+                  options={[0, 1]
+                    .flatMap((offset) => {
+                      const y = new Date().getFullYear() + offset;
+                      return [`${y}-Q1`, `${y}-Q2`, `${y}-Q3`, `${y}-All`];
+                    })
+                    .map((p) => ({ value: p, label: periodLabel(p) }))}
+                />
               </Form.Item>
             </Col>
             <Col span={8}>

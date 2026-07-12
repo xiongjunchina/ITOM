@@ -22,7 +22,7 @@ from app.schemas.common import ok, paginate
 from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
-from app.services.points import award, award_by_rule, current_period
+from app.services.points import award, award_by_rule, current_period, period_clause
 
 router = APIRouter(tags=["team"])
 
@@ -365,7 +365,11 @@ def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(require_pe
         .all()
     )
     period = current_period()
-    period_total = sum(e.points for e in entries if e.period == period)
+    if period.endswith("-All"):
+        year_prefix = period.split("-")[0] + "-"
+        period_total = sum(e.points for e in entries if (e.period or "").startswith(year_prefix))
+    else:
+        period_total = sum(e.points for e in entries if e.period == period)
     return ok({
         "period": period,
         "period_total": round(period_total, 1),
@@ -383,7 +387,7 @@ def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depend
     period = period or current_period()
     rows = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(PointEntry.period == period, PointEntry.is_deleted.is_(False))
+        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False))
         .group_by(PointEntry.person_id)
         .order_by(func.sum(PointEntry.points).desc())
         .limit(20)

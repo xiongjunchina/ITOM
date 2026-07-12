@@ -21,7 +21,7 @@ def ctx(client, admin_headers):
             "bm_pid": bm_pid, "bm_h": bm_h, "member_and_user": member_and_user}
 
 
-def perf_row(client, headers, name, period="2026-H2"):
+def perf_row(client, headers, name, period="2026-Q3"):
     data = client.get(f"/api/team/performance?period={period}", headers=headers).json()["data"]
     return next(r for r in data["rows"] if r["person_name"] == name)
 
@@ -34,7 +34,7 @@ def test_override_and_clear(client, ctx):
     assert row["dims"]["knowledge_contrib"]["score"] == 0  # 公共维度参考值 0
 
     r = client.put("/api/perf/overrides", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "dimension_code": "knowledge_contrib", "score": 88,
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "dimension_code": "knowledge_contrib", "score": 88,
     }, headers=ctx["tm_h"])
     assert r.json()["success"], r.text
     row = perf_row(client, ctx["bm_h"], "核定开发")  # it_bm 也能看
@@ -43,7 +43,7 @@ def test_override_and_clear(client, ctx):
 
     # 无数据维度核定后也计入权重
     r = client.put("/api/perf/overrides", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "dimension_code": "ticket_service", "score": 70,
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "dimension_code": "ticket_service", "score": 70,
     }, headers=ctx["bm_h"])
     assert r.json()["success"]
     row = perf_row(client, ctx["tm_h"], "核定开发")
@@ -51,13 +51,13 @@ def test_override_and_clear(client, ctx):
 
     # 清除核定 → 回参考值
     client.put("/api/perf/overrides", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "dimension_code": "ticket_service", "score": None,
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "dimension_code": "ticket_service", "score": None,
     }, headers=ctx["tm_h"])
     row = perf_row(client, ctx["tm_h"], "核定开发")
     assert row["dims"]["ticket_service"]["override"] is None
     # 普通成员无权核定
     r = client.put("/api/perf/overrides", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "dimension_code": "knowledge_contrib", "score": 100,
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "dimension_code": "knowledge_contrib", "score": 100,
     }, headers=ctx["dev_h"])
     assert r.status_code == 403
 
@@ -65,12 +65,12 @@ def test_override_and_clear(client, ctx):
 def test_adjustments_bonus_penalty(client, ctx):
     """加分/扣分事项：必填说明；计入总分 = 基础分 + 加分 − 扣分。"""
     r = client.post("/api/perf/adjustments", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "kind": "bonus", "points": 6,
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "kind": "bonus", "points": 6,
         "reason": "重保期间通宵处理故障，特殊贡献",
     }, headers=ctx["tm_h"])
     assert r.json()["success"], r.text
     r = client.post("/api/perf/adjustments", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "kind": "penalty", "points": 2,
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "kind": "penalty", "points": 2,
         "reason": "违规直连生产库",
     }, headers=ctx["tm_h"])
     adj_id = r.json()["data"]["id"]
@@ -82,7 +82,7 @@ def test_adjustments_bonus_penalty(client, ctx):
 
     # 说明必填（min_length=2）
     r = client.post("/api/perf/adjustments", json={
-        "period": "2026-H2", "person_id": ctx["dev_pid"], "kind": "bonus", "points": 1, "reason": "x",
+        "period": "2026-Q3", "person_id": ctx["dev_pid"], "kind": "bonus", "points": 1, "reason": "x",
     }, headers=ctx["tm_h"])
     assert r.status_code == 422
 
@@ -186,3 +186,33 @@ def test_requester_scope(client, admin_headers, ctx):
     perms = me["permissions"]
     assert set(perms) == {"dashboard", "tickets", "knowledge", "requirements"}
     assert perms["tickets"] == ["create", "view"] and perms["requirements"] == ["create", "view"]
+
+
+# ---------- 季度考核制（M6.4）：Q1-Q3 单季 + 全年 All 聚合 ----------
+
+def test_quarterly_periods_and_yearly_all(client, admin_headers, ctx):
+    """全年考核 YYYY-All：积分聚合全年各周期打标；人效统计范围=全年。"""
+    from app.db import SessionLocal
+    from app.services.points import award
+
+    db = SessionLocal()
+    award(db, ctx["dev_pid"], 10, "manual", period="2026-Q1", note="Q1 积分")
+    award(db, ctx["dev_pid"], 7, "manual", period="2026-Q3", note="Q3 积分")
+    award(db, ctx["dev_pid"], 3, "manual", period="2026-All", note="Q4 期间积分（打标全年期）")
+    db.commit()
+    db.close()
+
+    # 单季只统计本季
+    q1 = client.get("/api/points/leaderboard?period=2026-Q1", headers=ctx["tm_h"]).json()["data"]["board"]
+    assert next(b["points"] for b in q1 if b["person_name"] == "核定开发") == 10
+    # 全年考核聚合 Q1+Q3+All 全部打标
+    yr = client.get("/api/points/leaderboard?period=2026-All", headers=ctx["tm_h"]).json()["data"]["board"]
+    assert next(b["points"] for b in yr if b["person_name"] == "核定开发") == 20
+
+    # 人效：全年期合法，活动积分维度按全年聚合（相对分，有积分即 >0）
+    perf = client.get("/api/team/performance?period=2026-All", headers=ctx["tm_h"]).json()["data"]
+    dev_row = next(r for r in perf["rows"] if r["person_name"] == "核定开发")
+    assert dev_row["dims"]["activity_points"]["score"] is not None
+    # 非法格式被拒（H 制已废弃）
+    assert client.get("/api/team/performance?period=2026-H2", headers=ctx["tm_h"]).json()["error"]["code"] == "INVALID_PERIOD"
+    assert client.get("/api/team/performance?period=2026-Q4", headers=ctx["tm_h"]).json()["error"]["code"] == "INVALID_PERIOD"

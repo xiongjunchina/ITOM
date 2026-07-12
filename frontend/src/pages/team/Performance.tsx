@@ -36,7 +36,7 @@ import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import PermTabs from '../../components/PermTabs';
 import { hasPermission, useAuthStore } from '../../stores/auth';
-import { currentPeriod, recentPeriods } from '../../utils/period';
+import { currentPeriod, periodLabel, recentPeriods } from '../../utils/period';
 import type {
   PerfDimension,
   PerfScheme,
@@ -328,7 +328,7 @@ function PerfOverview() {
             setPeriod(p);
             setEditor(null);
           }}
-          options={recentPeriods(2).map((p) => ({ value: p, label: p }))}
+          options={recentPeriods(2).map((p) => ({ value: p, label: periodLabel(p) }))}
         />
       }
     >

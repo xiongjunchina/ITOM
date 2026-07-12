@@ -55,12 +55,16 @@ PUBLIC_DIMENSIONS = {d[0] for d in DIMENSIONS if d[2]}
 
 
 def period_range(period: str) -> tuple[datetime, datetime]:
-    """"2026-H1" → [1.1 00:00, 6.30 23:59:59]；H2 → [7.1, 12.31]。"""
-    year, half = period.split("-H")
+    """考核期 → 统计时间范围：Q1-Q3 单季；YYYY-All 全年考核=本年度全范围。"""
+    year, _, tag = period.partition("-")
     y = int(year)
-    if half == "1":
-        return datetime(y, 1, 1), datetime.combine(date(y, 6, 30), time.max)
-    return datetime(y, 7, 1), datetime.combine(date(y, 12, 31), time.max)
+    if tag == "Q1":
+        return datetime(y, 1, 1), datetime.combine(date(y, 3, 31), time.max)
+    if tag == "Q2":
+        return datetime(y, 4, 1), datetime.combine(date(y, 6, 30), time.max)
+    if tag == "Q3":
+        return datetime(y, 7, 1), datetime.combine(date(y, 9, 30), time.max)
+    return datetime(y, 1, 1), datetime.combine(date(y, 12, 31), time.max)  # YYYY-All 全年
 
 
 def _rate(hits: int, total: int) -> float | None:
@@ -238,9 +242,12 @@ def _score_knowledge_contrib(db: Session, member_ids: list[str], start, end) -> 
 def _score_activity_points(db: Session, member_ids: list[str], period: str, **_) -> dict[str, float]:
     from sqlalchemy import func
 
+    from app.services.points import period_clause
+
     rows = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(PointEntry.period == period, PointEntry.is_deleted.is_(False), PointEntry.person_id.in_(member_ids))
+        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False),
+                PointEntry.person_id.in_(member_ids))
         .group_by(PointEntry.person_id)
         .all()
     )

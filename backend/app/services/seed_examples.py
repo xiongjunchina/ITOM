@@ -308,10 +308,13 @@ def run_seed_team_examples(db: Session):
 
     if db.query(ActivityCampaign).filter(ActivityCampaign.is_example.is_(True)).first():
         return
+    from app.services.perf import period_range
+    from app.services.points import current_period
+
     today = date.today()
-    half_start = date(today.year, 1 if today.month <= 6 else 7, 1)
-    half_end = date(today.year, 6, 30) if today.month <= 6 else date(today.year, 12, 31)
-    period = f"{today.year}-H{1 if today.month <= 6 else 2}"
+    period = current_period()
+    p_start, p_end = period_range(period)
+    half_start, half_end = p_start.date(), p_end.date()
 
     campaign = ActivityCampaign(
         is_example=True,

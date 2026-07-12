@@ -65,7 +65,7 @@ def test_idea_requires_only_two_fields(client, ctx):
 def campaign(client, ctx):
     body = {
         "name": "季度文档冲刺", "description": "补齐运维文档",
-        "period_label": "2026-H2", "start_date": "2026-07-01", "end_date": "2026-09-30",
+        "period_label": "2026-Q3", "start_date": "2026-07-01", "end_date": "2026-09-30",
         "performance_ratio": 0.2,
         "tasks": [
             {"name": "完成一篇 SOP", "points": 10, "max_times": 2},
@@ -110,7 +110,7 @@ def test_award_max_times_and_ledger(client, ctx, campaign):
     assert detail["leaderboard"][0]["points"] == 35
     assert detail["can_manage"] is False  # it_dev 无 ideas.edit
 
-    board = client.get("/api/points/leaderboard?period=2026-H2", headers=ctx["dev_h"]).json()["data"]["board"]
+    board = client.get("/api/points/leaderboard?period=2026-Q3", headers=ctx["dev_h"]).json()["data"]["board"]
     assert any(b["person_name"] == "积分开发" for b in board)
 
 
@@ -131,7 +131,7 @@ def test_award_requires_active_and_perm(client, ctx, campaign):
 def test_campaign_edit_locked_after_awards(client, ctx, campaign):
     """已有发放记录后：任务只增不删（保护台账引用）。"""
     body = {
-        "name": "季度文档冲刺", "period_label": "2026-H2",
+        "name": "季度文档冲刺", "period_label": "2026-Q3",
         "start_date": "2026-07-01", "end_date": "2026-09-30", "performance_ratio": 0.2,
         "tasks": [{"name": "全新任务", "points": 8, "max_times": 1}],
     }
@@ -231,7 +231,7 @@ def test_team_overview_and_performance(client, admin_headers, ctx):
     # 人效可见性（M6.2）：admin/cio/it_bm/it_tm（IT 管理岗）可见，普通成员 403
     assert client.get("/api/team/performance", headers=ctx["dev_h"]).status_code == 403
     assert client.get("/api/team/performance", headers=ctx["tm_h"]).status_code == 200
-    perf = client.get("/api/team/performance?period=2026-H2", headers=ctx["cio_h"]).json()["data"]
+    perf = client.get("/api/team/performance?period=2026-Q3", headers=ctx["cio_h"]).json()["data"]
     assert perf["rows"] and perf["dimensions"]
     dev_row = next(r for r in perf["rows"] if r["person_name"] == "积分开发")
     assert dev_row["scheme_name"] == "默认方案（兜底）"  # 未绑岗位走兜底方案

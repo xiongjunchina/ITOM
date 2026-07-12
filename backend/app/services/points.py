@@ -2,7 +2,8 @@
 
 - award(): 唯一写入口（专项活动发放/自动事件/手工调整都走这里）
 - 自动事件：订阅领域事件总线，按 point_rule 配置分值计分（规则停用即不计）
-- period: 未显式指定时按自然半年归期（2026-H1/H2），与专项活动的考核期同一维度
+- period: 季度考核制（2026-07-12 定稿）——Q1/Q2/Q3 单季考核；Q4 不单独考核，
+  10-12 月进入全年考核期 YYYY-All，全年统计覆盖本年度全部积分（Q1/Q2/Q3/All 打标）
 """
 import logging
 from datetime import date
@@ -15,8 +16,17 @@ logger = logging.getLogger("aom.points")
 
 
 def current_period(d: date | None = None) -> str:
+    """考核期序列：YYYY-Q1 / YYYY-Q2 / YYYY-Q3 / YYYY-All（Q4 并入全年考核）。"""
     d = d or date.today()
-    return f"{d.year}-H{1 if d.month <= 6 else 2}"
+    quarter = (d.month - 1) // 3 + 1
+    return f"{d.year}-All" if quarter == 4 else f"{d.year}-Q{quarter}"
+
+
+def period_clause(col, period: str):
+    """积分台账的考核期过滤：全年考核（YYYY-All）聚合本年度全部周期打标。"""
+    if period.endswith("-All"):
+        return col.like(f"{period.split('-')[0]}-%")
+    return col == period
 
 
 def award(

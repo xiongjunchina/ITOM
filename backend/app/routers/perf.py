@@ -210,7 +210,9 @@ def delete_adjustment(adj_id: str, db: Session = Depends(get_db), user: AuthUser
 
 @router.get("/api/team/performance")
 def team_performance(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("performance", "view"))):
+    import re
+
     period = period or current_period()
-    if "-H" not in period:
-        raise AppError("INVALID_PERIOD", "考核期格式应为 YYYY-H1 / YYYY-H2")
+    if not re.fullmatch(r"\d{4}-(Q[123]|All)", period):
+        raise AppError("INVALID_PERIOD", "考核期格式应为 YYYY-Q1/Q2/Q3 或 YYYY-All（全年考核）")
     return ok(compute_performance(db, period))

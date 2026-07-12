@@ -1,3 +1,4 @@
+import { periodLabel } from '../../utils/period';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button, Card, Col, Row, Statistic, Table, Tag, Typography } from 'antd';
@@ -139,7 +140,7 @@ export default function Overview() {
             title={
               <WidgetTitle
                 widget={widgetOf('points_board')}
-                suffix={`${data?.period ? `（${data.period}）` : ''} Top10`}
+                suffix={`${data?.period ? `（${periodLabel(data.period)}）` : ''} Top10`}
               />
             }
             style={{ height: '100%' }}
