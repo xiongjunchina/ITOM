@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -44,4 +45,19 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
 
 @router.get("/me")
 def me(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    return ok(_user_payload(db, user))
+    return ok({**_user_payload(db, user), "preferences": user.preferences or {}})
+
+
+class PreferencesIn(BaseModel):
+    dashboard_widgets: list[str] | None = None
+
+
+@router.patch("/me/preferences")
+def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """个人偏好（总览 widget 配置等）：只更新提交的键。"""
+    prefs = dict(user.preferences or {})
+    for k, v in body.model_dump(exclude_unset=True).items():
+        prefs[k] = v
+    user.preferences = prefs
+    db.commit()
+    return ok({"preferences": prefs})

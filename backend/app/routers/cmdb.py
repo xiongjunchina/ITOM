@@ -69,7 +69,7 @@ def _row(c: Ci, db: Session) -> dict:
 @router.get("/api/cis")
 def list_cis(
     page: int = 1, page_size: int = 20, q: str = "", category: str = "", status: str = "", environment: str = "",
-    db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("cmdb", "view")),
 ):
     query = db.query(Ci).filter(Ci.is_deleted.is_(False))
     if q:
@@ -109,7 +109,7 @@ def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=D
 
 
 @router.get("/api/cis/{ci_id}/impact")
-def impact_analysis(ci_id: str, db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user)):
+def impact_analysis(ci_id: str, db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("cmdb", "view"))):
     """影响分析：上游（我依赖的）/下游（依赖我的）+ 关联工单历史。"""
     ci = db.get(Ci, ci_id)
     if not ci or ci.is_deleted:

@@ -43,6 +43,38 @@ def _service_section(db: Session) -> tuple[dict, list]:
         round(sum(1 for p in problems if p.status == "closed") / len(problems) * 100, 1) if problems else None
     )
 
+    def _month_resolved(ttype):
+        return sum(1 for t in tickets if t.ticket_type == ttype and t.resolved_at and t.resolved_at >= month_start)
+
+    def _sla_rate(ttype):
+        done = [t for t in tickets if t.ticket_type == ttype and t.resolved_at and t.resolved_at >= month_start
+                and t.sla_resolution_met is not None]
+        return round(sum(1 for t in done if t.sla_resolution_met) / len(done) * 100, 1) if done else None
+
+    itsm_blocks = {
+        "service_request": {
+            "open": by_type["service_request_open"],
+            "month_resolved": _month_resolved("service_request"),
+            "sla_rate": _sla_rate("service_request"),
+        },
+        "change": {
+            "pending_approval": by_type["change_pending_approval"],
+            "implementing": by_type["change_implementing"],
+            "success_rate": change_rate,
+        },
+        "incident": {
+            "open": by_type["incident_open"],
+            "sla_warned": sum(1 for t in open_tickets if t.ticket_type == "incident" and t.sla_warned),
+            "month_resolved": _month_resolved("incident"),
+            "sla_rate": _sla_rate("incident"),
+        },
+        "problem": {
+            "open": sum(1 for p in problems if p.status not in ("closed",)),
+            "known_errors": sum(1 for p in problems if p.status == "known_error"),
+            "close_rate": problem_close_rate,
+        },
+    }
+
     alerts = [
         {
             "type": "sla_warning",
@@ -75,6 +107,7 @@ def _service_section(db: Session) -> tuple[dict, list]:
             "open_tickets": len(open_tickets),
             "open_by_priority": open_by_priority,
             "by_type": by_type,
+            "itsm_blocks": itsm_blocks,
             "sla_rate": sla_rate,
             "change_success_rate": change_rate,
             "problem_close_rate": problem_close_rate,

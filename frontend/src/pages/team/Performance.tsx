@@ -4,11 +4,15 @@ import {
   Button,
   Card,
   Collapse,
+  Divider,
   Drawer,
   Form,
   Input,
   InputNumber,
+  List,
   Popconfirm,
+  Popover,
+  Radio,
   Result,
   Select,
   Space,
@@ -22,13 +26,16 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   DeleteOutlined,
+  EditFilled,
   EditOutlined,
   MinusCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
 } from '@ant-design/icons';
+import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import PermTabs from '../../components/PermTabs';
+import { hasPermission, useAuthStore } from '../../stores/auth';
 import { currentPeriod, recentPeriods } from '../../utils/period';
 import type {
   PerfDimension,
@@ -45,11 +52,36 @@ const EMPTY_CELL = <span style={{ color: GRAY }}>—</span>;
 
 // ============ Tab A 总览 ============
 
+interface AdjFormValues {
+  kind: 'bonus' | 'penalty';
+  points: number;
+  reason: string;
+}
+
 function PerfOverview() {
   const [period, setPeriod] = useState(currentPeriod());
   const [data, setData] = useState<PerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
+
+  const user = useAuthStore((s) => s.user);
+  // 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示）
+  const canEdit = user?.permissions ? hasPermission(user, 'performance', 'edit') : true;
+
+  // 维度核定编辑器（Popover 锚定在被点击的单元格上）
+  const [editor, setEditor] = useState<{
+    personId: string;
+    code: string;
+    /** 当前已核定分（null=未核定，清除按钮置灰） */
+    override: number | null;
+  } | null>(null);
+  const [editorValue, setEditorValue] = useState<number | null>(null);
+  const [editorSaving, setEditorSaving] = useState(false);
+
+  // 加减分 Drawer：仅存 person_id，行数据从最新 data 派生（增删后随表格一起刷新）
+  const [adjPersonId, setAdjPersonId] = useState<string | null>(null);
+  const [adjSaving, setAdjSaving] = useState(false);
+  const [adjForm] = Form.useForm<AdjFormValues>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -67,6 +99,52 @@ function PerfOverview() {
     void load();
   }, [load]);
 
+  const saveOverride = async (score: number | null) => {
+    if (!editor) return;
+    setEditorSaving(true);
+    try {
+      await api.put('/perf/overrides', {
+        period,
+        person_id: editor.personId,
+        dimension_code: editor.code,
+        score,
+      });
+      message.success(score == null ? '已清除核定，恢复系统参考值' : '核定分已保存');
+      setEditor(null);
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setEditorSaving(false);
+    }
+  };
+
+  const submitAdjustment = async () => {
+    const values = await adjForm.validateFields();
+    if (!adjPersonId) return;
+    setAdjSaving(true);
+    try {
+      await api.post('/perf/adjustments', { period, person_id: adjPersonId, ...values });
+      message.success('加减分事项已添加');
+      adjForm.resetFields();
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setAdjSaving(false);
+    }
+  };
+
+  const removeAdjustment = async (id: string) => {
+    try {
+      await api.delete(`/perf/adjustments/${id}`);
+      message.success('加减分事项已删除');
+      void load();
+    } catch {
+      // 已统一提示
+    }
+  };
+
   if (forbidden) {
     return (
       <Card>
@@ -76,6 +154,45 @@ function PerfOverview() {
   }
 
   const dimensions = data?.dimensions ?? [];
+  const adjRow = data?.rows.find((r) => r.person_id === adjPersonId) ?? null;
+
+  // 核定编辑弹层内容（同一时刻只有一个单元格打开）
+  const editorContent = (
+    <Space direction="vertical" size={8} style={{ width: 240 }}>
+      <InputNumber
+        min={0}
+        max={100}
+        value={editorValue}
+        onChange={(v) => setEditorValue(v)}
+        style={{ width: '100%' }}
+        placeholder="核定分（0-100）"
+      />
+      <Space>
+        <Button
+          type="primary"
+          size="small"
+          loading={editorSaving}
+          onClick={() => {
+            if (editorValue == null) {
+              message.warning('请输入 0-100 的核定分');
+              return;
+            }
+            void saveOverride(editorValue);
+          }}
+        >
+          保存核定
+        </Button>
+        <Button
+          size="small"
+          disabled={editor?.override == null}
+          loading={editorSaving && editor?.override != null}
+          onClick={() => void saveOverride(null)}
+        >
+          清除核定（恢复系统值）
+        </Button>
+      </Space>
+    </Space>
+  );
 
   const columns: ColumnsType<PerformanceRow> = [
     { title: '姓名', dataIndex: 'person_name', width: 100, fixed: 'left' },
@@ -87,13 +204,45 @@ function PerfOverview() {
       render: (v: string | null) => (v ? v : <Tag>未配置方案</Tag>),
     },
     {
+      title: '加分项',
+      dataIndex: 'bonus',
+      width: 80,
+      render: (v: number) =>
+        v > 0 ? <span style={{ color: '#52c41a', fontWeight: 600 }}>+{v}</span> : <span style={{ color: GRAY }}>-</span>,
+    },
+    {
+      title: '扣分项',
+      dataIndex: 'penalty',
+      width: 80,
+      render: (v: number) =>
+        v > 0 ? <span style={{ color: '#ff4d4f', fontWeight: 600 }}>−{v}</span> : <span style={{ color: GRAY }}>-</span>,
+    },
+    {
+      title: '加减分说明',
+      key: 'adj_reasons',
+      width: 180,
+      ellipsis: { showTitle: false },
+      render: (_, r) => {
+        const text = (r.adjustments ?? []).map((a) => a.reason).join('；');
+        if (!text) return EMPTY_CELL;
+        return (
+          <Tooltip placement="topLeft" title={text}>
+            {text}
+          </Tooltip>
+        );
+      },
+    },
+    {
       title: '总分',
       dataIndex: 'total',
       width: 90,
       sorter: (a, b) => (a.total ?? -1) - (b.total ?? -1),
       defaultSortOrder: 'descend',
-      render: (v: number | null) =>
-        v == null ? EMPTY_CELL : <Typography.Text strong>{v}</Typography.Text>,
+      render: (v: number | null, r) => (
+        <Tooltip title={`基础分 ${r.base_score ?? '—'} + 加分 ${r.bonus ?? 0} − 扣分 ${r.penalty ?? 0}`}>
+          {v == null ? EMPTY_CELL : <Typography.Text strong>{v}</Typography.Text>}
+        </Tooltip>
+      ),
     },
     ...dimensions.map<ColumnsType<PerformanceRow>[number]>((d) => ({
       title: (
@@ -106,13 +255,66 @@ function PerfOverview() {
       render: (_, r) => {
         const cell = r.dims[d.code];
         if (!cell) return EMPTY_CELL;
-        return (
-          <Tooltip title={`权重 ${cell.weight}`}>
-            {cell.score == null ? EMPTY_CELL : <span>{cell.score}</span>}
+        const overridden = cell.override != null;
+        const inner = (
+          <Tooltip
+            title={
+              overridden
+                ? `系统参考值：${cell.score ?? '无数据'}，已人工核定`
+                : `权重 ${cell.weight}${canEdit ? '，点击可人工核定' : ''}`
+            }
+          >
+            <span
+              style={{
+                cursor: canEdit ? 'pointer' : undefined,
+                color: overridden ? '#1677ff' : undefined,
+                fontWeight: overridden ? 600 : undefined,
+              }}
+            >
+              {cell.effective == null ? <span style={{ color: GRAY }}>—</span> : cell.effective}
+              {overridden && <EditFilled style={{ fontSize: 11, marginLeft: 4, color: '#1677ff' }} />}
+            </span>
           </Tooltip>
+        );
+        if (!canEdit) return inner;
+        return (
+          <Popover
+            trigger="click"
+            open={editor?.personId === r.person_id && editor?.code === d.code}
+            onOpenChange={(open) => {
+              if (open) {
+                setEditor({ personId: r.person_id, code: d.code, override: cell.override });
+                setEditorValue(cell.effective);
+              } else {
+                // 仅当当前打开的就是本单元格时才关闭，避免点击其他单元格时相互覆盖
+                setEditor((prev) =>
+                  prev?.personId === r.person_id && prev?.code === d.code ? null : prev,
+                );
+              }
+            }}
+            title={`核定维度分：${r.person_name} · ${d.name}`}
+            content={editorContent}
+          >
+            {inner}
+          </Popover>
         );
       },
     })),
+    ...(canEdit
+      ? [
+          {
+            title: '操作',
+            key: 'action',
+            width: 90,
+            fixed: 'right',
+            render: (_: unknown, r: PerformanceRow) => (
+              <Button type="link" size="small" onClick={() => setAdjPersonId(r.person_id)}>
+                加减分
+              </Button>
+            ),
+          } as ColumnsType<PerformanceRow>[number],
+        ]
+      : []),
   ];
 
   return (
@@ -122,7 +324,10 @@ function PerfOverview() {
         <Select
           value={period}
           style={{ width: 130 }}
-          onChange={setPeriod}
+          onChange={(p) => {
+            setPeriod(p);
+            setEditor(null);
+          }}
           options={recentPeriods(2).map((p) => ({ value: p, label: p }))}
         />
       }
@@ -153,9 +358,102 @@ function PerfOverview() {
         loading={loading}
         columns={columns}
         dataSource={data?.rows ?? []}
-        scroll={{ x: 470 + dimensions.length * 110 }}
+        scroll={{ x: 810 + dimensions.length * 110 + (canEdit ? 90 : 0) }}
         pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 人` }}
       />
+
+      <Drawer
+        title={`加减分事项：${adjRow?.person_name ?? ''}（${period}）`}
+        width={440}
+        open={adjPersonId != null}
+        onClose={() => setAdjPersonId(null)}
+        destroyOnClose
+      >
+        <List
+          size="small"
+          header={
+            <Typography.Text type="secondary">
+              本期事项（{adjRow?.adjustments.length ?? 0} 条）
+            </Typography.Text>
+          }
+          dataSource={adjRow?.adjustments ?? []}
+          locale={{ emptyText: '本期暂无加减分事项' }}
+          renderItem={(a) => (
+            <List.Item
+              actions={[
+                <Popconfirm
+                  key="del"
+                  title="确定删除该加减分事项？"
+                  onConfirm={() => void removeAdjustment(a.id)}
+                >
+                  <Button type="link" size="small" danger icon={<DeleteOutlined />} />
+                </Popconfirm>,
+              ]}
+            >
+              <List.Item.Meta
+                title={
+                  <Space size={8}>
+                    <Tag color={a.kind === 'bonus' ? 'green' : 'red'}>
+                      {a.kind === 'bonus' ? '加分' : '扣分'}
+                    </Tag>
+                    <span style={{ color: a.kind === 'bonus' ? '#52c41a' : '#ff4d4f', fontWeight: 600 }}>
+                      {a.kind === 'bonus' ? `+${a.points}` : `−${a.points}`}
+                    </span>
+                  </Space>
+                }
+                description={
+                  <>
+                    <div>{a.reason}</div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {a.created_at ? dayjs(a.created_at).format('YYYY-MM-DD HH:mm') : ''}
+                    </Typography.Text>
+                  </>
+                }
+              />
+            </List.Item>
+          )}
+        />
+        <Divider style={{ margin: '16px 0 12px' }}>添加事项</Divider>
+        <Form<AdjFormValues> form={adjForm} layout="vertical" preserve={false} initialValues={{ kind: 'bonus' }}>
+          <Form.Item name="kind" label="类型" rules={[{ required: true, message: '请选择类型' }]}>
+            <Radio.Group
+              optionType="button"
+              buttonStyle="solid"
+              options={[
+                { value: 'bonus', label: '加分' },
+                { value: 'penalty', label: '扣分' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="points" label="分值" rules={[{ required: true, message: '请输入分值' }]}>
+            <InputNumber min={0.1} max={1000} style={{ width: '100%' }} placeholder="须大于 0" />
+          </Form.Item>
+          <Form.Item
+            name="reason"
+            label="事项说明"
+            rules={[
+              { required: true, message: '请填写事项说明' },
+              { min: 2, message: '至少 2 个字符' },
+            ]}
+          >
+            <Input.TextArea
+              rows={3}
+              maxLength={200}
+              showCount
+              placeholder="如：重保期间通宵处置故障 / 违规操作生产库"
+            />
+          </Form.Item>
+          <Button
+            type="primary"
+            block
+            icon={<PlusOutlined />}
+            loading={adjSaving}
+            onClick={() => void submitAdjustment()}
+          >
+            添加
+          </Button>
+        </Form>
+      </Drawer>
     </Card>
   );
 }

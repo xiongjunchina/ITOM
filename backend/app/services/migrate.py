@@ -31,7 +31,12 @@ ENSURE_COLUMNS = {
         ("supervisor_id", "VARCHAR(26)"),
         ("work_location", "VARCHAR(64)"),
     ],
+    "hiring_need": [
+        ("level", "VARCHAR(8) NOT NULL DEFAULT '中级'"),
+        ("qualification", "TEXT"),
+    ],
     "auth_user": [
+        ("preferences", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("auth_source", "VARCHAR(16) NOT NULL DEFAULT 'local'"),
         ("external_id", "VARCHAR(128)"),
     ],

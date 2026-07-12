@@ -86,7 +86,7 @@ export default function MainLayout() {
             overflow: 'hidden',
           }}
         >
-          {collapsed ? 'AOM' : 'New_AOM 运营管理平台'}
+          {collapsed ? 'ITOM' : 'IT运营管理平台'}
         </div>
         <Menu
           theme="dark"

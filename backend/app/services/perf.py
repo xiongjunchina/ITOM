@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     AuthUser,
+    PerfAdjustment,
+    PerfOverride,
     BusinessDomain,
     BusinessDomainMember,
     KnowledgeArticle,
@@ -285,14 +287,37 @@ def compute_performance(db: Session, period: str) -> dict:
         scores["knowledge_contrib"] = _score_knowledge_contrib(db, member_ids, start, end)
         scores["activity_points"] = _score_activity_points(db, member_ids, period=period)
 
+    # 核定分（系统值只是初始参考，管理岗可覆盖）与加减分事项
+    overrides = {
+        (o.person_id, o.dimension_code): o.score
+        for o in db.query(PerfOverride).filter(PerfOverride.period == period, PerfOverride.is_deleted.is_(False))
+    }
+    adj_map: dict[str, list] = {}
+    for a in (
+        db.query(PerfAdjustment)
+        .filter(PerfAdjustment.period == period, PerfAdjustment.is_deleted.is_(False))
+        .order_by(PerfAdjustment.created_at)
+    ):
+        adj_map.setdefault(a.person_id, []).append(a)
+
     rows = []
     for m in members:
         scheme = match_scheme(m, schemes)
+        adjs = adj_map.get(m.id, [])
+        bonus = round(sum(a.points for a in adjs if a.kind == "bonus"), 1)
+        penalty = round(sum(a.points for a in adjs if a.kind == "penalty"), 1)
+        adj_rows = [
+            {"id": a.id, "kind": a.kind, "points": a.points, "reason": a.reason, "created_at": a.created_at}
+            for a in adjs
+        ]
+        base = {
+            "person_id": m.id, "person_name": m.name, "position_name": m.position.name if m.position else None,
+            "bonus": bonus, "penalty": penalty, "adjustments": adj_rows,
+        }
         if not scheme:
-            rows.append({
-                "person_id": m.id, "person_name": m.name, "position_name": m.position.name if m.position else None,
-                "scheme_id": None, "scheme_name": None, "total": None, "dims": {},
-            })
+            total = round(bonus - penalty, 1) if adjs else None
+            rows.append({**base, "scheme_id": None, "scheme_name": None,
+                         "base_score": None, "total": total, "dims": {}})
             continue
         dims = {}
         weighted_sum = 0.0
@@ -304,20 +329,24 @@ def compute_performance(db: Session, period: str) -> dict:
             score = scores.get(code, {}).get(m.id)
             if score is None and code in PUBLIC_DIMENSIONS:
                 score = 0.0
-            dims[code] = {"score": score, "weight": weight}
-            if score is not None:
-                weighted_sum += score * weight
+            override = overrides.get((m.id, code))
+            effective = override if override is not None else score
+            dims[code] = {"score": score, "override": override, "effective": effective, "weight": weight}
+            if effective is not None:
+                weighted_sum += effective * weight
                 weight_sum += weight
-        total = round(weighted_sum / weight_sum, 1) if weight_sum else None
-        rows.append({
-            "person_id": m.id, "person_name": m.name, "position_name": m.position.name if m.position else None,
-            "scheme_id": scheme.id, "scheme_name": scheme.name, "total": total, "dims": dims,
-        })
+        base_score = round(weighted_sum / weight_sum, 1) if weight_sum else None
+        total = None
+        if base_score is not None or adjs:
+            total = round((base_score or 0) + bonus - penalty, 1)
+        rows.append({**base, "scheme_id": scheme.id, "scheme_name": scheme.name,
+                     "base_score": base_score, "total": total, "dims": dims})
     rows.sort(key=lambda r: (r["total"] is None, -(r["total"] or 0)))
     return {
         "period": period,
         "rows": rows,
         "dimensions": [{"code": c, "name": n, "public": p, "description": desc} for c, n, p, desc in DIMENSIONS],
-        "note": "总分 = Σ(维度得分 × 权重) ÷ Σ(有效权重)。无数据维度不计入并自动归一；公共维度（知识/积分）无贡献计 0 分。"
-               "各维度口径为 v1 默认实现，可在「计分规则」页调整维度与权重。",
+        "note": "总分 = Σ(维度核定分 × 权重) ÷ Σ(有效权重) + 加分项 − 扣分项。系统按口径算出的是初始参考值，"
+               "管理岗可逐维度核定覆盖（单元格可编辑）；无数据且未核定的维度不计入并自动归一；"
+               "公共维度（知识/积分）无贡献计 0 分。维度口径为 v1 默认实现，可在「计分规则」页调整。",
     }

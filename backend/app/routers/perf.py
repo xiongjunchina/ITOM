@@ -130,6 +130,84 @@ def delete_scheme(scheme_id: str, db: Session = Depends(get_db), user: AuthUser 
     return ok({"deleted": True})
 
 
+class OverrideIn(BaseModel):
+    period: str
+    person_id: str
+    dimension_code: str
+    score: float | None = Field(default=None, ge=0, le=100, description="null=清除核定，回到系统参考值")
+
+
+class AdjustmentIn(BaseModel):
+    period: str
+    person_id: str
+    kind: str = Field(pattern="^(bonus|penalty)$")
+    points: float = Field(gt=0, le=1000)
+    reason: str = Field(min_length=2, max_length=200)
+
+
+@router.put("/api/perf/overrides")
+def put_override(body: OverrideIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("performance", "edit"))):
+    """核定维度分：score=null 清除核定恢复系统参考值。"""
+    from app.models import OrgMember, PerfOverride
+
+    if body.dimension_code not in DIMENSION_CODES:
+        raise AppError("INVALID_DIMENSION", "未知的评分维度")
+    if not db.get(OrgMember, body.person_id):
+        raise AppError("NOT_FOUND", "人员不存在", 404)
+    row = (
+        db.query(PerfOverride)
+        .filter(PerfOverride.period == body.period, PerfOverride.person_id == body.person_id,
+                PerfOverride.dimension_code == body.dimension_code, PerfOverride.is_deleted.is_(False))
+        .first()
+    )
+    if body.score is None:
+        if row:
+            row.is_deleted = True
+            audit(db, "perf_override", row.id, "clear", user, {"period": body.period, "dim": body.dimension_code})
+            db.commit()
+        return ok({"cleared": True})
+    if row:
+        row.score = body.score
+        row.created_by = user.id
+    else:
+        row = PerfOverride(period=body.period, person_id=body.person_id,
+                           dimension_code=body.dimension_code, score=body.score, created_by=user.id)
+        db.add(row)
+        db.flush()
+    audit(db, "perf_override", row.id, "set", user,
+          {"period": body.period, "dim": body.dimension_code, "score": body.score})
+    db.commit()
+    return ok({"id": row.id, "score": row.score})
+
+
+@router.post("/api/perf/adjustments")
+def create_adjustment(body: AdjustmentIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("performance", "edit"))):
+    from app.models import OrgMember, PerfAdjustment
+
+    if not db.get(OrgMember, body.person_id):
+        raise AppError("NOT_FOUND", "人员不存在", 404)
+    row = PerfAdjustment(**body.model_dump(), created_by=user.id)
+    db.add(row)
+    db.flush()
+    audit(db, "perf_adjustment", row.id, "create", user,
+          {"period": body.period, "kind": body.kind, "points": body.points, "reason": body.reason})
+    db.commit()
+    return ok({"id": row.id})
+
+
+@router.delete("/api/perf/adjustments/{adj_id}")
+def delete_adjustment(adj_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("performance", "edit"))):
+    from app.models import PerfAdjustment
+
+    row = db.get(PerfAdjustment, adj_id)
+    if not row or row.is_deleted:
+        raise AppError("NOT_FOUND", "加减分事项不存在", 404)
+    row.is_deleted = True
+    audit(db, "perf_adjustment", row.id, "delete", user, {"reason": row.reason})
+    db.commit()
+    return ok({"deleted": True})
+
+
 @router.get("/api/team/performance")
 def team_performance(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("performance", "view"))):
     period = period or current_period()

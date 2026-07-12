@@ -42,6 +42,12 @@ export const ALL_ROLES = Object.keys(ROLE_LABELS) as Role[];
 /** 认证源 */
 export type AuthSource = 'local' | 'ad' | 'feishu' | 'sms' | 'wechat';
 
+/** 个人偏好（GET /auth/me 返回；PATCH /auth/me/preferences 更新） */
+export interface UserPreferences {
+  /** 总览面板显示的 widget key 列表；缺省或空数组 = 全部显示 */
+  dashboard_widgets?: string[];
+}
+
 /** 登录用户 */
 export interface AuthUser {
   id: string;
@@ -58,6 +64,8 @@ export interface AuthUser {
   permissions?: Record<string, string[]>;
   auth_source?: AuthSource;
   person_id: string | null;
+  /** 个人偏好（登录响应不含；进入布局后由 GET /auth/me 刷新写入 store） */
+  preferences?: UserPreferences;
 }
 
 export interface LoginResult {
@@ -148,6 +156,14 @@ export interface NotificationItem {
   created_at: string;
 }
 
+/** 总览看板：ITSM 四板块（服务工单/变更/事件/问题）独立卡片数据 */
+export interface ItsmBlocks {
+  service_request: { open: number; month_resolved: number; sla_rate: number | null };
+  change: { pending_approval: number; implementing: number; success_rate: number | null };
+  incident: { open: number; sla_warned: number; month_resolved: number; sla_rate: number | null };
+  problem: { open: number; known_errors: number; close_rate: number | null };
+}
+
 /** 总览看板 */
 export interface DashboardData {
   service: {
@@ -160,19 +176,22 @@ export interface DashboardData {
       change_pending_approval: number;
       change_implementing: number;
     };
-    sla_rate: number;
-    change_success_rate: number;
-    problem_close_rate: number;
+    /** ITSM 四板块卡片数据 */
+    itsm_blocks?: ItsmBlocks;
+    sla_rate: number | null;
+    change_success_rate: number | null;
+    problem_close_rate: number | null;
+    open_problems?: number;
   };
   project: {
     active: number;
     health: { green: number; yellow: number; red: number };
     overdue_milestones: number;
-    budget_usage: number;
+    budget_usage: number | null;
   };
   requirement: {
     by_stage: { registered: number; analyzing: number; implementing: number; closed: number };
-    avg_lead_days: number;
+    avg_lead_days: number | null;
   };
   team: {
     top_workload: { name: string; value: number }[];
@@ -1298,12 +1317,25 @@ export const HIRING_STATUS_COLORS: Record<string, string> = {
 
 export const HIRING_STATUSES = ['待招聘', '面试中', '已到岗', '已取消'] as const;
 
+/** 招聘级别（与后端白名单一致） */
+export const HIRING_LEVELS = ['高级', '中级', '初级'] as const;
+
+export const HIRING_LEVEL_COLORS: Record<string, string> = {
+  高级: 'gold',
+  中级: 'blue',
+  初级: 'default',
+};
+
 /** 招聘需求 */
 export interface HiringNeedRow {
   id: string;
   position_id: string;
   position_name: string | null;
+  /** 级别：高级/中级/初级 */
+  level: string;
   headcount: number;
+  /** 任职资格（硬性条件与优先项） */
+  qualification: string | null;
   status: string;
   progress_note: string | null;
 }
@@ -1356,16 +1388,41 @@ export interface PerfScheme {
   active: boolean;
 }
 
-/** 人效评分行；score=null 该维度无数据不计入；total=null 未配置方案或全部维度无数据 */
+/** 加减分事项（POST /perf/adjustments / DELETE /perf/adjustments/{id}） */
+export interface PerfAdjustment {
+  id: string;
+  kind: 'bonus' | 'penalty';
+  points: number;
+  reason: string;
+  created_at: string;
+}
+
+/** 维度单元格：score=系统参考值（null=无数据）；override=人工核定分；effective=核定优先的生效值 */
+export interface PerfDimCell {
+  score: number | null;
+  override: number | null;
+  effective: number | null;
+  weight: number;
+}
+
+/** 人效评分行；total = base_score + bonus − penalty（基础分与加减分均无时为 null） */
 export interface PerformanceRow {
   person_id: string;
   person_name: string;
   position_name: string | null;
   scheme_id: string | null;
   scheme_name: string | null;
+  /** 维度加权基础分；未配置方案或全部维度无数据为 null */
+  base_score: number | null;
+  /** 加分合计 */
+  bonus: number;
+  /** 扣分合计 */
+  penalty: number;
+  /** 本期加减分事项明细 */
+  adjustments: PerfAdjustment[];
   total: number | null;
-  /** 维度得分 {code: {score, weight}}，仅含所适用方案配置的维度 */
-  dims: Record<string, { score: number | null; weight: number }>;
+  /** 维度得分，仅含所适用方案配置的维度 */
+  dims: Record<string, PerfDimCell>;
 }
 
 /** 人效评分（GET /team/performance） */

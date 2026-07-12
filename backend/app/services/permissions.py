@@ -92,10 +92,10 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     }),
     "it_bm": _merge(_staff_base(), {
         "requirements": "e", "projects": "ce", "admin_business_domains": "v",
-        "process_monitor": "v",
+        "performance": "vce", "process_monitor": "v",
     }),
     "it_tm": _merge(_staff_base(), {
-        "activities": "e", "charter": "e",
+        "activities": "e", "charter": "e", "performance": "vce",
         "ideas": "e", "process_monitor": "v", "admin_members": "vce",
     }),
 }

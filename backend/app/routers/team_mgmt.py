@@ -52,7 +52,9 @@ class CharterIn(BaseModel):
 
 class HiringIn(BaseModel):
     position_id: str
+    level: str = Field(default="中级", pattern="^(高级|中级|初级)$")
     headcount: int = Field(default=1, ge=1)
+    qualification: str | None = None
     status: str = Field(default="待招聘", pattern="^(待招聘|面试中|已到岗|已取消)$")
     progress_note: str | None = None
 
@@ -60,7 +62,7 @@ class HiringIn(BaseModel):
 # ---------- 培训发展 ----------
 
 @router.get("/api/trainings")
-def list_trainings(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_trainings(db: Session = Depends(get_db), _=Depends(require_perm("activities", "view"))):
     rows = (
         db.query(DevelopmentActivity)
         .filter(DevelopmentActivity.is_deleted.is_(False))
@@ -99,7 +101,7 @@ def create_training(body: TrainingIn, db: Session = Depends(get_db), user: AuthU
 # ---------- 团队文化（单例） ----------
 
 @router.get("/api/team-charter")
-def get_charter(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def get_charter(db: Session = Depends(get_db), _=Depends(require_perm("charter", "view"))):
     row = db.query(TeamCharter).filter(TeamCharter.is_deleted.is_(False)).first()
     if not row:
         return ok({"vision": None, "goals": None, "principles": None, "updated_at": None})
@@ -128,6 +130,7 @@ def list_hiring(db: Session = Depends(get_db), _=Depends(require_perm("positions
     positions = {p.id: p.name for p in db.query(Position).filter(Position.is_deleted.is_(False))}
     return ok([
         {"id": r.id, "position_id": r.position_id, "position_name": positions.get(r.position_id),
+         "level": r.level, "qualification": r.qualification,
          "headcount": r.headcount, "status": r.status, "progress_note": r.progress_note}
         for r in rows
     ], total=len(rows))
@@ -186,7 +189,7 @@ def _workload(db: Session) -> list[dict]:
 
 
 @router.get("/api/team/overview")
-def team_overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_overview", "view"))):
     period = current_period()
     board = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))

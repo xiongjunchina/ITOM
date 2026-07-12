@@ -26,7 +26,7 @@ router = APIRouter(tags=["itsm"])
 # ---- 服务目录 ----
 
 @router.get("/api/catalogs")
-def list_catalogs(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_catalogs(db: Session = Depends(get_db), _=Depends(require_perm("catalog", "view"))):
     rows = db.query(ServiceCatalog).filter(ServiceCatalog.is_deleted.is_(False)).order_by(ServiceCatalog.is_example.desc(), ServiceCatalog.sort).all()
     item_counts = dict(
         db.query(ServiceItem.catalog_id, func.count(ServiceItem.id))
@@ -125,7 +125,7 @@ def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get
 # ---- SLA 策略（admin）与看板 ----
 
 @router.get("/api/admin/sla-policies")
-def list_sla_policies(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_sla_policies(db: Session = Depends(get_db), _=Depends(require_perm("sla", "view"))):
     rows = db.query(SlaPolicy).filter(SlaPolicy.is_deleted.is_(False)).order_by(SlaPolicy.priority).all()
     return ok(
         [
@@ -152,7 +152,7 @@ def upsert_sla_policies(body: list[SlaPolicyIn], db: Session = Depends(get_db), 
 
 
 @router.get("/api/sla/dashboard")
-def sla_dashboard(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def sla_dashboard(db: Session = Depends(get_db), _=Depends(require_perm("sla", "view"))):
     """实时达成率看板：本月按优先级 + 超时/临期清单。"""
     now = datetime.now()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

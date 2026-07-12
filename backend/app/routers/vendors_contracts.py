@@ -88,7 +88,7 @@ def _contract_row(c: Contract, db: Session) -> dict:
 
 
 @router.get("/api/vendors")
-def list_vendors(page: int = 1, page_size: int = 20, q: str = "", db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user)):
+def list_vendors(page: int = 1, page_size: int = 20, q: str = "", db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("vendors", "view"))):
     query = db.query(Vendor).filter(Vendor.is_deleted.is_(False))
     if q:
         query = query.filter(Vendor.name.ilike(f"%{q}%"))
@@ -121,7 +121,7 @@ def update_vendor(vendor_id: str, body: VendorUpdate, db: Session = Depends(get_
 
 
 @router.get("/api/contracts")
-def list_contracts(page: int = 1, page_size: int = 20, q: str = "", vendor_id: str = "", db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user)):
+def list_contracts(page: int = 1, page_size: int = 20, q: str = "", vendor_id: str = "", db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("contracts", "view"))):
     query = db.query(Contract).filter(Contract.is_deleted.is_(False))
     if q:
         query = query.filter(Contract.name.ilike(f"%{q}%"))

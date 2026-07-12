@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from 'antd';
+import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, Tooltip, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import PermTabs from '../../components/PermTabs';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import type { HiringNeedRow, Position } from '../../api/types';
-import { HIRING_STATUSES, HIRING_STATUS_COLORS } from '../../api/types';
+import { HIRING_LEVELS, HIRING_LEVEL_COLORS, HIRING_STATUSES, HIRING_STATUS_COLORS } from '../../api/types';
 
 /** 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示） */
 function usePositionsPerm(action: 'create' | 'edit'): boolean {
@@ -173,7 +173,9 @@ function PositionsTab() {
 
 interface HiringFormValues {
   position_id: string;
+  level: string;
   headcount: number;
+  qualification?: string;
   status: string;
   progress_note?: string;
 }
@@ -219,7 +221,7 @@ function HiringTab() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ headcount: 1, status: '待招聘' });
+    form.setFieldsValue({ headcount: 1, status: '待招聘', level: '中级' });
     ensurePositions();
     setModalOpen(true);
   };
@@ -229,7 +231,9 @@ function HiringTab() {
     form.resetFields();
     form.setFieldsValue({
       position_id: r.position_id,
+      level: r.level || '中级',
       headcount: r.headcount,
+      qualification: r.qualification ?? undefined,
       status: r.status,
       progress_note: r.progress_note ?? undefined,
     });
@@ -239,10 +243,12 @@ function HiringTab() {
 
   const handleSave = async () => {
     const values = await form.validateFields();
-    // PATCH 需带全字段（position_id/headcount/status/progress_note）
+    // PATCH 需带全字段（position_id/level/headcount/qualification/status/progress_note）
     const payload = {
       position_id: values.position_id,
+      level: values.level,
       headcount: values.headcount,
+      qualification: values.qualification || null,
       status: values.status,
       progress_note: values.progress_note || null,
     };
@@ -265,13 +271,32 @@ function HiringTab() {
   };
 
   const columns: ColumnsType<HiringNeedRow> = [
-    { title: '岗位', dataIndex: 'position_name', width: 200, render: (v) => v || '-' },
-    { title: '人数', dataIndex: 'headcount', width: 80 },
+    { title: '岗位', dataIndex: 'position_name', width: 180, render: (v) => v || '-' },
+    {
+      title: '级别',
+      dataIndex: 'level',
+      width: 80,
+      render: (v: string) => <Tag color={HIRING_LEVEL_COLORS[v] ?? 'default'}>{v || '中级'}</Tag>,
+    },
+    { title: '人数', dataIndex: 'headcount', width: 70 },
     {
       title: '状态',
       dataIndex: 'status',
       width: 100,
       render: (v: string) => <Tag color={HIRING_STATUS_COLORS[v] ?? 'default'}>{v}</Tag>,
+    },
+    {
+      title: '任职资格',
+      dataIndex: 'qualification',
+      ellipsis: { showTitle: false },
+      render: (v: string | null) =>
+        v ? (
+          <Tooltip placement="topLeft" title={v}>
+            {v}
+          </Tooltip>
+        ) : (
+          '-'
+        ),
     },
     { title: '进度备注', dataIndex: 'progress_note', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
@@ -331,8 +356,18 @@ function HiringTab() {
               options={positions.map((p) => ({ value: p.id, label: p.name }))}
             />
           </Form.Item>
+          <Form.Item name="level" label="级别" rules={[{ required: true, message: '请选择级别' }]}>
+            <Select options={HIRING_LEVELS.map((l) => ({ value: l, label: l }))} />
+          </Form.Item>
           <Form.Item name="headcount" label="招聘人数" rules={[{ required: true, message: '请输入人数' }]}>
             <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="qualification" label="任职资格">
+            <Input.TextArea
+              rows={3}
+              maxLength={500}
+              placeholder="写清楚硬性条件与优先项，如：5 年以上运维经验；精通 K8s；有金融行业经验优先"
+            />
           </Form.Item>
           <Form.Item name="status" label="状态" rules={[{ required: true, message: '请选择状态' }]}>
             <Select options={HIRING_STATUSES.map((s) => ({ value: s, label: s }))} />

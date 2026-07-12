@@ -49,10 +49,10 @@ export default function Login() {
     >
       <Card style={{ width: 380, boxShadow: '0 2px 8px rgba(0,0,0,0.09)' }}>
         <Typography.Title level={3} style={{ textAlign: 'center', marginBottom: 8 }}>
-          New_AOM 运营管理平台
+          IT运营管理平台
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ textAlign: 'center' }}>
-          IT 团队运营管理一站式平台
+          IT服务、项目、需求、团队一站式管理平台
         </Typography.Paragraph>
         <Form<LoginForm> onFinish={(v) => void onFinish(v)} size="large">
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>

@@ -228,9 +228,9 @@ def test_team_overview_and_performance(client, admin_headers, ctx):
     assert any(w["person_name"] == "积分运维" for w in ov["workload"]) or ov["onboard_count"] > 0
     assert any(b["person_name"] == "积分开发" for b in ov["points_board"])
 
-    # 人效（M6.1 收紧）：仅 admin/cio 可见，it_dev 与 it_tm 都 403
+    # 人效可见性（M6.2）：admin/cio/it_bm/it_tm（IT 管理岗）可见，普通成员 403
     assert client.get("/api/team/performance", headers=ctx["dev_h"]).status_code == 403
-    assert client.get("/api/team/performance", headers=ctx["tm_h"]).status_code == 403
+    assert client.get("/api/team/performance", headers=ctx["tm_h"]).status_code == 200
     perf = client.get("/api/team/performance?period=2026-H2", headers=ctx["cio_h"]).json()["data"]
     assert perf["rows"] and perf["dimensions"]
     dev_row = next(r for r in perf["rows"] if r["person_name"] == "积分开发")

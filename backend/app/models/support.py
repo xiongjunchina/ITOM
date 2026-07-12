@@ -148,6 +148,7 @@ class AuthUser(GlidBase):
     external_id: Mapped[str | None] = mapped_column(String(128), comment="外部认证源用户 ID")
     person_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
     roles: Mapped[list] = mapped_column(JsonCol, default=list, comment="直接角色；有效角色=直接∪组授予")
+    preferences: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="个人偏好：总览 widget 配置等")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
 

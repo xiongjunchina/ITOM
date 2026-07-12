@@ -101,6 +101,32 @@ class PerfScheme(GlidBase):
     active: Mapped[bool] = mapped_column(default=True)
 
 
+class PerfAdjustment(GlidBase):
+    """考核期加减分事项（M6.2）：特殊贡献加分 / 违规事件扣分，必填事项说明。"""
+
+    __tablename__ = "perf_adjustment"
+
+    period: Mapped[str] = mapped_column(String(32), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(8), comment="bonus 加分 / penalty 扣分")
+    points: Mapped[float] = mapped_column(Float, comment="正数；扣分在计算时取负")
+    reason: Mapped[str] = mapped_column(String(200), comment="加减分事项说明（必填）")
+    created_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class PerfOverride(GlidBase):
+    """维度核定分（M6.2）：系统算出的是初始参考值，管理岗可核定覆盖。"""
+
+    __tablename__ = "perf_override"
+    __table_args__ = (UniqueConstraint("period", "person_id", "dimension_code"),)
+
+    period: Mapped[str] = mapped_column(String(32), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    dimension_code: Mapped[str] = mapped_column(String(48))
+    score: Mapped[float] = mapped_column(Float, comment="核定分 0-100")
+    created_by: Mapped[str | None] = mapped_column(String(26))
+
+
 class DevelopmentActivity(GlidBase):
     """培训发展活动（PRD §9.4）：登记即触发培训积分。"""
 
@@ -132,6 +158,8 @@ class HiringNeed(GlidBase):
     __tablename__ = "hiring_need"
 
     position_id: Mapped[str] = mapped_column(ForeignKey("position.id"))
+    level: Mapped[str] = mapped_column(String(8), default="中级", comment="高级/中级/初级")
     headcount: Mapped[int] = mapped_column(Integer, default=1)
+    qualification: Mapped[str | None] = mapped_column(Text, comment="任职资格要求")
     status: Mapped[str] = mapped_column(String(16), default="待招聘", comment="待招聘/面试中/已到岗/已取消")
     progress_note: Mapped[str | None] = mapped_column(String(200), comment="进度备注")

@@ -85,7 +85,7 @@ def _idea_row(i: Idea, liked_ids: set[str]) -> dict:
 
 @router.get("/api/ideas")
 def list_ideas(status: str = "", page: int = 1, page_size: int = 50,
-               db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+               db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("ideas", "view"))):
     query = db.query(Idea).filter(Idea.is_deleted.is_(False))
     if status:
         query = query.filter(Idea.status == status)
@@ -113,7 +113,7 @@ def create_idea(body: IdeaIn, db: Session = Depends(get_db), user: AuthUser = De
 
 
 @router.post("/api/ideas/{idea_id}/like")
-def like_idea(idea_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def like_idea(idea_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("ideas", "view"))):
     idea = db.get(Idea, idea_id)
     if not idea or idea.is_deleted:
         raise AppError("NOT_FOUND", "建言不存在", 404)
@@ -210,7 +210,7 @@ def _campaign_row(c: ActivityCampaign, db: Session, detail: bool = False, person
 
 
 @router.get("/api/campaigns")
-def list_campaigns(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def list_campaigns(db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("ideas", "view"))):
     query = db.query(ActivityCampaign).filter(ActivityCampaign.is_deleted.is_(False))
     if not has_perm(db, user, "ideas", "edit"):
         query = query.filter(ActivityCampaign.status == "active")
@@ -219,7 +219,7 @@ def list_campaigns(db: Session = Depends(get_db), user: AuthUser = Depends(get_c
 
 
 @router.get("/api/campaigns/{campaign_id}")
-def get_campaign(campaign_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def get_campaign(campaign_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("ideas", "view"))):
     c = db.get(ActivityCampaign, campaign_id)
     if not c or c.is_deleted:
         raise AppError("NOT_FOUND", "活动不存在", 404)
@@ -331,7 +331,7 @@ class RuleIn(BaseModel):
 
 
 @router.get("/api/point-rules")
-def list_point_rules(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_point_rules(db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
     from app.models import PointRule
 
     rows = db.query(PointRule).filter(PointRule.is_deleted.is_(False)).order_by(PointRule.created_at).all()
@@ -354,7 +354,7 @@ def update_point_rule(code: str, body: RuleIn, db: Session = Depends(get_db), us
 # ---------- 积分台账 ----------
 
 @router.get("/api/points/mine")
-def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("ideas", "view"))):
     if not user.person_id:
         return ok({"period": current_period(), "total": 0, "entries": []})
     entries = (
@@ -379,7 +379,7 @@ def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(get_curren
 
 
 @router.get("/api/points/leaderboard")
-def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
     period = period or current_period()
     rows = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))

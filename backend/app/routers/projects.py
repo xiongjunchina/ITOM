@@ -132,7 +132,7 @@ class CharterCreateIn(BaseModel):
 # ---------- 组合 ----------
 
 @router.get("/api/portfolios")
-def list_portfolios(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_portfolios(db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = db.query(Portfolio).filter(Portfolio.is_deleted.is_(False)).order_by(Portfolio.is_example.desc(), Portfolio.sort).all()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     projects = db.query(Project).filter(Project.is_deleted.is_(False)).all()
@@ -195,7 +195,7 @@ def _project_row(p: Project, db: Session, names: dict, status_map: dict, with_me
 def list_projects(
     page: int = 1, page_size: int = 20, q: str = "", status: str = "",
     portfolio_id: str = "", scope: str = "",
-    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("projects", "view")),
 ):
     query = db.query(Project).filter(Project.is_deleted.is_(False))
     if q:
@@ -241,7 +241,7 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db), actor=Dep
 
 
 @router.get("/api/projects/{project_id}")
-def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("projects", "view"))):
     p = db.get(Project, project_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
@@ -395,7 +395,7 @@ def _wbs_row(t: WbsTask, names: dict) -> dict:
 
 
 @router.get("/api/projects/{project_id}/wbs")
-def list_wbs(project_id: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_wbs(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     tasks = (
         db.query(WbsTask)
         .filter(WbsTask.project_id == project_id, WbsTask.is_deleted.is_(False))
@@ -478,7 +478,7 @@ def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(requir
 # ---------- 里程碑 ----------
 
 @router.get("/api/projects/{project_id}/milestones")
-def list_milestones(project_id: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_milestones(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = (
         db.query(Milestone)
         .filter(Milestone.project_id == project_id, Milestone.is_deleted.is_(False))
@@ -537,7 +537,7 @@ def delete_milestone(milestone_id: str, db: Session = Depends(get_db), actor=Dep
 # ---------- 风险 ----------
 
 @router.get("/api/projects/{project_id}/risks")
-def list_risks(project_id: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_risks(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = db.query(Risk).filter(Risk.project_id == project_id, Risk.is_deleted.is_(False)).order_by(Risk.created_at.desc()).all()
     return ok([
         {"id": r.id, "title": r.title, "probability": r.probability, "impact": r.impact,
@@ -577,7 +577,7 @@ def update_risk(risk_id: str, body: RiskUpdate, db: Session = Depends(get_db), a
 # ---------- 成本 ----------
 
 @router.get("/api/projects/{project_id}/costs")
-def list_costs(project_id: str, db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_costs(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = (
         db.query(CostEntry)
         .filter(CostEntry.project_id == project_id, CostEntry.is_deleted.is_(False))

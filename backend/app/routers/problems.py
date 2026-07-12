@@ -84,7 +84,7 @@ def _create_problem(db: Session, data: dict, actor: AuthUser, source_ticket: Tic
 @router.get("/api/problems")
 def list_problems(
     page: int = 1, page_size: int = 20, q: str = "", status: str = "", priority: str = "",
-    db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("problems", "view")),
 ):
     query = db.query(Problem).filter(Problem.is_deleted.is_(False))
     if q:
@@ -106,7 +106,7 @@ def create_problem(body: ProblemCreate, db: Session = Depends(get_db), user: Aut
 
 
 @router.get("/api/problems/{problem_id}")
-def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "view"))):
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
