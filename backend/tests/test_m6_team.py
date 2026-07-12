@@ -248,9 +248,12 @@ def test_charter_and_hiring(client, admin_headers, ctx):
     assert client.get("/api/positions", headers=ctx["dev_h"]).status_code == 403
     assert client.get("/api/hiring-needs", headers=ctx["tm_h"]).status_code == 403
     pos = client.post("/api/positions", json={"name": "DBA", "headcount": 1}, headers=ctx["cio_h"]).json()["data"]
-    r = client.post("/api/hiring-needs", json={"position_id": pos["id"], "headcount": 2}, headers=ctx["cio_h"])
+    r = client.post("/api/hiring-needs", json={"position_id": pos["id"], "headcount": 2,
+                                               "qualification": "3 年以上 DBA 经验，熟悉 PostgreSQL"},
+                    headers=ctx["cio_h"])
     hid = r.json()["data"]["id"]
     client.patch(f"/api/hiring-needs/{hid}", json={"position_id": pos["id"], "headcount": 2,
+                                                   "qualification": "3 年以上 DBA 经验，熟悉 PostgreSQL",
                                                    "status": "面试中", "progress_note": "已约 3 人"},
                  headers=ctx["cio_h"])
     rows = client.get("/api/hiring-needs", headers=ctx["cio_h"]).json()["data"]

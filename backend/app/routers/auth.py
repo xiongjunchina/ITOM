@@ -50,6 +50,7 @@ def me(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)
 
 class PreferencesIn(BaseModel):
     dashboard_widgets: list[str] | None = None
+    team_overview_widgets: list[str] | None = None
 
 
 @router.patch("/me/preferences")

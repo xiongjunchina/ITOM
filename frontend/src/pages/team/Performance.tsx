@@ -203,47 +203,6 @@ function PerfOverview() {
       width: 150,
       render: (v: string | null) => (v ? v : <Tag>未配置方案</Tag>),
     },
-    {
-      title: '加分项',
-      dataIndex: 'bonus',
-      width: 80,
-      render: (v: number) =>
-        v > 0 ? <span style={{ color: '#52c41a', fontWeight: 600 }}>+{v}</span> : <span style={{ color: GRAY }}>-</span>,
-    },
-    {
-      title: '扣分项',
-      dataIndex: 'penalty',
-      width: 80,
-      render: (v: number) =>
-        v > 0 ? <span style={{ color: '#ff4d4f', fontWeight: 600 }}>−{v}</span> : <span style={{ color: GRAY }}>-</span>,
-    },
-    {
-      title: '加减分说明',
-      key: 'adj_reasons',
-      width: 180,
-      ellipsis: { showTitle: false },
-      render: (_, r) => {
-        const text = (r.adjustments ?? []).map((a) => a.reason).join('；');
-        if (!text) return EMPTY_CELL;
-        return (
-          <Tooltip placement="topLeft" title={text}>
-            {text}
-          </Tooltip>
-        );
-      },
-    },
-    {
-      title: '总分',
-      dataIndex: 'total',
-      width: 90,
-      sorter: (a, b) => (a.total ?? -1) - (b.total ?? -1),
-      defaultSortOrder: 'descend',
-      render: (v: number | null, r) => (
-        <Tooltip title={`基础分 ${r.base_score ?? '—'} + 加分 ${r.bonus ?? 0} − 扣分 ${r.penalty ?? 0}`}>
-          {v == null ? EMPTY_CELL : <Typography.Text strong>{v}</Typography.Text>}
-        </Tooltip>
-      ),
-    },
     ...dimensions.map<ColumnsType<PerformanceRow>[number]>((d) => ({
       title: (
         <Tooltip title={d.description}>
@@ -300,6 +259,47 @@ function PerfOverview() {
         );
       },
     })),
+    {
+      title: '加分项',
+      dataIndex: 'bonus',
+      width: 80,
+      render: (v: number) =>
+        v > 0 ? <span style={{ color: '#52c41a', fontWeight: 600 }}>+{v}</span> : <span style={{ color: GRAY }}>-</span>,
+    },
+    {
+      title: '扣分项',
+      dataIndex: 'penalty',
+      width: 80,
+      render: (v: number) =>
+        v > 0 ? <span style={{ color: '#ff4d4f', fontWeight: 600 }}>−{v}</span> : <span style={{ color: GRAY }}>-</span>,
+    },
+    {
+      title: '加减分说明',
+      key: 'adj_reasons',
+      width: 180,
+      ellipsis: { showTitle: false },
+      render: (_, r) => {
+        const text = (r.adjustments ?? []).map((a) => a.reason).join('；');
+        if (!text) return EMPTY_CELL;
+        return (
+          <Tooltip placement="topLeft" title={text}>
+            {text}
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: '总分',
+      dataIndex: 'total',
+      width: 90,
+      sorter: (a, b) => (a.total ?? -1) - (b.total ?? -1),
+      defaultSortOrder: 'descend',
+      render: (v: number | null, r) => (
+        <Tooltip title={`基础分 ${r.base_score ?? '—'} + 加分 ${r.bonus ?? 0} − 扣分 ${r.penalty ?? 0}`}>
+          {v == null ? EMPTY_CELL : <Typography.Text strong>{v}</Typography.Text>}
+        </Tooltip>
+      ),
+    },
     ...(canEdit
       ? [
           {

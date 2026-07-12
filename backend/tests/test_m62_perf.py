@@ -96,6 +96,9 @@ def test_adjustments_bonus_penalty(client, ctx):
 
 def test_hiring_level_and_qualification(client, admin_headers):
     pos = client.post("/api/positions", json={"name": "SRE", "headcount": 1}, headers=admin_headers).json()["data"]
+    # 任职资格必填（M6.3）
+    r = client.post("/api/hiring-needs", json={"position_id": pos["id"], "level": "高级"}, headers=admin_headers)
+    assert r.status_code == 422
     r = client.post("/api/hiring-needs", json={
         "position_id": pos["id"], "level": "高级", "headcount": 1,
         "qualification": "5 年以上大型系统运维经验；精通 K8s 与可观测体系；有故障指挥经验",
@@ -118,6 +121,12 @@ def test_dashboard_preferences(client, ctx):
                      json={"dashboard_widgets": ["itsm_service_request", "itsm_incident", "team"]},
                      headers=ctx["dev_h"])
     assert r.json()["data"]["preferences"]["dashboard_widgets"] == ["itsm_service_request", "itsm_incident", "team"]
+    # 团队总览 widget 偏好独立保存（M6.3），且不覆盖已有键
+    r = client.patch("/api/auth/me/preferences",
+                     json={"team_overview_widgets": ["workload", "stats"]}, headers=ctx["dev_h"])
+    prefs = r.json()["data"]["preferences"]
+    assert prefs["team_overview_widgets"] == ["workload", "stats"]
+    assert prefs["dashboard_widgets"] == ["itsm_service_request", "itsm_incident", "team"]
     me = client.get("/api/auth/me", headers=ctx["dev_h"]).json()["data"]
     assert me["preferences"]["dashboard_widgets"] == ["itsm_service_request", "itsm_incident", "team"]
 

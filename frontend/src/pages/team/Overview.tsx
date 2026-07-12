@@ -1,16 +1,33 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Card, Col, Row, Statistic, Table, Tag, Typography } from 'antd';
+import type { ReactNode } from 'react';
+import { Button, Card, Col, Row, Statistic, Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import { FundOutlined, SettingOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { WidgetBoardDrawer, WidgetTitle, useWidgetBoard } from '../../components/WidgetBoard';
 import type { TeamOverviewData } from '../../api/types';
 
 type WorkloadRow = TeamOverviewData['workload'][number];
 type BoardRow = TeamOverviewData['points_board'][number];
 
-/** 团队总览：人数/培训/活动/招聘统计 + 人员负载 + 本期积分榜 */
+/** 团队总览 widget 注册表：key 有序持久化在 preferences.team_overview_widgets（数组顺序=显示顺序） */
+const TEAM_WIDGETS = [
+  { key: 'stats', name: '关键指标', icon: <FundOutlined style={{ color: '#1677ff' }} /> },
+  { key: 'workload', name: '人员负载', icon: <TeamOutlined style={{ color: '#52c41a' }} /> },
+  { key: 'points_board', name: '本期积分榜', icon: <TrophyOutlined style={{ color: '#faad14' }} /> },
+] as const;
+
+type TeamWidgetKey = (typeof TEAM_WIDGETS)[number]['key'];
+
+/** 按 key 取注册项（卡片标题/图标与注册表保持一致） */
+const widgetOf = (key: TeamWidgetKey) =>
+  TEAM_WIDGETS.find((w) => w.key === key) as (typeof TEAM_WIDGETS)[number];
+
+/** 团队总览：关键指标 / 人员负载 / 本期积分榜（widget 化，支持自定义显隐 + 拖拽排序） */
 export default function Overview() {
   const [data, setData] = useState<TeamOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
+  const board = useWidgetBoard(TEAM_WIDGETS, 'team_overview_widgets');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,59 +78,100 @@ export default function Overview() {
     { title: '积分', dataIndex: 'points', width: 90 },
   ];
 
-  return (
-    <Row gutter={[16, 16]}>
-      <Col xs={12} lg={6}>
-        <Card loading={loading}>
-          <Statistic title="在岗人数" value={data?.onboard_count ?? 0} />
-        </Card>
+  /** 各 widget 渲染器：按偏好数组顺序流式布局 */
+  const renderers: Record<TeamWidgetKey, () => ReactNode> = {
+    stats: () => (
+      <Col key="stats" span={24}>
+        <div {...board.dragProps('stats')}>
+          <Card
+            title={<WidgetTitle widget={widgetOf('stats')} />}
+            loading={loading}
+            style={{ height: '100%' }}
+          >
+            <Row gutter={[16, 16]}>
+              <Col xs={12} lg={6}>
+                <Statistic title="在岗人数" value={data?.onboard_count ?? 0} />
+              </Col>
+              <Col xs={12} lg={6}>
+                <Statistic title="本月培训" value={data?.trainings_month ?? 0} />
+              </Col>
+              <Col xs={12} lg={6}>
+                <Statistic title="进行中专项活动" value={data?.active_campaigns ?? 0} />
+              </Col>
+              <Col xs={12} lg={6}>
+                <Statistic
+                  title="待招聘"
+                  value={data?.open_hirings ?? 0}
+                  valueStyle={(data?.open_hirings ?? 0) > 0 ? { color: '#fa8c16' } : undefined}
+                />
+              </Col>
+            </Row>
+          </Card>
+        </div>
       </Col>
-      <Col xs={12} lg={6}>
-        <Card loading={loading}>
-          <Statistic title="本月培训" value={data?.trainings_month ?? 0} />
-        </Card>
-      </Col>
-      <Col xs={12} lg={6}>
-        <Card loading={loading}>
-          <Statistic title="进行中专项活动" value={data?.active_campaigns ?? 0} />
-        </Card>
-      </Col>
-      <Col xs={12} lg={6}>
-        <Card loading={loading}>
-          <Statistic
-            title="待招聘"
-            value={data?.open_hirings ?? 0}
-            valueStyle={(data?.open_hirings ?? 0) > 0 ? { color: '#fa8c16' } : undefined}
-          />
-        </Card>
-      </Col>
+    ),
 
-      <Col xs={24} lg={14}>
-        <Card title="人员负载（未完成事项，按合计降序）">
-          <Table<WorkloadRow>
-            rowKey="person_id"
-            size="small"
-            loading={loading}
-            columns={workloadColumns}
-            dataSource={workload}
-            pagination={false}
-            locale={{ emptyText: '暂无在岗人员负载数据' }}
-          />
-        </Card>
+    workload: () => (
+      <Col key="workload" xs={24} lg={14}>
+        <div {...board.dragProps('workload')}>
+          <Card
+            title={<WidgetTitle widget={widgetOf('workload')} suffix="（未完成事项，按合计降序）" />}
+            style={{ height: '100%' }}
+          >
+            <Table<WorkloadRow>
+              rowKey="person_id"
+              size="small"
+              loading={loading}
+              columns={workloadColumns}
+              dataSource={workload}
+              pagination={false}
+              locale={{ emptyText: '暂无在岗人员负载数据' }}
+            />
+          </Card>
+        </div>
       </Col>
-      <Col xs={24} lg={10}>
-        <Card title={`本期积分榜${data?.period ? `（${data.period}）` : ''} Top10`}>
-          <Table<BoardRow>
-            rowKey={(r, i) => `${i}-${r.person_name ?? ''}`}
-            size="small"
-            loading={loading}
-            columns={boardColumns}
-            dataSource={data?.points_board ?? []}
-            pagination={false}
-            locale={{ emptyText: '本期暂无积分记录' }}
-          />
-        </Card>
+    ),
+
+    points_board: () => (
+      <Col key="points_board" xs={24} lg={10}>
+        <div {...board.dragProps('points_board')}>
+          <Card
+            title={
+              <WidgetTitle
+                widget={widgetOf('points_board')}
+                suffix={`${data?.period ? `（${data.period}）` : ''} Top10`}
+              />
+            }
+            style={{ height: '100%' }}
+          >
+            <Table<BoardRow>
+              rowKey={(r, i) => `${i}-${r.person_name ?? ''}`}
+              size="small"
+              loading={loading}
+              columns={boardColumns}
+              dataSource={data?.points_board ?? []}
+              pagination={false}
+              locale={{ emptyText: '本期暂无积分记录' }}
+            />
+          </Card>
+        </div>
       </Col>
-    </Row>
+    ),
+  };
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <Button icon={<SettingOutlined />} onClick={board.openCustomize}>
+          自定义面板
+        </Button>
+      </div>
+
+      <Row gutter={[16, 16]}>
+        {(board.orderedKeys as TeamWidgetKey[]).map((k) => renderers[k]())}
+      </Row>
+
+      <WidgetBoardDrawer board={board} description="选择团队总览页要显示的板块，仅影响当前账号。" />
+    </>
   );
 }

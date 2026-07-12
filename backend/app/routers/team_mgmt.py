@@ -54,7 +54,7 @@ class HiringIn(BaseModel):
     position_id: str
     level: str = Field(default="中级", pattern="^(高级|中级|初级)$")
     headcount: int = Field(default=1, ge=1)
-    qualification: str | None = None
+    qualification: str = Field(min_length=5, max_length=2000, description="任职资格要求（必填）")
     status: str = Field(default="待招聘", pattern="^(待招聘|面试中|已到岗|已取消)$")
     progress_note: str | None = None
 

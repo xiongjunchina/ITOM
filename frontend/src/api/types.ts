@@ -44,8 +44,10 @@ export type AuthSource = 'local' | 'ad' | 'feishu' | 'sms' | 'wechat';
 
 /** 个人偏好（GET /auth/me 返回；PATCH /auth/me/preferences 更新） */
 export interface UserPreferences {
-  /** 总览面板显示的 widget key 列表；缺省或空数组 = 全部显示 */
+  /** 总览面板 widget 有序列表：数组顺序即显示顺序；缺省或空数组 = 默认顺序全部显示 */
   dashboard_widgets?: string[];
+  /** 团队总览页 widget 有序列表；语义同 dashboard_widgets */
+  team_overview_widgets?: string[];
 }
 
 /** 登录用户 */

@@ -362,7 +362,14 @@ function HiringTab() {
           <Form.Item name="headcount" label="招聘人数" rules={[{ required: true, message: '请输入人数' }]}>
             <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="qualification" label="任职资格">
+          <Form.Item
+            name="qualification"
+            label="任职资格"
+            rules={[
+              { required: true, message: '请填写任职资格要求' },
+              { min: 5, message: '至少 5 个字符' },
+            ]}
+          >
             <Input.TextArea
               rows={3}
               maxLength={500}
