@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -28,6 +28,7 @@ def _user_payload(db: Session, user: AuthUser) -> dict:
         "permissions": user_permissions(db, user),  # {module:[actions]}，admin 为 {"*":[...]}；前端菜单/按钮以此渲染
         "auth_source": user.auth_source,
         "person_id": user.person_id,
+        "language": (user.preferences or {}).get("language", "zh"),  # 显示语言：zh/en（登录即应用）
     }
 
 
@@ -51,6 +52,7 @@ def me(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)
 class PreferencesIn(BaseModel):
     dashboard_widgets: list[str] | None = None
     team_overview_widgets: list[str] | None = None
+    language: str | None = Field(default=None, pattern="^(zh|en)$")
 
 
 @router.patch("/me/preferences")
@@ -62,3 +64,230 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
     user.preferences = prefs
     db.commit()
     return ok({"preferences": prefs})
+
+
+# ==================== 飞书扫码登录 + 管理员开通审批（M7） ====================
+#
+# 流程：员工飞书扫码 → 身份校验通过但不立即登录 → 落一条 LoginRequest（pending）
+#      → 管理员在「用户与组管理」为其配置用户名/角色/默认语言并开通 → 员工过渡页轮询到
+#      approved 后自动进入系统。飞书凭据就绪前，/feishu/scan 以传入身份模拟飞书 OAuth 回调；
+#      通知当前走站内 + 发件箱（channel=in_app），发件箱即飞书推送的未来挂接点。
+
+from fastapi import Header  # noqa: E402
+
+from app.core.security import (  # noqa: E402
+    create_pending_token,
+    decode_pending_token,
+    hash_password,
+)
+from app.deps import require_perm  # noqa: E402
+from app.models import LoginRequest, OrgMember  # noqa: E402
+from app.services.audit import audit  # noqa: E402
+
+
+class FeishuScanIn(BaseModel):
+    external_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=128)
+    email: str | None = None
+    mobile: str | None = None
+    avatar_url: str | None = None
+
+
+class ApproveIn(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9_.\-]+$")
+    roles: list[str] = []
+    language: str = Field(default="zh", pattern="^(zh|en)$")
+    person_id: str | None = None
+    note: str | None = None
+
+
+class RejectIn(BaseModel):
+    reason: str = Field(min_length=2, max_length=500)
+
+
+def _admin_person_ids(db: Session) -> list[str]:
+    """有 admin_users.create 权限且已绑定人员的管理员（用于站内通知收件人）。"""
+    from app.services.permissions import has_perm
+
+    ids = []
+    for u in db.query(AuthUser).filter(AuthUser.is_deleted.is_(False), AuthUser.is_active.is_(True)):
+        if u.person_id and has_perm(db, u, "admin_users", "create"):
+            ids.append(u.person_id)
+    return ids
+
+
+def _notify(db: Session, event_type: str, req: LoginRequest, title: str, content: str, recipients: list[str], link: str):
+    """站内通知 + 发件箱（飞书通道未来挂接点）。"""
+    from app.events import notifier
+
+    notifier.notify(db, event_type, "login_request", req.id, recipients, title, content, link)
+
+
+@router.post("/feishu/scan")
+def feishu_scan(body: FeishuScanIn, db: Session = Depends(get_db)):
+    """飞书扫码回调（当前模拟）：已开通用户直登；未开通则落待处理请求并通知管理员。"""
+    existing = (
+        db.query(AuthUser)
+        .filter(
+            AuthUser.auth_source == "feishu",
+            AuthUser.external_id == body.external_id,
+            AuthUser.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if existing:
+        if not existing.is_active:
+            raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
+        existing.last_login_at = datetime.now()
+        db.commit()
+        return ok({"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)})
+
+    req = (
+        db.query(LoginRequest)
+        .filter(
+            LoginRequest.external_id == body.external_id,
+            LoginRequest.status == "pending",
+            LoginRequest.is_deleted.is_(False),
+        )
+        .first()
+    )
+    new_request = req is None
+    if new_request:
+        req = LoginRequest(
+            external_source="feishu", external_id=body.external_id, display_name=body.display_name,
+            email=body.email, mobile=body.mobile, avatar_url=body.avatar_url, status="pending",
+        )
+        db.add(req)
+        db.flush()
+    else:
+        req.display_name = body.display_name  # 刷新展示名
+        req.email = body.email or req.email
+        req.mobile = body.mobile or req.mobile
+    if new_request:
+        _notify(
+            db, "onboarding.requested", req,
+            title=f"新的登录开通请求：{req.display_name}",
+            content=f"{req.display_name} 通过飞书扫码登录，等待开通系统账号。请前往「用户与组管理」处理。",
+            recipients=_admin_person_ids(db), link="/admin/identity?tab=onboarding",
+        )
+    db.commit()
+    return ok({
+        "status": "pending", "request_id": req.id, "pending_token": create_pending_token(req.id),
+        "display_name": req.display_name,
+    })
+
+
+@router.get("/onboarding/status")
+def onboarding_status(authorization: str = Header(default=""), db: Session = Depends(get_db)):
+    """过渡页轮询：pending 停留等待；approved 直接返回正式令牌进入系统；rejected 显示原因。"""
+    token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    req_id = decode_pending_token(token)
+    if not req_id:
+        raise AppError("INVALID_PENDING_TOKEN", "登录会话已失效，请重新扫码", 401)
+    req = db.get(LoginRequest, req_id)
+    if not req or req.is_deleted:
+        raise AppError("NOT_FOUND", "登录请求不存在", 404)
+    if req.status == "approved" and req.auth_user_id:
+        user = db.get(AuthUser, req.auth_user_id)
+        if user and user.is_active and not user.is_deleted:
+            user.last_login_at = datetime.now()
+            db.commit()
+            return ok({"status": "approved", "token": create_token(user.id), "user": _user_payload(db, user)})
+        raise AppError("LOGIN_FAILED", "账号不可用，请联系管理员", 401)
+    if req.status == "rejected":
+        return ok({"status": "rejected", "note": req.note, "display_name": req.display_name})
+    return ok({"status": "pending", "display_name": req.display_name, "requested_at": req.created_at})
+
+
+def _request_row(db: Session, req: LoginRequest) -> dict:
+    return {
+        "id": req.id, "external_source": req.external_source, "external_id": req.external_id,
+        "display_name": req.display_name, "email": req.email, "mobile": req.mobile,
+        "status": req.status, "note": req.note, "requested_at": req.created_at,
+        "processed_at": req.processed_at, "auth_user_id": req.auth_user_id,
+    }
+
+
+@router.get("/onboarding/requests")
+def list_requests(status: str = "pending", db: Session = Depends(get_db), _=Depends(require_perm("admin_users", "view"))):
+    query = db.query(LoginRequest).filter(LoginRequest.is_deleted.is_(False))
+    if status:
+        query = query.filter(LoginRequest.status == status)
+    rows = query.order_by(LoginRequest.created_at.desc()).limit(200).all()
+    return ok([_request_row(db, r) for r in rows], total=len(rows))
+
+
+@router.get("/onboarding/pending-count")
+def pending_count(db: Session = Depends(get_db), _=Depends(require_perm("admin_users", "view"))):
+    n = db.query(LoginRequest).filter(LoginRequest.status == "pending", LoginRequest.is_deleted.is_(False)).count()
+    return ok({"pending": n})
+
+
+@router.post("/onboarding/requests/{request_id}/approve")
+def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("admin_users", "create"))):
+    """开通：为员工创建飞书账号（用户名/角色/默认语言），标记请求已处理并通知员工。"""
+    from app.services.rbac import valid_role_codes
+
+    req = db.get(LoginRequest, request_id)
+    if not req or req.is_deleted:
+        raise AppError("NOT_FOUND", "登录请求不存在", 404)
+    if req.status != "pending":
+        raise AppError("ALREADY_PROCESSED", "该请求已处理")
+    if db.query(AuthUser).filter(AuthUser.username == body.username, AuthUser.is_deleted.is_(False)).first():
+        raise AppError("USERNAME_TAKEN", "用户名已存在")
+    bad = set(body.roles) - valid_role_codes(db)
+    if bad:
+        raise AppError("INVALID_ROLE", f"未知角色: {','.join(bad)}")
+    if "admin" in body.roles:
+        raise AppError("ADMIN_NOT_GRANTABLE", "开通时不可直接授予 admin 角色")
+    roles = body.roles
+    if not roles:  # 未指定则按开通规则取默认
+        from app.services.provisioning import default_roles_for
+
+        person = db.get(OrgMember, body.person_id) if body.person_id else None
+        roles = default_roles_for(db, person.department_id if person else None)
+    if body.person_id and not db.get(OrgMember, body.person_id):
+        raise AppError("NOT_FOUND", "关联人员不存在", 404)
+
+    import secrets
+
+    user = AuthUser(
+        username=body.username,
+        password_hash=hash_password(secrets.token_urlsafe(24)),  # 飞书用户走扫码，本地口令随机不可用
+        auth_source="feishu", external_id=req.external_id,
+        roles=roles, person_id=body.person_id, is_active=True,
+        preferences={"language": body.language},
+    )
+    db.add(user)
+    db.flush()
+    req.status = "approved"
+    req.processed_by = actor.id
+    req.processed_at = datetime.now()
+    req.auth_user_id = user.id
+    req.note = body.note
+    audit(db, "login_request", req.id, "approve", actor,
+          {"username": body.username, "roles": roles, "language": body.language})
+    if user.person_id:
+        _notify(
+            db, "onboarding.approved", req,
+            title="您的系统账号已开通", content=f"账号 {body.username} 已开通，欢迎使用 IT 运营管理平台。",
+            recipients=[user.person_id], link="/dashboard",
+        )
+    db.commit()
+    return ok({"id": user.id, "username": user.username, "roles": roles})
+
+
+@router.post("/onboarding/requests/{request_id}/reject")
+def reject_request(request_id: str, body: RejectIn, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("admin_users", "create"))):
+    req = db.get(LoginRequest, request_id)
+    if not req or req.is_deleted:
+        raise AppError("NOT_FOUND", "登录请求不存在", 404)
+    if req.status != "pending":
+        raise AppError("ALREADY_PROCESSED", "该请求已处理")
+    req.status = "rejected"
+    req.note = body.reason
+    req.processed_by = actor.id
+    req.processed_at = datetime.now()
+    audit(db, "login_request", req.id, "reject", actor, {"reason": body.reason})
+    db.commit()
+    return ok({"id": req.id, "status": "rejected"})

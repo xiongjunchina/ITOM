@@ -196,6 +196,28 @@ class AuditLog(GlidBase):
     summary: Mapped[dict | None] = mapped_column(JsonCol)
 
 
+class LoginRequest(GlidBase):
+    """飞书扫码登录后、管理员开通前的待处理登录请求（M7）。
+
+    员工扫码通过飞书身份校验后不立即进入系统；管理员为其配置用户名/角色/默认语言，
+    开通前员工停留在过渡页并轮询本请求状态。飞书凭据就绪前 scan 接口以传入身份模拟回调。
+    """
+
+    __tablename__ = "login_request"
+
+    external_source: Mapped[str] = mapped_column(String(16), default="feishu", comment="feishu/…")
+    external_id: Mapped[str] = mapped_column(String(128), index=True, comment="飞书 open_id/union_id")
+    display_name: Mapped[str] = mapped_column(String(128), comment="飞书返回的姓名")
+    avatar_url: Mapped[str | None] = mapped_column(String(500))
+    email: Mapped[str | None] = mapped_column(String(128))
+    mobile: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True, comment="pending/approved/rejected")
+    note: Mapped[str | None] = mapped_column(String(500), comment="管理员备注 / 驳回原因")
+    processed_by: Mapped[str | None] = mapped_column(String(26))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    auth_user_id: Mapped[str | None] = mapped_column(String(26), comment="开通后创建的用户 id")
+
+
 class NotificationOutbox(GlidBase):
     __tablename__ = "notification_outbox"
 
