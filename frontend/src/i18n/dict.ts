@@ -336,4 +336,19 @@ const en: Dict = {
   'menu./admin/audit-logs': 'Audit Log',
 };
 
-export const DICT: Record<'zh' | 'en', Dict> = { zh, en };
+// 分域文案（每个域一个文件，便于并行维护，互不冲突）
+import * as itsm from './locales/itsm';
+import * as projects from './locales/projects';
+import * as requirements from './locales/requirements';
+import * as team from './locales/team';
+import * as admin from './locales/admin';
+import * as process from './locales/process';
+import * as dashboard from './locales/dashboard';
+import * as components from './locales/components';
+
+const domains = [itsm, projects, requirements, team, admin, process, dashboard, components];
+
+export const DICT: Record<'zh' | 'en', Dict> = {
+  zh: Object.assign({}, zh, ...domains.map((d) => d.zh)),
+  en: Object.assign({}, en, ...domains.map((d) => d.en)),
+};
