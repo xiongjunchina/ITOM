@@ -943,34 +943,66 @@ export interface ProjectDetail extends ProjectRow {
   can_edit: boolean;
 }
 
-/** WBS 任务状态 */
-export type WbsStatus = '未开始' | '进行中' | '已完成';
+/** WBS 任务状态（状态由后端计算；已延期 = 实际结束晚于计划结束或已超期未完成） */
+export type WbsStatus = '未开始' | '进行中' | '已完成' | '已延期';
 
 export const WBS_STATUS_COLORS: Record<WbsStatus, string> = {
   未开始: '#bfbfbf',
   进行中: '#1677ff',
   已完成: '#52c41a',
+  已延期: '#ff4d4f',
 };
 
-/** WBS 任务 */
+/** WBS 任务（进度偏差/状态由后端计算） */
 export interface WbsTask {
   id: string;
   wbs_code: string;
+  /** 阶段 */
+  stage: string | null;
   name: string;
   parent_task_id: string | null;
+  /** WBS 词典说明（含/不含范围） */
+  wbs_dict: string | null;
+  /** 交付物/验收标准(DoD) */
+  deliverable: string | null;
   assignee: string;
   assignee_name: string | null;
+  /** 是否里程碑 */
+  is_milestone: boolean;
   start_date: string;
   end_date: string;
+  actual_start: string | null;
+  actual_end: string | null;
+  /** 进度偏差(天)=实际结束−计划结束；null 未知，>0 延期，<0 提前 */
+  schedule_deviation: number | null;
+  /** 完成度 %（仅 0/50/100） */
+  progress: number;
+  /** 后端计算的状态 */
   status: WbsStatus;
   completed_at: string | null;
+  /** 备注 */
+  remarks: string | null;
   description: string | null;
-  deliverable: string | null;
   predecessor_ids: string[];
+  /** 前置任务的 WBS 编号（展示用） */
+  predecessor_codes: string[];
   sort: number;
 }
 
-/** 里程碑 */
+/** 里程碑跟踪派生行（GET /projects/{id}/milestone-tracking，只读，来自 WBS is_milestone=true） */
+export interface MilestoneTrackingRow {
+  id: string;
+  wbs_code: string;
+  name: string;
+  stage: string | null;
+  assignee_name: string | null;
+  end_date: string;
+  actual_end: string | null;
+  schedule_deviation: number | null;
+  status: WbsStatus;
+}
+
+/** 里程碑（旧独立 CRUD 已废弃，保留类型供甘特图/导入沿用） */
 export interface Milestone {
   id: string;
   name: string;

@@ -18,9 +18,11 @@ import {
   Space,
   Spin,
   Statistic,
+  Switch,
   Table,
   Tabs,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -28,7 +30,6 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import {
   ArrowLeftOutlined,
-  CheckOutlined,
   DownloadOutlined,
   EditOutlined,
   PlusOutlined,
@@ -50,6 +51,7 @@ import type {
   CostEntry,
   Member,
   Milestone,
+  MilestoneTrackingRow,
   Portfolio,
   ProjectDetail as ProjectDetailData,
   Risk,
@@ -61,13 +63,28 @@ import type {
 import { RISK_GRADES } from '../../api/types';
 import { HealthDot, RiskLevelTag, StatusBadge, fmt10k, fmtPct } from './shared';
 
-const WBS_STATUSES: WbsStatus[] = ['未开始', '进行中', '已完成'];
-
 const WBS_TAG_COLORS: Record<WbsStatus, string> = {
   未开始: 'default',
   进行中: 'processing',
   已完成: 'success',
+  已延期: 'error',
 };
+
+/** 完成度可选值（后端校验仅 0/50/100） */
+const PROGRESS_OPTIONS = [0, 50, 100];
+
+/** 进度偏差(天)着色单元：null→'-'，>0 红「+N」，<0 绿，0 灰 */
+function renderDeviation(v: number | null | undefined): React.ReactNode {
+  if (v == null) return '-';
+  if (v > 0) return <span style={{ color: '#ff4d4f' }}>{`+${v}`}</span>;
+  if (v < 0) return <span style={{ color: '#52c41a' }}>{v}</span>;
+  return <span style={{ color: '#8c8c8c' }}>0</span>;
+}
+
+/** 状态 Tag（后端已算好，直接展示） */
+function WbsStatusTag({ status, label }: { status: WbsStatus; label: string }): JSX.Element {
+  return <Tag color={WBS_TAG_COLORS[status] ?? 'default'}>{label}</Tag>;
+}
 
 function formatSize(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
@@ -109,6 +126,7 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true);
   const [wbs, setWbs] = useState<WbsTask[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
   const [risks, setRisks] = useState<Risk[]>([]);
   const [costs, setCosts] = useState<CostEntry[]>([]);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
@@ -137,6 +155,15 @@ export default function ProjectDetail() {
     if (!id) return;
     try {
       setMilestones((await api.getList<Milestone>(`/projects/${id}/milestones`)).items);
+    } catch {
+      // 已统一提示
+    }
+  }, [id]);
+
+  const loadMilestoneTracking = useCallback(async () => {
+    if (!id) return;
+    try {
+      setMilestoneTracking((await api.getList<MilestoneTrackingRow>(`/projects/${id}/milestone-tracking`)).items);
     } catch {
       // 已统一提示
     }
@@ -173,10 +200,16 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     setLoading(true);
-    void Promise.all([loadDetail(), loadWbs(), loadMilestones(), loadRisks(), loadCosts(), loadAttachments()]).finally(
-      () => setLoading(false),
-    );
-  }, [loadDetail, loadWbs, loadMilestones, loadRisks, loadCosts, loadAttachments]);
+    void Promise.all([
+      loadDetail(),
+      loadWbs(),
+      loadMilestones(),
+      loadMilestoneTracking(),
+      loadRisks(),
+      loadCosts(),
+      loadAttachments(),
+    ]).finally(() => setLoading(false));
+  }, [loadDetail, loadWbs, loadMilestones, loadMilestoneTracking, loadRisks, loadCosts, loadAttachments]);
 
   useEffect(() => {
     api
@@ -280,53 +313,6 @@ export default function ProjectDetail() {
     }
   };
 
-  // ---------- 里程碑 ----------
-  const [msModalOpen, setMsModalOpen] = useState(false);
-  const [msSaving, setMsSaving] = useState(false);
-  const [msForm] = Form.useForm();
-
-  const submitMilestone = async () => {
-    const v = await msForm.validateFields();
-    setMsSaving(true);
-    try {
-      await api.post(`/projects/${id}/milestones`, {
-        name: v.name,
-        target_date: (v.target_date as Dayjs).format('YYYY-MM-DD'),
-        description: v.description || null,
-      });
-      message.success(t('proj.msCreated'));
-      setMsModalOpen(false);
-      void loadMilestones();
-      void loadDetail();
-    } catch {
-      // 已统一提示
-    } finally {
-      setMsSaving(false);
-    }
-  };
-
-  const achieveMilestone = async (m: Milestone) => {
-    try {
-      await api.post(`/milestones/${m.id}/achieve`);
-      message.success(t('proj.msAchieved', { name: m.name }));
-      void loadMilestones();
-      void loadDetail();
-    } catch {
-      // 已统一提示
-    }
-  };
-
-  const deleteMilestone = async (m: Milestone) => {
-    try {
-      await api.delete(`/milestones/${m.id}`);
-      message.success(t('proj.msDeleted'));
-      void loadMilestones();
-      void loadDetail();
-    } catch {
-      // 已统一提示
-    }
-  };
-
   // ---------- WBS ----------
   const [taskModal, setTaskModal] = useState<{ mode: 'create' | 'edit'; task?: WbsTask; parent?: WbsTask } | null>(
     null,
@@ -347,8 +333,16 @@ export default function ProjectDetail() {
         name: task.name,
         assignee: task.assignee,
         dates: [dayjs(task.start_date), dayjs(task.end_date)],
-        description: task.description ?? undefined,
+        stage: task.stage ?? undefined,
+        wbs_dict: task.wbs_dict ?? undefined,
         deliverable: task.deliverable ?? undefined,
+        is_milestone: task.is_milestone ?? false,
+        remarks: task.remarks ?? undefined,
+        actuals: [
+          task.actual_start ? dayjs(task.actual_start) : null,
+          task.actual_end ? dayjs(task.actual_end) : null,
+        ],
+        description: task.description ?? undefined,
         predecessor_ids: task.predecessor_ids ?? [],
       });
     }
@@ -363,14 +357,23 @@ export default function ProjectDetail() {
       assignee: v.assignee,
       start_date: (v.dates[0] as Dayjs).format('YYYY-MM-DD'),
       end_date: (v.dates[1] as Dayjs).format('YYYY-MM-DD'),
-      description: v.description || null,
+      stage: v.stage || null,
+      wbs_dict: v.wbs_dict || null,
       deliverable: v.deliverable || null,
+      is_milestone: !!v.is_milestone,
+      remarks: v.remarks || null,
+      description: v.description || null,
       predecessor_ids: v.predecessor_ids ?? [],
     };
     setTaskSaving(true);
     try {
       if (taskModal.mode === 'edit' && taskModal.task) {
-        await api.patch(`/wbs/${taskModal.task.id}`, base);
+        const actuals = (v.actuals ?? []) as (Dayjs | null)[];
+        await api.patch(`/wbs/${taskModal.task.id}`, {
+          ...base,
+          actual_start: actuals[0] ? actuals[0].format('YYYY-MM-DD') : null,
+          actual_end: actuals[1] ? actuals[1].format('YYYY-MM-DD') : null,
+        });
         message.success(t('proj.taskUpdated'));
       } else {
         await api.post(`/projects/${id}/wbs`, {
@@ -381,6 +384,7 @@ export default function ProjectDetail() {
       }
       setTaskModal(null);
       void loadWbs();
+      void loadMilestoneTracking();
       void loadDetail();
     } catch {
       // 已统一提示
@@ -389,11 +393,12 @@ export default function ProjectDetail() {
     }
   };
 
-  const changeTaskStatus = async (task: WbsTask, status: WbsStatus) => {
+  const changeTaskProgress = async (task: WbsTask, progress: number) => {
     try {
-      await api.patch(`/wbs/${task.id}`, { status });
-      message.success(t('proj.taskStatusUpdated'));
+      await api.patch(`/wbs/${task.id}`, { progress });
+      message.success(t('proj.taskProgressUpdated'));
       void loadWbs();
+      void loadMilestoneTracking();
       void loadDetail();
     } catch {
       // 403 等由拦截器统一中文提示
@@ -405,14 +410,15 @@ export default function ProjectDetail() {
       await api.delete(`/wbs/${task.id}`);
       message.success(t('proj.taskDeleted'));
       void loadWbs();
+      void loadMilestoneTracking();
       void loadDetail();
     } catch {
       // 已统一提示（有子任务时后端返回 400）
     }
   };
 
-  /** 任务状态可编辑：有 projects.edit 或本人是任务负责人；示例数据一律只读 */
-  const canChangeStatus = (task: WbsTask): boolean =>
+  /** 完成度可编辑：有 projects.edit 或本人是任务负责人；示例数据一律只读 */
+  const canChangeProgress = (task: WbsTask): boolean =>
     !isExample && (canEdit || (!!user?.person_id && user.person_id === task.assignee));
 
   // ---------- 成本 ----------
@@ -621,101 +627,117 @@ export default function ProjectDetail() {
   );
 
   // ----- 进度 -----
-  const msColumns: ColumnsType<Milestone> = [
-    { title: t('proj.ms.col.name'), dataIndex: 'name', ellipsis: true },
+  // 里程碑跟踪（派生只读，来自 WBS is_milestone=true）
+  const mtColumns: ColumnsType<MilestoneTrackingRow> = [
+    { title: t('proj.mt.col.code'), dataIndex: 'wbs_code', width: 100 },
+    { title: t('proj.mt.col.name'), dataIndex: 'name', ellipsis: true },
+    { title: t('proj.mt.col.stage'), dataIndex: 'stage', width: 120, render: (v) => v || '-' },
+    { title: t('proj.mt.col.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
+    { title: t('proj.mt.col.plannedEnd'), dataIndex: 'end_date', width: 120 },
+    { title: t('proj.mt.col.actualEnd'), dataIndex: 'actual_end', width: 120, render: (v) => v || '-' },
     {
-      title: t('proj.ms.col.targetDate'),
-      dataIndex: 'target_date',
-      width: 160,
-      render: (v: string, r) => (
-        <Space size={4}>
-          {v}
-          {r.overdue && <Tag color="red">{t('proj.overdue')}</Tag>}
-        </Space>
-      ),
-    },
-    {
-      title: t('proj.ms.col.achievedAt'),
-      dataIndex: 'achieved_at',
-      width: 130,
-      render: (v: string | null) => (v ? <Tag color="green">{v}</Tag> : '-'),
-    },
-    { title: t('proj.ms.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
-    ...(canEdit
-      ? [
-          {
-            title: t('common.actions'),
-            key: 'action',
-            width: 140,
-            render: (_: unknown, r: Milestone) => (
-              <Space size={0}>
-                {!r.achieved_at && (
-                  <Popconfirm
-                    title={t('proj.confirmAchieveMs', { name: r.name })}
-                    onConfirm={() => void achieveMilestone(r)}
-                  >
-                    <Button type="link" size="small" icon={<CheckOutlined />}>
-                      {t('proj.achieve')}
-                    </Button>
-                  </Popconfirm>
-                )}
-                <Popconfirm title={t('proj.confirmDeleteMs')} onConfirm={() => void deleteMilestone(r)}>
-                  <Button type="link" size="small" danger>
-                    {t('common.delete')}
-                  </Button>
-                </Popconfirm>
-              </Space>
-            ),
-          } as ColumnsType<Milestone>[number],
-        ]
-      : []),
-  ];
-
-  const wbsNameById: Record<string, string> = Object.fromEntries(wbs.map((t) => [t.id, t.name]));
-
-  const wbsColumns: ColumnsType<WbsNode> = [
-    { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 90 },
-    { title: t('proj.wbs.col.name'), dataIndex: 'name', ellipsis: true },
-    { title: t('proj.wbs.col.assignee'), dataIndex: 'assignee_name', width: 100, render: (v) => v || '-' },
-    {
-      title: t('proj.wbs.col.dates'),
-      key: 'dates',
-      width: 200,
-      render: (_, r) => `${r.start_date} ~ ${r.end_date}`,
+      title: t('proj.mt.col.deviation'),
+      dataIndex: 'schedule_deviation',
+      width: 110,
+      align: 'center',
+      render: (v: number | null) => renderDeviation(v),
     },
     {
       title: t('common.status'),
       dataIndex: 'status',
-      width: 110,
-      render: (v: WbsStatus, r) =>
-        canChangeStatus(r) ? (
-          <Select
-            size="small"
-            value={v}
-            style={{ width: 92 }}
-            options={WBS_STATUSES.map((s) => ({ value: s, label: et.wbsStatus(s) }))}
-            onChange={(s) => void changeTaskStatus(r, s)}
-          />
+      width: 100,
+      render: (v: WbsStatus) => <WbsStatusTag status={v} label={et.wbsStatus(v)} />,
+    },
+  ];
+
+  const wbsColumns: ColumnsType<WbsNode> = [
+    { title: t('proj.wbs.col.stage'), dataIndex: 'stage', width: 110, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 90 },
+    { title: t('proj.wbs.col.name'), dataIndex: 'name', width: 200, ellipsis: true },
+    {
+      title: t('proj.wbs.col.wbsDict'),
+      dataIndex: 'wbs_dict',
+      width: 160,
+      ellipsis: true,
+      render: (v: string | null) => (v ? <Tooltip title={v}>{v}</Tooltip> : '-'),
+    },
+    {
+      title: t('proj.wbs.col.deliverable'),
+      dataIndex: 'deliverable',
+      width: 160,
+      ellipsis: true,
+      render: (v: string | null) => (v ? <Tooltip title={v}>{v}</Tooltip> : '-'),
+    },
+    { title: t('proj.wbs.col.assignee'), dataIndex: 'assignee_name', width: 100, render: (v) => v || '-' },
+    {
+      title: t('proj.wbs.col.milestone'),
+      dataIndex: 'is_milestone',
+      width: 90,
+      align: 'center',
+      render: (v: boolean) =>
+        v ? (
+          <Tag color="blue" style={{ fontWeight: 700 }}>
+            {t('proj.yes')}
+          </Tag>
         ) : (
-          <Tag color={WBS_TAG_COLORS[v]}>{et.wbsStatus(v)}</Tag>
+          <Typography.Text type="secondary">{t('proj.no')}</Typography.Text>
         ),
     },
     {
       title: t('proj.wbs.col.predecessors'),
-      key: 'predecessors',
+      dataIndex: 'predecessor_codes',
+      width: 130,
+      ellipsis: true,
+      render: (v: string[] | null) => (v?.length ? v.join('、') : '-'),
+    },
+    { title: t('proj.wbs.col.plannedStart'), dataIndex: 'start_date', width: 120 },
+    { title: t('proj.wbs.col.plannedEnd'), dataIndex: 'end_date', width: 120 },
+    { title: t('proj.wbs.col.actualStart'), dataIndex: 'actual_start', width: 120, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.actualEnd'), dataIndex: 'actual_end', width: 120, render: (v) => v || '-' },
+    {
+      title: t('proj.wbs.col.deviation'),
+      dataIndex: 'schedule_deviation',
+      width: 120,
+      align: 'center',
+      render: (v: number | null) => renderDeviation(v),
+    },
+    {
+      title: t('proj.wbs.col.progress'),
+      dataIndex: 'progress',
+      width: 110,
+      render: (v: number, r) =>
+        canChangeProgress(r) ? (
+          <Select
+            size="small"
+            value={v}
+            style={{ width: 84 }}
+            options={PROGRESS_OPTIONS.map((p) => ({ value: p, label: `${p}%` }))}
+            onChange={(p) => void changeTaskProgress(r, p)}
+          />
+        ) : (
+          `${v}%`
+        ),
+    },
+    {
+      title: t('common.status'),
+      dataIndex: 'status',
+      width: 100,
+      render: (v: WbsStatus) => <WbsStatusTag status={v} label={et.wbsStatus(v)} />,
+    },
+    {
+      title: t('proj.wbs.col.remarks'),
+      dataIndex: 'remarks',
       width: 150,
       ellipsis: true,
-      render: (_, r) =>
-        r.predecessor_ids?.length ? r.predecessor_ids.map((pid) => wbsNameById[pid] || '?').join('、') : '-',
+      render: (v: string | null) => (v ? <Tooltip title={v}>{v}</Tooltip> : '-'),
     },
-    { title: t('proj.wbs.col.deliverable'), dataIndex: 'deliverable', width: 150, ellipsis: true, render: (v) => v || '-' },
-    { title: t('proj.wbs.col.desc'), dataIndex: 'description', width: 160, ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {
             title: t('common.actions'),
             key: 'action',
             width: 190,
+            fixed: 'right' as const,
             render: (_: unknown, r: WbsNode) => (
               <Space size={0}>
                 <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
@@ -747,6 +769,7 @@ export default function ProjectDetail() {
               onDone={() => {
                 void loadWbs();
                 void loadMilestones();
+                void loadMilestoneTracking();
                 void loadDetail();
               }}
               buttonText={t('proj.importWbsMs')}
@@ -757,32 +780,19 @@ export default function ProjectDetail() {
           </Space>
         </Card>
       )}
-      <Card
-        title={t('proj.milestonesTitle')}
-        size="small"
-        extra={
-          canEdit && (
-            <Button
-              size="small"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                msForm.resetFields();
-                setMsModalOpen(true);
-              }}
-            >
-              {t('proj.newMilestone')}
-            </Button>
-          )
-        }
-      >
-        <Table<Milestone>
-          size="small"
-          rowKey="id"
-          columns={msColumns}
-          dataSource={milestones}
-          pagination={false}
-          locale={{ emptyText: t('proj.emptyMs') }}
-        />
+      <Card title={t('proj.mtTitle')} size="small">
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Alert type="info" showIcon message={t('proj.mtAlert')} />
+          <Table<MilestoneTrackingRow>
+            size="small"
+            rowKey="id"
+            columns={mtColumns}
+            dataSource={milestoneTracking}
+            pagination={false}
+            scroll={{ x: 'max-content' }}
+            locale={{ emptyText: t('proj.emptyMt') }}
+          />
+        </Space>
       </Card>
 
       <Card
@@ -802,7 +812,7 @@ export default function ProjectDetail() {
           columns={wbsColumns}
           dataSource={wbsTree}
           pagination={false}
-          scroll={{ x: 1000 }}
+          scroll={{ x: 'max-content' }}
           expandable={{
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: setExpandedKeys,
@@ -1206,28 +1216,6 @@ export default function ProjectDetail() {
         </Form>
       </Modal>
 
-      {/* 新建里程碑 Modal */}
-      <Modal
-        title={t('proj.newMilestone')}
-        open={msModalOpen}
-        onOk={() => void submitMilestone()}
-        confirmLoading={msSaving}
-        onCancel={() => setMsModalOpen(false)}
-        destroyOnClose
-      >
-        <Form form={msForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label={t('proj.msName')} rules={[{ required: true, message: t('proj.msNameRequired') }]}>
-            <Input maxLength={200} />
-          </Form.Item>
-          <Form.Item name="target_date" label={t('proj.msTargetDate')} rules={[{ required: true, message: t('proj.msTargetDateRequired') }]}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="description" label={t('proj.msDesc')}>
-            <Input.TextArea rows={2} maxLength={500} />
-          </Form.Item>
-        </Form>
-      </Modal>
-
       {/* 新建/编辑任务 Modal */}
       <Modal
         title={
@@ -1238,14 +1226,18 @@ export default function ProjectDetail() {
               : t('proj.newTask')
         }
         open={!!taskModal}
+        width={600}
         onOk={() => void submitTask()}
         confirmLoading={taskSaving}
         onCancel={() => setTaskModal(null)}
         destroyOnClose
       >
-        <Form form={taskForm} layout="vertical" preserve={false}>
+        <Form form={taskForm} layout="vertical" preserve={false} initialValues={{ is_milestone: false }}>
           <Form.Item name="name" label={t('proj.taskName')} rules={[{ required: true, message: t('proj.taskNameRequired') }]}>
             <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item name="stage" label={t('proj.stage')}>
+            <Input maxLength={100} />
           </Form.Item>
           <Form.Item name="assignee" label={t('proj.assignee')} rules={[{ required: true, message: t('proj.assigneeRequired') }]}>
             <Select showSearch optionFilterProp="label" options={memberOptions} />
@@ -1253,8 +1245,19 @@ export default function ProjectDetail() {
           <Form.Item name="dates" label={t('proj.dateRange')} rules={[{ required: true, message: t('proj.dateRangeRequired') }]}>
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
+          {taskModal?.mode === 'edit' && (
+            <Form.Item name="actuals" label={`${t('proj.actualStart')} ~ ${t('proj.actualEnd')}`}>
+              <DatePicker.RangePicker style={{ width: '100%' }} allowEmpty={[true, true]} />
+            </Form.Item>
+          )}
+          <Form.Item name="wbs_dict" label={t('proj.wbsDict')}>
+            <Input.TextArea rows={2} maxLength={1000} placeholder={t('proj.wbsDictPlaceholder')} />
+          </Form.Item>
           <Form.Item name="deliverable" label={t('proj.deliverable')}>
             <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item name="is_milestone" label={t('proj.isMilestone')} valuePropName="checked">
+            <Switch />
           </Form.Item>
           <Form.Item
             name="predecessor_ids"
@@ -1269,6 +1272,9 @@ export default function ProjectDetail() {
                 .filter((t) => t.id !== taskModal?.task?.id)
                 .map((t) => ({ value: t.id, label: `${t.wbs_code} ${t.name}` }))}
             />
+          </Form.Item>
+          <Form.Item name="remarks" label={t('proj.remarks')}>
+            <Input.TextArea rows={2} maxLength={1000} />
           </Form.Item>
           <Form.Item name="description" label={t('proj.taskDesc')}>
             <Input.TextArea rows={2} maxLength={1000} />
