@@ -125,7 +125,7 @@ export default function ProjectDetail() {
   const [detail, setDetail] = useState<ProjectDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [wbs, setWbs] = useState<WbsTask[]>([]);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [, setMilestones] = useState<Milestone[]>([]);
   const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
   const [risks, setRisks] = useState<Risk[]>([]);
   const [costs, setCosts] = useState<CostEntry[]>([]);
@@ -824,7 +824,6 @@ export default function ProjectDetail() {
       <Card title={t('proj.gantt')} size="small">
         <GanttChart
           tasks={wbs}
-          milestones={milestones}
           rangeStart={detail.planned_start}
           rangeEnd={detail.planned_end}
         />

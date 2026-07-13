@@ -1,38 +1,67 @@
 import { useMemo } from 'react';
-import { Tooltip, Typography } from 'antd';
+import { Tag, Tooltip, Typography } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
-import type { Milestone, WbsTask } from '../api/types';
-import { WBS_STATUS_COLORS } from '../api/types';
+import type { WbsStatus, WbsTask } from '../api/types';
 import { useT } from '../i18n';
+import { useLangStore } from '../i18n/store';
 import { useEnums } from '../i18n/enums';
 
 /**
- * 自研轻量甘特图（纯 CSS / 绝对定位，无第三方图库）：
- * - 横轴按项目计划起止（并入任务/里程碑日期）确定日期范围，短周期按周刻度、长周期按月刻度；
- * - 每个任务一行水平条，按起止日期定位，状态着色（未开始灰 / 进行中蓝 / 已完成绿）；
- * - 里程碑用菱形标记在对应日期（达成绿 / 逾期红 / 未达成蓝）；
- * - 今日红色竖线；容器横向滚动，任务名列 sticky 固定在左侧。
+ * 自研轻量甘特图（纯 CSS / 绝对定位，无第三方图库），按「甘特图」子表结构：
+ * - 左侧 6 列固定（sticky）：WBS编号 / 任务名称 / 责任人 / 计划开始 / 计划结束 / 状态；
+ * - 时间轴按周分桶：项目起始周一起，每列 = 1 周（7 天），双行表头（月份行 + 周行）；
+ * - 每行蓝色「计划工期」条（start→end）+ 按状态着色的实际条（已完成绿/进行中黄/已延期红/未开始不画）；
+ * - 里程碑（is_milestone）在计划结束位置画 ◆（已完成绿/已延期红/其余蓝）；
+ * - 今日红色竖线贯穿所有行；容器横向滚动，左 6 列 sticky、表头 sticky top。
  */
 
 interface GanttChartProps {
   tasks: WbsTask[];
-  milestones?: Milestone[];
   /** 项目计划开始/结束（参与范围计算，保证空任务时也有坐标轴） */
   rangeStart?: string | null;
   rangeEnd?: string | null;
 }
 
-const LABEL_W = 220;
-const HEADER_H = 30;
-const ROW_H = 32;
-const BAR_H = 16;
+const WEEK_W = 40; // 单周列宽
+const ROW_H = 36;
+const HEADER_MONTH_H = 24;
+const HEADER_WEEK_H = 24;
+const HEADER_H = HEADER_MONTH_H + HEADER_WEEK_H;
+const PLAN_H = 12; // 计划条高
+const ACTUAL_H = 6; // 实际条高（更细，下移叠加）
+
+// 颜色
+const C_PLAN = '#1677ff';
+const C_DONE = '#52c41a';
+const C_DOING = '#faad14';
+const C_OVERDUE = '#ff4d4f';
+const C_TODAY = '#ff4d4f';
+
+// 状态 → antd Tag 颜色（与 ProjectDetail 的 WBS 表保持一致）
+const TAG_COLOR: Record<WbsStatus, string> = {
+  未开始: 'default',
+  进行中: 'processing',
+  已完成: 'success',
+  已延期: 'error',
+};
+
+// 左侧固定列定义（宽度）
+const COLS = [
+  { key: 'code', w: 96 },
+  { key: 'name', w: 200 },
+  { key: 'owner', w: 96 },
+  { key: 'plannedStart', w: 100 },
+  { key: 'plannedEnd', w: 100 },
+  { key: 'status', w: 96 },
+] as const;
+const LEFT_W = COLS.reduce((s, c) => s + c.w, 0);
 
 interface FlatRow {
   task: WbsTask;
   depth: number;
 }
 
-/** 按树结构（parent_task_id）先序展开，孤儿节点视为根 */
+/** 按树结构（parent_task_id）先序展开，孤儿节点视为根，depth 用于 WBS 编号缩进 */
 function flattenTree(tasks: WbsTask[]): FlatRow[] {
   const ids = new Set(tasks.map((t) => t.id));
   const byParent = new Map<string, WbsTask[]>();
@@ -53,336 +82,386 @@ function flattenTree(tasks: WbsTask[]): FlatRow[] {
   return out;
 }
 
-export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEnd }: GanttChartProps) {
+export default function GanttChart({ tasks, rangeStart, rangeEnd }: GanttChartProps) {
   const t = useT();
   const et = useEnums();
+  const lang = useLangStore((s) => s.lang);
   const rows = useMemo(() => flattenTree(tasks), [tasks]);
 
   const model = useMemo(() => {
-    const dates: Dayjs[] = [];
-    const push = (v?: string | null) => {
+    const today = dayjs().startOf('day');
+    const starts: Dayjs[] = [today];
+    const ends: Dayjs[] = [today];
+    const push = (arr: Dayjs[], v?: string | null) => {
       if (!v) return;
       const d = dayjs(v);
-      if (d.isValid()) dates.push(d);
+      if (d.isValid()) arr.push(d.startOf('day'));
     };
-    push(rangeStart);
-    push(rangeEnd);
-    tasks.forEach((t) => {
-      push(t.start_date);
-      push(t.end_date);
+    push(starts, rangeStart);
+    push(ends, rangeEnd);
+    tasks.forEach((tk) => {
+      push(starts, tk.start_date);
+      push(ends, tk.end_date);
+      push(starts, tk.actual_start);
+      push(ends, tk.actual_end);
     });
-    milestones.forEach((m) => push(m.target_date));
-    if (dates.length === 0) return null;
-
-    let min = dates[0];
-    let max = dates[0];
-    dates.forEach((d) => {
+    let min = starts[0];
+    starts.forEach((d) => {
       if (d.isBefore(min)) min = d;
+    });
+    let max = ends[0];
+    ends.forEach((d) => {
       if (d.isAfter(max)) max = d;
     });
-    // 两端各留 3 天呼吸空间
-    min = min.subtract(3, 'day').startOf('day');
-    max = max.add(3, 'day').startOf('day');
-    const totalDays = max.diff(min, 'day') + 1;
-    // 短周期按周刻度（日宽大），长周期按月刻度（日宽小）
-    const weekMode = totalDays <= 130;
-    const dayWidth = weekMode ? 18 : 5;
+    if (max.isBefore(min)) max = min;
 
-    const ticks: { left: number; label: string }[] = [];
-    if (weekMode) {
-      // 每周一一条刻度线
-      let cur = min.day() === 1 ? min : min.add((8 - min.day()) % 7 || 7, 'day');
-      while (!cur.isAfter(max)) {
-        ticks.push({ left: cur.diff(min, 'day') * dayWidth, label: cur.format('MM-DD') });
-        cur = cur.add(7, 'day');
+    // 起始周一 = min 所在周的周一（dayjs：day()=0 周日, 1 周一 … 6 周六）
+    const dow = min.day();
+    const axisStart = min.subtract(dow === 0 ? 6 : dow - 1, 'day').startOf('day');
+    const weekCount = Math.max(1, Math.ceil((max.diff(axisStart, 'day') + 1) / 7));
+    const weeks = Array.from({ length: weekCount }, (_, i) => axisStart.add(i * 7, 'day'));
+    const chartW = weekCount * WEEK_W;
+
+    const monthMarks: { left: number; label: string }[] = [];
+    weeks.forEach((wk, i) => {
+      if (i === 0 || wk.month() !== weeks[i - 1].month()) {
+        monthMarks.push({
+          left: i * WEEK_W,
+          label: lang === 'zh' ? `${wk.month() + 1}月` : wk.format('MMM'),
+        });
       }
-    } else {
-      // 每月 1 日一条刻度线
-      let cur = min.date() === 1 ? min : min.add(1, 'month').startOf('month');
-      while (!cur.isAfter(max)) {
-        ticks.push({ left: cur.diff(min, 'day') * dayWidth, label: cur.format('YYYY-MM') });
-        cur = cur.add(1, 'month');
-      }
-    }
-    return { min, max, dayWidth, chartW: totalDays * dayWidth, ticks };
-  }, [tasks, milestones, rangeStart, rangeEnd]);
-
-  if (!model || (rows.length === 0 && milestones.length === 0)) {
-    return <Typography.Text type="secondary">{t('comp.gantt.empty')}</Typography.Text>;
-  }
-
-  const { min, max, dayWidth, chartW, ticks } = model;
-  const offsetOf = (v: string) => dayjs(v).diff(min, 'day') * dayWidth;
-  const hasMsRow = milestones.length > 0;
-  const bodyTop = HEADER_H + (hasMsRow ? ROW_H : 0);
-  const totalH = bodyTop + rows.length * ROW_H;
-  const today = dayjs().startOf('day');
-  const todayVisible = !today.isBefore(min) && !today.isAfter(max);
-
-  // 依赖线（PRD §6.2）：前置任务条尾 → 后继任务条头 的折线 + 箭头
-  const rowIndexById = new Map(rows.map((r, i) => [r.task.id, i]));
-  const barGeom = (t: WbsTask) => {
-    const x1 = LABEL_W + offsetOf(t.start_date);
-    const w = Math.max((dayjs(t.end_date).diff(dayjs(t.start_date), 'day') + 1) * dayWidth - 1, 5);
-    return { left: x1, right: x1 + w };
-  };
-  const depEdges: { key: string; d: string }[] = [];
-  rows.forEach(({ task }) => {
-    const toIdx = rowIndexById.get(task.id);
-    if (toIdx === undefined) return;
-    (task.predecessor_ids ?? []).forEach((pid) => {
-      const fromIdx = rowIndexById.get(pid);
-      const pred = rows[fromIdx ?? -1]?.task;
-      if (fromIdx === undefined || !pred) return;
-      const fromY = bodyTop + fromIdx * ROW_H + ROW_H / 2;
-      const toY = bodyTop + toIdx * ROW_H + ROW_H / 2;
-      const fromX = barGeom(pred).right + 2;
-      const toX = barGeom(task).left - 6;
-      const elbowX = Math.max(fromX + 8, toX - 8);
-      const d =
-        toX > fromX + 12
-          ? `M ${fromX} ${fromY} H ${elbowX} V ${toY} H ${toX}`
-          : `M ${fromX} ${fromY} H ${fromX + 10} V ${(fromY + toY) / 2} H ${toX - 10} V ${toY} H ${toX}`;
-      depEdges.push({ key: `${pid}->${task.id}`, d });
     });
+
+    return { axisStart, weeks, weekCount, chartW, monthMarks, today };
+  }, [tasks, rangeStart, rangeEnd, lang]);
+
+  const { axisStart, weeks, chartW, monthMarks, today } = model;
+  const dayW = WEEK_W / 7;
+  // 日期 → 相对起始周一的像素 x
+  const x = (v: string | Dayjs) => dayjs(v).startOf('day').diff(axisStart, 'day') * dayW;
+
+  const totalH = HEADER_H + rows.length * ROW_H;
+
+  // 单元样式（左侧固定列 + 时间区共用）
+  const cellStyle = (w: number, h: number, extra?: React.CSSProperties): React.CSSProperties => ({
+    flexShrink: 0,
+    width: w,
+    height: h,
+    lineHeight: `${h}px`,
+    padding: '0 8px',
+    fontSize: 12,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    borderRight: '1px solid #f0f0f0',
+    boxSizing: 'border-box',
+    ...extra,
   });
 
-  const labelCell = (content: React.ReactNode, height: number, strong = false): JSX.Element => (
+  // 左侧固定块（一行 6 列），position: sticky
+  const leftBlock = (
+    cells: React.ReactNode[],
+    h: number,
+    strong = false,
+    top?: number,
+  ): JSX.Element => (
     <div
       style={{
         position: 'sticky',
         left: 0,
-        zIndex: 3,
+        top,
+        zIndex: top !== undefined ? 5 : 3,
+        display: 'flex',
         flexShrink: 0,
-        width: LABEL_W,
-        height,
-        lineHeight: `${height}px`,
-        padding: '0 8px',
+        width: LEFT_W,
         background: '#fff',
-        borderRight: '1px solid #f0f0f0',
         borderBottom: '1px solid #f0f0f0',
-        fontSize: 13,
         fontWeight: strong ? 600 : 400,
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
       }}
     >
-      {content}
+      {COLS.map((c, i) => (
+        <div key={c.key} style={cellStyle(c.w, h, { fontWeight: strong ? 600 : 400 })}>
+          {cells[i]}
+        </div>
+      ))}
     </div>
+  );
+
+  const legendItem = (color: string, label: string, shape: 'bar' | 'diamond' | 'line') => (
+    <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      {shape === 'diamond' ? (
+        <span style={{ display: 'inline-block', width: 8, height: 8, background: color, transform: 'rotate(45deg)' }} />
+      ) : shape === 'line' ? (
+        <span style={{ display: 'inline-block', width: 0, height: 12, borderLeft: `2px solid ${color}` }} />
+      ) : (
+        <span style={{ display: 'inline-block', width: 14, height: 8, borderRadius: 2, background: color }} />
+      )}
+      {label}
+    </span>
   );
 
   return (
     <div>
       {/* 图例 */}
-      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 8, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
-        {(['未开始', '进行中', '已完成'] as const).map((s) => (
-          <span key={s}>
-            <span
-              style={{
-                display: 'inline-block',
-                width: 12,
-                height: 8,
-                borderRadius: 2,
-                background: WBS_STATUS_COLORS[s],
-                marginRight: 4,
-              }}
-            />
-            {et.wbsStatus(s)}
-          </span>
-        ))}
-        <span>
-          <span
-            style={{
-              display: 'inline-block',
-              width: 8,
-              height: 8,
-              background: '#1677ff',
-              transform: 'rotate(45deg)',
-              marginRight: 6,
-            }}
-          />
-          {t('comp.gantt.milestone')}
-        </span>
-        <span>
-          <span
-            style={{
-              display: 'inline-block',
-              width: 0,
-              height: 10,
-              borderLeft: '2px solid #ff4d4f',
-              marginRight: 4,
-              verticalAlign: 'middle',
-            }}
-          />
-          {t('comp.gantt.today')}
-        </span>
-        <span>
-          <span
-            style={{
-              display: 'inline-block',
-              width: 16,
-              height: 0,
-              borderTop: '2px dashed #8c8c8c',
-              marginRight: 4,
-              verticalAlign: 'middle',
-            }}
-          />
-          {t('comp.gantt.depLine')}
-        </span>
+      <div
+        style={{
+          display: 'flex',
+          gap: 16,
+          flexWrap: 'wrap',
+          marginBottom: 8,
+          fontSize: 12,
+          color: 'rgba(0,0,0,0.65)',
+        }}
+      >
+        {legendItem(C_PLAN, t('proj.gantt.legend.plan'), 'bar')}
+        {legendItem(C_DONE, t('proj.gantt.legend.actualDone'), 'bar')}
+        {legendItem(C_DOING, t('proj.gantt.legend.actualDoing'), 'bar')}
+        {legendItem(C_OVERDUE, t('proj.gantt.legend.overdue'), 'bar')}
+        {legendItem(C_PLAN, t('proj.gantt.legend.milestone'), 'diamond')}
+        {legendItem(C_TODAY, t('proj.gantt.legend.today'), 'line')}
       </div>
 
-      <div style={{ overflowX: 'auto', border: '1px solid #f0f0f0', borderRadius: 8 }}>
-        <div style={{ position: 'relative', width: LABEL_W + chartW, minWidth: '100%' }}>
-          {/* 刻度竖线（压在图表区，标签列 sticky 白底盖住它） */}
-          {ticks.map((t, i) => (
+      <div style={{ overflowX: 'auto', border: '1px solid #f0f0f0', borderRadius: 8, maxHeight: 560, overflowY: 'auto' }}>
+        <div style={{ position: 'relative', width: LEFT_W + chartW, minWidth: '100%' }}>
+          {/* 周网格竖线（压在图表区底层，左侧列白底盖住） */}
+          {weeks.map((_, i) => (
             <div
               key={`grid-${i}`}
               style={{
                 position: 'absolute',
-                left: LABEL_W + t.left,
+                left: LEFT_W + i * WEEK_W,
                 top: 0,
                 height: totalH,
-                borderLeft: '1px solid #f0f0f0',
+                borderLeft: '1px solid #f5f5f5',
                 zIndex: 0,
               }}
             />
           ))}
 
-          {/* 表头：刻度标签 */}
-          <div style={{ display: 'flex', position: 'relative', zIndex: 1 }}>
-            {labelCell(t('comp.gantt.task'), HEADER_H, true)}
-            <div style={{ position: 'relative', width: chartW, height: HEADER_H, borderBottom: '1px solid #f0f0f0' }}>
-              {ticks.map((t, i) => (
+          {/* 表头：月份行 + 周行 */}
+          <div style={{ display: 'flex', position: 'sticky', top: 0, zIndex: 4 }}>
+            {leftBlock(
+              [
+                t('proj.gantt.col.code'),
+                t('proj.gantt.col.name'),
+                t('proj.gantt.col.owner'),
+                t('proj.gantt.col.plannedStart'),
+                t('proj.gantt.col.plannedEnd'),
+                t('proj.gantt.col.status'),
+              ].map((s, i) => (
+                <span key={i} style={{ lineHeight: `${HEADER_H}px` }}>
+                  {s}
+                </span>
+              )),
+              HEADER_H,
+              true,
+              0,
+            )}
+            <div style={{ position: 'relative', width: chartW, height: HEADER_H, background: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+              {/* 月份行 */}
+              {monthMarks.map((m, i) => (
                 <span
-                  key={`tick-${i}`}
+                  key={`mon-${i}`}
                   style={{
                     position: 'absolute',
-                    left: t.left + 3,
-                    top: 6,
+                    left: m.left + 2,
+                    top: 0,
+                    height: HEADER_MONTH_H,
+                    lineHeight: `${HEADER_MONTH_H}px`,
                     fontSize: 12,
-                    color: 'rgba(0,0,0,0.45)',
+                    fontWeight: 600,
+                    color: 'rgba(0,0,0,0.65)',
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {t.label}
+                  {m.label}
+                </span>
+              ))}
+              {/* 周行 */}
+              {weeks.map((wk, i) => (
+                <span
+                  key={`wk-${i}`}
+                  style={{
+                    position: 'absolute',
+                    left: i * WEEK_W,
+                    top: HEADER_MONTH_H,
+                    width: WEEK_W,
+                    height: HEADER_WEEK_H,
+                    lineHeight: `${HEADER_WEEK_H}px`,
+                    textAlign: 'center',
+                    fontSize: 11,
+                    color: 'rgba(0,0,0,0.45)',
+                    borderTop: '1px solid #f5f5f5',
+                    boxSizing: 'border-box',
+                  }}
+                >
+                  {wk.format('M/D')}
                 </span>
               ))}
             </div>
           </div>
 
-          {/* 里程碑行 */}
-          {hasMsRow && (
-            <div style={{ display: 'flex', position: 'relative', zIndex: 1 }}>
-              {labelCell(t('comp.gantt.milestoneCol'), ROW_H, true)}
-              <div style={{ position: 'relative', width: chartW, height: ROW_H, borderBottom: '1px solid #f0f0f0' }}>
-                {milestones.map((m) => {
-                  const color = m.achieved_at ? '#52c41a' : m.overdue ? '#ff4d4f' : '#1677ff';
-                  const state = m.achieved_at
-                    ? t('comp.gantt.achieved', { date: m.achieved_at })
-                    : m.overdue
-                      ? t('comp.gantt.overdue')
-                      : t('comp.gantt.notAchieved');
-                  return (
-                    <Tooltip key={m.id} title={`${m.name} · ${m.target_date} · ${state}`}>
-                      <span
-                        style={{
-                          position: 'absolute',
-                          left: offsetOf(m.target_date) - 5,
-                          top: (ROW_H - 10) / 2,
-                          width: 10,
-                          height: 10,
-                          background: color,
-                          transform: 'rotate(45deg)',
-                          cursor: 'default',
-                        }}
-                      />
-                    </Tooltip>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* 任务行 */}
           {rows.map(({ task, depth }) => {
-            const left = offsetOf(task.start_date);
-            const width = Math.max(
-              (dayjs(task.end_date).diff(dayjs(task.start_date), 'day') + 1) * dayWidth - 1,
-              5,
+            const status = task.status;
+            const isMs = task.is_milestone;
+
+            // 计划条
+            const planLeft = x(task.start_date);
+            const planW = Math.max(x(task.end_date) - planLeft, 4);
+
+            // 实际条（按状态）
+            let actual: { left: number; width: number; color: string } | null = null;
+            if (status === '已完成') {
+              const s = task.actual_start ?? task.start_date;
+              const e = task.actual_end ?? task.end_date;
+              actual = { left: x(s), width: Math.max(x(e) - x(s), 4), color: C_DONE };
+            } else if (status === '进行中') {
+              const s = task.actual_start ?? task.start_date;
+              actual = { left: x(s), width: Math.max(x(today) - x(s), 4), color: C_DOING };
+            } else if (status === '已延期') {
+              actual = { left: planLeft, width: Math.max(x(today) - planLeft, 4), color: C_OVERDUE };
+            }
+
+            const msColor = status === '已完成' ? C_DONE : status === '已延期' ? C_OVERDUE : C_PLAN;
+
+            const tip = (
+              <div style={{ fontSize: 12 }}>
+                <div style={{ fontWeight: 600 }}>
+                  {task.wbs_code} {task.name}
+                </div>
+                <div>
+                  {t('proj.gantt.tip.planned')}: {task.start_date} ~ {task.end_date}
+                </div>
+                {(task.actual_start || task.actual_end) && (
+                  <div>
+                    {t('proj.gantt.tip.actual')}: {task.actual_start ?? '-'} ~ {task.actual_end ?? '-'}
+                  </div>
+                )}
+                <div>
+                  {t('proj.gantt.tip.status')}: {et.wbsStatus(status)}
+                </div>
+              </div>
             );
+
             return (
               <div key={task.id} style={{ display: 'flex', position: 'relative', zIndex: 1 }}>
-                {labelCell(
-                  <span style={{ paddingLeft: depth * 14 }}>
-                    <Typography.Text type="secondary" style={{ fontSize: 12, marginRight: 6 }}>
+                {leftBlock(
+                  [
+                    <span key="c" style={{ paddingLeft: depth * 12, color: 'rgba(0,0,0,0.55)' }}>
                       {task.wbs_code}
-                    </Typography.Text>
-                    {task.name}
-                  </span>,
+                    </span>,
+                    <span key="n">
+                      {isMs && <span style={{ color: C_PLAN, marginRight: 4 }}>◆</span>}
+                      {task.name}
+                    </span>,
+                    <span key="o">{task.assignee_name || '-'}</span>,
+                    <span key="ps">{task.start_date || '-'}</span>,
+                    <span key="pe">{task.end_date || '-'}</span>,
+                    <Tag key="st" color={TAG_COLOR[status] ?? 'default'} style={{ marginInlineEnd: 0 }}>
+                      {et.wbsStatus(status)}
+                    </Tag>,
+                  ],
                   ROW_H,
                 )}
-                <div style={{ position: 'relative', width: chartW, height: ROW_H, borderBottom: '1px solid #f0f0f0' }}>
-                  <Tooltip
-                    title={`${task.wbs_code} ${task.name} · ${task.start_date} ~ ${task.end_date} · ${et.wbsStatus(task.status)}${task.assignee_name ? ` · ${task.assignee_name}` : ''}`}
-                  >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left,
-                        top: (ROW_H - BAR_H) / 2,
-                        width,
-                        height: BAR_H,
-                        borderRadius: 4,
-                        background: WBS_STATUS_COLORS[task.status] ?? '#bfbfbf',
-                        cursor: 'default',
-                      }}
-                    />
+                <div
+                  style={{
+                    position: 'relative',
+                    width: chartW,
+                    height: ROW_H,
+                    borderBottom: '1px solid #f0f0f0',
+                  }}
+                >
+                  <Tooltip title={tip}>
+                    <div style={{ position: 'absolute', inset: 0 }}>
+                      {isMs ? (
+                        // 里程碑：在计划结束位置画 ◆（以计划结束定位）
+                        <span
+                          style={{
+                            position: 'absolute',
+                            left: x(task.end_date) - 6,
+                            top: (ROW_H - 12) / 2,
+                            width: 12,
+                            height: 12,
+                            background: msColor,
+                            transform: 'rotate(45deg)',
+                          }}
+                        />
+                      ) : (
+                        <>
+                          {/* 计划条（蓝） */}
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: planLeft,
+                              top: 8,
+                              width: planW,
+                              height: PLAN_H,
+                              borderRadius: 3,
+                              background: C_PLAN,
+                            }}
+                          />
+                          {/* 实际条（按状态着色，下移叠加） */}
+                          {actual && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: actual.left,
+                                top: 8 + PLAN_H + 1,
+                                width: actual.width,
+                                height: ACTUAL_H,
+                                borderRadius: 3,
+                                background: actual.color,
+                              }}
+                            />
+                          )}
+                        </>
+                      )}
+                    </div>
                   </Tooltip>
                 </div>
               </div>
             );
           })}
 
-          {/* 依赖线覆盖层 */}
-          {depEdges.length > 0 && (
-            <svg
-              width={LABEL_W + chartW}
-              height={totalH}
-              style={{ position: 'absolute', top: 0, left: 0, zIndex: 2, pointerEvents: 'none' }}
-            >
-              <defs>
-                <marker id="gantt-dep-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                  <path d="M0,0 L6,3 L0,6 Z" fill="#8c8c8c" />
-                </marker>
-              </defs>
-              {depEdges.map((e) => (
-                <path
-                  key={e.key}
-                  d={e.d}
-                  fill="none"
-                  stroke="#8c8c8c"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
-                  markerEnd="url(#gantt-dep-arrow)"
-                />
-              ))}
-            </svg>
-          )}
-
-          {/* 今日红色竖线 */}
-          {todayVisible && (
-            <div
+          {/* 今日红色竖线（贯穿所有行） */}
+          <div
+            style={{
+              position: 'absolute',
+              left: LEFT_W + x(today),
+              top: HEADER_MONTH_H,
+              height: totalH - HEADER_MONTH_H,
+              borderLeft: `2px solid ${C_TODAY}`,
+              zIndex: 2,
+              pointerEvents: 'none',
+            }}
+          >
+            <span
               style={{
                 position: 'absolute',
-                left: LABEL_W + today.diff(min, 'day') * dayWidth,
-                top: HEADER_H,
-                height: totalH - HEADER_H,
-                borderLeft: '2px solid #ff4d4f',
-                zIndex: 2,
-                pointerEvents: 'none',
+                top: 0,
+                left: 2,
+                fontSize: 10,
+                color: C_TODAY,
+                whiteSpace: 'nowrap',
+                lineHeight: `${HEADER_WEEK_H}px`,
               }}
-            />
+            >
+              {t('proj.gantt.legend.today')}
+            </span>
+          </div>
+
+          {rows.length === 0 && (
+            <div
+              style={{
+                display: 'flex',
+                position: 'relative',
+                zIndex: 1,
+              }}
+            >
+              {leftBlock([<Typography.Text key="e" type="secondary">{t('proj.gantt.empty')}</Typography.Text>, '', '', '', '', ''], ROW_H)}
+              <div style={{ width: chartW, height: ROW_H, borderBottom: '1px solid #f0f0f0' }} />
+            </div>
           )}
         </div>
       </div>

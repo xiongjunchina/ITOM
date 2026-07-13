@@ -109,7 +109,7 @@ export const zh: Dict = {
 
   // 进度：导入 / 里程碑跟踪 / WBS
   'proj.importWbsMs': '导入 WBS 与里程碑',
-  'proj.importHint': '模板含「WBS任务」「里程碑」两个工作表；上级/前置任务按名称挂接，导入后自动生成层级编码与甘特依赖线',
+  'proj.importHint': '模板含「WBS任务」单个工作表，里程碑由「里程碑=是」的行派生；上级/前置任务按 WBS 编号挂接，导入后自动生成层级与甘特图',
 
   // 里程碑跟踪（派生只读）
   'proj.mtTitle': '里程碑跟踪',
@@ -146,6 +146,23 @@ export const zh: Dict = {
   'proj.confirmDeleteTask': '确认删除该任务？',
   'proj.emptyWbs': '暂无任务，可通过「新建任务」或章程导入生成',
   'proj.gantt': '甘特图',
+  // 甘特图（按周分桶，左 6 列固定）
+  'proj.gantt.empty': '暂无任务',
+  'proj.gantt.legend.plan': '计划',
+  'proj.gantt.legend.actualDone': '实际(已完成)',
+  'proj.gantt.legend.actualDoing': '实际(进行中)',
+  'proj.gantt.legend.overdue': '延期',
+  'proj.gantt.legend.milestone': '里程碑',
+  'proj.gantt.legend.today': '今日',
+  'proj.gantt.col.code': 'WBS编号',
+  'proj.gantt.col.name': '任务名称(交付物)',
+  'proj.gantt.col.owner': '责任人',
+  'proj.gantt.col.plannedStart': '计划开始',
+  'proj.gantt.col.plannedEnd': '计划结束',
+  'proj.gantt.col.status': '状态',
+  'proj.gantt.tip.planned': '计划',
+  'proj.gantt.tip.actual': '实际',
+  'proj.gantt.tip.status': '状态',
   'proj.taskUpdated': '任务已更新',
   'proj.taskCreated': '任务已创建',
   'proj.taskProgressUpdated': '完成度已更新',
@@ -356,7 +373,7 @@ export const en: Dict = {
   // Progress: import / milestone tracking / WBS
   'proj.importWbsMs': 'Import WBS & Milestones',
   'proj.importHint':
-    'The template has two sheets, "WBS Tasks" and "Milestones"; parent/predecessor tasks are matched by name, and hierarchy codes and Gantt dependency lines are generated on import',
+    'The template has a single "WBS Tasks" sheet; milestones are derived from rows flagged "Milestone=Yes". Parent/predecessor tasks are matched by WBS code, and hierarchy and the Gantt chart are generated on import',
 
   // Milestone tracking (derived, read-only)
   'proj.mtTitle': 'Milestone Tracking',
@@ -393,6 +410,23 @@ export const en: Dict = {
   'proj.confirmDeleteTask': 'Delete this task?',
   'proj.emptyWbs': 'No tasks yet; add via "New Task" or Charter Import',
   'proj.gantt': 'Gantt Chart',
+  // Gantt (weekly buckets, 6 fixed left columns)
+  'proj.gantt.empty': 'No tasks',
+  'proj.gantt.legend.plan': 'Plan',
+  'proj.gantt.legend.actualDone': 'Actual (Done)',
+  'proj.gantt.legend.actualDoing': 'Actual (In progress)',
+  'proj.gantt.legend.overdue': 'Overdue',
+  'proj.gantt.legend.milestone': 'Milestone',
+  'proj.gantt.legend.today': 'Today',
+  'proj.gantt.col.code': 'WBS Code',
+  'proj.gantt.col.name': 'Task Name (Deliverable)',
+  'proj.gantt.col.owner': 'Owner',
+  'proj.gantt.col.plannedStart': 'Planned Start',
+  'proj.gantt.col.plannedEnd': 'Planned End',
+  'proj.gantt.col.status': 'Status',
+  'proj.gantt.tip.planned': 'Plan',
+  'proj.gantt.tip.actual': 'Actual',
+  'proj.gantt.tip.status': 'Status',
   'proj.taskUpdated': 'Task updated',
   'proj.taskCreated': 'Task created',
   'proj.taskProgressUpdated': 'Progress updated',
