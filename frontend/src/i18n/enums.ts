@@ -61,6 +61,15 @@ const HIRING_STATUS_EN: M = { 待招聘: 'To hire', 面试中: 'Interviewing', �
 const HIRING_LEVEL_EN: M = { 高级: 'Senior', 中级: 'Mid', 初级: 'Junior' };
 const CATALOG_STATUS_EN: M = { 上架: 'Listed', 下架: 'Unlisted' };
 const TRAINING_TYPE_EN: M = { 内部交叉培训: 'Internal cross-training', 外部技术交流: 'External tech exchange', 新技术研究: 'New-tech research' };
+const CHANGE_TYPE_EN: M = { 标准: 'Standard', 普通: 'Normal', 紧急: 'Emergency' };
+const GENDER_EN: M = { 男: 'Male', 女: 'Female' };
+const EMPLOYMENT_EN: M = { 正式: 'Full-time', 外包: 'Outsourced', 实习: 'Intern' };
+const MEMBER_STATUS_EN: M = { 在岗: 'Active', 离职: 'Left' };
+// 项目/需求状态（按 code，与后端 STATUS_EN 一致；用于筛选下拉，列表徽标已由后端 status_name 本地化）
+const PROJECT_STATUS_ZH: M = { planning: '规划中', active: '进行中', paused: '已暂停', completed: '已完成', closed: '已关闭', cancelled: '已取消' };
+const PROJECT_STATUS_EN: M = { planning: 'Planning', active: 'In progress', paused: 'Paused', completed: 'Completed', closed: 'Closed', cancelled: 'Cancelled' };
+const REQUIREMENT_STATUS_ZH: M = { registered: '已登记', analyzing: '分析中', implementing: '实现中', closed: '已关闭', on_hold: '已搁置', cancelled: '已取消' };
+const REQUIREMENT_STATUS_EN: M = { registered: 'Registered', analyzing: 'Analyzing', implementing: 'Implementing', closed: 'Closed', on_hold: 'On hold', cancelled: 'Cancelled' };
 
 /** 组件内使用：随语言 store 响应式返回双语枚举标签函数。 */
 export function useEnums() {
@@ -98,6 +107,12 @@ export function useEnums() {
     hiringLevel: val(HIRING_LEVEL_EN),
     catalogStatus: val(CATALOG_STATUS_EN),
     trainingType: val(TRAINING_TYPE_EN),
+    changeType: val(CHANGE_TYPE_EN),
+    gender: val(GENDER_EN),
+    employment: val(EMPLOYMENT_EN),
+    memberStatus: val(MEMBER_STATUS_EN),
+    projectStatus: code(PROJECT_STATUS_ZH, PROJECT_STATUS_EN),
+    requirementStatus: code(REQUIREMENT_STATUS_ZH, REQUIREMENT_STATUS_EN),
   };
 }
 

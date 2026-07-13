@@ -358,7 +358,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                 rules={[{ required: true, message: t('itsm.ticket.changeTypeRequired') }]}
               >
                 <Select
-                  options={['标准', '普通', '紧急'].map((v) => ({ value: v, label: v }))}
+                  options={['标准', '普通', '紧急'].map((v) => ({ value: v, label: et.changeType(v) }))}
                   placeholder={t('itsm.ticket.changeTypePlaceholder')}
                 />
               </Form.Item>
@@ -367,7 +367,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                 label={t('itsm.ticket.riskLevel')}
                 rules={[{ required: true, message: t('itsm.ticket.riskLevelRequired') }]}
               >
-                <Select options={['高', '中', '低'].map((v) => ({ value: v, label: v }))} />
+                <Select options={['高', '中', '低'].map((v) => ({ value: v, label: et.riskGrade(v) }))} />
               </Form.Item>
               <Form.Item name="change_reason" label={t('itsm.ticket.changeReason')}>
                 <Input.TextArea rows={2} maxLength={1000} />

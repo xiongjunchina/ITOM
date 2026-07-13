@@ -659,7 +659,7 @@ export default function OrgArchitecture() {
           <Descriptions.Item label={t('admin.member.email')}>{m.email || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.mobile')}>{m.mobile || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('common.status')}>
-            {m.status ? <Tag color={m.status === '在岗' ? 'green' : 'default'}>{m.status}</Tag> : '-'}
+            {m.status ? <Tag color={m.status === '在岗' ? 'green' : 'default'}>{et.memberStatus(m.status)}</Tag> : '-'}
           </Descriptions.Item>
           <Descriptions.Item label={t('admin.common.syncSource')}>{m.external_source || t('admin.common.localMaintained')}</Descriptions.Item>
         </Descriptions>
@@ -905,8 +905,8 @@ export default function OrgArchitecture() {
                 allowClear
                 disabled={memberSynced}
                 options={[
-                  { value: '男', label: '男' },
-                  { value: '女', label: '女' },
+                  { value: '男', label: et.gender('男') },
+                  { value: '女', label: et.gender('女') },
                 ]}
               />
             </Form.Item>
@@ -920,9 +920,9 @@ export default function OrgArchitecture() {
                 allowClear
                 disabled={memberSynced}
                 options={[
-                  { value: '正式', label: '正式' },
-                  { value: '外包', label: '外包' },
-                  { value: '实习', label: '实习' },
+                  { value: '正式', label: et.employment('正式') },
+                  { value: '外包', label: et.employment('外包') },
+                  { value: '实习', label: et.employment('实习') },
                 ]}
               />
             </Form.Item>
@@ -969,8 +969,8 @@ export default function OrgArchitecture() {
               <Select
                 disabled={memberSynced}
                 options={[
-                  { value: '在岗', label: '在岗' },
-                  { value: '离职', label: '离职' },
+                  { value: '在岗', label: et.memberStatus('在岗') },
+                  { value: '离职', label: et.memberStatus('离职') },
                 ]}
               />
             </Form.Item>

@@ -20,6 +20,7 @@ import { api } from '../../api/client';
 import type { Department, Member, Position } from '../../api/types';
 import { buildDeptTreeSelectData } from '../../utils/dept';
 import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface MemberForm {
   name: string;
@@ -36,6 +37,7 @@ interface MemberForm {
 
 export default function Members() {
   const t = useT();
+  const et = useEnums();
   const [items, setItems] = useState<Member[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -164,7 +166,7 @@ export default function Members() {
       dataIndex: 'status',
       width: 80,
       render: (v: Member['status']) =>
-        v ? <Tag color={v === '在岗' ? 'green' : 'default'}>{v}</Tag> : '-',
+        v ? <Tag color={v === '在岗' ? 'green' : 'default'}>{et.memberStatus(v)}</Tag> : '-',
     },
     { title: t('admin.member.hireDate'), dataIndex: 'hire_date', width: 110 },
     {
@@ -306,8 +308,8 @@ export default function Members() {
             <Form.Item name="status" label={t('common.status')} style={{ width: '50%', marginRight: 8 }}>
               <Select
                 options={[
-                  { value: '在岗', label: '在岗' },
-                  { value: '离职', label: '离职' },
+                  { value: '在岗', label: et.memberStatus('在岗') },
+                  { value: '离职', label: et.memberStatus('离职') },
                 ]}
               />
             </Form.Item>

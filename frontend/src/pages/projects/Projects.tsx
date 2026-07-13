@@ -27,13 +27,11 @@ import { ExampleTag } from '../../components/ExampleTag';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type { Member, Portfolio, ProjectRow, ProjectStatus, ServiceItem } from '../../api/types';
 import { PROJECT_STATUS } from '../../api/types';
+import { useEnums } from '../../i18n/enums';
 import { HealthDot, StatusBadge } from './shared';
 import CharterImportModal from './CharterImportModal';
 
-const STATUS_OPTIONS = (Object.keys(PROJECT_STATUS) as ProjectStatus[]).map((s) => ({
-  value: s,
-  label: PROJECT_STATUS[s].label,
-}));
+const STATUS_KEYS = Object.keys(PROJECT_STATUS) as ProjectStatus[];
 
 /** 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示） */
 function useProjectPerm(action: 'create' | 'edit'): boolean {
@@ -55,6 +53,7 @@ interface ProjectFormValues {
 
 function ProjectList() {
   const t = useT();
+  const et = useEnums();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const canCreate = useProjectPerm('create');
@@ -252,7 +251,7 @@ function ProjectList() {
               setPage(1);
               setStatus(v);
             }}
-            options={STATUS_OPTIONS}
+            options={STATUS_KEYS.map((s) => ({ value: s, label: et.projectStatus(s) }))}
           />
           <Select
             placeholder={t('proj.portfolio')}

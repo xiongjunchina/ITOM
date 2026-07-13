@@ -36,10 +36,7 @@ import type {
 import { MOSCOW_KEYS, REQ_STATUS, REQ_TYPES } from '../../api/types';
 import { MoscowTag, ReqStatusBadge } from './shared';
 
-const STATUS_OPTIONS = (Object.keys(REQ_STATUS) as RequirementStatus[]).map((s) => ({
-  value: s,
-  label: REQ_STATUS[s].label,
-}));
+const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
 /** 看板四列：on_hold / cancelled 不入看板（表格视图可见） */
 const BOARD_COLS: RequirementStatus[] = ['registered', 'analyzing', 'implementing', 'closed'];
@@ -359,7 +356,7 @@ export default function Requirements() {
                 setPage(1);
                 setStatus(v);
               }}
-              options={STATUS_OPTIONS}
+              options={STATUS_KEYS.map((s) => ({ value: s, label: et.requirementStatus(s) }))}
             />
           )}
           <span>

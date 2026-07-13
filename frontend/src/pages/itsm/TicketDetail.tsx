@@ -453,8 +453,8 @@ export default function TicketDetail() {
       {isChange && (
         <Card title={t('itsm.ticket.changeInfo')} size="small">
           <Descriptions column={2} size="small" bordered>
-            <Descriptions.Item label={t('itsm.ticket.changeType')}>{detail.change_type ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('itsm.ticket.riskLevel')}>{detail.risk_level ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.changeType')}>{detail.change_type ? et.changeType(detail.change_type) : '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.riskLevel')}>{detail.risk_level ? et.riskGrade(detail.risk_level) : '-'}</Descriptions.Item>
             <Descriptions.Item label={t('itsm.ticket.plannedStart')}>{fmt(detail.planned_start_at)}</Descriptions.Item>
             <Descriptions.Item label={t('itsm.ticket.plannedEnd')}>{fmt(detail.planned_end_at)}</Descriptions.Item>
             <Descriptions.Item label={t('itsm.ticket.changeReason')} span={2}>
