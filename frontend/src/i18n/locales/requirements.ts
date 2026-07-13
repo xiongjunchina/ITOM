@@ -132,9 +132,9 @@ export const zh: Dict = {
   'req.task.actualEffort': '实际工天',
   'req.task.effort': '计划/实际工天',
 
-  // 实现任务标签页（跨需求聚合排期/实现中的任务）
+  // 任务跟踪标签页（跨需求聚合排期/实现中的任务）
   'req.tab.overview': '需求总览',
-  'req.tab.tasks': '实现任务',
+  'req.tab.tasks': '任务跟踪',
   'req.activeTask.title': '排期/实现中的任务清单',
   'req.activeTask.empty': '暂无排期或实现中的任务',
   'req.activeTask.planN': '计划{n}',
@@ -403,7 +403,7 @@ export const en: Dict = {
 
   // Delivery tasks tab (scheduled / in-progress tasks across requirements)
   'req.tab.overview': 'Overview',
-  'req.tab.tasks': 'Delivery Tasks',
+  'req.tab.tasks': 'Task Tracking',
   'req.activeTask.title': 'Scheduled / In-progress Task List',
   'req.activeTask.empty': 'No scheduled or in-progress tasks',
   'req.activeTask.planN': 'Plan {n}',
