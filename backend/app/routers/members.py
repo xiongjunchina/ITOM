@@ -107,7 +107,7 @@ def delete_member(member_id: str, db: Session = Depends(get_db), actor=Depends(r
         Ticket.status.notin_(["resolved", "closed", "rejected"]),
     ).count()
     open_wbs = db.query(WbsTask).filter(
-        WbsTask.assignee == member.id, WbsTask.is_deleted.is_(False), WbsTask.status != "已完成",
+        WbsTask.assignee == member.id, WbsTask.is_deleted.is_(False), WbsTask.progress < 100,
     ).count()
     open_req = db.query(RequirementTask).filter(
         RequirementTask.assignee == member.id, RequirementTask.is_deleted.is_(False),

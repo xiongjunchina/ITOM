@@ -74,8 +74,8 @@ def test_wbs_progress_and_health(client, ctx):
         "start_date": str(TODAY + timedelta(days=5)), "end_date": str(TODAY + timedelta(days=9)),
     }, headers=ctx["pm"]).json()["data"]
 
-    # 任务负责人自己更新状态（数据范围规则）
-    r = client.patch(f"/api/wbs/{t1['id']}", json={"status": "已完成"}, headers=ctx["dev"])
+    # 任务负责人自己更新完成度（数据范围规则）
+    r = client.patch(f"/api/wbs/{t1['id']}", json={"progress": 100}, headers=ctx["dev"])
     assert r.json()["success"], r.text
     # 负责人改其他字段被拒
     r = client.patch(f"/api/wbs/{t1['id']}", json={"name": "改名"}, headers=ctx["dev"])
@@ -101,11 +101,22 @@ def test_health_yellow_on_overdue_milestone_and_red_risk(client, ctx):
     pid = p["id"]
     client.post(f"/api/projects/{pid}/transition", json={"to": "active", "fields": {}}, headers=ctx["pm"])
 
-    client.post(f"/api/projects/{pid}/milestones", json={
-        "name": "已逾期里程碑", "target_date": str(TODAY - timedelta(days=1)),
-    }, headers=ctx["pm"])
+    # 一个按期完成的大任务（占大工期，稀释整体偏差到黄色区间）
+    big = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "主体工作按期完成", "assignee": ctx["dev_person"],
+        "start_date": str(TODAY - timedelta(days=30)), "end_date": str(TODAY - timedelta(days=1)),
+    }, headers=ctx["pm"]).json()["data"]
+    client.patch(f"/api/wbs/{big['id']}", json={"progress": 100}, headers=ctx["pm"])
+    # 里程碑=WBS 勾选「是」；小任务、计划结束已过且未完成 → 已延期 → 逾期里程碑（触发黄）
+    ms_task = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "已逾期里程碑", "assignee": ctx["dev_person"], "is_milestone": True,
+        "start_date": str(TODAY - timedelta(days=1)), "end_date": str(TODAY - timedelta(days=1)),
+    }, headers=ctx["pm"]).json()["data"]
     detail = client.get(f"/api/projects/{pid}", headers=ctx["pm"]).json()["data"]
     assert detail["health"] == "yellow" and detail["milestone_overdue"] == 1
+    # 里程碑跟踪派生视图汇总该行
+    track = client.get(f"/api/projects/{pid}/milestone-tracking", headers=ctx["pm"]).json()["data"]
+    assert len(track) == 1 and track[0]["name"] == "已逾期里程碑" and track[0]["status"] == "已延期"
 
     client.post(f"/api/projects/{pid}/risks", json={
         "title": "核心供应商跑路", "probability": "高", "impact": "高", "mitigation": "备选供应商",
@@ -113,11 +124,10 @@ def test_health_yellow_on_overdue_milestone_and_red_risk(client, ctx):
     detail = client.get(f"/api/projects/{pid}", headers=ctx["pm"]).json()["data"]
     assert detail["health"] == "red" and detail["red_risks"] == 1
 
-    # 关闭风险 + 达成里程碑 → 恢复绿
+    # 关闭风险 + 里程碑完成度置 100 → 恢复绿
     risks = client.get(f"/api/projects/{pid}/risks", headers=ctx["pm"]).json()["data"]
     client.patch(f"/api/risks/{risks[0]['id']}", json={"status": "已关闭"}, headers=ctx["pm"])
-    ms = client.get(f"/api/projects/{pid}/milestones", headers=ctx["pm"]).json()["data"]
-    client.post(f"/api/milestones/{ms[0]['id']}/achieve", headers=ctx["pm"])
+    client.patch(f"/api/wbs/{ms_task['id']}", json={"progress": 100}, headers=ctx["pm"])
     detail = client.get(f"/api/projects/{pid}", headers=ctx["pm"]).json()["data"]
     assert detail["health"] == "green"
 

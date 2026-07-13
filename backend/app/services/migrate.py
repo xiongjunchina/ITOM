@@ -31,6 +31,15 @@ ENSURE_COLUMNS = {
         ("supervisor_id", "VARCHAR(26)"),
         ("work_location", "VARCHAR(64)"),
     ],
+    "wbs_task": [
+        ("stage", "VARCHAR(64)"),
+        ("wbs_dict", "TEXT"),
+        ("is_milestone", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("actual_start", "DATE"),
+        ("actual_end", "DATE"),
+        ("progress", "INTEGER NOT NULL DEFAULT 0"),
+        ("remarks", "TEXT"),
+    ],
     "hiring_need": [
         ("level", "VARCHAR(8) NOT NULL DEFAULT '中级'"),
         ("qualification", "TEXT"),

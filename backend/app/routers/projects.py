@@ -79,8 +79,11 @@ class WbsIn(BaseModel):
     start_date: date
     end_date: date
     parent_task_id: str | None = None
-    description: str | None = None
+    stage: str | None = None
+    wbs_dict: str | None = None
     deliverable: str | None = None
+    is_milestone: bool = False
+    remarks: str | None = None
     predecessor_ids: list[str] = []
 
 
@@ -89,10 +92,15 @@ class WbsUpdate(BaseModel):
     assignee: str | None = None
     start_date: date | None = None
     end_date: date | None = None
-    description: str | None = None
+    stage: str | None = None
+    wbs_dict: str | None = None
     deliverable: str | None = None
+    is_milestone: bool | None = None
+    remarks: str | None = None
     predecessor_ids: list[str] | None = None
-    status: str | None = None
+    actual_start: date | None = None
+    actual_end: date | None = None
+    progress: int | None = Field(default=None)  # 完成度% 0/50/100
 
 
 class MilestoneIn(BaseModel):
@@ -427,13 +435,24 @@ def charter_create(body: CharterCreateIn, db: Session = Depends(get_db), actor=D
 
 # ---------- WBS ----------
 
-def _wbs_row(t: WbsTask, names: dict) -> dict:
+def _wbs_row(t: WbsTask, names: dict, codes: dict | None = None) -> dict:
+    from app.services.projects import wbs_deviation, wbs_status
+
     return {
-        "id": t.id, "wbs_code": t.wbs_code, "name": t.name, "parent_task_id": t.parent_task_id,
+        "id": t.id, "wbs_code": t.wbs_code, "stage": t.stage, "name": t.name, "parent_task_id": t.parent_task_id,
+        "wbs_dict": t.wbs_dict, "deliverable": t.deliverable,
         "assignee": t.assignee, "assignee_name": names.get(t.assignee),
-        "start_date": t.start_date, "end_date": t.end_date, "status": t.status,
-        "completed_at": t.completed_at, "description": t.description, "deliverable": t.deliverable,
-        "predecessor_ids": t.predecessor_ids or [], "sort": t.sort,
+        "is_milestone": t.is_milestone,
+        "start_date": t.start_date, "end_date": t.end_date,
+        "actual_start": t.actual_start, "actual_end": t.actual_end,
+        "schedule_deviation": wbs_deviation(t.actual_end, t.end_date),  # 进度偏差(天)，计算
+        "progress": t.progress or 0,  # 完成度% 0/50/100
+        "status": wbs_status(t.progress or 0, t.end_date),  # 状态，计算（含已延期）
+        "completed_at": t.completed_at, "remarks": t.remarks, "description": t.description,
+        "predecessor_ids": t.predecessor_ids or [],
+        # 前置任务按 WBS 号展示（前端用）
+        "predecessor_codes": [codes[pid] for pid in (t.predecessor_ids or []) if codes and pid in codes] if codes else [],
+        "sort": t.sort,
     }
 
 
@@ -446,7 +465,8 @@ def list_wbs(project_id: str, db: Session = Depends(get_db), _=Depends(require_p
         .all()
     )
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
-    return ok([_wbs_row(t, names) for t in tasks], total=len(tasks))
+    codes = {t.id: t.wbs_code for t in tasks}
+    return ok([_wbs_row(t, names, codes) for t in tasks], total=len(tasks))
 
 
 @router.post("/api/projects/{project_id}/wbs")
@@ -482,21 +502,29 @@ def update_wbs(task_id: str, body: WbsUpdate, db: Session = Depends(get_db), use
         raise AppError("NOT_FOUND", "任务不存在", 404)
     ensure_not_example(db.get(Project, task.project_id))
     data = body.model_dump(exclude_unset=True)
-    # 数据范围规则：任务负责人可更新自己任务的状态；其余字段需 projects.edit
+    # 数据范围规则：任务负责人可更新自己任务的完成度/实际起止；其余字段需 projects.edit
     is_assignee = user.person_id and task.assignee == user.person_id
     if not has_perm(db, user, "projects", "edit"):
-        if not (is_assignee and set(data) <= {"status"}):
-            raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的状态；其他修改需项目编辑权限", 403)
-    if data.get("status") and data["status"] not in ("未开始", "进行中", "已完成"):
-        raise AppError("INVALID_STATUS", "状态必须为 未开始/进行中/已完成")
+        if not (is_assignee and set(data) <= {"progress", "actual_start", "actual_end"}):
+            raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的完成度；其他修改需项目编辑权限", 403)
+    if "progress" in data and data["progress"] not in (0, 50, 100):
+        raise AppError("INVALID_STATUS", "完成度%须为 0/50/100 三档")
     for k, v in data.items():
         setattr(task, k, v)
     if task.end_date < task.start_date:
         raise AppError("INVALID_DATES", "结束日期不能早于开始日期")
-    if data.get("status") == "已完成" and not task.completed_at:
+    # 完成度达 100 → 记完成时间并派按期积分；里程碑另奖项目经理
+    if (task.progress or 0) >= 100 and not task.completed_at:
         task.completed_at = datetime.now()
-        on_time = task.completed_at.date() <= task.end_date
+        done_date = task.actual_end or task.completed_at.date()
+        on_time = done_date <= task.end_date
         publish(db, "wbs.completed", "project", task.project_id, {"task_id": task.id, "on_time": on_time})
+        if task.is_milestone:
+            proj = db.get(Project, task.project_id)
+            if proj and not proj.is_example:
+                from app.services.points import award_by_rule
+
+                award_by_rule(db, "milestone_achieved", proj.pm, task.id, f"里程碑达成 {task.name[:30]}")
     audit(db, "wbs_task", task.id, "update", user, {"fields": list(data.keys())})
     db.commit()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
@@ -518,7 +546,33 @@ def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(requir
     return ok({"id": task.id})
 
 
-# ---------- 里程碑 ----------
+# ---------- 里程碑跟踪（派生：WBS 中里程碑=是 的行自动汇总，与模板「里程碑跟踪」页一致） ----------
+
+@router.get("/api/projects/{project_id}/milestone-tracking")
+def milestone_tracking(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
+    from app.services.projects import wbs_deviation, wbs_status
+
+    tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project_id, WbsTask.is_deleted.is_(False), WbsTask.is_milestone.is_(True))
+        .order_by(WbsTask.sort, WbsTask.created_at)
+        .all()
+    )
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    rows = [
+        {
+            "id": t.id, "wbs_code": t.wbs_code, "name": t.name, "stage": t.stage,
+            "assignee_name": names.get(t.assignee) or "(待填)",
+            "end_date": t.end_date, "actual_end": t.actual_end,
+            "schedule_deviation": wbs_deviation(t.actual_end, t.end_date),
+            "status": wbs_status(t.progress or 0, t.end_date),
+        }
+        for t in tasks
+    ]
+    return ok(rows, total=len(rows))
+
+
+# ---------- 里程碑（旧独立实体，保留兼容；新界面用里程碑跟踪派生视图） ----------
 
 @router.get("/api/projects/{project_id}/milestones")
 def list_milestones(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):

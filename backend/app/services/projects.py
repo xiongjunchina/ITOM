@@ -8,6 +8,25 @@ from app.models import CostEntry, Milestone, Project, Risk, WbsTask
 STATUS_PROGRESS = {"未开始": 0.0, "进行中": 0.5, "已完成": 1.0}
 
 
+def wbs_status(progress: int, end_date: date | None, today: date | None = None) -> str:
+    """状态计算（与 WBS 模板公式一致）：完成100→已完成；未完且已过计划结束→已延期；完成0→未开始；否则进行中。"""
+    today = today or date.today()
+    if (progress or 0) >= 100:
+        return "已完成"
+    if end_date and today > end_date:
+        return "已延期"
+    if (progress or 0) <= 0:
+        return "未开始"
+    return "进行中"
+
+
+def wbs_deviation(actual_end: date | None, end_date: date | None) -> int | None:
+    """进度偏差(天) = 实际结束 − 计划结束（>0 延期，<0 提前）。"""
+    if actual_end and end_date:
+        return (actual_end - end_date).days
+    return None
+
+
 def task_weight(t: WbsTask) -> int:
     return max((t.end_date - t.start_date).days + 1, 1)
 
@@ -17,7 +36,7 @@ def compute_progress(tasks: list[WbsTask]) -> float | None:
     if not tasks:
         return None
     total = sum(task_weight(t) for t in tasks)
-    earned = sum(task_weight(t) * STATUS_PROGRESS.get(t.status, 0) for t in tasks)
+    earned = sum(task_weight(t) * ((t.progress or 0) / 100) for t in tasks)  # 完成度% 三档 0/50/100
     return round(earned / total * 100, 1)
 
 
@@ -44,7 +63,7 @@ def compute_planned_progress(tasks: list[WbsTask], today: date | None = None) ->
 def compute_metrics(db: Session, project: Project) -> dict:
     """一次算清项目详情/列表所需全部派生指标。"""
     tasks = db.query(WbsTask).filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False)).all()
-    milestones = db.query(Milestone).filter(Milestone.project_id == project.id, Milestone.is_deleted.is_(False)).all()
+    milestone_tasks = [t for t in tasks if t.is_milestone]  # 里程碑=WBS 勾选「是」的行（派生）
     risks = db.query(Risk).filter(Risk.project_id == project.id, Risk.is_deleted.is_(False)).all()
     actual_cost = sum(
         c.amount_10k for c in db.query(CostEntry).filter(CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False))
@@ -56,7 +75,7 @@ def compute_metrics(db: Session, project: Project) -> dict:
     deviation = round(planned - progress, 1) if progress is not None and planned is not None else None
 
     today = date.today()
-    overdue_milestones = [m for m in milestones if not m.achieved_at and m.target_date < today]
+    overdue_milestones = [t for t in milestone_tasks if wbs_status(t.progress, t.end_date, today) == "已延期"]
     red_risks = [r for r in risks if r.status == "开放" and r.probability == "高" and r.impact == "高"]
 
     # 健康度规则（PRD §6.1）：偏差>30% 或红色风险→红；偏差>15% 或里程碑逾期→黄
@@ -81,8 +100,8 @@ def compute_metrics(db: Session, project: Project) -> dict:
         "actual_cost_10k": round(actual_cost, 2),
         "budget_usage": budget_usage,
         "task_total": len(tasks),
-        "task_done": sum(1 for t in tasks if t.status == "已完成"),
-        "milestone_total": len(milestones),
+        "task_done": sum(1 for t in tasks if (t.progress or 0) >= 100),
+        "milestone_total": len(milestone_tasks),
         "milestone_overdue": len(overdue_milestones),
         "open_risks": sum(1 for r in risks if r.status == "开放"),
         "red_risks": len(red_risks),

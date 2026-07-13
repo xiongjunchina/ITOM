@@ -172,7 +172,7 @@ def _workload(db: Session) -> list[dict]:
         open_tickets[assignee] = open_tickets.get(assignee, 0) + 1
     open_wbs: dict[str, int] = {}
     for (assignee,) in db.query(WbsTask.assignee).filter(
-        WbsTask.is_deleted.is_(False), WbsTask.is_example.is_(False), WbsTask.status != "已完成",
+        WbsTask.is_deleted.is_(False), WbsTask.is_example.is_(False), WbsTask.progress < 100,
     ):
         open_wbs[assignee] = open_wbs.get(assignee, 0) + 1
     open_req: dict[str, int] = {}

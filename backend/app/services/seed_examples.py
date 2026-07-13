@@ -228,21 +228,25 @@ def run_seed_examples(db: Session):
     db.add(project)
     db.flush()
     t1 = WbsTask(
-        is_example=True, project_id=project.id, wbs_code="1", name="【示例】需求调研与建模",
+        is_example=True, project_id=project.id, wbs_code="1", stage="1.调研", name="【示例】需求调研与建模",
         assignee=person.id, start_date=today - timedelta(days=20), end_date=today - timedelta(days=8),
-        status="已完成", completed_at=now - timedelta(days=8),
-        deliverable="填写指引：交付物写可检查的产出，如：调研纪要+数据模型设计文档",
-        description="填写指引：任务说明写工作内容要点；负责人完成后自己把状态改为已完成，项目进度自动联动",
+        actual_start=today - timedelta(days=20), actual_end=today - timedelta(days=8),
+        progress=100, completed_at=now - timedelta(days=8),
+        wbs_dict="填写指引：写清含/不含，厘清工作包边界（含数据调研与建模；不含平台搭建）",
+        deliverable="填写指引：交付物/DoD 写可检查的验收标准，如：调研纪要+数据模型设计文档签字",
+        remarks="填写指引：备注写补充说明",
         sort=0,
     )
     db.add(t1)
     db.flush()
     db.add(WbsTask(
-        is_example=True, project_id=project.id, wbs_code="2", name="【示例】平台搭建与 ETL 开发",
+        is_example=True, project_id=project.id, wbs_code="2", stage="2.建设", name="【示例】平台搭建与 ETL 开发（里程碑）",
         assignee=person.id, start_date=today - timedelta(days=7), end_date=today + timedelta(days=20),
-        status="进行中",
-        deliverable="可用的数仓环境与首批 ETL 作业",
-        description="填写指引：本任务设置了前置任务（需求调研），甘特图上会显示虚线依赖箭头",
+        actual_start=today - timedelta(days=7),
+        progress=50, is_milestone=True,
+        wbs_dict="含数仓环境搭建与首批 ETL；不含报表开发",
+        deliverable="可用的数仓环境与首批 ETL 作业（一期上线里程碑）",
+        remarks="填写指引：勾选『里程碑=是』的行会自动汇总到里程碑跟踪页；前置任务画甘特图依赖箭头",
         predecessor_ids=[t1.id], sort=1,
     ))
     db.add(Milestone(
