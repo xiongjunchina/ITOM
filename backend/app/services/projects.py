@@ -31,6 +31,86 @@ def task_weight(t: WbsTask) -> int:
     return max((t.end_date - t.start_date).days + 1, 1)
 
 
+def _coerce_date(v) -> date | None:
+    if not v:
+        return None
+    if isinstance(v, date):
+        return v
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except ValueError:
+        return None
+
+
+def create_wbs_by_code(db: Session, project: Project, rows: list[dict], *, default_assignee: str | None = None,
+                       sort_base: int = 0) -> tuple[int, list[str]]:
+    """按 WBS编号建 WBS：层级由编号前缀推导（1.1 的父级是 1），前置按编号引用；里程碑=WBS 标志。
+
+    rows 键：stage/wbs_code/name/wbs_dict/deliverable/assignee_name/is_milestone/
+             predecessor_codes(list|逗号串)/start_date/end_date/actual_start/actual_end/progress/remarks。
+    返回 (创建数, 错误消息列表)。负责人姓名未匹配时用 default_assignee（章程默认 PM）。
+    """
+    from datetime import datetime
+
+    from app.models import OrgMember, WbsTask
+
+    members = {m.name: m.id for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")}
+    errors: list[str] = []
+    by_code: dict[str, WbsTask] = {}
+    order: list[tuple[dict, WbsTask]] = []
+    for r in rows:
+        name = (r.get("name") or "").strip()
+        if not name:
+            continue
+        code = str(r.get("wbs_code") or "").strip() or str(sort_base + len(order) + 1)
+        if code in by_code:
+            errors.append(f"WBS编号「{code}」重复，已跳过")
+            continue
+        assignee = members.get((r.get("assignee_name") or "").strip()) or default_assignee
+        if not assignee:
+            errors.append(f"任务「{name}」的责任人「{r.get('assignee_name') or ''}」不是在岗人员")
+            continue
+        start, end = _coerce_date(r.get("start_date")), _coerce_date(r.get("end_date"))
+        if not start or not end:
+            errors.append(f"任务「{name}」缺计划开始/结束日期")
+            continue
+        if end < start:
+            start = end
+        ms = r.get("is_milestone")
+        ms = ms if isinstance(ms, bool) else (str(ms).strip() in ("是", "Y", "y", "yes", "true", "1"))
+        try:
+            prog = int(r.get("progress") or 0)
+        except (TypeError, ValueError):
+            prog = 0
+        prog = prog if prog in (0, 50, 100) else 0
+        task = WbsTask(
+            project_id=project.id, wbs_code=code, stage=r.get("stage"), name=name,
+            wbs_dict=r.get("wbs_dict"), deliverable=r.get("deliverable"), assignee=assignee, is_milestone=ms,
+            start_date=start, end_date=end,
+            actual_start=_coerce_date(r.get("actual_start")), actual_end=_coerce_date(r.get("actual_end")),
+            progress=prog, remarks=r.get("remarks"), sort=sort_base + len(order),
+        )
+        if prog >= 100:
+            task.completed_at = datetime.now()
+        db.add(task)
+        db.flush()
+        by_code[code] = task
+        order.append((r, task))
+    for r, task in order:  # 第二遍：父级由编号前缀、前置按编号
+        if "." in task.wbs_code:
+            parent = by_code.get(task.wbs_code.rsplit(".", 1)[0])
+            if parent and parent.id != task.id:
+                task.parent_task_id = parent.id
+        preds = r.get("predecessor_codes")
+        if isinstance(preds, str):
+            preds = [x.strip() for x in preds.replace("，", ",").split(",") if x.strip()]
+        pred_ids = [by_code[str(pc).strip()].id for pc in (preds or [])
+                    if str(pc).strip() in by_code and by_code[str(pc).strip()].id != task.id]
+        if pred_ids:
+            task.predecessor_ids = pred_ids
+    return len(order), errors
+
+
 def compute_progress(tasks: list[WbsTask]) -> float | None:
     """进度 = 任务完成度按工期加权（PRD：状态映射 0/50/100）。"""
     if not tasks:

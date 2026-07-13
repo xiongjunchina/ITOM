@@ -375,62 +375,26 @@ def charter_create(body: CharterCreateIn, db: Session = Depends(get_db), actor=D
         "budget_10k": f.get("budget_10k"), "description": f.get("description"),
     }, actor)
 
-    created = {"wbs": 0, "milestones": 0, "risks": 0}
-    members = {
-        m.name: m.id
-        for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
+    from app.services.projects import create_wbs_by_code
+
+    # WBS：按 WBS编号建层级、前置按编号；里程碑=WBS 勾选「是」派生。负责人未匹配默认项目经理。
+    wbs_count, wbs_errors = create_wbs_by_code(db, project, body.wbs, default_assignee=project.pm)
+    created = {
+        "wbs": wbs_count,
+        "milestones": sum(1 for w in body.wbs if w.get("is_milestone")),  # 里程碑=WBS 派生
+        "risks": 0,
     }
-    # WBS：两遍——先建任务（负责人按姓名解析，未匹配默认项目经理），再按任务名称挂上级/前置
-    file_tasks: dict[str, WbsTask] = {}
-    pending_links: list[tuple[dict, WbsTask]] = []
-    for idx, w in enumerate(body.wbs):
-        name = (w.get("name") or "").strip() or f"任务{idx + 1}"
-        if name in file_tasks:
-            continue
-        end = date.fromisoformat(str(w["end_date"])) if w.get("end_date") else project.planned_end
-        start = date.fromisoformat(str(w["start_date"])) if w.get("start_date") else project.planned_start
-        if start > end:
-            start = end
-        assignee = members.get((w.get("assignee_name") or "").strip()) or w.get("assignee") or project.pm
-        task = WbsTask(
-            project_id=project.id, name=name, assignee=assignee,
-            start_date=start, end_date=end, description=w.get("description"),
-            deliverable=w.get("deliverable"), sort=idx, wbs_code="0",
-        )
-        db.add(task)
-        db.flush()
-        file_tasks[name] = task
-        pending_links.append((w, task))
-        created["wbs"] += 1
-    for w, task in pending_links:  # 第二遍：上级/前置按名称挂接（仅引用本次导入的任务）
-        parent_name = (w.get("parent_name") or "").strip()
-        parent = file_tasks.get(parent_name)
-        if parent and parent.id != task.id:
-            task.parent_task_id = parent.id
-        preds = w.get("predecessor_names")
-        if preds:
-            pred_ids = []
-            for pn in [x.strip() for x in str(preds).replace("，", ",").split(",") if x.strip()]:
-                p = file_tasks.get(pn)
-                if p and p.id != task.id:
-                    pred_ids.append(p.id)
-            task.predecessor_ids = pred_ids
-    for m in body.milestones:
-        if not m.get("target_date"):
-            continue
-        db.add(Milestone(project_id=project.id, name=m.get("name") or "里程碑",
-                         target_date=date.fromisoformat(str(m["target_date"])), description=m.get("description")))
-        created["milestones"] += 1
     for r in body.risks:
         db.add(Risk(project_id=project.id, title=r.get("title") or "未命名风险",
                     probability=r.get("probability") or "中", impact=r.get("impact") or "中",
                     mitigation=r.get("mitigation")))
         created["risks"] += 1
     db.flush()
-    rebuild_wbs_codes(db, project.id)
+    rebuild_wbs_codes(db, project.id)  # 按树规范化 WBS编号（前置引用为 id，不受影响）
     audit(db, "project", project.id, "charter_import", actor, created)
     db.commit()
-    return ok({"project_id": project.id, "project_code": project.project_code, "created": created})
+    return ok({"project_id": project.id, "project_code": project.project_code,
+               "created": created, "wbs_errors": wbs_errors})
 
 
 # ---------- WBS ----------
@@ -717,21 +681,24 @@ def delete_cost(cost_id: str, db: Session = Depends(get_db), actor=Depends(requi
 
 from app.services.excel_io import Col, Sheet, build_template, parse_sheet
 
+# WBS 主表（与用户 Excel 设计一致）：层级由 WBS编号 建立，里程碑=WBS 勾选「是」派生，
+# 进度偏差/状态在系统内自动计算，故导入模板只收输入列（不含偏差/状态两个公式列）。
 PROGRESS_SHEETS = [
     Sheet("WBS任务", [
-        Col("name", "任务名称", required=True, hint="同一项目内任务名称不能重复（上级/前置按名称挂接）"),
-        Col("assignee_name", "负责人姓名", required=True, hint="须为系统中已有在岗人员"),
-        Col("start_date", "开始日期", required=True, kind="date"),
-        Col("end_date", "结束日期", required=True, kind="date"),
-        Col("parent_name", "上级任务名称", hint="留空为顶层；须为本文件中已出现或项目中已有的任务名称"),
-        Col("predecessor_names", "前置任务名称", hint="多个用逗号分隔；甘特图将显示依赖箭头"),
-        Col("deliverable", "交付物"),
-        Col("description", "说明"),
-    ]),
-    Sheet("里程碑", [
-        Col("name", "里程碑名称", required=True),
-        Col("target_date", "目标日期", required=True, kind="date"),
-        Col("description", "说明"),
+        Col("stage", "阶段", hint="如 1.立项/2.选型，便于按阶段筛选"),
+        Col("wbs_code", "WBS编号", hint="层级式 1/1.1/1.1.1，父级由编号前缀自动推导；留空则顺序编号"),
+        Col("name", "任务名称(交付物)", required=True, hint="用名词性交付物命名（如“需求规格说明书”）"),
+        Col("wbs_dict", "WBS词典说明(含/不含)", hint="写清含什么/不含什么，厘清工作包边界"),
+        Col("deliverable", "交付物/验收标准(DoD)", hint="完成的定义（可检查的验收标准）"),
+        Col("assignee_name", "责任人姓名", required=True, hint="唯一；须为系统中已有在岗人员"),
+        Col("is_milestone", "里程碑(是/否)", hint="填『是』的行自动汇总到里程碑跟踪页"),
+        Col("predecessor_codes", "前置任务(WBS号)", hint="多个用逗号分隔，填被依赖任务的 WBS编号"),
+        Col("start_date", "计划开始", required=True, kind="date"),
+        Col("end_date", "计划结束", required=True, kind="date"),
+        Col("actual_start", "实际开始", kind="date", hint="执行阶段填写"),
+        Col("actual_end", "实际结束", kind="date", hint="执行阶段填写，用于算进度偏差"),
+        Col("progress", "完成度%(0/50/100)", hint="三档法：未开始0/进行中50/已完成100"),
+        Col("remarks", "备注"),
     ]),
 ]
 
@@ -765,87 +732,15 @@ async def import_progress(project_id: str, file: UploadFile, db: Session = Depen
     if not (file.filename or "").lower().endswith(".xlsx"):
         raise AppError("INVALID_FORMAT", "请上传 .xlsx 文件（使用系统导出的模板）")
 
+    from app.services.projects import create_wbs_by_code
+
     wbs_rows, wbs_errors = parse_sheet(content, PROGRESS_SHEETS[0])
-    ms_rows, ms_errors = parse_sheet(content, PROGRESS_SHEETS[1])
-    errors = [{**e, "sheet": "WBS任务"} for e in wbs_errors] + [{**e, "sheet": "里程碑"} for e in ms_errors]
-    created = {"wbs": 0, "milestones": 0}
-
-    members = {
-        m.name: m.id
-        for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
-    }
-    existing_tasks = {
-        t.name: t for t in db.query(WbsTask).filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
-    }
-    sort_base = len(existing_tasks)
-
-    # 第一遍：建任务（查重/负责人/日期校验）
-    file_tasks: dict[str, WbsTask] = {}
-    pending_links: list[tuple[dict, WbsTask]] = []
-    seen_names: set[str] = set()
-    for r in wbs_rows:
-        name = r["name"]
-        if name in seen_names:
-            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": f"任务「{name}」在文件中重复"})
-            continue
-        seen_names.add(name)
-        if name in existing_tasks:
-            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": f"任务「{name}」已存在于项目中，跳过"})
-            continue
-        assignee = members.get(r["assignee_name"])
-        if not assignee:
-            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": f"负责人「{r['assignee_name']}」不是系统中的在岗人员"})
-            continue
-        if r["end_date"] < r["start_date"]:
-            errors.append({"sheet": "WBS任务", "row": r["_row"], "error": "结束日期早于开始日期"})
-            continue
-        task = WbsTask(
-            project_id=project.id, name=name, assignee=assignee,
-            start_date=r["start_date"], end_date=r["end_date"],
-            deliverable=r.get("deliverable"), description=r.get("description"),
-            wbs_code="0", sort=sort_base + created["wbs"],
-        )
-        db.add(task)
-        db.flush()
-        file_tasks[name] = task
-        pending_links.append((r, task))
-        created["wbs"] += 1
-
-    # 第二遍：挂上级与前置（文件内任务 + 项目已有任务 皆可引用）
-    all_by_name = {**{k: v for k, v in existing_tasks.items()}, **file_tasks}
-    for r, task in pending_links:
-        parent_name = r.get("parent_name")
-        if parent_name:
-            parent = all_by_name.get(parent_name)
-            if not parent or parent.id == task.id:
-                errors.append({"sheet": "WBS任务", "row": r["_row"],
-                               "error": f"已导入，但上级任务「{parent_name}」未找到，按顶层处理"})
-            else:
-                task.parent_task_id = parent.id
-        pred_raw = r.get("predecessor_names")
-        if pred_raw:
-            pred_ids = []
-            for pname in [x.strip() for x in str(pred_raw).replace("，", ",").split(",") if x.strip()]:
-                pred = all_by_name.get(pname)
-                if not pred or pred.id == task.id:
-                    errors.append({"sheet": "WBS任务", "row": r["_row"],
-                                   "error": f"已导入，但前置任务「{pname}」未找到，已忽略"})
-                else:
-                    pred_ids.append(pred.id)
-            task.predecessor_ids = pred_ids
-
-    # 里程碑
-    existing_ms = {
-        m.name for m in db.query(Milestone).filter(Milestone.project_id == project.id, Milestone.is_deleted.is_(False))
-    }
-    for r in ms_rows:
-        if r["name"] in existing_ms:
-            errors.append({"sheet": "里程碑", "row": r["_row"], "error": f"里程碑「{r['name']}」已存在，跳过"})
-            continue
-        db.add(Milestone(project_id=project.id, name=r["name"], target_date=r["target_date"],
-                         description=r.get("description")))
-        existing_ms.add(r["name"])
-        created["milestones"] += 1
+    errors = [{**e, "sheet": "WBS任务"} for e in wbs_errors]
+    sort_base = db.query(WbsTask).filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False)).count()
+    # 按 WBS编号建层级、前置按编号、里程碑=WBS 派生（与设计一致）
+    count, create_errors = create_wbs_by_code(db, project, wbs_rows, sort_base=sort_base)
+    errors += [{"sheet": "WBS任务", "error": msg} for msg in create_errors]
+    created = {"wbs": count, "milestones": sum(1 for r in wbs_rows if str(r.get("is_milestone") or "").strip() in ("是", "Y", "yes", "true", "1"))}
 
     db.flush()
     rebuild_wbs_codes(db, project.id)

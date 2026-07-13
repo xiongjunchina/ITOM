@@ -87,10 +87,27 @@ def ensure_columns(db: Session):
     db.commit()
 
 
+# 已废弃、需从存量表删除的列（create_all 不会删列）
+DROP_COLUMNS = {
+    "wbs_task": ["status"],  # M9：状态改为据完成度与计划结束日计算，不再落库
+}
+
+
+def drop_columns(db: Session):
+    for table, cols in DROP_COLUMNS.items():
+        existing = _columns(db, table)
+        for name in cols:
+            if name in existing:
+                db.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
+                logger.info("dropped column %s.%s", table, name)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
     ensure_columns(db)
+    drop_columns(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

@@ -166,26 +166,23 @@ def _charter_docx() -> bytes:
 
     start = (TODAY + timedelta(days=1)).isoformat()
     end = (TODAY + timedelta(days=60)).isoformat()
-    ms1 = (TODAY + timedelta(days=10)).isoformat()
-    ms2 = (TODAY + timedelta(days=40)).isoformat()
+    e1 = (TODAY + timedelta(days=10)).isoformat()
+    e2 = (TODAY + timedelta(days=40)).isoformat()
     body = (
         tbl([["项目名称", "数据中台一期"], ["项目经理", "项目张经理"],
              ["计划开始", start], ["计划完成", end], ["项目预算", "120万元"]])
         + p("1. 项目背景") + p("统一数据口径，减少重复建设。")
         + p("3. 项目目标") + p("上线统一数仓与指标服务。")
-        + p("5. 里程碑")
-        + tbl([["里程碑名称", "目标日期", "说明"],  # 表头（目标日期列非日期，自动跳过）
-               ["需求评审", ms1, "评审通过"],
-               ["平台验收", ms2, "验收通过"]])
-        + p("6. WBS 任务分解")
-        + tbl([["任务名称", "负责人", "开始日期", "结束日期", "上级任务", "前置任务", "交付物", "说明"],  # 表头
-               ["需求调研", "", start, ms1, "", "", "调研报告", "访谈业务部门"],
-               ["平台搭建", "", (TODAY + timedelta(days=11)).isoformat(), ms2, "", "", "可用环境", "部署数仓"]])
-        + p("8.1 关键风险")
+        + p("5. WBS 任务分解与里程碑")
+        # 10 列：阶段|WBS编号|任务名称|词典说明|DoD|责任人|里程碑|前置(WBS号)|计划开始|计划结束
+        + tbl([["阶段", "WBS编号", "任务名称(交付物)", "WBS词典说明", "交付物/DoD", "责任人", "里程碑", "前置任务(WBS号)", "计划开始", "计划结束"],
+               ["1.需求", "1", "需求调研", "访谈业务部门", "调研报告", "", "否", "", start, e1],
+               ["2.建设", "2", "平台搭建", "部署数仓", "可用环境（里程碑）", "", "是", "1", (TODAY + timedelta(days=11)).isoformat(), e2]])
+        + p("7.1 关键风险")
         + tbl([["风险类别", "风险描述", "概率", "影响", "应对措施"],  # 表头
                ["技术风险", "数据源接入复杂", "高", "中", "预留缓冲期"],
                ["资源风险", "关键人员不足", "中", "高", "提前锁定资源"]])
-        + p("8.2 关键假设")
+        + p("7.2 关键假设")
     )
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -223,18 +220,22 @@ def test_charter_parse_and_create(client, ctx):
     f = r["fields"]
     assert f["name"] == "数据中台一期" and f["budget_10k"] == 120
     assert f["pm"] == ctx["pm_person"]  # 姓名解析到人员
-    assert len(r["drafts"]["wbs"]) == 2 and len(r["drafts"]["risks"]) == 2 and len(r["drafts"]["milestones"]) == 2
+    assert len(r["drafts"]["wbs"]) == 2 and len(r["drafts"]["risks"]) == 2  # 里程碑=WBS 派生，无独立 milestones
     assert "项目背景" in f["description"]
+    assert sum(1 for w in r["drafts"]["wbs"] if w["is_milestone"]) == 1  # 平台搭建 里程碑=是
 
     r2 = client.post("/api/projects/charter/create", json={
-        "fields": f, "wbs": r["drafts"]["wbs"], "milestones": r["drafts"]["milestones"], "risks": r["drafts"]["risks"],
+        "fields": f, "wbs": r["drafts"]["wbs"], "risks": r["drafts"]["risks"],
     }, headers=ctx["pm"]).json()["data"]
-    assert r2["created"] == {"wbs": 2, "milestones": 2, "risks": 2}
+    assert r2["created"] == {"wbs": 2, "milestones": 1, "risks": 2}  # milestones = 里程碑=是 的行数
 
     detail = client.get(f"/api/projects/{r2['project_id']}", headers=ctx["pm"]).json()["data"]
     assert detail["name"] == "数据中台一期" and detail["task_total"] == 2
     wbs = client.get(f"/api/projects/{r2['project_id']}/wbs", headers=ctx["pm"]).json()["data"]
     assert [w["wbs_code"] for w in wbs] == ["1", "2"]
+    # 里程碑跟踪派生：仅 平台搭建（里程碑=是）
+    track = client.get(f"/api/projects/{r2['project_id']}/milestone-tracking", headers=ctx["pm"]).json()["data"]
+    assert len(track) == 1 and track[0]["name"] == "平台搭建"
 
 
 def test_dashboard_project_section(client, ctx):
@@ -244,29 +245,27 @@ def test_dashboard_project_section(client, ctx):
 
 
 def test_progress_template_and_import(client, ctx):
-    """M5.2：进度页 WBS+里程碑模板导入（层级/前置按名称挂接）。"""
+    """M9：进度导入模板单 WBS 表（WBS编号层级+前置、里程碑=WBS 标志、完成度%）。"""
     import io
     from openpyxl import Workbook, load_workbook
 
     r = client.get("/api/project-progress/template", headers=ctx["pm"])
     assert r.status_code == 200
     wb = load_workbook(io.BytesIO(r.content))
-    assert set(wb.sheetnames) == {"WBS任务", "里程碑"}
+    assert set(wb.sheetnames) == {"WBS任务"}  # 里程碑=WBS 派生，不再单独出表
 
     p = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="导入进度项目")
     pid = p["id"]
 
     wb2 = Workbook(); wb2.remove(wb2.active)
     ws = wb2.create_sheet("WBS任务")
-    ws.append(["h"] * 8); ws.append(["hint"] * 8)
-    ws.append(["需求调研", "项目张经理", str(TODAY), str(TODAY + timedelta(days=5)), "", "", "调研报告", ""])
-    ws.append(["方案设计", "项目张经理", str(TODAY + timedelta(days=6)), str(TODAY + timedelta(days=10)), "", "需求调研", "", ""])
-    ws.append(["接口开发", "项目张经理", str(TODAY + timedelta(days=6)), str(TODAY + timedelta(days=15)), "方案设计", "", "", ""])
-    ws.append(["坏行-负责人不存在", "查无此人", str(TODAY), str(TODAY), "", "", "", ""])
-    ws.append(["坏行-上级不存在", "项目张经理", str(TODAY), str(TODAY), "不存在的任务", "", "", ""])
-    ms = wb2.create_sheet("里程碑")
-    ms.append(["h"] * 3); ms.append(["hint"] * 3)
-    ms.append(["一期上线", str(TODAY + timedelta(days=20)), "上线即验收"])
+    # 14 列：阶段|WBS编号|任务名称|词典说明|DoD|责任人|里程碑|前置(WBS号)|计划开始|计划结束|实际开始|实际结束|完成度%|备注
+    ws.append(["h"] * 14); ws.append(["hint"] * 14)
+    ws.append(["1.需求", "1", "需求调研", "访谈", "调研报告", "项目张经理", "否", "", str(TODAY), str(TODAY + timedelta(days=5)), "", "", "100", ""])
+    ws.append(["2.建设", "2", "方案设计", "原型", "设计文档", "项目张经理", "否", "1", str(TODAY + timedelta(days=6)), str(TODAY + timedelta(days=10)), "", "", "50", ""])
+    ws.append(["2.建设", "2.1", "接口开发", "接口", "接口代码", "项目张经理", "否", "", str(TODAY + timedelta(days=6)), str(TODAY + timedelta(days=15)), "", "", "", ""])
+    ws.append(["3.上线", "3", "一期上线", "上线", "上线报告", "项目张经理", "是", "2", str(TODAY + timedelta(days=16)), str(TODAY + timedelta(days=20)), "", "", "", ""])
+    ws.append(["", "", "坏行", "", "", "查无此人", "否", "", str(TODAY), str(TODAY), "", "", "", ""])
     buf = io.BytesIO(); wb2.save(buf)
 
     result = client.post(
@@ -274,19 +273,18 @@ def test_progress_template_and_import(client, ctx):
         files={"file": ("progress.xlsx", buf.getvalue())},
         headers=ctx["pm"],
     ).json()["data"]
-    assert result["created"] == {"wbs": 4, "milestones": 1}
+    assert result["created"] == {"wbs": 4, "milestones": 1}  # 一期上线 里程碑=是
     assert any("查无此人" in e["error"] for e in result["failed"])
-    assert any("按顶层处理" in e["error"] for e in result["failed"])
 
     wbs = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"]
     by_name = {w["name"]: w for w in wbs}
-    assert by_name["接口开发"]["parent_task_id"] == by_name["方案设计"]["id"]  # 层级
-    assert by_name["方案设计"]["predecessor_ids"] == [by_name["需求调研"]["id"]]  # 前置依赖
-    assert by_name["方案设计"]["wbs_code"] and "." not in by_name["方案设计"]["wbs_code"]
+    assert by_name["接口开发"]["parent_task_id"] == by_name["方案设计"]["id"]  # 层级由 WBS编号 建立
+    assert by_name["方案设计"]["predecessor_ids"] == [by_name["需求调研"]["id"]]  # 前置按编号
     assert "." in by_name["接口开发"]["wbs_code"]  # 子任务层级编码
-
-    mss = client.get(f"/api/projects/{pid}/milestones", headers=ctx["pm"]).json()["data"]
-    assert any(m["name"] == "一期上线" for m in mss)
+    assert by_name["需求调研"]["progress"] == 100 and by_name["方案设计"]["progress"] == 50
+    # 里程碑跟踪派生
+    track = client.get(f"/api/projects/{pid}/milestone-tracking", headers=ctx["pm"]).json()["data"]
+    assert [t["name"] for t in track] == ["一期上线"]
 
     # 示例项目禁止导入
     projects = client.get("/api/projects", headers=ctx["pm"]).json()["data"]

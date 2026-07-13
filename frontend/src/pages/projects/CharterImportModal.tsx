@@ -14,6 +14,7 @@ import {
   Spin,
   Steps,
   Table,
+  Tag,
   Typography,
   Upload,
   message,
@@ -37,21 +38,16 @@ interface CharterFormValues {
 
 interface WbsRowState {
   key: number;
+  stage?: string | null;
+  wbs_code?: string | null;
   name: string;
+  wbs_dict?: string | null;
+  deliverable?: string | null;
   assignee_name?: string | null;
+  is_milestone?: boolean;
+  predecessor_codes?: string | null;
   start_date: Dayjs | null;
   end_date: Dayjs | null;
-  parent_name?: string | null;
-  predecessor_names?: string | null;
-  deliverable?: string | null;
-  description?: string | null;
-}
-
-interface MsRowState {
-  key: number;
-  name: string;
-  target_date: Dayjs | null;
-  description?: string | null;
 }
 
 interface RiskRowState {
@@ -71,7 +67,7 @@ const asGrade = (v?: string | null): RiskGrade => (v === '高' || v === '低' ? 
 
 /**
  * 章程导入向导（两步）：
- * 1) 上传 .docx → 解析 → 字段表单 + warnings + WBS/里程碑/风险草稿表（可勾选、可行内编辑名称与日期）；
+ * 1) 上传 .docx → 解析 → 字段表单 + warnings + WBS/风险草稿表（可勾选，WBS 名称可行内编辑；里程碑为 WBS is_milestone 行）；
  * 2) 确认 → POST /projects/charter/create → 跳转项目详情。
  */
 export default function CharterImportModal({ open, onClose }: CharterImportModalProps) {
@@ -87,10 +83,8 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
   const [members, setMembers] = useState<Member[]>([]);
 
   const [wbsRows, setWbsRows] = useState<WbsRowState[]>([]);
-  const [msRows, setMsRows] = useState<MsRowState[]>([]);
   const [riskRows, setRiskRows] = useState<RiskRowState[]>([]);
   const [wbsKeys, setWbsKeys] = useState<React.Key[]>([]);
-  const [msKeys, setMsKeys] = useState<React.Key[]>([]);
   const [riskKeys, setRiskKeys] = useState<React.Key[]>([]);
 
   // 确认页快照
@@ -104,7 +98,6 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       setFileName('');
       setConfirmed(null);
       setWbsRows([]);
-      setMsRows([]);
       setRiskRows([]);
       form.resetFields();
       return;
@@ -137,20 +130,16 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       });
       const wbs = res.drafts.wbs.map((w, i) => ({
         key: i,
+        stage: w.stage,
+        wbs_code: w.wbs_code,
         name: w.name ?? '',
+        wbs_dict: w.wbs_dict,
+        deliverable: w.deliverable,
         assignee_name: w.assignee_name,
+        is_milestone: w.is_milestone,
+        predecessor_codes: w.predecessor_codes,
         start_date: w.start_date ? dayjs(w.start_date) : null,
         end_date: w.end_date ? dayjs(w.end_date) : null,
-        parent_name: w.parent_name,
-        predecessor_names: w.predecessor_names,
-        deliverable: w.deliverable,
-        description: w.description,
-      }));
-      const ms = res.drafts.milestones.map((m, i) => ({
-        key: i,
-        name: m.name ?? '',
-        target_date: m.target_date ? dayjs(m.target_date) : null,
-        description: m.description,
       }));
       const risks = res.drafts.risks.map((r, i) => ({
         key: i,
@@ -160,10 +149,8 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
         mitigation: r.mitigation,
       }));
       setWbsRows(wbs);
-      setMsRows(ms);
       setRiskRows(risks);
       setWbsKeys(wbs.map((r) => r.key));
-      setMsKeys(ms.map((r) => r.key));
       setRiskKeys(risks.map((r) => r.key));
     } catch {
       // 已统一提示
@@ -194,21 +181,16 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
         wbs: wbsRows
           .filter((r) => wbsKeys.includes(r.key))
           .map((r) => ({
+            stage: r.stage ?? null,
+            wbs_code: r.wbs_code ?? null,
             name: r.name,
+            wbs_dict: r.wbs_dict ?? null,
+            deliverable: r.deliverable ?? null,
             assignee_name: r.assignee_name ?? null,
-            start_date: r.start_date ? r.start_date.format('YYYY-MM-DD') : null,
-            end_date: r.end_date ? r.end_date.format('YYYY-MM-DD') : null,
-            parent_name: r.parent_name ?? null,
-            predecessor_names: r.predecessor_names ?? null,
-            deliverable: r.deliverable,
-            description: r.description,
-          })),
-        milestones: msRows
-          .filter((r) => msKeys.includes(r.key))
-          .map((r) => ({
-            name: r.name,
-            target_date: r.target_date ? r.target_date.format('YYYY-MM-DD') : null,
-            description: r.description ?? null,
+            is_milestone: r.is_milestone ?? false,
+            predecessor_codes: r.predecessor_codes ?? null,
+            start_date: r.start_date?.format('YYYY-MM-DD') ?? null,
+            end_date: r.end_date?.format('YYYY-MM-DD') ?? null,
           })),
         risks: riskRows
           .filter((r) => riskKeys.includes(r.key))
@@ -229,11 +211,15 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
     }
   };
 
+  const fmtDate = (d: Dayjs | null) => (d ? d.format('YYYY-MM-DD') : '-');
+
   const wbsColumns: ColumnsType<WbsRowState> = [
+    { title: t('proj.wbs.col.stage'), dataIndex: 'stage', width: 90, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 80, render: (v) => v || '-' },
     {
       title: t('proj.charter.wbs.col.name'),
       dataIndex: 'name',
-      width: 150,
+      width: 160,
       render: (_, r) => (
         <Input
           size="small"
@@ -247,55 +233,16 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
     },
     { title: t('proj.wbs.col.assignee'), dataIndex: 'assignee_name', width: 90, render: (v) => v || '-' },
     {
-      title: t('proj.wbs.col.dates'),
-      key: 'dates',
-      width: 190,
-      render: (_, r) => (
-        <DatePicker.RangePicker
-          size="small"
-          value={[r.start_date, r.end_date]}
-          onChange={(d) =>
-            setWbsRows((rows) =>
-              rows.map((x) => (x.key === r.key ? { ...x, start_date: d?.[0] ?? null, end_date: d?.[1] ?? null } : x)),
-            )
-          }
-        />
-      ),
+      title: t('proj.wbs.col.milestone'),
+      dataIndex: 'is_milestone',
+      width: 70,
+      align: 'center',
+      render: (v) => (v ? <Tag color="blue">{t('proj.yes')}</Tag> : <Tag>{t('proj.no')}</Tag>),
     },
-    { title: t('proj.charter.wbs.col.parent'), dataIndex: 'parent_name', width: 110, ellipsis: true, render: (v) => v || '-' },
-    { title: t('proj.wbs.col.predecessors'), dataIndex: 'predecessor_names', width: 110, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.predecessors'), dataIndex: 'predecessor_codes', width: 90, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.plannedStart'), dataIndex: 'start_date', width: 110, render: (_, r) => fmtDate(r.start_date) },
+    { title: t('proj.wbs.col.plannedEnd'), dataIndex: 'end_date', width: 110, render: (_, r) => fmtDate(r.end_date) },
     { title: t('proj.deliverable'), dataIndex: 'deliverable', width: 130, ellipsis: true, render: (v) => v || '-' },
-  ];
-
-  const msColumns: ColumnsType<MsRowState> = [
-    {
-      title: t('proj.charter.ms.col.name'),
-      dataIndex: 'name',
-      render: (_, r) => (
-        <Input
-          size="small"
-          value={r.name}
-          maxLength={200}
-          onChange={(e) =>
-            setMsRows((rows) => rows.map((x) => (x.key === r.key ? { ...x, name: e.target.value } : x)))
-          }
-        />
-      ),
-    },
-    {
-      title: t('proj.msTargetDate'),
-      dataIndex: 'target_date',
-      width: 140,
-      render: (_, r) => (
-        <DatePicker
-          size="small"
-          value={r.target_date}
-          onChange={(d) =>
-            setMsRows((rows) => rows.map((x) => (x.key === r.key ? { ...x, target_date: d } : x)))
-          }
-        />
-      ),
-    },
   ];
 
   const riskColumns: ColumnsType<RiskRowState> = [
@@ -479,16 +426,6 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               rowSelection={{ selectedRowKeys: wbsKeys, onChange: setWbsKeys }}
               locale={{ emptyText: t('proj.charter.emptyWbs') }}
             />
-            <Typography.Text strong>{t('proj.charter.msDraft')}</Typography.Text>
-            <Table<MsRowState>
-              size="small"
-              rowKey="key"
-              columns={msColumns}
-              dataSource={msRows}
-              pagination={false}
-              rowSelection={{ selectedRowKeys: msKeys, onChange: setMsKeys }}
-              locale={{ emptyText: t('proj.charter.emptyMs') }}
-            />
             <Typography.Text strong>{t('proj.charter.riskDraft')}</Typography.Text>
             <Table<RiskRowState>
               size="small"
@@ -524,7 +461,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
             showIcon
             message={t('proj.charter.summaryInfo', {
               wbs: wbsKeys.length,
-              ms: msKeys.length,
+              ms: wbsRows.filter((r) => wbsKeys.includes(r.key) && r.is_milestone).length,
               risk: riskKeys.length,
             })}
             description={t('proj.charter.summaryDesc')}

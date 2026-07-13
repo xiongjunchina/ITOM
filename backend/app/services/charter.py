@@ -116,20 +116,20 @@ def parse_charter(raw: bytes) -> dict:
             description_parts.append(f"{label}：{content}")
     fields["description"] = "\n".join(description_parts) or None
 
-    # 三张表按结构区分（位置化单元格，保留空列）：里程碑 3 列 / WBS 8 列 / 风险 5 列
-    wbs, milestones, risks = [], [], []
+    # 两张表按结构区分（位置化单元格）：WBS 10 列（含里程碑标志，里程碑=WBS 派生）/ 风险 5 列
+    wbs, risks = [], []
     for ln in lines:
         cells = [c.strip() for c in ln.split("\t")]
-        if len(cells) == 8 and _normalize_date(cells[2]) and cells[0]:  # WBS 数据行（开始日期列为日期；表头自动跳过）
-            name, assignee, start, end, parent, preds, deliverable, desc = cells
+        if len(cells) == 10 and _normalize_date(cells[8]) and cells[2]:  # WBS 数据行（计划开始列为日期；表头自动跳过）
+            stage, code, name, wbs_dict, deliverable, assignee, ms, preds, start, end = cells
             wbs.append({
-                "name": name, "assignee_name": assignee or None,
+                "stage": stage or None, "wbs_code": code or None, "name": name,
+                "wbs_dict": wbs_dict or None, "deliverable": deliverable or None,
+                "assignee_name": assignee or None,
+                "is_milestone": ms.strip() in ("是", "Y", "y", "yes", "true", "1"),
+                "predecessor_codes": preds or None,
                 "start_date": _normalize_date(start), "end_date": _normalize_date(end),
-                "parent_name": parent or None, "predecessor_names": preds or None,
-                "deliverable": deliverable or None, "description": desc or None,
             })
-        elif len(cells) == 3 and _normalize_date(cells[1]) and cells[0]:  # 里程碑数据行（目标日期列）
-            milestones.append({"name": cells[0], "target_date": _normalize_date(cells[1]), "description": cells[2] or None})
         elif len(cells) == 5 and cells[2] in ("高", "中", "低"):  # 风险数据行（概率列 高/中/低；表头自动跳过）
             category, rdesc, prob, impact, mitigation = cells
             risks.append({"title": f"{category}：{rdesc}"[:200], "probability": prob, "impact": impact, "mitigation": mitigation})
@@ -139,10 +139,8 @@ def parse_charter(raw: bytes) -> dict:
         if not fields.get(key):
             warnings.append(f"未解析到「{label}」，请手工补充")
     if not wbs:
-        warnings.append("未解析到 WBS 任务表（第 6 节，8 列）")
-    if not milestones:
-        warnings.append("未解析到里程碑表（第 5 节，3 列）")
+        warnings.append("未解析到 WBS 任务表（第 5 节，10 列）")
     if not risks:
-        warnings.append("未解析到风险表（8.1 关键风险，5 列）")
+        warnings.append("未解析到风险表（7.1 关键风险，5 列）")
 
-    return {"fields": fields, "drafts": {"wbs": wbs[:50], "milestones": milestones[:20], "risks": risks[:10]}, "warnings": warnings}
+    return {"fields": fields, "drafts": {"wbs": wbs[:100], "risks": risks[:10]}, "warnings": warnings}

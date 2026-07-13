@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="IT运营管理平台 API", version="0.8.1-m8", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="IT运营管理平台 API", version="0.9.0-m9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)

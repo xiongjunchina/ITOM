@@ -1,4 +1,4 @@
-"""M8：章程模板（里程碑表 + WBS 表分离）下载、解析、并经导入创建含层级/依赖的项目。"""
+"""M8/M9：章程模板（单 WBS 表，WBS编号层级+里程碑标志）下载、解析、导入建含层级/依赖/里程碑的项目。"""
 
 
 def test_charter_template_download(client, admin_headers):
@@ -17,57 +17,50 @@ def _parse_template(client, admin_headers):
 
 
 def test_generated_template_parses(client, admin_headers):
-    """里程碑表(3列) / WBS表(8列，含上级+前置) / 风险表(5列) 各自解析、无结构告警。"""
+    """WBS 表(10列，含阶段/编号/词典/DoD/里程碑/前置) + 风险表各自解析、无结构告警。"""
     data = _parse_template(client, admin_headers)
     f, d = data["fields"], data["drafts"]
-    assert f["name"] and f["pm_name"] and f["planned_start"] and f["planned_end"] and f["budget_10k"] == 50.0
-    # WBS：5 任务，字段完整
+    assert f["name"] and f["pm_name"] and f["budget_10k"] == 50.0
     assert len(d["wbs"]) == 5
-    by_name = {w["name"]: w for w in d["wbs"]}
-    assert by_name["方案设计"]["parent_name"] == "需求与设计"
-    assert by_name["方案设计"]["predecessor_names"] == "需求调研"
-    assert by_name["需求与设计"]["assignee_name"] == "张三"
-    assert by_name["测试上线"]["start_date"] and by_name["测试上线"]["deliverable"]
-    # 里程碑：2 条（独立于 WBS）
-    assert {m["name"] for m in d["milestones"]} == {"需求评审通过", "系统上线"}
-    assert len(d["risks"]) == 2
+    by_code = {w["wbs_code"]: w for w in d["wbs"]}
+    assert by_code["1.2"]["predecessor_codes"] == "1.1"  # 前置按 WBS编号
+    assert by_code["1"]["wbs_dict"] and by_code["1"]["assignee_name"] == "张三" and by_code["1"]["stage"]
+    # 里程碑=WBS 勾选「是」（编号 2、3）
+    assert by_code["2"]["is_milestone"] is True and by_code["3"]["is_milestone"] is True
+    assert by_code["1"]["is_milestone"] is False
+    assert len(d["risks"]) == 2 and "milestones" not in d
     assert not any("未解析" in w for w in data["warnings"])
 
 
-def test_charter_create_builds_hierarchy_and_deps(client, admin_headers):
-    """用模板解析结果建项目：WBS 层级(parent)与前置(predecessor)正确落库。"""
-    # 需要真实项目经理 + 负责人
+def test_charter_create_builds_hierarchy_deps_milestones(client, admin_headers):
+    """建项目：WBS 层级(编号前缀)、前置(编号)、里程碑标志正确落库，里程碑跟踪派生。"""
     def member(name):
         return client.post("/api/members", json={"name": name}, headers=admin_headers).json()["data"]["id"]
 
     pm = member("章程PM")
-    m_zhang = member("张三")  # 与模板负责人同名 → 解析到该人员
-    m_li = member("李四")
+    member("张三"), member("李四"), member("王五")
     data = _parse_template(client, admin_headers)
     f = data["fields"]
-    f["pm"] = pm  # parse 未匹配到 PM，手工指定
+    f["pm"] = pm
     r = client.post("/api/projects/charter/create", json={
-        "fields": f, "wbs": data["drafts"]["wbs"],
-        "milestones": data["drafts"]["milestones"], "risks": data["drafts"]["risks"],
+        "fields": f, "wbs": data["drafts"]["wbs"], "risks": data["drafts"]["risks"],
     }, headers=admin_headers)
     assert r.json()["success"], r.text
     pid = r.json()["data"]["project_id"]
-    assert r.json()["data"]["created"] == {"wbs": 5, "milestones": 2, "risks": 2}
+    assert r.json()["data"]["created"]["wbs"] == 5 and r.json()["data"]["created"]["milestones"] == 2
 
     wbs = client.get(f"/api/projects/{pid}/wbs", headers=admin_headers).json()["data"]
     by_name = {w["name"]: w for w in wbs}
     # 层级：需求调研/方案设计 挂在 需求与设计 下
     assert by_name["需求调研"]["parent_task_id"] == by_name["需求与设计"]["id"]
-    assert by_name["方案设计"]["parent_task_id"] == by_name["需求与设计"]["id"]
-    # 前置：方案设计←需求调研，测试上线←开发实现
+    # 前置：方案设计←需求调研
     assert by_name["需求调研"]["id"] in by_name["方案设计"]["predecessor_ids"]
-    assert by_name["开发实现"]["id"] in by_name["测试上线"]["predecessor_ids"]
-    # 负责人按姓名解析
-    assert by_name["张三" if False else "需求与设计"]["assignee"] == m_zhang
-    assert by_name["方案设计"]["assignee"] == m_li
-    # 里程碑
-    ms = client.get(f"/api/projects/{pid}/milestones", headers=admin_headers).json()["data"]
-    assert {m["name"] for m in ms} == {"需求评审通过", "系统上线"}
+    # 里程碑标志 + 责任人姓名解析
+    assert by_name["开发实现"]["is_milestone"] is True and by_name["测试上线"]["is_milestone"] is True
+    assert by_name["方案设计"]["assignee_name"] == "李四"
+    # 里程碑跟踪派生：仅里程碑=是 的行（开发实现、测试上线）
+    track = client.get(f"/api/projects/{pid}/milestone-tracking", headers=admin_headers).json()["data"]
+    assert {t["name"] for t in track} == {"开发实现", "测试上线"}
 
 
 def test_template_requires_create_perm(client, admin_headers):

@@ -100,53 +100,48 @@ def build_charter_template_docx() -> bytes:
     body.append(_para("示例：后端数据库迁移、移动端 App（另立项目）。"))
     body.append(_para(""))
 
-    # 5. 里程碑（名称 | 目标日期 | 说明）
-    body.append(_para("5. 里程碑 / Milestones（项目关键节点 / key checkpoints）", bold=True))
-    body.append(_table([
-        ["里程碑名称 Milestone Name", "目标日期 Target Date (YYYY-MM-DD)", "说明 Description"],
-        ["需求评审通过", "2026-08-31", "完成需求与设计评审"],
-        ["系统上线", "2026-12-31", "通过上线验收"],
-    ]))
-    body.append(_para(""))
-
-    # 6. WBS 任务分解（8 列，上级/前置按任务名称引用；与「项目进度导入模板」字段一致）
+    # 5. WBS 任务分解（层级由 WBS编号 建立，前置任务按 WBS编号 引用，勾里程碑=是 汇总到里程碑跟踪）
     body.append(_para(
-        "6. WBS 任务分解 / Work Breakdown Structure"
-        "（上级任务、前置任务按任务名称引用 / reference parent & predecessors by task name）",
+        "5. WBS 任务分解与里程碑 / Work Breakdown Structure & Milestones"
+        "（层级由 WBS编号 建立(1/1.1)；前置任务、里程碑均随行填写 / hierarchy by WBS code; predecessors by code）",
         bold=True,
     ))
     body.append(_table([
-        ["任务名称 Task Name", "负责人 Assignee", "开始日期 Start (YYYY-MM-DD)", "结束日期 End (YYYY-MM-DD)",
-         "上级任务 Parent", "前置任务 Predecessors", "交付物 Deliverable", "说明 Description"],
-        ["需求与设计", "张三", "2026-08-01", "2026-08-31", "", "", "需求规格说明书", "需求与设计阶段汇总"],
-        ["需求调研", "张三", "2026-08-01", "2026-08-15", "需求与设计", "", "调研报告", "访谈与现状分析"],
-        ["方案设计", "李四", "2026-08-16", "2026-08-31", "需求与设计", "需求调研", "设计文档", "原型与技术方案"],
-        ["开发实现", "李四", "2026-09-01", "2026-11-15", "", "方案设计", "可运行系统", "前端重构与接口开发"],
-        ["测试上线", "王五", "2026-11-16", "2026-12-31", "", "开发实现", "上线验收报告", "系统测试与上线部署"],
+        ["阶段 Stage", "WBS编号 Code", "任务名称(交付物) Task", "WBS词典说明(含/不含) Dictionary",
+         "交付物/验收标准(DoD)", "责任人 Owner", "里程碑 Milestone(是/否)", "前置任务(WBS号) Predecessors",
+         "计划开始 Start (YYYY-MM-DD)", "计划结束 End (YYYY-MM-DD)"],
+        ["1.需求", "1", "需求与设计", "含需求调研与建模；不含开发", "需求规格说明书签字", "张三", "否", "", "2026-08-01", "2026-08-31"],
+        ["1.需求", "1.1", "需求调研", "访谈与现状分析", "调研报告", "张三", "否", "", "2026-08-01", "2026-08-15"],
+        ["1.需求", "1.2", "方案设计", "原型与技术方案", "设计文档评审通过", "李四", "否", "1.1", "2026-08-16", "2026-08-31"],
+        ["2.开发", "2", "开发实现", "含前端重构与接口开发；不含数据迁移", "可运行系统（里程碑）", "李四", "是", "1.2", "2026-09-01", "2026-11-15"],
+        ["3.上线", "3", "测试上线", "系统测试与上线部署", "上线验收报告（里程碑）", "王五", "是", "2", "2026-11-16", "2026-12-31"],
     ]))
-    body.append(_para("填写说明：上级任务用于建立层级（缩进），前置任务用于甘特图依赖箭头；均填被引用任务的名称。"
-                      " / Parent builds hierarchy; predecessors draw Gantt dependency arrows — both reference task names."))
+    body.append(_para(
+        "填写说明：WBS编号用层级式(1/1.1/1.1.1)，父级由编号前缀自动推导；前置任务填被依赖任务的 WBS编号；"
+        "里程碑列填『是』的行会自动汇总到系统「里程碑跟踪」页；实际开始/结束、完成度% 在执行阶段于系统内更新。"
+        " / WBS code is hierarchical; predecessors reference codes; rows marked 是 (yes) become milestones; "
+        "actual dates & completion % are updated in the app during execution."))
     body.append(_para(""))
 
-    # 7. 预算与资源（预算金额在顶部信息表填写；此处描述资源投入）
-    body.append(_para("7. 预算与资源 / Budget & Resources", bold=True))
+    # 6. 预算与资源（预算金额在顶部信息表填写；此处描述资源投入）
+    body.append(_para("6. 预算与资源 / Budget & Resources", bold=True))
     body.append(_para("示例：总预算见文首信息表；投入 1 名 PM、3 名开发、1 名测试，外部供应商配合 UI 设计。"))
     body.append(_para(""))
 
-    # 8. 风险与应对（8.1 关键风险表：概率/影响列填 高/中/低）
-    body.append(_para("8. 风险与应对 / Risk Management", bold=True))
-    body.append(_para("8.1 关键风险 / Key Risks（概率、影响列请填 高/中/低 / probability & impact: 高/中/低）", bold=True))
+    # 7. 风险与应对（7.1 关键风险表：概率/影响列填 高/中/低）
+    body.append(_para("7. 风险与应对 / Risk Management", bold=True))
+    body.append(_para("7.1 关键风险 / Key Risks（概率、影响列请填 高/中/低 / probability & impact: 高/中/低）", bold=True))
     body.append(_table([
         ["风险类别 Category", "风险描述 Description", "概率 Prob", "影响 Impact", "应对措施 Mitigation"],
         ["技术风险", "新技术栈团队不熟悉，影响开发效率", "中", "高", "提前培训与技术预研"],
         ["进度风险", "需求变更导致工期延误", "高", "中", "变更控制流程 + 预留缓冲期"],
     ]))
-    body.append(_para("8.2 应对与监控 / Monitoring", bold=True))
+    body.append(_para("7.2 应对与监控 / Monitoring", bold=True))
     body.append(_para("示例：每周风险复盘，红色风险升级至项目发起人。"))
     body.append(_para(""))
 
     # 9. 审批
-    body.append(_para("9. 审批 / Approval", bold=True))
+    body.append(_para("8. 审批 / Approval", bold=True))
     body.append(_table([
         ["角色 Role", "姓名 Name", "签字/日期 Sign / Date"],
         ["项目发起人 Sponsor", "", ""],
