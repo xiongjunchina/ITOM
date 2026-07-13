@@ -36,6 +36,8 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
@@ -96,6 +98,8 @@ function buildWbsTree(list: WbsTask[]): WbsNode[] {
 }
 
 export default function ProjectDetail() {
+  const t = useT();
+  const et = useEnums();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
@@ -195,13 +199,13 @@ export default function ProjectDetail() {
   );
 
   // ---------- 状态流转 ----------
-  const runTransition = (t: AllowedTransition) => {
+  const runTransition = (tr: AllowedTransition) => {
     Modal.confirm({
-      title: `确认执行「${t.to_name}」？`,
-      content: `项目状态将变更为「${t.to_name}」。`,
+      title: t('proj.confirmTransitionTitle', { name: tr.to_name }),
+      content: t('proj.confirmTransitionContent', { name: tr.to_name }),
       onOk: async () => {
-        await api.post(`/projects/${id}/transition`, { to: t.to, fields: {} });
-        message.success('操作成功');
+        await api.post(`/projects/${id}/transition`, { to: tr.to, fields: {} });
+        message.success(t('proj.actionOk'));
         void loadDetail();
       },
     });
@@ -254,7 +258,7 @@ export default function ProjectDetail() {
         budget_10k: v.budget_10k ?? null,
         description: v.description || null,
       });
-      message.success('项目信息已更新');
+      message.success(t('proj.projectUpdated'));
       setEditOpen(false);
       void loadDetail();
     } catch {
@@ -269,7 +273,7 @@ export default function ProjectDetail() {
     if (!detail || text === (detail.latest_update ?? '')) return;
     try {
       await api.patch(`/projects/${id}`, { latest_update: text });
-      message.success('最新动态已更新');
+      message.success(t('proj.latestUpdated'));
       void loadDetail();
     } catch {
       // 已统一提示
@@ -290,7 +294,7 @@ export default function ProjectDetail() {
         target_date: (v.target_date as Dayjs).format('YYYY-MM-DD'),
         description: v.description || null,
       });
-      message.success('里程碑已创建');
+      message.success(t('proj.msCreated'));
       setMsModalOpen(false);
       void loadMilestones();
       void loadDetail();
@@ -304,7 +308,7 @@ export default function ProjectDetail() {
   const achieveMilestone = async (m: Milestone) => {
     try {
       await api.post(`/milestones/${m.id}/achieve`);
-      message.success(`里程碑「${m.name}」已达成`);
+      message.success(t('proj.msAchieved', { name: m.name }));
       void loadMilestones();
       void loadDetail();
     } catch {
@@ -315,7 +319,7 @@ export default function ProjectDetail() {
   const deleteMilestone = async (m: Milestone) => {
     try {
       await api.delete(`/milestones/${m.id}`);
-      message.success('里程碑已删除');
+      message.success(t('proj.msDeleted'));
       void loadMilestones();
       void loadDetail();
     } catch {
@@ -367,13 +371,13 @@ export default function ProjectDetail() {
     try {
       if (taskModal.mode === 'edit' && taskModal.task) {
         await api.patch(`/wbs/${taskModal.task.id}`, base);
-        message.success('任务已更新');
+        message.success(t('proj.taskUpdated'));
       } else {
         await api.post(`/projects/${id}/wbs`, {
           ...base,
           parent_task_id: taskModal.parent?.id ?? null,
         });
-        message.success('任务已创建');
+        message.success(t('proj.taskCreated'));
       }
       setTaskModal(null);
       void loadWbs();
@@ -388,7 +392,7 @@ export default function ProjectDetail() {
   const changeTaskStatus = async (task: WbsTask, status: WbsStatus) => {
     try {
       await api.patch(`/wbs/${task.id}`, { status });
-      message.success('任务状态已更新');
+      message.success(t('proj.taskStatusUpdated'));
       void loadWbs();
       void loadDetail();
     } catch {
@@ -399,7 +403,7 @@ export default function ProjectDetail() {
   const deleteTask = async (task: WbsTask) => {
     try {
       await api.delete(`/wbs/${task.id}`);
-      message.success('任务已删除');
+      message.success(t('proj.taskDeleted'));
       void loadWbs();
       void loadDetail();
     } catch {
@@ -425,7 +429,7 @@ export default function ProjectDetail() {
         amount_10k: v.amount_10k,
         note: v.note || null,
       });
-      message.success('成本明细已登记');
+      message.success(t('proj.costAdded'));
       setCostModalOpen(false);
       void loadCosts();
       void loadDetail();
@@ -439,7 +443,7 @@ export default function ProjectDetail() {
   const deleteCost = async (c: CostEntry) => {
     try {
       await api.delete(`/costs/${c.id}`);
-      message.success('成本明细已删除');
+      message.success(t('proj.costDeleted'));
       void loadCosts();
       void loadDetail();
     } catch {
@@ -479,7 +483,7 @@ export default function ProjectDetail() {
           mitigation: v.mitigation || null,
           status: v.status,
         });
-        message.success('风险已更新');
+        message.success(t('proj.riskUpdated'));
       } else {
         await api.post(`/projects/${id}/risks`, {
           title: v.title,
@@ -487,7 +491,7 @@ export default function ProjectDetail() {
           impact: v.impact,
           mitigation: v.mitigation || null,
         });
-        message.success('风险已登记');
+        message.success(t('proj.riskAdded'));
       }
       setRiskModal(null);
       void loadRisks();
@@ -510,7 +514,7 @@ export default function ProjectDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">项目不存在或无权查看</Typography.Text>
+        <Typography.Text type="secondary">{t('proj.notFound')}</Typography.Text>
       </Card>
     );
   }
@@ -519,17 +523,17 @@ export default function ProjectDetail() {
   const overviewTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Descriptions column={2} size="small" bordered>
-        <Descriptions.Item label="项目经理">{detail.pm_name ?? '-'}</Descriptions.Item>
-        <Descriptions.Item label="所属组合">{detail.portfolio_name ?? '-'}</Descriptions.Item>
-        <Descriptions.Item label="计划起止">
+        <Descriptions.Item label={t('proj.pm')}>{detail.pm_name ?? '-'}</Descriptions.Item>
+        <Descriptions.Item label={t('proj.belongPortfolio')}>{detail.portfolio_name ?? '-'}</Descriptions.Item>
+        <Descriptions.Item label={t('proj.planned')}>
           {detail.planned_start} ~ {detail.planned_end}
         </Descriptions.Item>
-        <Descriptions.Item label="实际起止">
+        <Descriptions.Item label={t('proj.d.actual')}>
           {detail.actual_start ?? '-'} ~ {detail.actual_end ?? '-'}
         </Descriptions.Item>
-        <Descriptions.Item label="预算">{fmt10k(detail.budget_10k)}</Descriptions.Item>
-        <Descriptions.Item label="实际成本">{fmt10k(detail.actual_cost_10k)}</Descriptions.Item>
-        <Descriptions.Item label="预算执行率">
+        <Descriptions.Item label={t('proj.d.budget')}>{fmt10k(detail.budget_10k)}</Descriptions.Item>
+        <Descriptions.Item label={t('proj.d.actualCost')}>{fmt10k(detail.actual_cost_10k)}</Descriptions.Item>
+        <Descriptions.Item label={t('proj.d.budgetUsageRate')}>
           <span style={detail.budget_usage != null && detail.budget_usage > 100 ? { color: '#ff4d4f' } : undefined}>
             {fmtPct(detail.budget_usage)}
           </span>
@@ -537,27 +541,34 @@ export default function ProjectDetail() {
         <Descriptions.Item label="SPI / CPI">
           {detail.spi ?? '-'} / {detail.cpi ?? '-'}
         </Descriptions.Item>
-        <Descriptions.Item label="进度偏差">
+        <Descriptions.Item label={t('proj.d.deviation')}>
           {detail.deviation == null ? (
             '-'
           ) : (
-            <span style={detail.deviation > 15 ? { color: '#ff4d4f' } : undefined}>{detail.deviation} 个百分点</span>
+            <span style={detail.deviation > 15 ? { color: '#ff4d4f' } : undefined}>
+              {t('proj.pctPoints', { n: detail.deviation })}
+            </span>
           )}
         </Descriptions.Item>
-        <Descriptions.Item label="任务 / 里程碑 / 风险">
-          任务 {detail.task_done}/{detail.task_total} · 里程碑 {detail.milestone_total}
-          {detail.milestone_overdue > 0 && <span style={{ color: '#ff4d4f' }}>（逾期 {detail.milestone_overdue}）</span>}
-          {' '}· 开放风险 {detail.open_risks}
-          {detail.red_risks > 0 && <span style={{ color: '#ff4d4f' }}>（红色 {detail.red_risks}）</span>}
+        <Descriptions.Item label={t('proj.d.taskMsRisk')}>
+          {t('proj.ov.tasks', { done: detail.task_done, total: detail.task_total })} ·{' '}
+          {t('proj.ov.milestones', { n: detail.milestone_total })}
+          {detail.milestone_overdue > 0 && (
+            <span style={{ color: '#ff4d4f' }}>{t('proj.ov.overdueParen', { n: detail.milestone_overdue })}</span>
+          )}
+          {' '}· {t('proj.ov.openRisks', { n: detail.open_risks })}
+          {detail.red_risks > 0 && (
+            <span style={{ color: '#ff4d4f' }}>{t('proj.ov.redParen', { n: detail.red_risks })}</span>
+          )}
         </Descriptions.Item>
-        <Descriptions.Item label="描述" span={2}>
+        <Descriptions.Item label={t('proj.desc')} span={2}>
           <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
             {detail.description || '-'}
           </Typography.Paragraph>
         </Descriptions.Item>
       </Descriptions>
 
-      <Card title="最新动态" size="small">
+      <Card title={t('proj.latestUpdate')} size="small">
         <Typography.Paragraph
           style={{ marginBottom: 0 }}
           editable={
@@ -565,28 +576,26 @@ export default function ProjectDetail() {
               ? {
                   text: detail.latest_update ?? '',
                   maxLength: 200,
-                  tooltip: '编辑最新动态（一句话）',
+                  tooltip: t('proj.editLatestTooltip'),
                   onChange: (v) => void saveLatestUpdate(v),
                 }
               : false
           }
         >
-          {detail.latest_update || '暂无动态'}
+          {detail.latest_update || t('proj.noUpdate')}
         </Typography.Paragraph>
       </Card>
 
-      <Card title="关联需求" size="small">
+      <Card title={t('proj.linkedReq')} size="small">
         {(detail.linked_requirements ?? []).length === 0 ? (
-          <Typography.Text type="secondary">
-            暂无关联需求（在需求详情的实现阶段可挂接本项目）
-          </Typography.Text>
+          <Typography.Text type="secondary">{t('proj.noLinkedReq')}</Typography.Text>
         ) : (
           <Space direction="vertical" size={4} style={{ width: '100%' }}>
             {(detail.linked_requirements ?? []).map((r) => (
               <Space key={r.id} size={8}>
                 <Link to={`/requirements/${r.id}`}>{r.requirement_code}</Link>
                 <span>{r.title}</span>
-                {r.moscow && <Tag>{r.moscow}</Tag>}
+                {r.moscow && <Tag>{et.moscow(r.moscow)}</Tag>}
                 <Tag>{r.status_name}</Tag>
               </Space>
             ))}
@@ -594,16 +603,16 @@ export default function ProjectDetail() {
         )}
       </Card>
 
-      <Card title="进度" size="small">
+      <Card title={t('proj.progress')} size="small">
         {detail.progress == null ? (
-          <Typography.Text type="secondary">暂无 WBS 任务，无法计算进度</Typography.Text>
+          <Typography.Text type="secondary">{t('proj.noWbsProgress')}</Typography.Text>
         ) : (
           <>
             <Progress percent={detail.progress} format={(p) => `${p ?? 0}%`} />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              计划进度 {fmtPct(detail.planned_progress)}
-              {detail.deviation != null && ` · 偏差 ${detail.deviation} 个百分点`}
-              {detail.spi != null && ` · SPI ${detail.spi}`}
+              {t('proj.plannedProgress', { pct: fmtPct(detail.planned_progress) })}
+              {detail.deviation != null && ` · ${t('proj.deviationSuffix', { n: detail.deviation })}`}
+              {detail.spi != null && ` · ${t('proj.spiSuffix', { v: detail.spi })}`}
             </Typography.Text>
           </>
         )}
@@ -613,43 +622,46 @@ export default function ProjectDetail() {
 
   // ----- 进度 -----
   const msColumns: ColumnsType<Milestone> = [
-    { title: '名称', dataIndex: 'name', ellipsis: true },
+    { title: t('proj.ms.col.name'), dataIndex: 'name', ellipsis: true },
     {
-      title: '目标日期',
+      title: t('proj.ms.col.targetDate'),
       dataIndex: 'target_date',
       width: 160,
       render: (v: string, r) => (
         <Space size={4}>
           {v}
-          {r.overdue && <Tag color="red">逾期</Tag>}
+          {r.overdue && <Tag color="red">{t('proj.overdue')}</Tag>}
         </Space>
       ),
     },
     {
-      title: '达成时间',
+      title: t('proj.ms.col.achievedAt'),
       dataIndex: 'achieved_at',
       width: 130,
       render: (v: string | null) => (v ? <Tag color="green">{v}</Tag> : '-'),
     },
-    { title: '说明', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.ms.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 140,
             render: (_: unknown, r: Milestone) => (
               <Space size={0}>
                 {!r.achieved_at && (
-                  <Popconfirm title={`确认里程碑「${r.name}」已达成？`} onConfirm={() => void achieveMilestone(r)}>
+                  <Popconfirm
+                    title={t('proj.confirmAchieveMs', { name: r.name })}
+                    onConfirm={() => void achieveMilestone(r)}
+                  >
                     <Button type="link" size="small" icon={<CheckOutlined />}>
-                      达成
+                      {t('proj.achieve')}
                     </Button>
                   </Popconfirm>
                 )}
-                <Popconfirm title="确认删除该里程碑？" onConfirm={() => void deleteMilestone(r)}>
+                <Popconfirm title={t('proj.confirmDeleteMs')} onConfirm={() => void deleteMilestone(r)}>
                   <Button type="link" size="small" danger>
-                    删除
+                    {t('common.delete')}
                   </Button>
                 </Popconfirm>
               </Space>
@@ -660,17 +672,17 @@ export default function ProjectDetail() {
   ];
 
   const wbsColumns: ColumnsType<WbsNode> = [
-    { title: '编码', dataIndex: 'wbs_code', width: 90 },
-    { title: '名称', dataIndex: 'name', ellipsis: true },
-    { title: '负责人', dataIndex: 'assignee_name', width: 100, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 90 },
+    { title: t('proj.wbs.col.name'), dataIndex: 'name', ellipsis: true },
+    { title: t('proj.wbs.col.assignee'), dataIndex: 'assignee_name', width: 100, render: (v) => v || '-' },
     {
-      title: '起止',
+      title: t('proj.wbs.col.dates'),
       key: 'dates',
       width: 200,
       render: (_, r) => `${r.start_date} ~ ${r.end_date}`,
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 110,
       render: (v: WbsStatus, r) =>
@@ -679,31 +691,31 @@ export default function ProjectDetail() {
             size="small"
             value={v}
             style={{ width: 92 }}
-            options={WBS_STATUSES.map((s) => ({ value: s, label: s }))}
+            options={WBS_STATUSES.map((s) => ({ value: s, label: et.wbsStatus(s) }))}
             onChange={(s) => void changeTaskStatus(r, s)}
           />
         ) : (
-          <Tag color={WBS_TAG_COLORS[v]}>{v}</Tag>
+          <Tag color={WBS_TAG_COLORS[v]}>{et.wbsStatus(v)}</Tag>
         ),
     },
-    { title: '交付物', dataIndex: 'deliverable', width: 150, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.deliverable'), dataIndex: 'deliverable', width: 150, ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 190,
             render: (_: unknown, r: WbsNode) => (
               <Space size={0}>
                 <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
-                  编辑
+                  {t('common.edit')}
                 </Button>
                 <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
-                  加子任务
+                  {t('proj.addSubtask')}
                 </Button>
-                <Popconfirm title="确认删除该任务？" onConfirm={() => void deleteTask(r)}>
+                <Popconfirm title={t('proj.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
                   <Button type="link" size="small" danger>
-                    删除
+                    {t('common.delete')}
                   </Button>
                 </Popconfirm>
               </Space>
@@ -726,16 +738,16 @@ export default function ProjectDetail() {
                 void loadMilestones();
                 void loadDetail();
               }}
-              buttonText="导入 WBS 与里程碑"
+              buttonText={t('proj.importWbsMs')}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              模板含「WBS任务」「里程碑」两个工作表；上级/前置任务按名称挂接，导入后自动生成层级编码与甘特依赖线
+              {t('proj.importHint')}
             </Typography.Text>
           </Space>
         </Card>
       )}
       <Card
-        title="里程碑"
+        title={t('proj.milestonesTitle')}
         size="small"
         extra={
           canEdit && (
@@ -747,7 +759,7 @@ export default function ProjectDetail() {
                 setMsModalOpen(true);
               }}
             >
-              新建里程碑
+              {t('proj.newMilestone')}
             </Button>
           )
         }
@@ -758,17 +770,17 @@ export default function ProjectDetail() {
           columns={msColumns}
           dataSource={milestones}
           pagination={false}
-          locale={{ emptyText: '暂无里程碑' }}
+          locale={{ emptyText: t('proj.emptyMs') }}
         />
       </Card>
 
       <Card
-        title="WBS 任务"
+        title={t('proj.wbsTasks')}
         size="small"
         extra={
           canEdit && (
             <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openTaskModal('create')}>
-              新建任务
+              {t('proj.newTask')}
             </Button>
           )
         }
@@ -784,11 +796,11 @@ export default function ProjectDetail() {
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: setExpandedKeys,
           }}
-          locale={{ emptyText: '暂无任务，可通过「新建任务」或章程导入生成' }}
+          locale={{ emptyText: t('proj.emptyWbs') }}
         />
       </Card>
 
-      <Card title="甘特图" size="small">
+      <Card title={t('proj.gantt')} size="small">
         <GanttChart
           tasks={wbs}
           milestones={milestones}
@@ -801,19 +813,19 @@ export default function ProjectDetail() {
 
   // ----- 成本 -----
   const costColumns: ColumnsType<CostEntry> = [
-    { title: '日期', dataIndex: 'entry_date', width: 130 },
-    { title: '金额（万元）', dataIndex: 'amount_10k', width: 130 },
-    { title: '说明', dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.cost.col.date'), dataIndex: 'entry_date', width: 130 },
+    { title: t('proj.cost.col.amountWan'), dataIndex: 'amount_10k', width: 130 },
+    { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 80,
             render: (_: unknown, r: CostEntry) => (
-              <Popconfirm title="确认删除该成本明细？" onConfirm={() => void deleteCost(r)}>
+              <Popconfirm title={t('proj.confirmDeleteCost')} onConfirm={() => void deleteCost(r)}>
                 <Button type="link" size="small" danger>
-                  删除
+                  {t('common.delete')}
                 </Button>
               </Popconfirm>
             ),
@@ -827,18 +839,18 @@ export default function ProjectDetail() {
       <Row gutter={16}>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title="预算（万元）" value={detail.budget_10k ?? '-'} />
+            <Statistic title={t('proj.budgetWan')} value={detail.budget_10k ?? '-'} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title="实际成本（万元）" value={detail.actual_cost_10k} />
+            <Statistic title={t('proj.stat.actualCostWan')} value={detail.actual_cost_10k} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
             <Statistic
-              title="预算执行率"
+              title={t('proj.d.budgetUsageRate')}
               value={detail.budget_usage ?? '-'}
               suffix={detail.budget_usage != null ? '%' : undefined}
               valueStyle={detail.budget_usage != null && detail.budget_usage > 100 ? { color: '#ff4d4f' } : undefined}
@@ -857,7 +869,7 @@ export default function ProjectDetail() {
       </Row>
 
       <Card
-        title="成本明细"
+        title={t('proj.costDetail')}
         size="small"
         extra={
           canEdit && (
@@ -870,7 +882,7 @@ export default function ProjectDetail() {
                 setCostModalOpen(true);
               }}
             >
-              新增明细
+              {t('proj.addEntry')}
             </Button>
           )
         }
@@ -881,7 +893,7 @@ export default function ProjectDetail() {
           columns={costColumns}
           dataSource={costs}
           pagination={false}
-          locale={{ emptyText: '暂无成本明细' }}
+          locale={{ emptyText: t('proj.emptyCost') }}
         />
       </Card>
     </Space>
@@ -896,31 +908,31 @@ export default function ProjectDetail() {
   };
 
   const riskColumns: ColumnsType<Risk> = [
-    { title: '标题', dataIndex: 'title', ellipsis: true },
-    { title: '概率', dataIndex: 'probability', width: 70 },
-    { title: '影响', dataIndex: 'impact', width: 70 },
+    { title: t('proj.risk.col.title'), dataIndex: 'title', ellipsis: true },
+    { title: t('proj.risk.col.prob'), dataIndex: 'probability', width: 70, render: (v) => et.riskGrade(v) },
+    { title: t('proj.risk.col.impact'), dataIndex: 'impact', width: 70, render: (v) => et.riskGrade(v) },
     {
-      title: '等级',
+      title: t('proj.risk.col.level'),
       key: 'level',
       width: 80,
       render: (_, r) => <RiskLevelTag probability={r.probability} impact={r.impact} />,
     },
-    { title: '应对措施', dataIndex: 'mitigation', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.risk.col.mitigation'), dataIndex: 'mitigation', ellipsis: true, render: (v) => v || '-' },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 90,
-      render: (v: Risk['status']) => <Tag color={v === '开放' ? 'orange' : 'default'}>{v}</Tag>,
+      render: (v: Risk['status']) => <Tag color={v === '开放' ? 'orange' : 'default'}>{et.riskStatus(v)}</Tag>,
     },
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 70,
             render: (_: unknown, r: Risk) => (
               <Button type="link" size="small" onClick={() => openRiskModal('edit', r)}>
-                编辑
+                {t('common.edit')}
               </Button>
             ),
           } as ColumnsType<Risk>[number],
@@ -930,17 +942,17 @@ export default function ProjectDetail() {
 
   const riskTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
-      <Card title="概率 × 影响矩阵（开放风险数）" size="small">
+      <Card title={t('proj.riskMatrixTitle')} size="small">
         <div style={{ display: 'grid', gridTemplateColumns: '90px repeat(3, 90px)', gap: 4, fontSize: 13 }}>
           <div />
           {RISK_GRADES.map((i) => (
             <div key={`h-${i}`} style={{ textAlign: 'center', color: 'rgba(0,0,0,0.45)' }}>
-              影响·{i}
+              {t('proj.impactAxis', { g: et.riskGrade(i) })}
             </div>
           ))}
           {RISK_GRADES.map((p) => (
             <div key={`row-${p}`} style={{ display: 'contents' }}>
-              <div style={{ lineHeight: '44px', color: 'rgba(0,0,0,0.45)' }}>概率·{p}</div>
+              <div style={{ lineHeight: '44px', color: 'rgba(0,0,0,0.45)' }}>{t('proj.probAxis', { g: et.riskGrade(p) })}</div>
               {RISK_GRADES.map((i) => {
                 const count = openRisks.filter((r) => r.probability === p && r.impact === i).length;
                 return (
@@ -967,12 +979,12 @@ export default function ProjectDetail() {
       </Card>
 
       <Card
-        title="风险清单"
+        title={t('proj.riskList')}
         size="small"
         extra={
           canEdit && (
             <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openRiskModal('create')}>
-              新建风险
+              {t('proj.newRisk')}
             </Button>
           )
         }
@@ -983,7 +995,7 @@ export default function ProjectDetail() {
           columns={riskColumns}
           dataSource={risks}
           pagination={false}
-          locale={{ emptyText: '暂无风险' }}
+          locale={{ emptyText: t('proj.emptyRisk') }}
         />
       </Card>
     </Space>
@@ -992,7 +1004,7 @@ export default function ProjectDetail() {
   // ----- 文档 -----
   const attachmentColumns: ColumnsType<AttachmentItem> = [
     {
-      title: '文件名',
+      title: t('proj.att.col.filename'),
       dataIndex: 'filename',
       ellipsis: true,
       render: (v: string, r) => (
@@ -1007,9 +1019,9 @@ export default function ProjectDetail() {
         </Button>
       ),
     },
-    { title: '大小', dataIndex: 'size', width: 100, render: (v: number) => formatSize(v) },
+    { title: t('proj.att.col.size'), dataIndex: 'size', width: 100, render: (v: number) => formatSize(v) },
     {
-      title: '上传时间',
+      title: t('proj.att.col.uploadedAt'),
       dataIndex: 'created_at',
       width: 160,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
@@ -1021,16 +1033,17 @@ export default function ProjectDetail() {
       <Alert
         type="info"
         showIcon
-        message="章程导入"
+        message={t('proj.charterImport')}
         description={
           <span>
-            如需通过《项目章程》.docx 快速创建项目（自动生成 WBS/里程碑/风险草稿），请前往
-            <Link to="/projects">项目列表页</Link>使用「章程导入」向导。本页附件仅作为项目文档存档。
+            {t('proj.charterAlert.pre')}
+            <Link to="/projects">{t('proj.charterAlert.link')}</Link>
+            {t('proj.charterAlert.post')}
           </span>
         }
       />
       <Card
-        title="附件"
+        title={t('proj.attachments')}
         size="small"
         extra={
           !isExample && (
@@ -1041,14 +1054,14 @@ export default function ProjectDetail() {
                   .upload<AttachmentItem>(`/attachments?entity_type=project&entity_id=${id}`, file as File)
                   .then((r) => {
                     onSuccess?.(r);
-                    message.success('附件已上传');
+                    message.success(t('proj.attUploaded'));
                     void loadAttachments();
                   })
                   .catch((e) => onError?.(e as Error));
               }}
             >
               <Button size="small" type="primary" icon={<UploadOutlined />}>
-                上传附件
+                {t('proj.upload')}
               </Button>
             </Upload>
           )
@@ -1060,7 +1073,7 @@ export default function ProjectDetail() {
           columns={attachmentColumns}
           dataSource={attachments}
           pagination={false}
-          locale={{ emptyText: '暂无附件' }}
+          locale={{ emptyText: t('proj.emptyAtt') }}
         />
       </Card>
     </Space>
@@ -1074,7 +1087,7 @@ export default function ProjectDetail() {
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')}>
-              返回
+              {t('proj.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>
               {detail.project_code} · {detail.name}
@@ -1086,17 +1099,17 @@ export default function ProjectDetail() {
             <Space wrap>
               {!isFinal && (
                 <Button icon={<EditOutlined />} onClick={openEdit}>
-                  编辑
+                  {t('common.edit')}
                 </Button>
               )}
-              {(detail.allowed_transitions ?? []).map((t) => (
+              {(detail.allowed_transitions ?? []).map((tr) => (
                 <Button
-                  key={t.to}
-                  type={t.to === 'cancelled' ? 'default' : 'primary'}
-                  danger={t.to === 'cancelled'}
-                  onClick={() => runTransition(t)}
+                  key={tr.to}
+                  type={tr.to === 'cancelled' ? 'default' : 'primary'}
+                  danger={tr.to === 'cancelled'}
+                  onClick={() => runTransition(tr)}
                 >
-                  {t.to_name}
+                  {tr.to_name}
                 </Button>
               ))}
             </Space>
@@ -1106,7 +1119,7 @@ export default function ProjectDetail() {
 
       {/* 流程示意 */}
       {detail.process && detail.process.steps?.length > 0 && (
-        <Card title={`流程：${detail.process.definition_name}`} size="small">
+        <Card title={t('proj.flowTitle', { name: detail.process.definition_name })} size="small">
           <FlowDiagram
             steps={detail.process.steps}
             roleLabel={roleLabel}
@@ -1118,18 +1131,18 @@ export default function ProjectDetail() {
       <Card>
         <Tabs
           items={[
-            { key: 'overview', label: '概述', children: overviewTab },
-            { key: 'progress', label: '进度', children: progressTab },
-            { key: 'cost', label: '成本', children: costTab },
-            { key: 'risk', label: '风险', children: riskTab },
-            { key: 'docs', label: '文档', children: docsTab },
+            { key: 'overview', label: t('proj.tab.overview'), children: overviewTab },
+            { key: 'progress', label: t('proj.tab.progress'), children: progressTab },
+            { key: 'cost', label: t('proj.tab.cost'), children: costTab },
+            { key: 'risk', label: t('proj.tab.risk'), children: riskTab },
+            { key: 'docs', label: t('proj.tab.docs'), children: docsTab },
           ]}
         />
       </Card>
 
       {/* 编辑基本信息 Modal */}
       <Modal
-        title="编辑项目信息"
+        title={t('proj.editProjectTitle')}
         open={editOpen}
         width={560}
         onOk={() => void submitEdit()}
@@ -1140,21 +1153,21 @@ export default function ProjectDetail() {
         <Form form={editForm} layout="vertical">
           <Form.Item
             name="name"
-            label="项目名称"
+            label={t('proj.projectName')}
             rules={[
-              { required: true, message: '请输入项目名称' },
-              { min: 2, message: '至少 2 个字符' },
+              { required: true, message: t('proj.projectNameRequired') },
+              { min: 2, message: t('proj.min2') },
             ]}
           >
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="pm" label="项目经理" rules={[{ required: true, message: '请选择项目经理' }]}>
+          <Form.Item name="pm" label={t('proj.pm')} rules={[{ required: true, message: t('proj.pmRequired') }]}>
             <Select showSearch optionFilterProp="label" options={memberOptions} />
           </Form.Item>
-          <Form.Item name="planned" label="计划起止" rules={[{ required: true, message: '请选择计划起止日期' }]}>
+          <Form.Item name="planned" label={t('proj.planned')} rules={[{ required: true, message: t('proj.plannedRequired') }]}>
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="portfolio_id" label="所属组合">
+          <Form.Item name="portfolio_id" label={t('proj.belongPortfolio')}>
             <Select
               allowClear
               showSearch
@@ -1162,7 +1175,7 @@ export default function ProjectDetail() {
               options={portfolios.map((p) => ({ value: p.id, label: p.name }))}
             />
           </Form.Item>
-          <Form.Item name="service_item_id" label="关联服务项">
+          <Form.Item name="service_item_id" label={t('proj.linkedService')}>
             <Select
               allowClear
               showSearch
@@ -1173,10 +1186,10 @@ export default function ProjectDetail() {
               }))}
             />
           </Form.Item>
-          <Form.Item name="budget_10k" label="预算（万元）">
+          <Form.Item name="budget_10k" label={t('proj.budgetWan')}>
             <InputNumber min={0} precision={2} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('proj.desc')}>
             <Input.TextArea rows={3} maxLength={2000} />
           </Form.Item>
         </Form>
@@ -1184,7 +1197,7 @@ export default function ProjectDetail() {
 
       {/* 新建里程碑 Modal */}
       <Modal
-        title="新建里程碑"
+        title={t('proj.newMilestone')}
         open={msModalOpen}
         onOk={() => void submitMilestone()}
         confirmLoading={msSaving}
@@ -1192,13 +1205,13 @@ export default function ProjectDetail() {
         destroyOnClose
       >
         <Form form={msForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入里程碑名称' }]}>
+          <Form.Item name="name" label={t('proj.msName')} rules={[{ required: true, message: t('proj.msNameRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="target_date" label="目标日期" rules={[{ required: true, message: '请选择目标日期' }]}>
+          <Form.Item name="target_date" label={t('proj.msTargetDate')} rules={[{ required: true, message: t('proj.msTargetDateRequired') }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="description" label="说明">
+          <Form.Item name="description" label={t('proj.msDesc')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>
@@ -1208,10 +1221,10 @@ export default function ProjectDetail() {
       <Modal
         title={
           taskModal?.mode === 'edit'
-            ? `编辑任务：${taskModal.task?.name ?? ''}`
+            ? t('proj.editTaskTitle', { name: taskModal.task?.name ?? '' })
             : taskModal?.parent
-              ? `新建子任务（父任务：${taskModal.parent.name}）`
-              : '新建任务'
+              ? t('proj.newSubtaskTitle', { name: taskModal.parent.name })
+              : t('proj.newTask')
         }
         open={!!taskModal}
         onOk={() => void submitTask()}
@@ -1220,22 +1233,22 @@ export default function ProjectDetail() {
         destroyOnClose
       >
         <Form form={taskForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="任务名称" rules={[{ required: true, message: '请输入任务名称' }]}>
+          <Form.Item name="name" label={t('proj.taskName')} rules={[{ required: true, message: t('proj.taskNameRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="assignee" label="负责人" rules={[{ required: true, message: '请选择负责人' }]}>
+          <Form.Item name="assignee" label={t('proj.assignee')} rules={[{ required: true, message: t('proj.assigneeRequired') }]}>
             <Select showSearch optionFilterProp="label" options={memberOptions} />
           </Form.Item>
-          <Form.Item name="dates" label="起止日期" rules={[{ required: true, message: '请选择起止日期' }]}>
+          <Form.Item name="dates" label={t('proj.dateRange')} rules={[{ required: true, message: t('proj.dateRangeRequired') }]}>
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="deliverable" label="交付物">
+          <Form.Item name="deliverable" label={t('proj.deliverable')}>
             <Input maxLength={200} />
           </Form.Item>
           <Form.Item
             name="predecessor_ids"
-            label="前置任务"
-            extra="前置任务完成后本任务才应开始；甘特图中以虚线箭头表示"
+            label={t('proj.predecessor')}
+            extra={t('proj.predecessorExtra')}
           >
             <Select
               mode="multiple"
@@ -1246,7 +1259,7 @@ export default function ProjectDetail() {
                 .map((t) => ({ value: t.id, label: `${t.wbs_code} ${t.name}` }))}
             />
           </Form.Item>
-          <Form.Item name="description" label="说明">
+          <Form.Item name="description" label={t('proj.taskDesc')}>
             <Input.TextArea rows={2} maxLength={1000} />
           </Form.Item>
         </Form>
@@ -1254,7 +1267,7 @@ export default function ProjectDetail() {
 
       {/* 新增成本明细 Modal */}
       <Modal
-        title="新增成本明细"
+        title={t('proj.addCostTitle')}
         open={costModalOpen}
         onOk={() => void submitCost()}
         confirmLoading={costSaving}
@@ -1262,17 +1275,17 @@ export default function ProjectDetail() {
         destroyOnClose
       >
         <Form form={costForm} layout="vertical" preserve={false}>
-          <Form.Item name="entry_date" label="日期" rules={[{ required: true, message: '请选择日期' }]}>
+          <Form.Item name="entry_date" label={t('proj.cost.col.date')} rules={[{ required: true, message: t('proj.cost.dateRequired') }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
             name="amount_10k"
-            label="金额（万元）"
-            rules={[{ required: true, message: '请输入金额（万元）' }]}
+            label={t('proj.cost.col.amountWan')}
+            rules={[{ required: true, message: t('proj.cost.amountRequired') }]}
           >
-            <InputNumber min={0.0001} precision={4} style={{ width: '100%' }} placeholder="必须大于 0" />
+            <InputNumber min={0.0001} precision={4} style={{ width: '100%' }} placeholder={t('proj.cost.amountPlaceholder')} />
           </Form.Item>
-          <Form.Item name="note" label="说明">
+          <Form.Item name="note" label={t('proj.cost.col.note')}>
             <Input maxLength={200} />
           </Form.Item>
         </Form>
@@ -1280,7 +1293,7 @@ export default function ProjectDetail() {
 
       {/* 新建/编辑风险 Modal */}
       <Modal
-        title={riskModal?.mode === 'edit' ? '编辑风险' : '新建风险'}
+        title={riskModal?.mode === 'edit' ? t('proj.editRisk') : t('proj.newRisk')}
         open={!!riskModal}
         onOk={() => void submitRisk()}
         confirmLoading={riskSaving}
@@ -1293,23 +1306,23 @@ export default function ProjectDetail() {
           preserve={false}
           initialValues={{ probability: '中', impact: '中', status: '开放' }}
         >
-          <Form.Item name="title" label="风险标题" rules={[{ required: true, message: '请输入风险标题' }]}>
+          <Form.Item name="title" label={t('proj.riskTitle')} rules={[{ required: true, message: t('proj.riskTitleRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>
           <Space size={16}>
-            <Form.Item name="probability" label="概率" rules={[{ required: true }]} style={{ width: 120 }}>
-              <Select options={RISK_GRADES.map((g) => ({ value: g, label: g }))} />
+            <Form.Item name="probability" label={t('proj.riskProb')} rules={[{ required: true }]} style={{ width: 120 }}>
+              <Select options={RISK_GRADES.map((g) => ({ value: g, label: et.riskGrade(g) }))} />
             </Form.Item>
-            <Form.Item name="impact" label="影响" rules={[{ required: true }]} style={{ width: 120 }}>
-              <Select options={RISK_GRADES.map((g) => ({ value: g, label: g }))} />
+            <Form.Item name="impact" label={t('proj.riskImpact')} rules={[{ required: true }]} style={{ width: 120 }}>
+              <Select options={RISK_GRADES.map((g) => ({ value: g, label: et.riskGrade(g) }))} />
             </Form.Item>
             {riskModal?.mode === 'edit' && (
-              <Form.Item name="status" label="状态" style={{ width: 120 }}>
-                <Select options={['开放', '已关闭'].map((s) => ({ value: s, label: s }))} />
+              <Form.Item name="status" label={t('common.status')} style={{ width: 120 }}>
+                <Select options={['开放', '已关闭'].map((s) => ({ value: s, label: et.riskStatus(s) }))} />
               </Form.Item>
             )}
           </Space>
-          <Form.Item name="mitigation" label="应对措施">
+          <Form.Item name="mitigation" label={t('proj.mitigation')}>
             <Input.TextArea rows={3} maxLength={1000} />
           </Form.Item>
         </Form>

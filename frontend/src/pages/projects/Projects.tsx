@@ -22,6 +22,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { ImportOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import { ExampleTag } from '../../components/ExampleTag';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type { Member, Portfolio, ProjectRow, ProjectStatus, ServiceItem } from '../../api/types';
@@ -53,6 +54,7 @@ interface ProjectFormValues {
 }
 
 function ProjectList() {
+  const t = useT();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const canCreate = useProjectPerm('create');
@@ -149,7 +151,7 @@ function ProjectList() {
         budget_10k: values.budget_10k ?? null,
         description: values.description || null,
       });
-      message.success(`项目 ${created.project_code ?? ''} 已创建`);
+      message.success(t('proj.projectCreated', { code: created.project_code ?? '' }));
       setCreateOpen(false);
       if (created?.id) {
         navigate(`/projects/${created.id}`);
@@ -165,7 +167,7 @@ function ProjectList() {
 
   const columns: ColumnsType<ProjectRow> = [
     {
-      title: '编号',
+      title: t('proj.col.code'),
       dataIndex: 'project_code',
       width: 110,
       fixed: 'left',
@@ -176,47 +178,52 @@ function ProjectList() {
         </Space>
       ),
     },
-    { title: '名称', dataIndex: 'name', width: 220, ellipsis: true },
-    { title: '组合', dataIndex: 'portfolio_name', width: 140, ellipsis: true, render: (v) => v || '-' },
-    { title: '项目经理', dataIndex: 'pm_name', width: 100, render: (v) => v || '-' },
+    { title: t('proj.col.name'), dataIndex: 'name', width: 220, ellipsis: true },
+    { title: t('proj.col.portfolio'), dataIndex: 'portfolio_name', width: 140, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.col.pm'), dataIndex: 'pm_name', width: 100, render: (v) => v || '-' },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 100,
       render: (_, r) => <StatusBadge status={r.status} name={r.status_name} />,
     },
     {
-      title: '健康度',
+      title: t('proj.col.health'),
       dataIndex: 'health',
       width: 90,
       render: (v: ProjectRow['health']) => <HealthDot health={v} />,
     },
     {
-      title: '进度',
+      title: t('proj.col.progress'),
       dataIndex: 'progress',
       width: 140,
       render: (v: number | null) =>
         v == null ? '-' : <Progress percent={v} size="small" format={(p) => `${p ?? 0}%`} />,
     },
     {
-      title: '计划起止',
+      title: t('proj.col.planned'),
       key: 'planned',
       width: 190,
       render: (_, r) => `${r.planned_start} ~ ${r.planned_end}`,
     },
     {
-      title: '预算执行',
+      title: t('proj.col.budgetUsage'),
       dataIndex: 'budget_usage',
       width: 100,
       render: (v: number | null) =>
         v == null ? '-' : <span style={v > 100 ? { color: '#ff4d4f', fontWeight: 600 } : undefined}>{v}%</span>,
     },
     {
-      title: '里程碑',
+      title: t('proj.col.milestones'),
       key: 'milestones',
       width: 90,
       render: (_, r) => (
-        <Badge count={r.milestone_overdue} size="small" offset={[8, -2]} title={`逾期 ${r.milestone_overdue} 个`}>
+        <Badge
+          count={r.milestone_overdue}
+          size="small"
+          offset={[8, -2]}
+          title={t('proj.milestoneOverdueTitle', { n: r.milestone_overdue })}
+        >
           <span>{r.milestone_total}</span>
         </Badge>
       ),
@@ -228,7 +235,7 @@ function ProjectList() {
       <Space wrap style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Space wrap>
           <Input.Search
-            placeholder="搜索编号/名称"
+            placeholder={t('proj.searchPlaceholder')}
             allowClear
             style={{ width: 220 }}
             onSearch={(v) => {
@@ -237,7 +244,7 @@ function ProjectList() {
             }}
           />
           <Select
-            placeholder="状态"
+            placeholder={t('common.status')}
             allowClear
             style={{ width: 120 }}
             value={status}
@@ -248,7 +255,7 @@ function ProjectList() {
             options={STATUS_OPTIONS}
           />
           <Select
-            placeholder="项目组合"
+            placeholder={t('proj.portfolio')}
             allowClear
             showSearch
             optionFilterProp="label"
@@ -261,7 +268,7 @@ function ProjectList() {
             options={portfolios.map((p) => ({ value: p.id, label: p.name }))}
           />
           <span>
-            只看我的{' '}
+            {t('proj.mineOnly')}{' '}
             <Switch
               checked={mineOnly}
               onChange={(v) => {
@@ -271,16 +278,16 @@ function ProjectList() {
             />
           </span>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
+            {t('common.refresh')}
           </Button>
         </Space>
         {canCreate && (
           <Space>
             <Button icon={<ImportOutlined />} onClick={() => setCharterOpen(true)}>
-              章程导入
+              {t('proj.charterImport')}
             </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建项目
+              {t('proj.newProject')}
             </Button>
           </Space>
         )}
@@ -297,7 +304,7 @@ function ProjectList() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('proj.totalN', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -307,7 +314,7 @@ function ProjectList() {
 
       {/* 新建项目 Modal */}
       <Modal
-        title="新建项目"
+        title={t('proj.newProject')}
         open={createOpen}
         width={560}
         onOk={() => void submitCreate()}
@@ -318,19 +325,19 @@ function ProjectList() {
         <Form<ProjectFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="name"
-            label="项目名称"
+            label={t('proj.projectName')}
             rules={[
-              { required: true, message: '请输入项目名称' },
-              { min: 2, message: '至少 2 个字符' },
+              { required: true, message: t('proj.projectNameRequired') },
+              { min: 2, message: t('proj.min2') },
             ]}
           >
-            <Input maxLength={200} placeholder="项目名称" />
+            <Input maxLength={200} placeholder={t('proj.projectName')} />
           </Form.Item>
-          <Form.Item name="pm" label="项目经理" rules={[{ required: true, message: '请选择项目经理' }]}>
+          <Form.Item name="pm" label={t('proj.pm')} rules={[{ required: true, message: t('proj.pmRequired') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择人员"
+              placeholder={t('proj.selectMember')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
@@ -339,8 +346,8 @@ function ProjectList() {
           </Form.Item>
           <Form.Item
             name="planned"
-            label="计划起止"
-            rules={[{ required: true, message: '请选择计划起止日期' }]}
+            label={t('proj.planned')}
+            rules={[{ required: true, message: t('proj.plannedRequired') }]}
           >
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
@@ -349,34 +356,34 @@ function ProjectList() {
             items={[
               {
                 key: 'more',
-                label: '更多选项',
+                label: t('proj.moreOptions'),
                 children: (
                   <>
-                    <Form.Item name="portfolio_id" label="所属组合">
+                    <Form.Item name="portfolio_id" label={t('proj.belongPortfolio')}>
                       <Select
                         allowClear
                         showSearch
                         optionFilterProp="label"
-                        placeholder="选择项目组合"
+                        placeholder={t('proj.selectPortfolio')}
                         options={portfolios.map((p) => ({ value: p.id, label: p.name }))}
                       />
                     </Form.Item>
-                    <Form.Item name="service_item_id" label="关联服务项">
+                    <Form.Item name="service_item_id" label={t('proj.linkedService')}>
                       <Select
                         allowClear
                         showSearch
                         optionFilterProp="label"
-                        placeholder="选择服务项"
+                        placeholder={t('proj.selectService')}
                         options={serviceItems.map((i) => ({
                           value: i.id,
                           label: `${i.name}（${i.catalog_name ?? i.item_code}）`,
                         }))}
                       />
                     </Form.Item>
-                    <Form.Item name="budget_10k" label="预算（万元）">
+                    <Form.Item name="budget_10k" label={t('proj.budgetWan')}>
                       <InputNumber min={0} precision={2} style={{ width: '100%' }} />
                     </Form.Item>
-                    <Form.Item name="description" label="描述">
+                    <Form.Item name="description" label={t('proj.desc')}>
                       <Input.TextArea rows={3} maxLength={2000} />
                     </Form.Item>
                   </>
@@ -403,6 +410,7 @@ interface PortfolioFormValues {
 }
 
 function PortfolioPane() {
+  const t = useT();
   const canCreate = useProjectPerm('create');
   const canEdit = useProjectPerm('edit');
 
@@ -465,10 +473,10 @@ function PortfolioPane() {
     try {
       if (editing) {
         await api.patch(`/portfolios/${editing.id}`, payload);
-        message.success('组合已更新');
+        message.success(t('proj.portfolioUpdated'));
       } else {
         await api.post('/portfolios', payload);
-        message.success('组合已创建');
+        message.success(t('proj.portfolioCreated'));
       }
       setModalOpen(false);
       void load();
@@ -481,7 +489,7 @@ function PortfolioPane() {
 
   const columns: ColumnsType<Portfolio> = [
     {
-      title: '名称',
+      title: t('proj.col.name'),
       dataIndex: 'name',
       width: 220,
       ellipsis: true,
@@ -492,26 +500,26 @@ function PortfolioPane() {
         </Space>
       ),
     },
-    { title: '负责人', dataIndex: 'owner_name', width: 120, render: (v) => v || '-' },
-    { title: '年度', dataIndex: 'year', width: 100, render: (v) => v || '-' },
+    { title: t('proj.col.owner'), dataIndex: 'owner_name', width: 120, render: (v) => v || '-' },
+    { title: t('proj.col.year'), dataIndex: 'year', width: 100, render: (v) => v || '-' },
     {
-      title: '项目数',
+      title: t('proj.col.projectCount'),
       dataIndex: 'project_count',
       width: 90,
       render: (v: number, r) =>
         v > 0 ? <Link to={`/projects?portfolio=${r.id}`}>{v}</Link> : v,
     },
-    { title: '描述', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 90,
             render: (_: unknown, r: Portfolio) =>
               r.is_example ? null : (
                 <Button type="link" size="small" onClick={() => openModal(r)}>
-                  编辑
+                  {t('common.edit')}
                 </Button>
               ),
           } as ColumnsType<Portfolio>[number],
@@ -523,18 +531,18 @@ function PortfolioPane() {
     <>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
         {canCreate && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openModal(null)}>
-            新建组合
+            {t('proj.newPortfolio')}
           </Button>
         )}
       </Space>
       <Table<Portfolio> rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={false} />
 
       <Modal
-        title={editing ? '编辑组合' : '新建组合'}
+        title={editing ? t('proj.editPortfolio') : t('proj.newPortfolio')}
         open={modalOpen}
         onOk={() => void submit()}
         confirmLoading={saving}
@@ -542,28 +550,28 @@ function PortfolioPane() {
         destroyOnClose
       >
         <Form<PortfolioFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="组合名称" rules={[{ required: true, message: '请输入组合名称' }]}>
+          <Form.Item name="name" label={t('proj.portfolioName')} rules={[{ required: true, message: t('proj.portfolioNameRequired') }]}>
             <Input maxLength={128} />
           </Form.Item>
-          <Form.Item name="owner_id" label="负责人">
+          <Form.Item name="owner_id" label={t('proj.owner')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="选择人员"
+              placeholder={t('proj.selectMember')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
               }))}
             />
           </Form.Item>
-          <Form.Item name="year" label="年度">
-            <Input maxLength={16} placeholder="如 2026" />
+          <Form.Item name="year" label={t('proj.year')}>
+            <Input maxLength={16} placeholder={t('proj.yearPlaceholder')} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('proj.desc')}>
             <Input.TextArea rows={3} maxLength={1000} />
           </Form.Item>
-          <Form.Item name="sort" label="排序">
+          <Form.Item name="sort" label={t('proj.sort')}>
             <InputNumber min={0} style={{ width: 120 }} />
           </Form.Item>
         </Form>
@@ -575,17 +583,18 @@ function PortfolioPane() {
 // ---------------- 页面：Tabs ----------------
 
 export default function Projects() {
+  const t = useT();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') === 'portfolios' ? 'portfolios' : 'list';
 
   return (
-    <Card title="项目管理">
+    <Card title={t('proj.title')}>
       <Tabs
         activeKey={tab}
         onChange={(k) => setSearchParams(k === 'portfolios' ? { tab: 'portfolios' } : {})}
         items={[
-          { key: 'list', label: '项目列表', children: <ProjectList /> },
-          { key: 'portfolios', label: '项目组合', children: <PortfolioPane /> },
+          { key: 'list', label: t('proj.tab.list'), children: <ProjectList /> },
+          { key: 'portfolios', label: t('proj.tab.portfolios'), children: <PortfolioPane /> },
         ]}
       />
     </Card>

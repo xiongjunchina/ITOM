@@ -22,6 +22,8 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { AppstoreOutlined, PlusOutlined, ReloadOutlined, TableOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import { ExampleTag } from '../../components/ExampleTag';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type {
@@ -31,15 +33,13 @@ import type {
   RequirementRow,
   RequirementStatus,
 } from '../../api/types';
-import { MOSCOW_KEYS, MOSCOW_META, REQ_STATUS, REQ_TYPES } from '../../api/types';
+import { MOSCOW_KEYS, REQ_STATUS, REQ_TYPES } from '../../api/types';
 import { MoscowTag, ReqStatusBadge } from './shared';
 
 const STATUS_OPTIONS = (Object.keys(REQ_STATUS) as RequirementStatus[]).map((s) => ({
   value: s,
   label: REQ_STATUS[s].label,
 }));
-
-const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: MOSCOW_META[k].label }));
 
 /** 看板四列：on_hold / cancelled 不入看板（表格视图可见） */
 const BOARD_COLS: RequirementStatus[] = ['registered', 'analyzing', 'implementing', 'closed'];
@@ -61,6 +61,7 @@ interface CreateFormValues {
 // ---------------- 看板卡片 ----------------
 
 function BoardCard({ row, onClick }: { row: RequirementRow; onClick: () => void }) {
+  const t = useT();
   return (
     <Card
       size="small"
@@ -89,11 +90,9 @@ function BoardCard({ row, onClick }: { row: RequirementRow; onClick: () => void 
           color: 'rgba(0,0,0,0.45)',
         }}
       >
-        <span>{row.owner_name || '未指派'}</span>
+        <span>{row.owner_name || t('req.unassigned')}</span>
         {row.task_total > 0 && (
-          <span>
-            任务 {row.task_done}/{row.task_total}
-          </span>
+          <span>{t('req.tasksCount', { done: row.task_done, total: row.task_total })}</span>
         )}
       </div>
       {row.task_total > 0 && (
@@ -106,8 +105,11 @@ function BoardCard({ row, onClick }: { row: RequirementRow; onClick: () => void 
 // ---------------- 页面 ----------------
 
 export default function Requirements() {
+  const t = useT();
+  const et = useEnums();
   const navigate = useNavigate();
   const canCreate = useReqPerm('create');
+  const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [view, setView] = useState<'board' | 'table'>('board');
   const [items, setItems] = useState<RequirementRow[]>([]);
@@ -204,7 +206,7 @@ export default function Requirements() {
         description: values.description,
         source: values.source ?? null,
       });
-      message.success(`需求 ${created.requirement_code ?? ''} 已登记`);
+      message.success(t('req.created', { code: created.requirement_code ?? '' }));
       setCreateOpen(false);
       if (created?.id) {
         navigate(`/requirements/${created.id}`);
@@ -221,7 +223,7 @@ export default function Requirements() {
   // ----- 表格视图 -----
   const columns: ColumnsType<RequirementRow> = [
     {
-      title: '编号',
+      title: t('req.col.code'),
       dataIndex: 'requirement_code',
       width: 110,
       fixed: 'left',
@@ -232,25 +234,25 @@ export default function Requirements() {
         </Space>
       ),
     },
-    { title: '标题', dataIndex: 'title', width: 240, ellipsis: true },
-    { title: '类型', dataIndex: 'req_type', width: 80 },
-    { title: '业务域', dataIndex: 'business_domain_name', width: 130, ellipsis: true, render: (v) => v || '-' },
+    { title: t('req.col.title'), dataIndex: 'title', width: 240, ellipsis: true },
+    { title: t('req.col.type'), dataIndex: 'req_type', width: 80, render: (v) => et.reqType(v) },
+    { title: t('req.col.domain'), dataIndex: 'business_domain_name', width: 130, ellipsis: true, render: (v) => v || '-' },
     {
       title: 'MoSCoW',
       dataIndex: 'moscow',
       width: 100,
       render: (v: string | null) => <MoscowTag value={v} />,
     },
-    { title: '负责人', dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
+    { title: t('req.col.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 100,
       render: (_, r) => <ReqStatusBadge status={r.status} name={r.status_name} />,
     },
-    { title: '目标日期', dataIndex: 'target_date', width: 110, render: (v) => v || '-' },
+    { title: t('req.col.targetDate'), dataIndex: 'target_date', width: 110, render: (v) => v || '-' },
     {
-      title: '进度',
+      title: t('req.col.progress'),
       dataIndex: 'progress',
       width: 140,
       render: (v: number | null, r) =>
@@ -261,10 +263,10 @@ export default function Requirements() {
         ),
     },
     {
-      title: '交付周期',
+      title: t('req.col.leadDays'),
       dataIndex: 'lead_days',
       width: 100,
-      render: (v: number | null) => (v == null ? '-' : `${v} 天`),
+      render: (v: number | null) => (v == null ? '-' : t('req.daysN', { n: v })),
     },
   ];
 
@@ -289,7 +291,7 @@ export default function Requirements() {
               <Tag style={{ marginInlineEnd: 0 }}>{rows.length}</Tag>
             </div>
             {rows.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无需求" style={{ margin: '24px 0' }} />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('req.emptyBoard')} style={{ margin: '24px 0' }} />
             ) : (
               rows.map((r) => <BoardCard key={r.id} row={r} onClick={() => navigate(`/requirements/${r.id}`)} />)
             )}
@@ -300,7 +302,7 @@ export default function Requirements() {
   );
 
   return (
-    <Card title="需求管理">
+    <Card title={t('req.title')}>
       <Space wrap style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Space wrap>
           <Segmented
@@ -310,12 +312,12 @@ export default function Requirements() {
               setView(v as 'board' | 'table');
             }}
             options={[
-              { value: 'board', label: '看板', icon: <AppstoreOutlined /> },
-              { value: 'table', label: '表格', icon: <TableOutlined /> },
+              { value: 'board', label: t('req.board'), icon: <AppstoreOutlined /> },
+              { value: 'table', label: t('req.table'), icon: <TableOutlined /> },
             ]}
           />
           <Input.Search
-            placeholder="搜索编号/标题"
+            placeholder={t('req.searchPlaceholder')}
             allowClear
             style={{ width: 200 }}
             onSearch={(v) => {
@@ -324,7 +326,7 @@ export default function Requirements() {
             }}
           />
           <Select
-            placeholder="业务域"
+            placeholder={t('req.domain')}
             allowClear
             showSearch
             optionFilterProp="label"
@@ -349,7 +351,7 @@ export default function Requirements() {
           />
           {view === 'table' && (
             <Select
-              placeholder="状态"
+              placeholder={t('common.status')}
               allowClear
               style={{ width: 110 }}
               value={status}
@@ -361,7 +363,7 @@ export default function Requirements() {
             />
           )}
           <span>
-            只看我的{' '}
+            {t('req.mineOnly')}{' '}
             <Switch
               checked={mineOnly}
               onChange={(v) => {
@@ -371,12 +373,12 @@ export default function Requirements() {
             />
           </span>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
+            {t('common.refresh')}
           </Button>
         </Space>
         {canCreate && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            登记需求
+            {t('req.register')}
           </Button>
         )}
       </Space>
@@ -388,7 +390,7 @@ export default function Requirements() {
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message={`当前筛选共 ${total} 条需求，看板仅展示最近 ${items.length} 条，可切换表格视图查看全部`}
+              message={t('req.boardCapHint', { total, shown: items.length })}
             />
           )}
           {boardView}
@@ -405,7 +407,7 @@ export default function Requirements() {
             pageSize,
             total,
             showSizeChanger: true,
-            showTotal: (t) => `共 ${t} 条`,
+            showTotal: (n) => t('req.totalN', { n }),
             onChange: (p, ps) => {
               setPage(p);
               setPageSize(ps);
@@ -416,7 +418,7 @@ export default function Requirements() {
 
       {/* 登记需求 Modal（极简 4+1 字段，30 秒完成） */}
       <Modal
-        title="登记需求"
+        title={t('req.register')}
         open={createOpen}
         width={560}
         onOk={() => void submitCreate()}
@@ -427,36 +429,36 @@ export default function Requirements() {
         <Form<CreateFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="title"
-            label="需求标题"
+            label={t('req.reqTitle')}
             rules={[
-              { required: true, message: '请输入需求标题' },
-              { min: 2, message: '至少 2 个字符' },
+              { required: true, message: t('req.reqTitleRequired') },
+              { min: 2, message: t('req.min2') },
             ]}
           >
-            <Input maxLength={200} placeholder="一句话说清要什么" />
+            <Input maxLength={200} placeholder={t('req.titlePlaceholder')} />
           </Form.Item>
-          <Form.Item name="req_type" label="需求类型" rules={[{ required: true, message: '请选择需求类型' }]}>
-            <Select placeholder="选择类型" options={REQ_TYPES.map((t) => ({ value: t, label: t }))} />
+          <Form.Item name="req_type" label={t('req.reqType')} rules={[{ required: true, message: t('req.reqTypeRequired') }]}>
+            <Select placeholder={t('req.selectType')} options={REQ_TYPES.map((v) => ({ value: v, label: et.reqType(v) }))} />
           </Form.Item>
           <Form.Item
             name="business_domain_id"
-            label="所属业务域"
-            rules={[{ required: true, message: '请选择所属业务域' }]}
+            label={t('req.belongDomain')}
+            rules={[{ required: true, message: t('req.domainRequired') }]}
           >
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择业务域"
+              placeholder={t('req.selectDomain')}
               options={domains.map((d) => ({ value: d.id, label: d.name }))}
             />
           </Form.Item>
-          <Form.Item name="description" label="需求描述" rules={[{ required: true, message: '请输入需求描述' }]}>
-            <Input.TextArea rows={4} maxLength={2000} placeholder="背景、期望达成的效果" />
+          <Form.Item name="description" label={t('req.reqDesc')} rules={[{ required: true, message: t('req.reqDescRequired') }]}>
+            <Input.TextArea rows={4} maxLength={2000} placeholder={t('req.descPlaceholder')} />
           </Form.Item>
-          <Form.Item name="source" label="需求来源">
+          <Form.Item name="source" label={t('req.source')}>
             <Select
               allowClear
-              placeholder="选择来源（可选）"
+              placeholder={t('req.selectSource')}
               options={sources.map((s) => ({ value: s.name, label: s.name }))}
             />
           </Form.Item>

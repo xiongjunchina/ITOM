@@ -33,6 +33,8 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
@@ -50,20 +52,20 @@ import type {
 } from '../../api/types';
 import {
   MOSCOW_KEYS,
-  MOSCOW_META,
   REQ_TASK_STATUSES,
   REQ_TASK_STATUS_COLORS,
   REQ_TYPES,
 } from '../../api/types';
 import { MoscowTag, ReqStatusBadge, fmtDt } from './shared';
 
-const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: MOSCOW_META[k].label }));
-
 export default function RequirementDetail() {
+  const t = useT();
+  const et = useEnums();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const { roleLabel } = useRoleOptions();
+  const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [detail, setDetail] = useState<RequirementDetailData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -116,7 +118,7 @@ export default function RequirementDetail() {
   );
 
   // ---------- 通用 PATCH ----------
-  const patchField = async (patch: Record<string, unknown>, okMsg = '已保存') => {
+  const patchField = async (patch: Record<string, unknown>, okMsg = t('req.saved')) => {
     try {
       await api.patch(`/requirements/${id}`, patch);
       message.success(okMsg);
@@ -131,22 +133,22 @@ export default function RequirementDetail() {
   const [closeSaving, setCloseSaving] = useState(false);
   const [closeForm] = Form.useForm();
 
-  const runTransition = (t: AllowedTransition) => {
+  const runTransition = (tr: AllowedTransition) => {
     if (!detail) return;
-    if (t.to === 'closed') {
+    if (tr.to === 'closed') {
       closeForm.setFieldsValue({ closure_note: detail.closure_note ?? undefined });
-      setCloseTrans(t);
+      setCloseTrans(tr);
       return;
     }
-    const needAnalysis = t.to === 'implementing' && (!detail.moscow || !detail.owner);
+    const needAnalysis = tr.to === 'implementing' && (!detail.moscow || !detail.owner);
     Modal.confirm({
-      title: `确认执行「${t.to_name}」？`,
+      title: t('req.confirmTransitionTitle', { name: tr.to_name }),
       content: needAnalysis
-        ? '提示：MoSCoW 优先级与负责人尚未填写，进入实现将被阶段门拦截，请先在「分析」区完成。'
-        : `需求状态将变更为「${t.to_name}」。`,
+        ? t('req.needAnalysisHint')
+        : t('req.confirmTransitionContent', { name: tr.to_name }),
       onOk: async () => {
-        await api.post(`/requirements/${id}/transition`, { to: t.to, fields: {} });
-        message.success('操作成功');
+        await api.post(`/requirements/${id}/transition`, { to: tr.to, fields: {} });
+        message.success(t('req.actionOk'));
         void load();
       },
     });
@@ -160,7 +162,7 @@ export default function RequirementDetail() {
         to: 'closed',
         fields: v.closure_note ? { closure_note: v.closure_note } : {},
       });
-      message.success('需求已关闭');
+      message.success(t('req.closed'));
       setCloseTrans(null);
       void load();
     } catch {
@@ -218,7 +220,7 @@ export default function RequirementDetail() {
         description: v.description,
         remarks: v.remarks || null,
       });
-      message.success('基本信息已更新');
+      message.success(t('req.basicUpdated'));
       setEditOpen(false);
       void load();
     } catch {
@@ -240,7 +242,7 @@ export default function RequirementDetail() {
     const text = newCriterion.trim();
     if (!text) return;
     setNewCriterion('');
-    void saveCriteria([...(detail.acceptance_criteria ?? []), { text, checked: false }], '验收标准已添加');
+    void saveCriteria([...(detail.acceptance_criteria ?? []), { text, checked: false }], t('req.criterionAdded'));
   };
 
   // ---------- 实现阶段：任务 ----------
@@ -257,7 +259,7 @@ export default function RequirementDetail() {
         assignee: v.assignee,
         plan_date: v.plan_date ? (v.plan_date as Dayjs).format('YYYY-MM-DD') : null,
       });
-      message.success('任务已添加');
+      message.success(t('req.taskAdded'));
       setTaskOpen(false);
       void load();
     } catch {
@@ -270,7 +272,7 @@ export default function RequirementDetail() {
   const changeTaskStatus = async (task: RequirementTask, status: RequirementTaskStatus) => {
     try {
       await api.patch(`/requirements/tasks/${task.id}`, { status });
-      message.success('任务状态已更新');
+      message.success(t('req.taskStatusUpdated'));
       void load();
     } catch {
       // 403 等由拦截器统一中文提示
@@ -280,7 +282,7 @@ export default function RequirementDetail() {
   const deleteTask = async (task: RequirementTask) => {
     try {
       await api.delete(`/requirements/tasks/${task.id}`);
-      message.success('任务已删除');
+      message.success(t('req.taskDeleted'));
       void load();
     } catch {
       // 已统一提示
@@ -303,10 +305,10 @@ export default function RequirementDetail() {
       setProblemOpen(false);
       void load();
       Modal.confirm({
-        title: `已转出遗留问题 ${res.problem_code}`,
-        content: '问题单已创建并进入问题管理跟踪，可在「已转出清单」中随时查看。',
-        okText: '前往问题详情',
-        cancelText: '留在本页',
+        title: t('req.problemHandoverTitle', { code: res.problem_code }),
+        content: t('req.problemHandoverContent'),
+        okText: t('req.gotoProblem'),
+        cancelText: t('req.stayHere'),
         onOk: () => navigate(`/itsm/problems/${res.problem_id}`),
       });
     } catch {
@@ -318,13 +320,13 @@ export default function RequirementDetail() {
 
   const runToKnowledge = () => {
     Modal.confirm({
-      title: '确认沉淀为知识？',
-      content: '将根据需求背景、解决方案与验收标准自动生成知识草稿，生成后跳转查看。',
+      title: t('req.toKnowledgeTitle'),
+      content: t('req.toKnowledgeContent'),
       onOk: async () => {
         const res = await api.post<{ article_id: string; article_code: string }>(
           `/requirements/${id}/to-knowledge`,
         );
-        message.success(`知识草稿 ${res.article_code} 已生成`);
+        message.success(t('req.knowledgeCreated', { code: res.article_code }));
         navigate(`/itsm/knowledge/${res.article_id}`);
       },
     });
@@ -341,7 +343,7 @@ export default function RequirementDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">需求不存在或无权查看</Typography.Text>
+        <Typography.Text type="secondary">{t('req.notFound')}</Typography.Text>
       </Card>
     );
   }
@@ -364,15 +366,15 @@ export default function RequirementDetail() {
   // ----- 阶段进度条 -----
   const currentStep = st === 'closed' ? 3 : reachedImplementing ? 2 : reachedAnalyzing ? 1 : 0;
   const stepItems = [
-    { title: '登记', description: fmtDt(detail.registered_at) },
-    { title: '分析', description: fmtDt(detail.analyzing_at) },
-    { title: '实现', description: fmtDt(detail.implementing_at) },
+    { title: t('req.step.register'), description: fmtDt(detail.registered_at) },
+    { title: t('req.step.analyze'), description: fmtDt(detail.analyzing_at) },
+    { title: t('req.step.implement'), description: fmtDt(detail.implementing_at) },
     {
-      title: '关闭',
+      title: t('req.step.close'),
       description: detail.closed_at ? (
         <>
           {fmtDt(detail.closed_at)}
-          {detail.lead_days != null && <div>交付周期 {detail.lead_days} 天</div>}
+          {detail.lead_days != null && <div>{t('req.leadDaysN', { n: detail.lead_days })}</div>}
         </>
       ) : undefined,
     },
@@ -380,11 +382,11 @@ export default function RequirementDetail() {
 
   // ----- 任务表 -----
   const taskColumns: ColumnsType<RequirementTask> = [
-    { title: '任务名称', dataIndex: 'name', ellipsis: true },
-    { title: '负责人', dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
-    { title: '计划日期', dataIndex: 'plan_date', width: 110, render: (v) => v || '-' },
+    { title: t('req.task.col.name'), dataIndex: 'name', ellipsis: true },
+    { title: t('req.task.col.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
+    { title: t('req.task.col.planDate'), dataIndex: 'plan_date', width: 110, render: (v) => v || '-' },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 110,
       render: (v: RequirementTaskStatus, r) =>
@@ -393,24 +395,24 @@ export default function RequirementDetail() {
             size="small"
             value={v}
             style={{ width: 96 }}
-            options={REQ_TASK_STATUSES.map((s) => ({ value: s, label: s }))}
+            options={REQ_TASK_STATUSES.map((s) => ({ value: s, label: et.reqTaskStatus(s) }))}
             onChange={(s) => void changeTaskStatus(r, s)}
           />
         ) : (
-          <Tag color={REQ_TASK_STATUS_COLORS[v]}>{v}</Tag>
+          <Tag color={REQ_TASK_STATUS_COLORS[v]}>{et.reqTaskStatus(v)}</Tag>
         ),
     },
-    { title: '完成时间', dataIndex: 'done_at', width: 150, render: (v) => fmtDt(v) ?? '-' },
+    { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, render: (v) => fmtDt(v) ?? '-' },
     ...(canEditNow
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 80,
             render: (_: unknown, r: RequirementTask) => (
-              <Popconfirm title="确认删除该任务？" onConfirm={() => void deleteTask(r)}>
+              <Popconfirm title={t('req.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
                 <Button type="link" size="small" danger>
-                  删除
+                  {t('common.delete')}
                 </Button>
               </Popconfirm>
             ),
@@ -429,7 +431,7 @@ export default function RequirementDetail() {
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/requirements')}>
-              返回
+              {t('req.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>
               {detail.requirement_code} · {detail.title}
@@ -439,28 +441,25 @@ export default function RequirementDetail() {
           </Space>
           {canEdit && (
             <Space wrap>
-              {(detail.allowed_transitions ?? []).map((t) => {
-                const closeBlocked = t.to === 'closed' && pendingAcceptance > 0;
+              {(detail.allowed_transitions ?? []).map((tr) => {
+                const closeBlocked = tr.to === 'closed' && pendingAcceptance > 0;
                 const btn = (
                   <Button
-                    type={t.to === 'cancelled' || t.to === 'on_hold' ? 'default' : 'primary'}
-                    danger={t.to === 'cancelled'}
+                    type={tr.to === 'cancelled' || tr.to === 'on_hold' ? 'default' : 'primary'}
+                    danger={tr.to === 'cancelled'}
                     disabled={closeBlocked}
                     style={closeBlocked ? { pointerEvents: 'none' } : undefined}
-                    onClick={() => runTransition(t)}
+                    onClick={() => runTransition(tr)}
                   >
-                    {t.to_name}
+                    {tr.to_name}
                   </Button>
                 );
                 return closeBlocked ? (
-                  <Tooltip
-                    key={t.to}
-                    title={`还有 ${pendingAcceptance} 项验收标准未通过，全部勾选后才能关闭（有遗留可先「转出遗留问题」）`}
-                  >
+                  <Tooltip key={tr.to} title={t('req.closeBlockedTip', { n: pendingAcceptance })}>
                     <span style={{ cursor: 'not-allowed' }}>{btn}</span>
                   </Tooltip>
                 ) : (
-                  <span key={t.to}>{btn}</span>
+                  <span key={tr.to}>{btn}</span>
                 );
               })}
             </Space>
@@ -473,12 +472,12 @@ export default function RequirementDetail() {
         <Alert
           type="warning"
           showIcon
-          message="需求已搁置"
-          description="该需求已暂缓推进，阶段进度停留在搁置前的位置；可通过右上角操作恢复到「分析中」继续，或取消。"
+          message={t('req.onHoldTitle')}
+          description={t('req.onHoldDesc')}
         />
       )}
       {st === 'cancelled' && (
-        <Alert type="info" showIcon message="需求已取消" description="该需求已终止，以下信息仅供查看。" />
+        <Alert type="info" showIcon message={t('req.cancelledTitle')} description={t('req.cancelledDesc')} />
       )}
 
       {/* 阶段进度条 */}
@@ -493,7 +492,7 @@ export default function RequirementDetail() {
 
       {/* 流程示意 */}
       {detail.process && detail.process.steps?.length > 0 && (
-        <Card title={`流程：${detail.process.definition_name}`} size="small">
+        <Card title={t('req.flowTitle', { name: detail.process.definition_name })} size="small">
           <FlowDiagram
             steps={detail.process.steps}
             roleLabel={roleLabel}
@@ -504,32 +503,32 @@ export default function RequirementDetail() {
 
       {/* 登记信息 */}
       <Card
-        title="登记信息"
+        title={t('req.registrationInfo')}
         size="small"
         extra={
           canEditNow && (
             <Button size="small" icon={<EditOutlined />} onClick={openEdit}>
-              编辑基本信息
+              {t('req.editBasic')}
             </Button>
           )
         }
       >
         <Descriptions column={2} size="small" bordered>
-          <Descriptions.Item label="编号">{detail.requirement_code}</Descriptions.Item>
-          <Descriptions.Item label="类型">
-            <Tag>{detail.req_type}</Tag>
+          <Descriptions.Item label={t('req.col.code')}>{detail.requirement_code}</Descriptions.Item>
+          <Descriptions.Item label={t('req.col.type')}>
+            <Tag>{et.reqType(detail.req_type)}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="业务域">{detail.business_domain_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="来源">{detail.source || '-'}</Descriptions.Item>
-          <Descriptions.Item label="提出人">{detail.requester_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="登记时间">{fmtDt(detail.registered_at) ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="描述" span={2}>
+          <Descriptions.Item label={t('req.col.domain')}>{detail.business_domain_name ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.source')}>{detail.source || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.requester')}>{detail.requester_name ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.registeredAt')}>{fmtDt(detail.registered_at) ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.desc')} span={2}>
             <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
               {detail.description || '-'}
             </Typography.Paragraph>
           </Descriptions.Item>
           {detail.remarks && (
-            <Descriptions.Item label="备注" span={2}>
+            <Descriptions.Item label={t('common.remark')} span={2}>
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {detail.remarks}
               </Typography.Paragraph>
@@ -540,51 +539,51 @@ export default function RequirementDetail() {
 
       {/* 分析（进入分析阶段后显示） */}
       {reachedAnalyzing && (
-        <Card title="分析" size="small">
+        <Card title={t('req.analysis')} size="small">
           <Descriptions column={2} size="small" bordered>
-            <Descriptions.Item label="MoSCoW 优先级">
+            <Descriptions.Item label={t('req.moscowPriority')}>
               {canEditNow ? (
                 <Select
                   allowClear
-                  placeholder="未评估"
+                  placeholder={t('req.notAssessed')}
                   value={detail.moscow ?? undefined}
                   style={{ width: 150 }}
                   options={MOSCOW_OPTIONS}
-                  onChange={(v) => void patchField({ moscow: v ?? null }, '优先级已更新')}
+                  onChange={(v) => void patchField({ moscow: v ?? null }, t('req.priorityUpdated'))}
                 />
               ) : (
-                <MoscowTag value={detail.moscow} empty="未评估" />
+                <MoscowTag value={detail.moscow} empty={t('req.notAssessed')} />
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="需求负责人">
+            <Descriptions.Item label={t('req.owner')}>
               {canEditNow ? (
                 <Select
                   allowClear
                   showSearch
-                  placeholder="未指派"
+                  placeholder={t('req.unassigned')}
                   optionFilterProp="label"
                   value={detail.owner ?? undefined}
                   style={{ minWidth: 180 }}
                   options={memberOptions}
-                  onChange={(v) => void patchField({ owner: v ?? null }, '负责人已更新')}
+                  onChange={(v) => void patchField({ owner: v ?? null }, t('req.ownerUpdated'))}
                 />
               ) : (
                 detail.owner_name || '-'
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="目标日期">
+            <Descriptions.Item label={t('req.targetDate')}>
               {canEditNow ? (
                 <DatePicker
                   value={detail.target_date ? dayjs(detail.target_date) : null}
                   onChange={(d) =>
-                    void patchField({ target_date: d ? d.format('YYYY-MM-DD') : null }, '目标日期已更新')
+                    void patchField({ target_date: d ? d.format('YYYY-MM-DD') : null }, t('req.targetDateUpdated'))
                   }
                 />
               ) : (
                 detail.target_date || '-'
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="解决方案" span={2}>
+            <Descriptions.Item label={t('req.solution')} span={2}>
               <Typography.Paragraph
                 style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}
                 editable={
@@ -592,17 +591,17 @@ export default function RequirementDetail() {
                     ? {
                         text: detail.solution ?? '',
                         autoSize: { minRows: 2 },
-                        tooltip: '编辑解决方案',
+                        tooltip: t('req.editSolution'),
                         onChange: (v) => {
                           if (v !== (detail.solution ?? '')) {
-                            void patchField({ solution: v || null }, '解决方案已更新');
+                            void patchField({ solution: v || null }, t('req.solutionUpdated'));
                           }
                         },
                       }
                     : false
                 }
               >
-                {detail.solution || '暂无'}
+                {detail.solution || t('req.none')}
               </Typography.Paragraph>
             </Descriptions.Item>
           </Descriptions>
@@ -610,17 +609,17 @@ export default function RequirementDetail() {
           {/* 验收标准清单 */}
           <div style={{ marginTop: 16 }}>
             <Space style={{ marginBottom: 8 }}>
-              <Typography.Text strong>验收标准</Typography.Text>
+              <Typography.Text strong>{t('req.acceptanceCriteria')}</Typography.Text>
               {criteria.length > 0 && (
                 <Tag color={pendingAcceptance === 0 ? 'green' : 'orange'} style={{ marginInlineEnd: 0 }}>
-                  {checkedCount}/{criteria.length} 已通过
+                  {t('req.passedCount', { done: checkedCount, total: criteria.length })}
                 </Tag>
               )}
             </Space>
             {criteria.length === 0 && (
               <div>
                 <Typography.Text type="secondary">
-                  暂无验收标准{canEditNow ? '，可在下方添加（关闭前需全部勾选通过）' : ''}
+                  {canEditNow ? t('req.noCriteriaEditable') : t('req.noCriteria')}
                 </Typography.Text>
               </div>
             )}
@@ -635,7 +634,7 @@ export default function RequirementDetail() {
                   onChange={(e) =>
                     void saveCriteria(
                       criteria.map((x, j) => (j === i ? { ...x, checked: e.target.checked } : x)),
-                      e.target.checked ? '已通过该验收项' : '已取消通过',
+                      e.target.checked ? t('req.criterionChecked') : t('req.criterionUnchecked'),
                     )
                   }
                 />
@@ -649,7 +648,7 @@ export default function RequirementDetail() {
                     onClick={() =>
                       void saveCriteria(
                         criteria.filter((_, j) => j !== i),
-                        '验收标准已删除',
+                        t('req.criterionDeleted'),
                       )
                     }
                   />
@@ -661,12 +660,12 @@ export default function RequirementDetail() {
                 <Input
                   value={newCriterion}
                   onChange={(e) => setNewCriterion(e.target.value)}
-                  placeholder="新增验收标准，如：报表口径与财务一致"
+                  placeholder={t('req.criterionPlaceholder')}
                   maxLength={200}
                   onPressEnter={addCriterion}
                 />
                 <Button icon={<PlusOutlined />} onClick={addCriterion}>
-                  添加
+                  {t('req.add')}
                 </Button>
               </Space.Compact>
             )}
@@ -677,7 +676,7 @@ export default function RequirementDetail() {
       {/* 实现（进入实现阶段后显示） */}
       {reachedImplementing && (
         <Card
-          title="实现"
+          title={t('req.implementation')}
           size="small"
           extra={
             canEditNow && (
@@ -690,36 +689,36 @@ export default function RequirementDetail() {
                   setTaskOpen(true);
                 }}
               >
-                添加任务
+                {t('req.addTask')}
               </Button>
             )
           }
         >
           <Descriptions column={2} size="small" bordered style={{ marginBottom: 16 }}>
-            <Descriptions.Item label="关联项目">
+            <Descriptions.Item label={t('req.linkedProject')}>
               {canEditNow ? (
                 <Space wrap>
                   <Select
                     allowClear
                     showSearch
-                    placeholder="关联到项目（可选）"
+                    placeholder={t('req.linkProjectPlaceholder')}
                     optionFilterProp="label"
                     value={detail.project_id ?? undefined}
                     style={{ minWidth: 240 }}
                     options={projectOptions}
-                    onChange={(v) => void patchField({ project_id: v ?? null }, '关联项目已更新')}
+                    onChange={(v) => void patchField({ project_id: v ?? null }, t('req.linkedProjectUpdated'))}
                   />
-                  {detail.project_id && <Link to={`/projects/${detail.project_id}`}>查看项目</Link>}
+                  {detail.project_id && <Link to={`/projects/${detail.project_id}`}>{t('req.viewProject')}</Link>}
                 </Space>
               ) : detail.project_id ? (
-                <Link to={`/projects/${detail.project_id}`}>{detail.project_name || '查看项目'}</Link>
+                <Link to={`/projects/${detail.project_id}`}>{detail.project_name || t('req.viewProject')}</Link>
               ) : (
                 '-'
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="任务进度">
+            <Descriptions.Item label={t('req.taskProgress')}>
               {detail.task_total === 0 ? (
-                <Typography.Text type="secondary">暂无任务</Typography.Text>
+                <Typography.Text type="secondary">{t('req.noTask')}</Typography.Text>
               ) : (
                 <Progress
                   percent={detail.progress ?? 0}
@@ -736,14 +735,14 @@ export default function RequirementDetail() {
             columns={taskColumns}
             dataSource={detail.tasks}
             pagination={false}
-            locale={{ emptyText: '暂无任务，可通过「添加任务」分解实现工作' }}
+            locale={{ emptyText: t('req.emptyTasks') }}
           />
         </Card>
       )}
 
       {/* 关闭收尾（实现中/已关闭显示） */}
       {showClosure && (
-        <Card title="关闭收尾" size="small">
+        <Card title={t('req.closure')} size="small">
           {canEdit && !isExample && (
             <Space wrap style={{ marginBottom: 16 }}>
               <Button
@@ -753,30 +752,30 @@ export default function RequirementDetail() {
                   setProblemOpen(true);
                 }}
               >
-                转出遗留问题
+                {t('req.handoverProblem')}
               </Button>
               <Button icon={<BookOutlined />} onClick={runToKnowledge}>
-                沉淀知识
+                {t('req.toKnowledge')}
               </Button>
             </Space>
           )}
 
-          <Typography.Text strong>已转出清单</Typography.Text>
+          <Typography.Text strong>{t('req.handoverList')}</Typography.Text>
           <div style={{ margin: '8px 0 16px' }}>
             {handoverEmpty ? (
-              <Typography.Text type="secondary">暂无转出记录</Typography.Text>
+              <Typography.Text type="secondary">{t('req.noHandover')}</Typography.Text>
             ) : (
               <Space direction="vertical" size={4}>
                 {detail.handover.problems.map((p) => (
                   <div key={p.id}>
-                    <Tag color="volcano">问题</Tag>
+                    <Tag color="volcano">{t('req.tagProblem')}</Tag>
                     <Link to={`/itsm/problems/${p.id}`}>{p.problem_code}</Link>{' '}
                     <Typography.Text>{p.title}</Typography.Text>
                   </div>
                 ))}
                 {detail.handover.articles.map((a) => (
                   <div key={a.id}>
-                    <Tag color="green">知识</Tag>
+                    <Tag color="green">{t('req.tagKnowledge')}</Tag>
                     <Link to={`/itsm/knowledge/${a.id}`}>{a.article_code}</Link>{' '}
                     <Typography.Text>{a.title}</Typography.Text>
                   </div>
@@ -785,7 +784,7 @@ export default function RequirementDetail() {
             )}
           </div>
 
-          <Typography.Text strong>关闭说明</Typography.Text>
+          <Typography.Text strong>{t('req.closureNote')}</Typography.Text>
           <Typography.Paragraph
             style={{ marginTop: 8, marginBottom: 0, whiteSpace: 'pre-wrap' }}
             editable={
@@ -793,24 +792,24 @@ export default function RequirementDetail() {
                 ? {
                     text: detail.closure_note ?? '',
                     autoSize: { minRows: 2 },
-                    tooltip: '编辑关闭说明（也可在执行「已关闭」时填写）',
+                    tooltip: t('req.editClosureNote'),
                     onChange: (v) => {
                       if (v !== (detail.closure_note ?? '')) {
-                        void patchField({ closure_note: v || null }, '关闭说明已更新');
+                        void patchField({ closure_note: v || null }, t('req.closureNoteUpdated'));
                       }
                     },
                   }
                 : false
             }
           >
-            {detail.closure_note || '暂无'}
+            {detail.closure_note || t('req.none')}
           </Typography.Paragraph>
         </Card>
       )}
 
       {/* 编辑基本信息 Modal */}
       <Modal
-        title="编辑基本信息"
+        title={t('req.editBasic')}
         open={editOpen}
         width={560}
         onOk={() => void submitEdit()}
@@ -821,31 +820,31 @@ export default function RequirementDetail() {
         <Form form={editForm} layout="vertical">
           <Form.Item
             name="title"
-            label="需求标题"
+            label={t('req.reqTitle')}
             rules={[
-              { required: true, message: '请输入需求标题' },
-              { min: 2, message: '至少 2 个字符' },
+              { required: true, message: t('req.reqTitleRequired') },
+              { min: 2, message: t('req.min2') },
             ]}
           >
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="req_type" label="需求类型" rules={[{ required: true, message: '请选择需求类型' }]}>
-            <Select options={REQ_TYPES.map((t) => ({ value: t, label: t }))} />
+          <Form.Item name="req_type" label={t('req.reqType')} rules={[{ required: true, message: t('req.reqTypeRequired') }]}>
+            <Select options={REQ_TYPES.map((v) => ({ value: v, label: et.reqType(v) }))} />
           </Form.Item>
           <Form.Item
             name="business_domain_id"
-            label="所属业务域"
-            rules={[{ required: true, message: '请选择所属业务域' }]}
+            label={t('req.belongDomain')}
+            rules={[{ required: true, message: t('req.domainRequired') }]}
           >
             <Select showSearch optionFilterProp="label" options={domains.map((d) => ({ value: d.id, label: d.name }))} />
           </Form.Item>
-          <Form.Item name="source" label="需求来源">
+          <Form.Item name="source" label={t('req.source')}>
             <Select allowClear options={sources.map((s) => ({ value: s.name, label: s.name }))} />
           </Form.Item>
-          <Form.Item name="description" label="需求描述" rules={[{ required: true, message: '请输入需求描述' }]}>
+          <Form.Item name="description" label={t('req.reqDesc')} rules={[{ required: true, message: t('req.reqDescRequired') }]}>
             <Input.TextArea rows={4} maxLength={2000} />
           </Form.Item>
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>
@@ -853,7 +852,7 @@ export default function RequirementDetail() {
 
       {/* 关闭需求 Modal（closure_note 随流转 fields 提交） */}
       <Modal
-        title="关闭需求"
+        title={t('req.closeReqTitle')}
         open={!!closeTrans}
         onOk={() => void submitClose()}
         confirmLoading={closeSaving}
@@ -866,21 +865,21 @@ export default function RequirementDetail() {
           style={{ marginBottom: 16 }}
           message={
             criteria.length > 0
-              ? `验收标准已全部通过（${checkedCount}/${criteria.length}）`
-              : '该需求未设置验收标准'
+              ? t('req.allCriteriaPassed', { done: checkedCount, total: criteria.length })
+              : t('req.noCriteriaSet')
           }
-          description="关闭后需求进入终态，不可再编辑；如有遗留事项请先「转出遗留问题」。"
+          description={t('req.closeReqDesc')}
         />
         <Form form={closeForm} layout="vertical">
-          <Form.Item name="closure_note" label="关闭说明（可选）">
-            <Input.TextArea rows={3} maxLength={1000} placeholder="交付结果、遗留事项处理方式等" />
+          <Form.Item name="closure_note" label={t('req.closureNoteOptional')}>
+            <Input.TextArea rows={3} maxLength={1000} placeholder={t('req.closureNotePlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 添加任务 Modal */}
       <Modal
-        title="添加任务"
+        title={t('req.addTask')}
         open={taskOpen}
         onOk={() => void submitTask()}
         confirmLoading={taskSaving}
@@ -888,13 +887,13 @@ export default function RequirementDetail() {
         destroyOnClose
       >
         <Form form={taskForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="任务名称" rules={[{ required: true, message: '请输入任务名称' }]}>
+          <Form.Item name="name" label={t('req.task.col.name')} rules={[{ required: true, message: t('req.taskNameRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="assignee" label="负责人" rules={[{ required: true, message: '请选择负责人' }]}>
-            <Select showSearch optionFilterProp="label" placeholder="选择人员" options={memberOptions} />
+          <Form.Item name="assignee" label={t('req.assignee')} rules={[{ required: true, message: t('req.assigneeRequired') }]}>
+            <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
           </Form.Item>
-          <Form.Item name="plan_date" label="计划日期">
+          <Form.Item name="plan_date" label={t('req.task.col.planDate')}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
         </Form>
@@ -902,7 +901,7 @@ export default function RequirementDetail() {
 
       {/* 转出遗留问题 Modal */}
       <Modal
-        title="转出遗留问题"
+        title={t('req.handoverProblem')}
         open={problemOpen}
         onOk={() => void submitProblem()}
         confirmLoading={problemSaving}
@@ -913,14 +912,14 @@ export default function RequirementDetail() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="将遗留事项转为问题单继续跟踪，需求可正常关闭。"
+          message={t('req.handoverProblemHint')}
         />
         <Form form={problemForm} layout="vertical" preserve={false}>
-          <Form.Item name="title" label="问题标题" extra={`不填则默认为「[需求遗留] ${detail.title}」`}>
-            <Input maxLength={200} placeholder="（可选）" />
+          <Form.Item name="title" label={t('req.problemTitle')} extra={t('req.problemTitleExtra', { title: detail.title })}>
+            <Input maxLength={200} placeholder={t('req.optional')} />
           </Form.Item>
-          <Form.Item name="description" label="问题描述" rules={[{ required: true, message: '请描述遗留问题' }]}>
-            <Input.TextArea rows={4} maxLength={2000} placeholder="遗留了什么、影响与建议" />
+          <Form.Item name="description" label={t('req.problemDesc')} rules={[{ required: true, message: t('req.problemDescRequired') }]}>
+            <Input.TextArea rows={4} maxLength={2000} placeholder={t('req.problemDescPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>

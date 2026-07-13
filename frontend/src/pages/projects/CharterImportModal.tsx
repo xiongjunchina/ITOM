@@ -22,6 +22,8 @@ import type { ColumnsType } from 'antd/es/table';
 import { FileWordOutlined, InboxOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type { CharterCreateResult, CharterParseResult, Member, RiskGrade } from '../../api/types';
 import { RISK_GRADES } from '../../api/types';
 
@@ -69,6 +71,8 @@ const asGrade = (v?: string | null): RiskGrade => (v === '高' || v === '低' ? 
  * 2) 确认 → POST /projects/charter/create → 跳转项目详情。
  */
 export default function CharterImportModal({ open, onClose }: CharterImportModalProps) {
+  const t = useT();
+  const et = useEnums();
   const navigate = useNavigate();
   const [form] = Form.useForm<CharterFormValues>();
 
@@ -203,7 +207,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
             mitigation: r.mitigation,
           })),
       });
-      message.success(`章程导入成功，项目 ${res.project_code} 已创建`);
+      message.success(t('proj.charter.created', { code: res.project_code }));
       onClose();
       navigate(`/projects/${res.project_id}`);
     } catch {
@@ -214,9 +218,9 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
   };
 
   const wbsColumns: ColumnsType<WbsRowState> = [
-    { title: '编号', dataIndex: 'code', width: 64, render: (v) => v || '-' },
+    { title: t('proj.charter.wbs.col.code'), dataIndex: 'code', width: 64, render: (v) => v || '-' },
     {
-      title: '任务名称',
+      title: t('proj.charter.wbs.col.name'),
       dataIndex: 'name',
       render: (_, r) => (
         <Input
@@ -229,9 +233,9 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
         />
       ),
     },
-    { title: '交付物', dataIndex: 'deliverable', width: 180, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.deliverable'), dataIndex: 'deliverable', width: 180, ellipsis: true, render: (v) => v || '-' },
     {
-      title: '完成日期',
+      title: t('proj.charter.wbs.col.endDate'),
       dataIndex: 'end_date',
       width: 140,
       render: (_, r) => (
@@ -248,7 +252,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
 
   const msColumns: ColumnsType<MsRowState> = [
     {
-      title: '里程碑名称',
+      title: t('proj.charter.ms.col.name'),
       dataIndex: 'name',
       render: (_, r) => (
         <Input
@@ -262,7 +266,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       ),
     },
     {
-      title: '目标日期',
+      title: t('proj.msTargetDate'),
       dataIndex: 'target_date',
       width: 140,
       render: (_, r) => (
@@ -279,7 +283,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
 
   const riskColumns: ColumnsType<RiskRowState> = [
     {
-      title: '风险标题',
+      title: t('proj.riskTitle'),
       dataIndex: 'title',
       render: (_, r) => (
         <Input
@@ -293,7 +297,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       ),
     },
     {
-      title: '概率',
+      title: t('proj.riskProb'),
       dataIndex: 'probability',
       width: 90,
       render: (_, r) => (
@@ -301,7 +305,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
           size="small"
           value={r.probability}
           style={{ width: 72 }}
-          options={RISK_GRADES.map((g) => ({ value: g, label: g }))}
+          options={RISK_GRADES.map((g) => ({ value: g, label: et.riskGrade(g) }))}
           onChange={(v) =>
             setRiskRows((rows) => rows.map((x) => (x.key === r.key ? { ...x, probability: v } : x)))
           }
@@ -309,7 +313,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       ),
     },
     {
-      title: '影响',
+      title: t('proj.riskImpact'),
       dataIndex: 'impact',
       width: 90,
       render: (_, r) => (
@@ -317,14 +321,14 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
           size="small"
           value={r.impact}
           style={{ width: 72 }}
-          options={RISK_GRADES.map((g) => ({ value: g, label: g }))}
+          options={RISK_GRADES.map((g) => ({ value: g, label: et.riskGrade(g) }))}
           onChange={(v) =>
             setRiskRows((rows) => rows.map((x) => (x.key === r.key ? { ...x, impact: v } : x)))
           }
         />
       ),
     },
-    { title: '应对措施', dataIndex: 'mitigation', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.mitigation'), dataIndex: 'mitigation', ellipsis: true, render: (v) => v || '-' },
   ];
 
   const memberOptions = members.map((m) => ({
@@ -335,7 +339,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
 
   return (
     <Modal
-      title="章程导入"
+      title={t('proj.charterImport')}
       open={open}
       width={960}
       onCancel={onClose}
@@ -343,16 +347,16 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       footer={
         step === 0 ? (
           <Space>
-            <Button onClick={onClose}>取消</Button>
+            <Button onClick={onClose}>{t('common.cancel')}</Button>
             <Button type="primary" disabled={!parsed} onClick={() => void goConfirm()}>
-              下一步
+              {t('proj.charter.next')}
             </Button>
           </Space>
         ) : (
           <Space>
-            <Button onClick={() => setStep(0)}>上一步</Button>
+            <Button onClick={() => setStep(0)}>{t('proj.charter.prev')}</Button>
             <Button type="primary" loading={creating} onClick={() => void submitCreate()}>
-              确认创建
+              {t('proj.charter.confirmCreate')}
             </Button>
           </Space>
         )
@@ -361,14 +365,14 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       <Steps
         size="small"
         current={step}
-        items={[{ title: '上传并解析' }, { title: '确认创建' }]}
+        items={[{ title: t('proj.charter.step1') }, { title: t('proj.charter.step2') }]}
         style={{ marginBottom: 16, maxWidth: 420 }}
       />
 
       {/* 第一步：上传 + 解析结果编辑（第二步时隐藏而非卸载，保留表单值） */}
       <div style={{ display: step === 0 ? 'block' : 'none' }}>
         {!parsed ? (
-          <Spin spinning={parsing} tip="正在解析章程…">
+          <Spin spinning={parsing} tip={t('proj.charter.parsing')}>
             <Upload.Dragger
               accept=".docx"
               showUploadList={false}
@@ -381,10 +385,8 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               <p className="ant-upload-drag-icon">
                 <InboxOutlined />
               </p>
-              <p className="ant-upload-text">点击或拖拽《项目章程》.docx 到此处解析</p>
-              <p className="ant-upload-hint">
-                系统将自动提取项目字段，并生成 WBS / 里程碑 / 风险草稿，供确认后一键创建
-              </p>
+              <p className="ant-upload-text">{t('proj.charter.dragText')}</p>
+              <p className="ant-upload-hint">{t('proj.charter.dragHint')}</p>
             </Upload.Dragger>
           </Spin>
         ) : (
@@ -393,7 +395,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               <FileWordOutlined style={{ color: '#1677ff' }} />
               <Typography.Text>{fileName}</Typography.Text>
               <Button size="small" onClick={() => setParsed(null)}>
-                重新上传
+                {t('proj.charter.reupload')}
               </Button>
             </Space>
 
@@ -401,7 +403,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               <Alert
                 type="warning"
                 showIcon
-                message="解析提醒"
+                message={t('proj.charter.parseWarn')}
                 description={
                   <ul style={{ margin: 0, paddingLeft: 18 }}>
                     {parsed.warnings.map((w, i) => (
@@ -416,10 +418,10 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               <Space size={16} wrap style={{ width: '100%' }} align="start">
                 <Form.Item
                   name="name"
-                  label="项目名称"
+                  label={t('proj.projectName')}
                   rules={[
-                    { required: true, message: '请输入项目名称' },
-                    { min: 2, message: '至少 2 个字符' },
+                    { required: true, message: t('proj.projectNameRequired') },
+                    { min: 2, message: t('proj.min2') },
                   ]}
                   style={{ width: 300, marginBottom: 8 }}
                 >
@@ -427,30 +429,30 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
                 </Form.Item>
                 <Form.Item
                   name="pm"
-                  label="项目经理"
-                  rules={[{ required: true, message: '请选择项目经理' }]}
+                  label={t('proj.pm')}
+                  rules={[{ required: true, message: t('proj.pmRequired') }]}
                   style={{ width: 220, marginBottom: 8 }}
                 >
-                  <Select showSearch optionFilterProp="label" options={memberOptions} placeholder="选择人员" />
+                  <Select showSearch optionFilterProp="label" options={memberOptions} placeholder={t('proj.selectMember')} />
                 </Form.Item>
                 <Form.Item
                   name="planned"
-                  label="计划起止"
-                  rules={[{ required: true, message: '请选择计划起止日期' }]}
+                  label={t('proj.planned')}
+                  rules={[{ required: true, message: t('proj.plannedRequired') }]}
                   style={{ marginBottom: 8 }}
                 >
                   <DatePicker.RangePicker />
                 </Form.Item>
-                <Form.Item name="budget_10k" label="预算（万元）" style={{ width: 150, marginBottom: 8 }}>
+                <Form.Item name="budget_10k" label={t('proj.budgetWan')} style={{ width: 150, marginBottom: 8 }}>
                   <InputNumber min={0} precision={2} style={{ width: '100%' }} />
                 </Form.Item>
               </Space>
-              <Form.Item name="description" label="项目描述" style={{ marginBottom: 8 }}>
+              <Form.Item name="description" label={t('proj.charter.projectDesc')} style={{ marginBottom: 8 }}>
                 <Input.TextArea rows={3} maxLength={2000} />
               </Form.Item>
             </Form>
 
-            <Typography.Text strong>WBS 任务草稿（勾选导入，可改名称与日期）</Typography.Text>
+            <Typography.Text strong>{t('proj.charter.wbsDraft')}</Typography.Text>
             <Table<WbsRowState>
               size="small"
               rowKey="key"
@@ -458,9 +460,9 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               dataSource={wbsRows}
               pagination={false}
               rowSelection={{ selectedRowKeys: wbsKeys, onChange: setWbsKeys }}
-              locale={{ emptyText: '未解析到 WBS 草稿' }}
+              locale={{ emptyText: t('proj.charter.emptyWbs') }}
             />
-            <Typography.Text strong>里程碑草稿</Typography.Text>
+            <Typography.Text strong>{t('proj.charter.msDraft')}</Typography.Text>
             <Table<MsRowState>
               size="small"
               rowKey="key"
@@ -468,9 +470,9 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               dataSource={msRows}
               pagination={false}
               rowSelection={{ selectedRowKeys: msKeys, onChange: setMsKeys }}
-              locale={{ emptyText: '未解析到里程碑草稿' }}
+              locale={{ emptyText: t('proj.charter.emptyMs') }}
             />
-            <Typography.Text strong>风险草稿</Typography.Text>
+            <Typography.Text strong>{t('proj.charter.riskDraft')}</Typography.Text>
             <Table<RiskRowState>
               size="small"
               rowKey="key"
@@ -478,7 +480,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               dataSource={riskRows}
               pagination={false}
               rowSelection={{ selectedRowKeys: riskKeys, onChange: setRiskKeys }}
-              locale={{ emptyText: '未解析到风险草稿' }}
+              locale={{ emptyText: t('proj.charter.emptyRisk') }}
             />
           </Space>
         )}
@@ -488,13 +490,13 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       {step === 1 && confirmed && (
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Descriptions column={2} size="small" bordered>
-            <Descriptions.Item label="项目名称">{confirmed.name}</Descriptions.Item>
-            <Descriptions.Item label="项目经理">{pmLabel(confirmed.pm)}</Descriptions.Item>
-            <Descriptions.Item label="计划起止">
+            <Descriptions.Item label={t('proj.projectName')}>{confirmed.name}</Descriptions.Item>
+            <Descriptions.Item label={t('proj.pm')}>{pmLabel(confirmed.pm)}</Descriptions.Item>
+            <Descriptions.Item label={t('proj.planned')}>
               {confirmed.planned[0].format('YYYY-MM-DD')} ~ {confirmed.planned[1].format('YYYY-MM-DD')}
             </Descriptions.Item>
-            <Descriptions.Item label="预算（万元）">{confirmed.budget_10k ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="描述" span={2}>
+            <Descriptions.Item label={t('proj.budgetWan')}>{confirmed.budget_10k ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('proj.desc')} span={2}>
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {confirmed.description || '-'}
               </Typography.Paragraph>
@@ -503,8 +505,12 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
           <Alert
             type="info"
             showIcon
-            message={`确认后将创建项目，并生成 ${wbsKeys.length} 个 WBS 任务、${msKeys.length} 个里程碑、${riskKeys.length} 条风险`}
-            description="未指派负责人的任务默认由项目经理负责；缺少日期的任务将按项目计划顺延推算。"
+            message={t('proj.charter.summaryInfo', {
+              wbs: wbsKeys.length,
+              ms: msKeys.length,
+              risk: riskKeys.length,
+            })}
+            description={t('proj.charter.summaryDesc')}
           />
         </Space>
       )}

@@ -1,6 +1,8 @@
 import { Badge, Tag } from 'antd';
 import type { ProjectHealth, ProjectStatus, RiskGrade } from '../../api/types';
 import { HEALTH_META, PROJECT_STATUS } from '../../api/types';
+import { currentLang, useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 /** 项目状态 Badge（未知状态回退灰点 + 后端中文名） */
 export function StatusBadge({ status, name }: { status: string; name?: string | null }) {
@@ -16,7 +18,9 @@ export function StatusBadge({ status, name }: { status: string; name?: string | 
 
 /** 健康度圆点 + 文字 */
 export function HealthDot({ health }: { health: ProjectHealth | string }) {
+  const et = useEnums();
   const meta = HEALTH_META[health as ProjectHealth] ?? HEALTH_META.green;
+  const key = HEALTH_META[health as ProjectHealth] ? (health as ProjectHealth) : 'green';
   return (
     <span style={{ whiteSpace: 'nowrap' }}>
       <span
@@ -30,26 +34,28 @@ export function HealthDot({ health }: { health: ProjectHealth | string }) {
           verticalAlign: 'middle',
         }}
       />
-      {meta.label}
+      {et.health(key)}
     </span>
   );
 }
 
 /** 风险等级：高×高→红「高危」；含高→橙「中高」；其余灰「一般」 */
-export function riskLevel(probability: string, impact: string): { label: string; color: string } {
-  if (probability === '高' && impact === '高') return { label: '高危', color: 'red' };
-  if (probability === '高' || impact === '高') return { label: '中高', color: 'orange' };
-  return { label: '一般', color: 'default' };
+export function riskLevel(probability: string, impact: string): { key: 'high' | 'mid' | 'normal'; color: string } {
+  if (probability === '高' && impact === '高') return { key: 'high', color: 'red' };
+  if (probability === '高' || impact === '高') return { key: 'mid', color: 'orange' };
+  return { key: 'normal', color: 'default' };
 }
 
 export function RiskLevelTag({ probability, impact }: { probability: RiskGrade; impact: RiskGrade }) {
+  const t = useT();
   const lv = riskLevel(probability, impact);
-  return <Tag color={lv.color}>{lv.label}</Tag>;
+  return <Tag color={lv.color}>{t(`proj.risk.level.${lv.key}`)}</Tag>;
 }
 
-/** 万元数字展示：null → '-' */
+/** 万元数字展示：null → '-'（zh 追加「万」单位；en 由 label 承载单位，仅显示数值） */
 export function fmt10k(v: number | null | undefined): string {
-  return v == null ? '-' : `${v} 万`;
+  if (v == null) return '-';
+  return currentLang() === 'en' ? `${v}` : `${v} 万`;
 }
 
 /** 百分比展示：null → '-' */
