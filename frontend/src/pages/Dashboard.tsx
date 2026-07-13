@@ -362,19 +362,22 @@ export default function Dashboard() {
           extra={<Link to="/requirements">{t('dash.view')}</Link>}
         >
           <Row gutter={16}>
-            <Col span={5}>
+            <Col span={4}>
               <Statistic title={t('dash.req.registered')} value={requirement?.by_stage.registered ?? 0} />
             </Col>
-            <Col span={5}>
+            <Col span={4}>
+              <Statistic title={t('dash.req.evaluating')} value={requirement?.by_stage.evaluating ?? 0} />
+            </Col>
+            <Col span={4}>
               <Statistic title={t('dash.req.analyzing')} value={requirement?.by_stage.analyzing ?? 0} />
             </Col>
-            <Col span={5}>
+            <Col span={4}>
               <Statistic title={t('dash.req.implementing')} value={requirement?.by_stage.implementing ?? 0} />
             </Col>
             <Col span={4}>
               <Statistic title={t('dash.req.closed')} value={requirement?.by_stage.closed ?? 0} />
             </Col>
-            <Col span={5}>
+            <Col span={4}>
               <Statistic
                 title={t('dash.req.avgLead')}
                 value={requirement?.avg_lead_days ?? '-'}

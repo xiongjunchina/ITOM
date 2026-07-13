@@ -29,8 +29,9 @@ STATUS_EN: dict[str, dict[str, str]] = {
                 "resolved": "Resolved", "closed": "Closed"},
     "project": {"planning": "Planning", "active": "In progress", "paused": "Paused",
                 "completed": "Completed", "closed": "Closed", "cancelled": "Cancelled"},
-    "requirement": {"registered": "Registered", "analyzing": "Analyzing", "implementing": "Implementing",
-                    "closed": "Closed", "on_hold": "On hold", "cancelled": "Cancelled"},
+    "requirement": {"registered": "Registered", "evaluating": "Evaluating", "analyzing": "Analyzing",
+                    "implementing": "Implementing", "closed": "Closed", "on_hold": "On hold",
+                    "cancelled": "Cancelled"},
     "idea": {"submitted": "Submitted", "adopted": "Adopted", "implemented": "Implemented", "declined": "Declined"},
     "campaign": {"draft": "Draft", "active": "Active", "offline": "Offline"},
 }

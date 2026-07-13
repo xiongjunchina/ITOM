@@ -4,6 +4,8 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
+  DatePicker,
   Empty,
   Form,
   Input,
@@ -20,7 +22,15 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { AppstoreOutlined, PlusOutlined, ReloadOutlined, TableOutlined } from '@ant-design/icons';
+import {
+  AppstoreOutlined,
+  DownloadOutlined,
+  ImportOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  TableOutlined,
+} from '@ant-design/icons';
+import type { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
@@ -33,13 +43,17 @@ import type {
   RequirementRow,
   RequirementStatus,
 } from '../../api/types';
-import { MOSCOW_KEYS, REQ_STATUS, REQ_TYPES } from '../../api/types';
-import { MoscowTag, ReqStatusBadge } from './shared';
+import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/types';
+import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge } from './shared';
+import RequirementImportModal from './RequirementImportModal';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
-/** 看板四列：on_hold / cancelled 不入看板（表格视图可见） */
-const BOARD_COLS: RequirementStatus[] = ['registered', 'analyzing', 'implementing', 'closed'];
+/** 看板五列：登记→评估→分析→实现→关闭；on_hold / cancelled 不入看板（表格视图可见） */
+const BOARD_COLS: RequirementStatus[] = ['registered', 'evaluating', 'analyzing', 'implementing', 'closed'];
+
+/** 加权总分展示：保留 1 位小数，空显示 - */
+const fmtScore = (v?: number | null): string => (v == null ? '-' : v.toFixed(1));
 
 /** 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示） */
 function useReqPerm(action: 'create' | 'edit'): boolean {
@@ -53,6 +67,11 @@ interface CreateFormValues {
   business_domain_id: string;
   description: string;
   source?: string;
+  // 进阶字段（默认折叠）
+  department?: string;
+  expected_date?: Dayjs;
+  expected_effect?: string;
+  business_value_note?: string;
 }
 
 // ---------------- 看板卡片 ----------------
@@ -76,6 +95,12 @@ function BoardCard({ row, onClick }: { row: RequirementRow; onClick: () => void 
       </Typography.Paragraph>
       <Space size={4} wrap>
         <MoscowTag value={row.moscow} empty={null} />
+        <QuadrantTag value={row.quadrant} empty={null} />
+        {row.weighted_total != null && (
+          <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+            {t('req.weightedTotal')} {fmtScore(row.weighted_total)}
+          </Tag>
+        )}
         {row.business_domain_name && <Tag style={{ marginInlineEnd: 0 }}>{row.business_domain_name}</Tag>}
       </Space>
       <div
@@ -120,14 +145,16 @@ export default function Requirements() {
   const [domainId, setDomainId] = useState<string | undefined>();
   const [moscow, setMoscow] = useState<Moscow | undefined>();
   const [status, setStatus] = useState<string | undefined>(); // 仅表格视图
+  const [decision, setDecision] = useState<string | undefined>(); // 仅表格视图
   const [mineOnly, setMineOnly] = useState(false);
   const [domains, setDomains] = useState<BusinessDomain[]>([]);
 
-  // 登记需求
+  // 登记需求 / 导入
   const [createOpen, setCreateOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<CreateFormValues>();
   const [sources, setSources] = useState<MasterDataItem[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,6 +172,7 @@ export default function Requirements() {
           : await api.getList<RequirementRow>('/requirements', {
               ...base,
               status: status || undefined,
+              decision: decision || undefined,
               page,
               page_size: pageSize,
             });
@@ -155,7 +183,7 @@ export default function Requirements() {
     } finally {
       setLoading(false);
     }
-  }, [view, q, domainId, moscow, status, mineOnly, page, pageSize]);
+  }, [view, q, domainId, moscow, status, decision, mineOnly, page, pageSize]);
 
   useEffect(() => {
     void load();
@@ -202,6 +230,10 @@ export default function Requirements() {
         business_domain_id: values.business_domain_id,
         description: values.description,
         source: values.source ?? null,
+        department: values.department || null,
+        expected_date: values.expected_date ? values.expected_date.format('YYYY-MM-DD') : null,
+        expected_effect: values.expected_effect || null,
+        business_value_note: values.business_value_note || null,
       });
       message.success(t('req.created', { code: created.requirement_code ?? '' }));
       setCreateOpen(false);
@@ -239,6 +271,25 @@ export default function Requirements() {
       dataIndex: 'moscow',
       width: 100,
       render: (v: string | null) => <MoscowTag value={v} />,
+    },
+    {
+      title: t('req.col.weightedTotal'),
+      dataIndex: 'weighted_total',
+      width: 100,
+      align: 'right',
+      render: (v: number | null) => fmtScore(v),
+    },
+    {
+      title: t('req.col.quadrant'),
+      dataIndex: 'quadrant',
+      width: 120,
+      render: (v: string | null) => <QuadrantTag value={v} />,
+    },
+    {
+      title: t('req.col.decision'),
+      dataIndex: 'decision',
+      width: 90,
+      render: (v: string | null) => <DecisionTag value={v} />,
     },
     { title: t('req.col.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
     {
@@ -359,6 +410,19 @@ export default function Requirements() {
               options={STATUS_KEYS.map((s) => ({ value: s, label: et.requirementStatus(s) }))}
             />
           )}
+          {view === 'table' && (
+            <Select
+              placeholder={t('req.decision')}
+              allowClear
+              style={{ width: 110 }}
+              value={decision}
+              onChange={(v) => {
+                setPage(1);
+                setDecision(v);
+              }}
+              options={REQ_DECISIONS.map((d) => ({ value: d, label: et.reqDecision(d) }))}
+            />
+          )}
           <span>
             {t('req.mineOnly')}{' '}
             <Switch
@@ -374,9 +438,17 @@ export default function Requirements() {
           </Button>
         </Space>
         {canCreate && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            {t('req.register')}
-          </Button>
+          <Space>
+            <Button icon={<DownloadOutlined />} onClick={() => void api.download('/requirements/template')}>
+              {t('req.downloadTemplate')}
+            </Button>
+            <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
+              {t('req.import')}
+            </Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+              {t('req.register')}
+            </Button>
+          </Space>
         )}
       </Space>
 
@@ -398,7 +470,7 @@ export default function Requirements() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1520 }}
           pagination={{
             current: page,
             pageSize,
@@ -459,8 +531,35 @@ export default function Requirements() {
               options={sources.map((s) => ({ value: s.name, label: s.name }))}
             />
           </Form.Item>
+          <Collapse
+            ghost
+            items={[
+              {
+                key: 'more',
+                label: t('req.moreOptions'),
+                children: (
+                  <>
+                    <Form.Item name="department" label={t('req.department')}>
+                      <Input maxLength={100} />
+                    </Form.Item>
+                    <Form.Item name="expected_date" label={t('req.expectedDate')}>
+                      <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item name="expected_effect" label={t('req.expectedEffect')}>
+                      <Input.TextArea rows={2} maxLength={1000} placeholder={t('req.expectedEffectPlaceholder')} />
+                    </Form.Item>
+                    <Form.Item name="business_value_note" label={t('req.businessValue')}>
+                      <Input.TextArea rows={2} maxLength={1000} placeholder={t('req.businessValuePlaceholder')} />
+                    </Form.Item>
+                  </>
+                ),
+              },
+            ]}
+          />
         </Form>
       </Modal>
+
+      <RequirementImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={() => void load()} />
     </Card>
   );
 }

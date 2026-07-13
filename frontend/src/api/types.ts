@@ -225,7 +225,7 @@ export interface DashboardData {
     budget_usage: number | null;
   };
   requirement: {
-    by_stage: { registered: number; analyzing: number; implementing: number; closed: number };
+    by_stage: { registered: number; evaluating: number; analyzing: number; implementing: number; closed: number };
     avg_lead_days: number | null;
   };
   team: {
@@ -1101,6 +1101,7 @@ export interface AttachmentItem {
 /** 需求状态 */
 export type RequirementStatus =
   | 'registered'
+  | 'evaluating'
   | 'analyzing'
   | 'implementing'
   | 'closed'
@@ -1113,11 +1114,31 @@ export const REQ_STATUS: Record<
   { label: string; badge: 'default' | 'processing' | 'success' | 'warning'; color?: string }
 > = {
   registered: { label: '已登记', badge: 'default', color: 'blue' },
+  evaluating: { label: '评估中', badge: 'processing', color: 'cyan' },
   analyzing: { label: '分析中', badge: 'processing' },
   implementing: { label: '实现中', badge: 'processing', color: 'purple' },
   closed: { label: '已关闭', badge: 'success' },
   on_hold: { label: '已搁置', badge: 'warning', color: 'orange' },
   cancelled: { label: '已取消', badge: 'default' },
+};
+
+/** 六维评分四象限（后端权威值为中文；Tag 配色/图标语言无关，放此处） */
+export const REQ_QUADRANTS = ['战略下注', '速赢项目', '低优先级', '重新评估'] as const;
+
+export const QUADRANT_META: Record<string, { color: string; icon: string }> = {
+  战略下注: { color: 'gold', icon: '⭐' },
+  速赢项目: { color: 'green', icon: '⚡' },
+  低优先级: { color: 'default', icon: '📋' },
+  重新评估: { color: 'red', icon: '🔄' },
+};
+
+/** 评估决议（后端权威值为中文） */
+export const REQ_DECISIONS = ['立项', '搁置', '驳回'] as const;
+
+export const DECISION_COLORS: Record<string, string> = {
+  立项: 'green',
+  搁置: 'orange',
+  驳回: 'red',
 };
 
 /** 需求类型（后端白名单） */
@@ -1190,8 +1211,71 @@ export interface RequirementRow {
   task_done: number;
   /** 任务完成比 0-100；无任务时 null */
   progress: number | null;
+  // ---- M10 六维评分 / 四象限漏斗 ----
+  /** 渠道部门 */
+  department?: string | null;
+  /** 期望完成时间 */
+  expected_date?: string | null;
+  /** 加权总分（六维评分后有值） */
+  weighted_total?: number | null;
+  /** 四象限（中文权威值：战略下注/速赢项目/低优先级/重新评估） */
+  quadrant?: string | null;
+  /** 评估决议（中文权威值：立项/搁置/驳回） */
+  decision?: string | null;
+  /** PRD 人天 */
+  prd_effort?: number | null;
+  /** 开发人天 */
+  dev_effort?: number | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+}
+
+/** 六维评分记录（多评审人；单人场景通常一条） */
+export interface RequirementScore {
+  reviewer_name: string | null;
+  reviewer_role: string | null;
+  d1_strategy: number;
+  d2_value: number;
+  d3_tech: number;
+  d4_org: number;
+  d5_risk: number;
+  d6_speed: number;
+  is_consensus: boolean;
+  comment: string | null;
+  created_at: string;
+}
+
+/** 六维评分档位说明（rubric 单维度） */
+export interface ScoringRubricEntry {
+  name: string;
+  '5': string;
+  '4': string;
+  '3': string;
+  '2': string;
+  '1': string;
+}
+
+/** 六维权重键（后端 rubric/weights 用短键 d1..d6） */
+export type ScoringDimKey = 'd1' | 'd2' | 'd3' | 'd4' | 'd5' | 'd6';
+
+/** 评分规则配置（GET/PUT /requirements/scoring-config） */
+export interface ScoringConfig {
+  weights: Record<ScoringDimKey, number>;
+  thresholds: { total: number; strategic: number; viable: number };
+  rubric: Record<string, ScoringRubricEntry>;
+  role_weights?: Record<string, number>;
+  defaults?: {
+    weights: Record<ScoringDimKey, number>;
+    thresholds: { total: number; strategic: number; viable: number };
+    rubric: Record<string, ScoringRubricEntry>;
+    role_weights?: Record<string, number>;
+  };
+}
+
+/** 需求 Excel 导入结果（POST /requirements/import） */
+export interface RequirementImportResult {
+  imported: number;
+  errors: { row: number; error: string }[];
 }
 
 /** 需求详情 */
@@ -1203,6 +1287,15 @@ export interface RequirementDetail extends RequirementRow {
   remarks: string | null;
   /** 提出人 auth_user.id */
   requester: string | null;
+  // ---- M10 进阶登记 / 评估字段 ----
+  /** 期望效果 */
+  expected_effect?: string | null;
+  /** 运营价值说明 */
+  business_value_note?: string | null;
+  /** 进入评估的时间 */
+  evaluating_at?: string | null;
+  /** 六维评分明细（可能多条评审人） */
+  scores?: RequirementScore[];
   analyzing_at: string | null;
   implementing_at: string | null;
   project_name: string | null;

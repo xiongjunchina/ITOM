@@ -16,6 +16,7 @@ import Access from './pages/admin/Access';
 import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
+import RequirementScoring from './pages/admin/RequirementScoring';
 import Definitions from './pages/process/Definitions';
 import Tickets from './pages/itsm/Tickets';
 import TicketDetail from './pages/itsm/TicketDetail';
@@ -88,6 +89,7 @@ export const router = createBrowserRouter([
       { path: 'admin/access', element: <Access /> },
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
+      { path: 'admin/requirement-scoring', element: <RequirementScoring /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
 
       // 旧路由 → 新复合页对应 Tab（M3.9 前的书签/外链兼容）

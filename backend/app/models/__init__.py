@@ -11,7 +11,12 @@ from app.models.itsm_assets import (
 )
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.project import CostEntry, Milestone, Portfolio, Project, Risk, WbsTask
-from app.models.requirement import Requirement, RequirementTask
+from app.models.requirement import (
+    Requirement,
+    RequirementScore,
+    RequirementScoringConfig,
+    RequirementTask,
+)
 from app.models.team import (
     ActivityCampaign,
     CampaignTask,
@@ -87,6 +92,8 @@ __all__ = [
     "Position",
     "Project",
     "Requirement",
+    "RequirementScore",
+    "RequirementScoringConfig",
     "RequirementTask",
     "ProcessDefinition",
     "ProcessInstance",

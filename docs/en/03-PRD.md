@@ -280,30 +280,51 @@ The Project Management landing page has two tabs: **Project List** (default) and
 
 ---
 
-## 7. Domain Four: Requirement Management (lightweight collaboration)
+## 7. Domain Four: Requirement Management (evaluation funnel · M10 upgrade)
 
-### 7.1 Four-Stage Lifecycle
+### 7.1 Five-Stage Lifecycle
+
+From M10: an "Evaluation" gate is inserted between Registration and Analysis — six-dimension weighted scoring + four-quadrant decision. Only requirements decided as "Approved" proceed to Analysis, forming a requirement funnel. Small requirements may skip evaluation via `Registration → Analysis`.
 
 ```text
-Registration → Analysis → Implementation → Closure (can move from any stage to "On Hold / Cancelled")
+Registration → Evaluation → Analysis → Implementation → Closure (any active stage can move to "On Hold / Cancelled")
 ```
 
 | Stage | Who | What is filled in | What the system does |
 | --- | --- | --- | --- |
-| ① Registration | requester / it_bp / any team member | Title ✔, type ✔ (business/functional/data/integration/compliance), owning business ✔, description ✔; source optional | Code, requester, registration time automatic; notify it_pdm/manager |
-| ② Analysis | it_pdm / manager | MoSCoW priority, owner, scheduled target date, solution, acceptance criteria (checklist-style, entered item by item) | Stamps the analysis-start time |
-| ③ Implementation | Owner | Task breakdown (task name / assignee / planned date, 3 items), optionally attach a project | Progress = completed tasks / total tasks; task completion produces points |
-| ④ Closure | Owner | Check off acceptance criteria one by one; **one-click hand-off**: legacy problem → ITSM Problem, lessons → Knowledge Base (requirement context carried automatically) | Stamps the completion date; computes lead time; closure produces points |
+| ① Registration | requester / it_bp / any team member | Title ✔, type ✔ (business/functional/data/integration/compliance), owning business ✔, description ✔; source / channel dept / expected date / expected effect / operational value optional | Code, requester, registration time automatic; notify it_pdm |
+| ② Evaluation | it_pdm + review (CIO/it_bm cc'd) | Six scores D1-D6 (1-5), decision (Approved/On hold/Rejected), comment | **Auto-computes weighted total & quadrant** (never typed); stamps evaluation-start time; enforces the evaluation gate |
+| ③ Analysis | it_pdm | Owner, scheduled target date, solution, acceptance criteria (checklist), PRD/dev person-days; MoSCoW demoted to an optional auxiliary tag | Stamps the analysis-start time |
+| ④ Implementation | Owner | Task breakdown (task name / assignee / planned date / planned·actual person-days), optionally attach a project | Progress = completed tasks / total tasks; task completion produces points |
+| ⑤ Closure | Owner | Check off acceptance criteria one by one; **one-click hand-off**: legacy problem → ITSM Problem, lessons → Knowledge Base | Stamps the completion date; computes lead time; closure produces points |
 
-### 7.2 Requirement List
+### 7.2 Six-Dimension Weighted Scoring & Four Quadrants
 
-Columns by stage (kanban-style) + toggle to table view; filters: business line / priority / owner / requester.
+Based on the "Requirement Scoring & Prioritization Standard" (McKinsey strategic-value × feasibility axes). Weights / thresholds / rubric are configured under **System Admin → Requirement Scoring Rules**, adjustable annually by admin (defaults below).
 
-### 7.3 Acceptance Criteria
+| Dimension | Default weight | Note |
+| --- | --- | --- |
+| D1 Strategic Fit / D2 Business Value / D3 Technical Feasibility | 0.2 / 0.2 / 0.2 | Strategic value + tech |
+| D4 Org Readiness / D5 Risk (reverse) | 0.1 / 0.1 | Risk counted as (6−D5) |
+| D6 Time-to-Value | 0.2 | |
 
-- [ ] Registration's 4 required fields are completed in ≤ 30 seconds.
-- [ ] Closure is not allowed until all acceptance criteria are checked (if anything is left over, a problem must be handed off or an explanation given).
+`Weighted total = 0.2·D1 + 0.2·D2 + 0.2·D3 + 0.1·D4 + 0.1·(6−D5) + 0.2·D6` (server-side).
+Four quadrants (x = strategic value (D1+D2)/2, y = total; default thresholds total 3.5 / strategic 4 / viable 3): ⭐ Strategic Bet, ⚡ Quick Win, 📋 Low Priority, 🔄 Re-evaluate.
+Review governance: M10 starts with **single-reviewer consensus scoring** (`requirement_score.is_consensus` backfills the requirement's six scores); multi-party independent scoring + consensus is a later enhancement (the table already reserves reviewer_role/role_weight).
+
+### 7.3 Requirement List & Import
+
+- Columns by stage (kanban, including an "Evaluating" column) + toggle to table view; filters: business line / priority / **decision** / owner / requester; cards show weighted total and quadrant.
+- **Template import**: download the Excel template (registration fields + optional six scores) → fill → upload, with per-row error reporting on partial success; rows already fully scored land in "Evaluating" with scores carried.
+
+### 7.4 Acceptance Criteria
+
+- [ ] Registration's 4 required fields are completed in ≤ 30 seconds; scoring fields appear only in the Evaluation stage, never in the registration form.
+- [ ] Weighted total / quadrant are all server-derived; users cannot type them.
+- [ ] Evaluation gate: cannot enter Analysis until all six are scored and the decision is "Approved".
+- [ ] Closure is not allowed until all acceptance criteria are checked (otherwise hand off a problem or explain).
 - [ ] Handed-off problems/knowledge automatically carry the requirement code as a back-link.
+- [ ] Fully bilingual; weights / thresholds / rubric are admin-configurable.
 
 ---
 

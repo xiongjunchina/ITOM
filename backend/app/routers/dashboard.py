@@ -184,7 +184,7 @@ def _team_section(db: Session) -> dict:
 
 def _requirement_section(db: Session) -> dict:
     rows = db.query(Requirement).filter(Requirement.is_deleted.is_(False)).all()
-    by_stage = {"registered": 0, "analyzing": 0, "implementing": 0, "closed": 0}
+    by_stage = {"registered": 0, "evaluating": 0, "analyzing": 0, "implementing": 0, "closed": 0}
     for r in rows:
         if r.status in by_stage:
             by_stage[r.status] += 1

@@ -58,6 +58,7 @@ export const zh: Dict = {
 
   // 阶段进度
   'req.step.register': '登记',
+  'req.step.evaluate': '评估',
   'req.step.analyze': '分析',
   'req.step.implement': '实现',
   'req.step.close': '关闭',
@@ -164,6 +165,85 @@ export const zh: Dict = {
   'req.problemDesc': '问题描述',
   'req.problemDescRequired': '请描述遗留问题',
   'req.problemDescPlaceholder': '遗留了什么、影响与建议',
+
+  // ===== M10 六维评分 / 四象限漏斗 =====
+  // 列表列 / 筛选 / 工具栏
+  'req.col.weightedTotal': '加权总分',
+  'req.col.quadrant': '象限',
+  'req.col.decision': '决议',
+  'req.decision': '决议',
+  'req.downloadTemplate': '下载模板',
+  'req.import': '导入',
+  'req.moreOptions': '更多信息（可选）',
+
+  // 进阶登记字段
+  'req.department': '渠道部门',
+  'req.expectedDate': '期望完成时间',
+  'req.expectedEffect': '期望效果',
+  'req.businessValue': '运营价值',
+  'req.prdEffort': 'PRD 人天',
+  'req.devEffort': '开发人天',
+  'req.effortDays': '{n} 人天',
+  'req.expectedEffectPlaceholder': '上线后期望达成的业务效果/指标',
+  'req.businessValuePlaceholder': '对运营/业务的价值说明',
+
+  // 导入弹窗
+  'req.importTitle': '导入需求',
+  'req.importDragText': '点击或拖拽 Excel 文件到此处',
+  'req.importDragHint': '支持 .xlsx；建议先「下载模板」按列填写',
+  'req.importParsing': '导入中…',
+  'req.importResult': '导入完成，成功 {n} 条',
+  'req.importReupload': '重新选择文件',
+  'req.importErrorsTitle': '{n} 行未导入',
+  'req.importErrorRow': '第 {row} 行：{error}',
+  'req.importClose': '完成',
+
+  // 评估评分面板
+  'req.evaluation': '评估评分',
+  'req.evalScore': '六维评分',
+  'req.weightedTotal': '加权总分',
+  'req.quadrant': '象限',
+  'req.evalDecision': '评估决议',
+  'req.selectDecision': '选择决议',
+  'req.scoreComment': '评审备注',
+  'req.scoreCommentPlaceholder': '评分理由、关键判断依据（可选）',
+  'req.saveScore': '保存评分',
+  'req.scoreSaved': '评分已保存',
+  'req.previewHint': '完成六维打分后显示加权总分与象限预览',
+  'req.dimReverse': '反向',
+  'req.dimReverseHint': '反向：分越高风险越大',
+  'req.evalGateHint': '六维评满且决议为「立项」后，方可通过右上角流转进入分析阶段。',
+  'req.scoreHistory': '评分记录',
+  'req.reviewer': '评审人',
+  'req.consensus': '共识',
+  'req.scoreLoadFailed': '评分配置加载失败',
+  'req.notScoredYet': '尚未评分',
+
+  // 六维维度名
+  'req.dim.d1_strategy': '战略对齐',
+  'req.dim.d2_value': '业务价值',
+  'req.dim.d3_tech': '技术可行性',
+  'req.dim.d4_org': '组织就绪',
+  'req.dim.d5_risk': '风险等级',
+  'req.dim.d6_speed': '价值速度',
+
+  // 评分规则配置页（系统管理）
+  'req.cfg.title': '需求评分规则',
+  'req.cfg.weights': '六维权重',
+  'req.cfg.weightsSum': '权重合计：{sum}',
+  'req.cfg.weightsSumError': '六维权重合计须等于 1（当前 {sum}）',
+  'req.cfg.thresholds': '四象限阈值',
+  'req.cfg.thrTotal': '总分阈值（战略下注/速赢）',
+  'req.cfg.thrStrategic': '战略阈值（战略下注）',
+  'req.cfg.thrViable': '可行阈值（低优先级）',
+  'req.cfg.rubric': '六维 1-5 分档说明',
+  'req.cfg.dimName': '维度名称',
+  'req.cfg.levelN': '{n} 分',
+  'req.cfg.roleWeights': '评审角色权重（可选）',
+  'req.cfg.restoreDefault': '恢复默认',
+  'req.cfg.saved': '评分规则已保存',
+  'req.cfg.readonly': '仅系统管理员可修改评分规则，当前为只读。',
+  'req.cfg.reverseTag': '反向',
 };
 
 export const en: Dict = {
@@ -223,6 +303,7 @@ export const en: Dict = {
 
   // Stage progress
   'req.step.register': 'Register',
+  'req.step.evaluate': 'Evaluate',
   'req.step.analyze': 'Analyze',
   'req.step.implement': 'Implement',
   'req.step.close': 'Close',
@@ -329,4 +410,83 @@ export const en: Dict = {
   'req.problemDesc': 'Problem Description',
   'req.problemDescRequired': 'Please describe the leftover problem',
   'req.problemDescPlaceholder': 'What is left, its impact, and suggestions',
+
+  // ===== M10 six-dimension scoring / quadrant funnel =====
+  // List columns / filter / toolbar
+  'req.col.weightedTotal': 'Weighted Score',
+  'req.col.quadrant': 'Quadrant',
+  'req.col.decision': 'Decision',
+  'req.decision': 'Decision',
+  'req.downloadTemplate': 'Download Template',
+  'req.import': 'Import',
+  'req.moreOptions': 'More (optional)',
+
+  // Advanced registration fields
+  'req.department': 'Channel Dept',
+  'req.expectedDate': 'Expected Date',
+  'req.expectedEffect': 'Expected Effect',
+  'req.businessValue': 'Business Value',
+  'req.prdEffort': 'PRD Effort (person-days)',
+  'req.devEffort': 'Dev Effort (person-days)',
+  'req.effortDays': '{n} pd',
+  'req.expectedEffectPlaceholder': 'Business outcome / metrics expected after launch',
+  'req.businessValuePlaceholder': 'Value to operations / business',
+
+  // Import modal
+  'req.importTitle': 'Import Requirements',
+  'req.importDragText': 'Click or drag an Excel file here',
+  'req.importDragHint': 'Supports .xlsx; download the template first and fill by columns',
+  'req.importParsing': 'Importing…',
+  'req.importResult': 'Import done, {n} imported',
+  'req.importReupload': 'Choose another file',
+  'req.importErrorsTitle': '{n} row(s) not imported',
+  'req.importErrorRow': 'Row {row}: {error}',
+  'req.importClose': 'Done',
+
+  // Evaluation scoring panel
+  'req.evaluation': 'Evaluation Scoring',
+  'req.evalScore': 'Six-dimension Scoring',
+  'req.weightedTotal': 'Weighted Score',
+  'req.quadrant': 'Quadrant',
+  'req.evalDecision': 'Decision',
+  'req.selectDecision': 'Select a decision',
+  'req.scoreComment': 'Review Comment',
+  'req.scoreCommentPlaceholder': 'Rationale and key judgement (optional)',
+  'req.saveScore': 'Save Scoring',
+  'req.scoreSaved': 'Scoring saved',
+  'req.previewHint': 'Weighted score and quadrant preview appear once all six dimensions are scored',
+  'req.dimReverse': 'Reverse',
+  'req.dimReverseHint': 'Reverse: higher score means higher risk',
+  'req.evalGateHint': 'Score all six dimensions and set the decision to "Approved" before moving to the Analysis stage via the top-right actions.',
+  'req.scoreHistory': 'Scoring History',
+  'req.reviewer': 'Reviewer',
+  'req.consensus': 'Consensus',
+  'req.scoreLoadFailed': 'Failed to load scoring config',
+  'req.notScoredYet': 'Not scored yet',
+
+  // Six dimension names
+  'req.dim.d1_strategy': 'Strategic Fit',
+  'req.dim.d2_value': 'Business Value',
+  'req.dim.d3_tech': 'Technical Feasibility',
+  'req.dim.d4_org': 'Org Readiness',
+  'req.dim.d5_risk': 'Risk Level',
+  'req.dim.d6_speed': 'Time-to-Value',
+
+  // Scoring rules config page (System)
+  'req.cfg.title': 'Requirement Scoring Rules',
+  'req.cfg.weights': 'Dimension Weights',
+  'req.cfg.weightsSum': 'Weights sum: {sum}',
+  'req.cfg.weightsSumError': 'The six weights must sum to 1 (now {sum})',
+  'req.cfg.thresholds': 'Quadrant Thresholds',
+  'req.cfg.thrTotal': 'Total threshold (Strategic Bet / Quick Win)',
+  'req.cfg.thrStrategic': 'Strategic threshold (Strategic Bet)',
+  'req.cfg.thrViable': 'Viable threshold (Low Priority)',
+  'req.cfg.rubric': 'Dimension Rubric (1-5)',
+  'req.cfg.dimName': 'Dimension name',
+  'req.cfg.levelN': 'Score {n}',
+  'req.cfg.roleWeights': 'Reviewer Role Weights (optional)',
+  'req.cfg.restoreDefault': 'Restore Defaults',
+  'req.cfg.saved': 'Scoring rules saved',
+  'req.cfg.readonly': 'Only administrators can modify scoring rules; read-only here.',
+  'req.cfg.reverseTag': 'Reverse',
 };

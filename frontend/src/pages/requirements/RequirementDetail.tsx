@@ -7,11 +7,14 @@ import {
   Checkbox,
   DatePicker,
   Descriptions,
+  Divider,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Progress,
+  Segmented,
   Select,
   Space,
   Spin,
@@ -49,14 +52,227 @@ import type {
   RequirementDetail as RequirementDetailData,
   RequirementTask,
   RequirementTaskStatus,
+  ScoringConfig,
 } from '../../api/types';
 import {
   MOSCOW_KEYS,
+  REQ_DECISIONS,
   REQ_TASK_STATUSES,
   REQ_TASK_STATUS_COLORS,
   REQ_TYPES,
 } from '../../api/types';
-import { MoscowTag, ReqStatusBadge, fmtDt } from './shared';
+import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, fmtDt } from './shared';
+import { DIMENSIONS, computeScore, type DimScores } from './dimensions';
+
+// ---------- 评估评分面板 ----------
+
+function EvaluationPanel({
+  id,
+  detail,
+  editable,
+  onSaved,
+}: {
+  id: string;
+  detail: RequirementDetailData;
+  editable: boolean;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const et = useEnums();
+  const { roleLabel } = useRoleOptions();
+  const [config, setConfig] = useState<ScoringConfig | null>(null);
+
+  // 单人评分场景：用共识分或首条评分回填
+  const seed = useMemo(() => {
+    const list = detail.scores ?? [];
+    return list.find((s) => s.is_consensus) ?? list[0] ?? null;
+  }, [detail.scores]);
+
+  const [scores, setScores] = useState<DimScores>({});
+  const [decision, setDecision] = useState<string | undefined>(detail.decision ?? undefined);
+  const [comment, setComment] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setScores(
+      seed
+        ? {
+            d1_strategy: seed.d1_strategy,
+            d2_value: seed.d2_value,
+            d3_tech: seed.d3_tech,
+            d4_org: seed.d4_org,
+            d5_risk: seed.d5_risk,
+            d6_speed: seed.d6_speed,
+          }
+        : {},
+    );
+    setComment(seed?.comment ?? '');
+    setDecision(detail.decision ?? undefined);
+  }, [seed, detail.decision]);
+
+  useEffect(() => {
+    api
+      .get<ScoringConfig>('/requirements/scoring-config')
+      .then(setConfig)
+      .catch(() => message.error(t('req.scoreLoadFailed')));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const preview = useMemo(
+    () => (config ? computeScore(scores, config.weights, config.thresholds) : null),
+    [scores, config],
+  );
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      const body: Record<string, unknown> = { comment: comment || null };
+      DIMENSIONS.forEach((d) => {
+        if (scores[d.key] != null) body[d.key] = scores[d.key];
+      });
+      if (decision) body.decision = decision;
+      await api.post(`/requirements/${id}/score`, body);
+      message.success(t('req.scoreSaved'));
+      onSaved();
+    } catch {
+      // 已统一提示
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const scoreOptions = [1, 2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }));
+
+  return (
+    <Card title={t('req.evaluation')} size="small">
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.evalGateHint')} />
+
+      <Typography.Text strong>{t('req.evalScore')}</Typography.Text>
+      <div style={{ marginTop: 12 }}>
+        {DIMENSIONS.map((d) => {
+          const cur = scores[d.key];
+          const rubric = config?.rubric?.[d.short];
+          const levelText = cur != null && rubric ? (rubric as unknown as Record<string, string>)[String(cur)] : undefined;
+          return (
+            <div key={d.key} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+              <Space wrap style={{ width: '100%', justifyContent: 'space-between' }} align="start">
+                <Space size={6}>
+                  <Typography.Text strong>
+                    {d.code} · {t(d.nameKey)}
+                  </Typography.Text>
+                  {d.reverse && (
+                    <Tooltip title={t('req.dimReverseHint')}>
+                      <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                        {t('req.dimReverse')}
+                      </Tag>
+                    </Tooltip>
+                  )}
+                </Space>
+                <Segmented
+                  options={scoreOptions}
+                  value={cur}
+                  disabled={!editable}
+                  onChange={(v) => setScores((s) => ({ ...s, [d.key]: v as number }))}
+                />
+              </Space>
+              {levelText && (
+                <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                  {levelText}
+                </Typography.Text>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 实时预览：加权总分 + 象限 */}
+      <div style={{ margin: '16px 0', display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
+        {preview ? (
+          <>
+            <Space direction="vertical" size={0}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {t('req.weightedTotal')}
+              </Typography.Text>
+              <Typography.Title level={3} style={{ margin: 0 }}>
+                {preview.total.toFixed(1)}
+              </Typography.Title>
+            </Space>
+            <Space direction="vertical" size={4}>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {t('req.quadrant')}
+              </Typography.Text>
+              <QuadrantTag value={preview.quadrant} />
+            </Space>
+          </>
+        ) : (
+          <Typography.Text type="secondary">{t('req.previewHint')}</Typography.Text>
+        )}
+      </div>
+
+      {/* 决议 + 备注 + 保存 */}
+      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+        <Space wrap align="center">
+          <Typography.Text strong>{t('req.evalDecision')}</Typography.Text>
+          {editable ? (
+            <Select
+              allowClear
+              placeholder={t('req.selectDecision')}
+              style={{ width: 160 }}
+              value={decision}
+              onChange={(v) => setDecision(v)}
+              options={REQ_DECISIONS.map((dv) => ({ value: dv, label: et.reqDecision(dv) }))}
+            />
+          ) : (
+            <DecisionTag value={detail.decision} />
+          )}
+        </Space>
+        {editable ? (
+          <Input.TextArea
+            rows={2}
+            maxLength={1000}
+            value={comment}
+            placeholder={t('req.scoreCommentPlaceholder')}
+            onChange={(e) => setComment(e.target.value)}
+          />
+        ) : (
+          seed?.comment && (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+              {seed.comment}
+            </Typography.Paragraph>
+          )
+        )}
+        {editable && (
+          <Button type="primary" loading={saving} onClick={() => void submit()}>
+            {t('req.saveScore')}
+          </Button>
+        )}
+      </Space>
+
+      {/* 评分记录（多评审人时列出） */}
+      {(detail.scores?.length ?? 0) > 1 && (
+        <>
+          <Divider />
+          <Typography.Text strong>{t('req.scoreHistory')}</Typography.Text>
+          <div style={{ marginTop: 8 }}>
+            {detail.scores!.map((s, i) => (
+              <div key={i} style={{ padding: '4px 0' }}>
+                <Space size={6} wrap>
+                  <Tag>{s.reviewer_name || t('req.reviewer')}</Tag>
+                  {s.reviewer_role && <Typography.Text type="secondary">{roleLabel(s.reviewer_role)}</Typography.Text>}
+                  {s.is_consensus && <Tag color="blue">{t('req.consensus')}</Tag>}
+                  <Typography.Text>
+                    {DIMENSIONS.map((d) => (s as unknown as Record<string, number>)[d.key]).join(' / ')}
+                  </Typography.Text>
+                  {s.comment && <Typography.Text type="secondary">— {s.comment}</Typography.Text>}
+                </Space>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
 
 export default function RequirementDetail() {
   const t = useT();
@@ -188,6 +404,12 @@ export default function RequirementDetail() {
       source: detail.source ?? undefined,
       description: detail.description,
       remarks: detail.remarks ?? undefined,
+      department: detail.department ?? undefined,
+      expected_date: detail.expected_date ? dayjs(detail.expected_date) : undefined,
+      expected_effect: detail.expected_effect ?? undefined,
+      business_value_note: detail.business_value_note ?? undefined,
+      prd_effort: detail.prd_effort ?? undefined,
+      dev_effort: detail.dev_effort ?? undefined,
     });
     setEditOpen(true);
     if (domains.length === 0) {
@@ -219,6 +441,12 @@ export default function RequirementDetail() {
         source: v.source ?? null,
         description: v.description,
         remarks: v.remarks || null,
+        department: v.department || null,
+        expected_date: v.expected_date ? (v.expected_date as Dayjs).format('YYYY-MM-DD') : null,
+        expected_effect: v.expected_effect || null,
+        business_value_note: v.business_value_note || null,
+        prd_effort: v.prd_effort ?? null,
+        dev_effort: v.dev_effort ?? null,
       });
       message.success(t('req.basicUpdated'));
       setEditOpen(false);
@@ -352,6 +580,8 @@ export default function RequirementDetail() {
   const isFinal = st === 'closed' || st === 'cancelled';
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
+  const reachedEvaluating =
+    !!detail.evaluating_at || ['evaluating', 'analyzing', 'implementing', 'closed'].includes(st);
   const reachedAnalyzing = !!detail.analyzing_at || ['analyzing', 'implementing', 'closed'].includes(st);
   const reachedImplementing = !!detail.implementing_at || ['implementing', 'closed'].includes(st);
   const showClosure = st === 'implementing' || st === 'closed';
@@ -364,9 +594,18 @@ export default function RequirementDetail() {
     !isExample && !isFinal && (canEdit || (!!user?.person_id && user.person_id === t.assignee));
 
   // ----- 阶段进度条 -----
-  const currentStep = st === 'closed' ? 3 : reachedImplementing ? 2 : reachedAnalyzing ? 1 : 0;
+  const currentStep = st === 'closed'
+    ? 4
+    : reachedImplementing
+      ? 3
+      : reachedAnalyzing
+        ? 2
+        : reachedEvaluating
+          ? 1
+          : 0;
   const stepItems = [
     { title: t('req.step.register'), description: fmtDt(detail.registered_at) },
+    { title: t('req.step.evaluate'), description: fmtDt(detail.evaluating_at) },
     { title: t('req.step.analyze'), description: fmtDt(detail.analyzing_at) },
     { title: t('req.step.implement'), description: fmtDt(detail.implementing_at) },
     {
@@ -522,6 +761,28 @@ export default function RequirementDetail() {
           <Descriptions.Item label={t('req.source')}>{detail.source || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('req.requester')}>{detail.requester_name ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('req.registeredAt')}>{fmtDt(detail.registered_at) ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.department')}>{detail.department || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.expectedDate')}>{detail.expected_date || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.prdEffort')}>
+            {detail.prd_effort != null ? t('req.effortDays', { n: detail.prd_effort }) : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label={t('req.devEffort')}>
+            {detail.dev_effort != null ? t('req.effortDays', { n: detail.dev_effort }) : '-'}
+          </Descriptions.Item>
+          {detail.expected_effect && (
+            <Descriptions.Item label={t('req.expectedEffect')} span={2}>
+              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+                {detail.expected_effect}
+              </Typography.Paragraph>
+            </Descriptions.Item>
+          )}
+          {detail.business_value_note && (
+            <Descriptions.Item label={t('req.businessValue')} span={2}>
+              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+                {detail.business_value_note}
+              </Typography.Paragraph>
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label={t('req.desc')} span={2}>
             <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
               {detail.description || '-'}
@@ -536,6 +797,16 @@ export default function RequirementDetail() {
           )}
         </Descriptions>
       </Card>
+
+      {/* 评估评分（登记/评估阶段或已有评分时显示） */}
+      {id && (st === 'registered' || st === 'evaluating' || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
+        <EvaluationPanel
+          id={id}
+          detail={detail}
+          editable={canEditNow && (st === 'registered' || st === 'evaluating')}
+          onSaved={() => void load()}
+        />
+      )}
 
       {/* 分析（进入分析阶段后显示） */}
       {reachedAnalyzing && (
@@ -843,6 +1114,26 @@ export default function RequirementDetail() {
           </Form.Item>
           <Form.Item name="description" label={t('req.reqDesc')} rules={[{ required: true, message: t('req.reqDescRequired') }]}>
             <Input.TextArea rows={4} maxLength={2000} />
+          </Form.Item>
+          <Space size={16} wrap style={{ width: '100%' }} align="start">
+            <Form.Item name="department" label={t('req.department')} style={{ width: 200 }}>
+              <Input maxLength={100} />
+            </Form.Item>
+            <Form.Item name="expected_date" label={t('req.expectedDate')}>
+              <DatePicker style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="prd_effort" label={t('req.prdEffort')} style={{ width: 130 }}>
+              <InputNumber min={0} precision={1} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="dev_effort" label={t('req.devEffort')} style={{ width: 130 }}>
+              <InputNumber min={0} precision={1} style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
+          <Form.Item name="expected_effect" label={t('req.expectedEffect')}>
+            <Input.TextArea rows={2} maxLength={1000} placeholder={t('req.expectedEffectPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="business_value_note" label={t('req.businessValue')}>
+            <Input.TextArea rows={2} maxLength={1000} placeholder={t('req.businessValuePlaceholder')} />
           </Form.Item>
           <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />

@@ -170,6 +170,7 @@ const zh: Dict = {
   'menu./admin/access': '角色与权限',
   'menu./admin/master-data': '数据字典',
   'menu./admin/workflow-config': '状态机配置',
+  'menu./admin/requirement-scoring': '需求评分规则',
   'menu./admin/audit-logs': '审计日志',
 };
 
@@ -333,6 +334,7 @@ const en: Dict = {
   'menu./admin/access': 'Roles & Permissions',
   'menu./admin/master-data': 'Data Dictionary',
   'menu./admin/workflow-config': 'State Machine',
+  'menu./admin/requirement-scoring': 'Req. Scoring Rules',
   'menu./admin/audit-logs': 'Audit Log',
 };
 

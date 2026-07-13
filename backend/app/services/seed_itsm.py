@@ -64,22 +64,30 @@ PROJECT_TRANSITIONS = [
 
 REQUIREMENT_STATUSES = [
     ("requirement", "registered", "已登记", True, False, 1),
-    ("requirement", "analyzing", "分析中", False, False, 2),
-    ("requirement", "implementing", "实现中", False, False, 3),
-    ("requirement", "closed", "已关闭", False, True, 4),
-    ("requirement", "on_hold", "已搁置", False, False, 5),
-    ("requirement", "cancelled", "已取消", False, True, 6),
+    ("requirement", "evaluating", "评估中", False, False, 2),
+    ("requirement", "analyzing", "分析中", False, False, 3),
+    ("requirement", "implementing", "实现中", False, False, 4),
+    ("requirement", "closed", "已关闭", False, True, 5),
+    ("requirement", "on_hold", "已搁置", False, False, 6),
+    ("requirement", "cancelled", "已取消", False, True, 7),
 ]
 
 REQUIREMENT_TRANSITIONS = [
-    ("requirement", "registered", "analyzing", []),
+    # 主漏斗：登记 → 评估 → 分析 → 实现 → 关闭
+    ("requirement", "registered", "evaluating", []),
+    ("requirement", "evaluating", "analyzing", []),   # 评估门：需决议=立项（service 校验）
+    ("requirement", "registered", "analyzing", []),   # 小需求可跳过评估
     ("requirement", "analyzing", "implementing", []),
     ("requirement", "implementing", "closed", []),
+    # 搁置/驳回/取消
     ("requirement", "registered", "on_hold", []),
+    ("requirement", "evaluating", "on_hold", []),
     ("requirement", "analyzing", "on_hold", []),
     ("requirement", "implementing", "on_hold", []),
+    ("requirement", "on_hold", "evaluating", []),
     ("requirement", "on_hold", "analyzing", []),
     ("requirement", "registered", "cancelled", []),
+    ("requirement", "evaluating", "cancelled", []),
     ("requirement", "analyzing", "cancelled", []),
     ("requirement", "on_hold", "cancelled", []),
 ]
@@ -182,6 +190,7 @@ PROCESS_DEFS = [
         "trigger": None,
         "steps": [
             ("需求登记与业务对齐", IT_BP, "L3", 24),
+            ("需求评估与优先级评审", IT_PDM, "L2", 48, [CIO, IT_BM]),
             ("需求分析与方案", IT_PDM, "L3", None),
             ("排期与资源协调", IT_BM, "L3", 48),
             ("开发实现", IT_DEV, "L3", None),
