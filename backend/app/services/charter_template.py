@@ -86,20 +86,21 @@ def build_charter_template_docx() -> bytes:
     ]))
     body.append(_para(""))
 
-    # 描述节（解析器按 1.项目背景 / 3.项目目标 / 4.1 项目包含范围 抓取）
+    # 描述节（解析器按 1.项目背景 / 3.项目目标 / 4.1 项目包含范围 抓取；编号连贯完整）
     body.append(_para("1. 项目背景 / Project Background", bold=True))
     body.append(_para("示例：现有客户门户上线 5 年，技术栈老旧、体验差，需整体升级以支撑业务增长。"))
     body.append(_para("2. 相关方 / Stakeholders", bold=True))
-    body.append(_para("示例：业务部门、IT 开发、运维团队、外部供应商。"))
+    body.append(_para("示例：业务部门（需求方）、IT 开发与运维团队、外部供应商。"))
     body.append(_para("3. 项目目标 / Project Goals", bold=True))
     body.append(_para("示例：门户改版按期上线，核心功能可用率 99.9%，用户满意度 ≥ 90%。"))
+    body.append(_para("4. 项目范围 / Scope", bold=True))
     body.append(_para("4.1 项目包含范围 / In-scope", bold=True))
     body.append(_para("示例：门户前端重构、SSO 集成、3 个核心业务模块迁移。"))
     body.append(_para("4.2 项目不包含范围 / Out-of-scope", bold=True))
     body.append(_para("示例：后端数据库迁移、移动端 App（另立项目）。"))
     body.append(_para(""))
 
-    # 里程碑与 WBS（首列必须 M1/M2…）
+    # 5. 里程碑与 WBS（首列必须 M1/M2…）
     body.append(_para("5. 里程碑与 WBS / Milestones & WBS（首列必须为 M1/M2… / first column must be M1/M2…）", bold=True))
     body.append(_table([
         ["里程碑 Milestone", "名称 Name", "工作内容 Work", "交付物 Deliverable", "计划完成 Planned End (YYYY-MM-DD)"],
@@ -109,15 +110,30 @@ def build_charter_template_docx() -> bytes:
     ]))
     body.append(_para(""))
 
-    # 关键风险（概率/影响列填 高/中/低）
+    # 6. 预算与资源（预算金额在顶部信息表填写；此处描述资源投入）
+    body.append(_para("6. 预算与资源 / Budget & Resources", bold=True))
+    body.append(_para("示例：总预算见文首信息表；投入 1 名 PM、3 名开发、1 名测试，外部供应商配合 UI 设计。"))
+    body.append(_para(""))
+
+    # 7. 风险与应对（7.1 关键风险表：概率/影响列填 高/中/低）
+    body.append(_para("7. 风险与应对 / Risk Management", bold=True))
     body.append(_para("7.1 关键风险 / Key Risks（概率、影响列请填 高/中/低 / probability & impact: 高/中/低）", bold=True))
     body.append(_table([
         ["风险类别 Category", "风险描述 Description", "概率 Prob", "影响 Impact", "应对措施 Mitigation"],
         ["技术风险", "新技术栈团队不熟悉，影响开发效率", "中", "高", "提前培训与技术预研"],
         ["进度风险", "需求变更导致工期延误", "高", "中", "变更控制流程 + 预留缓冲期"],
     ]))
-    body.append(_para("7.2 其他 / Others", bold=True))
-    body.append(_para("示例：按需补充。"))
+    body.append(_para("7.2 应对与监控 / Monitoring", bold=True))
+    body.append(_para("示例：每周风险复盘，红色风险升级至项目发起人。"))
+    body.append(_para(""))
+
+    # 8. 审批
+    body.append(_para("8. 审批 / Approval", bold=True))
+    body.append(_table([
+        ["角色 Role", "姓名 Name", "签字/日期 Sign / Date"],
+        ["项目发起人 Sponsor", "", ""],
+        ["项目经理 Project Manager", "", ""],
+    ]))
 
     sect = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
     document = (
