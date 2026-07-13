@@ -49,13 +49,10 @@ import type {
   Position,
 } from '../../api/types';
 import { buildDeptTreeSelectData } from '../../utils/dept';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 const GRAY = '#999';
-
-const DEPT_TYPE_OPTIONS = (Object.keys(DEPT_TYPE_LABELS) as DeptType[]).map((k) => ({
-  value: k,
-  label: DEPT_TYPE_LABELS[k],
-}));
 
 interface DeptFormValues {
   code?: string;
@@ -107,6 +104,12 @@ function SourceTag({ source }: { source?: string | null }) {
 }
 
 export default function OrgArchitecture() {
+  const t = useT();
+  const et = useEnums();
+  const DEPT_TYPE_OPTIONS = (Object.keys(DEPT_TYPE_LABELS) as DeptType[]).map((k) => ({
+    value: k,
+    label: et.deptType(k),
+  }));
   const user = useAuthStore((s) => s.user);
   const canDeleteMember = hasPermission(user, 'admin_members', 'delete');
   const [data, setData] = useState<OrgTreeData | null>(null);
@@ -234,7 +237,7 @@ export default function OrgArchitecture() {
         title: (
           <span style={off ? { color: GRAY } : undefined}>
             {highlight(m.name)}
-            {off ? <span style={{ color: GRAY }}>（离职）</span> : null}
+            {off ? <span style={{ color: GRAY }}>{t('admin.org.leftSuffix')}</span> : null}
             <SourceTag source={m.external_source} />
           </span>
         ),
@@ -257,7 +260,7 @@ export default function OrgArchitecture() {
           title: (
             <span style={!d.active ? { color: GRAY } : undefined}>
               {highlight(d.name)}
-              {!d.active ? <span style={{ color: GRAY }}>（停用）</span> : null}
+              {!d.active ? <span style={{ color: GRAY }}>{t('admin.org.disabledSuffix')}</span> : null}
               <SourceTag source={d.external_source} />
             </span>
           ),
@@ -269,7 +272,7 @@ export default function OrgArchitecture() {
       children.push({
         key: 'unassigned',
         icon: <TeamOutlined />,
-        title: <span style={{ color: GRAY }}>{highlight('未分配部门')}</span>,
+        title: <span style={{ color: GRAY }}>{highlight(t('admin.org.unassignedDept'))}</span>,
         children: data.unassigned_members.map(memberNode),
       });
     }
@@ -315,7 +318,7 @@ export default function OrgArchitecture() {
     setSyncing(true);
     try {
       await api.post('/admin/org-sync', { source: data.sync_sources[0] });
-      message.success('同步完成');
+      message.success(t('admin.org.syncDone'));
       void load();
     } catch {
       // 已统一提示
@@ -337,7 +340,7 @@ export default function OrgArchitecture() {
     setSaving(true);
     try {
       await api.patch(`/admin/master-data/${data.company.master_data_id}`, { name: values.name });
-      message.success('公司名称已更新');
+      message.success(t('admin.org.companyUpdated'));
       setCompanyOpen(false);
       void load();
     } catch {
@@ -384,7 +387,7 @@ export default function OrgArchitecture() {
               active: values.active ?? true,
             };
         await api.patch(`/admin/departments/${dept.id}`, payload);
-        message.success('部门已更新');
+        message.success(t('admin.dept.updated'));
       } else {
         await api.post('/admin/departments', {
           code: values.code,
@@ -393,7 +396,7 @@ export default function OrgArchitecture() {
           dept_type: values.dept_type,
           sort: values.sort ?? 0,
         });
-        message.success('部门已创建');
+        message.success(t('admin.dept.created'));
       }
       setDeptModal({ open: false, editing: null });
       void load();
@@ -407,7 +410,7 @@ export default function OrgArchitecture() {
   const handleDeptDelete = async (dept: OrgTreeDept) => {
     try {
       await api.delete(`/admin/departments/${dept.id}`);
-      message.success('部门已删除');
+      message.success(t('admin.dept.deleted'));
       setSelectedKey('company');
       void load();
     } catch {
@@ -480,10 +483,10 @@ export default function OrgArchitecture() {
           `/members/${m.id}`,
           m.external_source ? localPart : { ...hrPart, ...localPart },
         );
-        message.success('人员信息已更新');
+        message.success(t('admin.member.updated'));
       } else {
         await api.post('/members', { ...hrPart, ...localPart });
-        message.success('人员已创建');
+        message.success(t('admin.member.created'));
       }
       setMemberModal({ open: false, editing: null });
       void load();
@@ -498,7 +501,7 @@ export default function OrgArchitecture() {
   const handleMemberDelete = async (m: Member) => {
     try {
       const res = await api.delete<{ message?: string }>(`/members/${m.id}`);
-      message.success(res?.message || '人员已删除');
+      message.success(res?.message || t('admin.member.deleted'));
       setSelectedKey(null);
       void load();
     } catch {
@@ -512,7 +515,7 @@ export default function OrgArchitecture() {
         .filter((m) => m.id !== memberModal.editing?.id)
         .map((m) => ({
           value: m.id,
-          label: `${m.name}（${deptNameOf(m.department_id) ?? '未分配'}）`,
+          label: `${m.name}（${deptNameOf(m.department_id) ?? t('admin.org.unassigned')}）`,
         })),
     [allMembers, memberModal.editing, deptNameOf],
   );
@@ -524,31 +527,31 @@ export default function OrgArchitecture() {
     return (
       <>
         <Descriptions
-          title="公司信息"
+          title={t('admin.org.companyInfo')}
           bordered
           size="small"
           column={1}
           extra={
             data.company.master_data_id ? (
               <Button icon={<EditOutlined />} onClick={openCompanyEdit}>
-                编辑
+                {t('common.edit')}
               </Button>
             ) : (
-              <Tooltip title="公司名称字典项（sys_config / company_name）缺失，请先在数据字典中创建">
+              <Tooltip title={t('admin.org.companyMissingTooltip')}>
                 <Button icon={<EditOutlined />} disabled>
-                  编辑
+                  {t('common.edit')}
                 </Button>
               </Tooltip>
             )
           }
         >
-          <Descriptions.Item label="公司名称">{data.company.name}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.org.companyName')}>{data.company.name}</Descriptions.Item>
         </Descriptions>
         <Alert
           type="info"
           showIcon
           style={{ marginTop: 12 }}
-          message="将来接入飞书后组织架构以飞书为准"
+          message={t('admin.org.feishuNotice')}
         />
       </>
     );
@@ -563,45 +566,45 @@ export default function OrgArchitecture() {
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message={`该部门由 ${dept.external_source} 同步，结构以外部源为准，本地仅可修改“部门类型”`}
+            message={t('admin.org.deptSyncedAlert', { source: dept.external_source ?? '' })}
           />
         )}
         <Descriptions
-          title="部门信息"
+          title={t('admin.org.deptInfo')}
           bordered
           size="small"
           column={2}
           extra={
             <Space>
               <Button icon={<EditOutlined />} onClick={() => openDeptEdit(dept)}>
-                编辑
+                {t('common.edit')}
               </Button>
               <Button icon={<PlusOutlined />} onClick={() => openDeptCreate(dept.id)}>
-                新建子部门
+                {t('admin.org.newSubDept')}
               </Button>
               {!synced && (
-                <Popconfirm title="确定删除该部门？" onConfirm={() => void handleDeptDelete(dept)}>
+                <Popconfirm title={t('admin.dept.deleteConfirm')} onConfirm={() => void handleDeptDelete(dept)}>
                   <Button danger icon={<DeleteOutlined />}>
-                    删除
+                    {t('common.delete')}
                   </Button>
                 </Popconfirm>
               )}
             </Space>
           }
         >
-          <Descriptions.Item label="编码">{dept.code}</Descriptions.Item>
-          <Descriptions.Item label="名称">{dept.name}</Descriptions.Item>
-          <Descriptions.Item label="类型">
-            <Tag color={DEPT_TYPE_COLORS[dept.dept_type]}>{DEPT_TYPE_LABELS[dept.dept_type]}</Tag>
+          <Descriptions.Item label={t('admin.common.code')}>{dept.code}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.common.name')}>{dept.name}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.common.type')}>
+            <Tag color={DEPT_TYPE_COLORS[dept.dept_type]}>{et.deptType(dept.dept_type)}</Tag>
           </Descriptions.Item>
-          <Descriptions.Item label="排序">{dept.sort}</Descriptions.Item>
-          <Descriptions.Item label="启用">
-            {dept.active ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>}
+          <Descriptions.Item label={t('admin.common.sort')}>{dept.sort}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.common.on')}>
+            {dept.active ? <Tag color="green">{t('admin.common.on')}</Tag> : <Tag>{t('admin.common.off')}</Tag>}
           </Descriptions.Item>
-          <Descriptions.Item label="同步来源">{dept.external_source || '本地维护'}</Descriptions.Item>
-          <Descriptions.Item label="人数">{dept.members.length}</Descriptions.Item>
-          <Descriptions.Item label="上级部门">
-            {deptNameOf(dept.parent_id) ?? '（顶级部门）'}
+          <Descriptions.Item label={t('admin.common.syncSource')}>{dept.external_source || t('admin.common.localMaintained')}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.common.memberCount')}>{dept.members.length}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.common.parentDept')}>
+            {deptNameOf(dept.parent_id) ?? t('admin.org.topLevel')}
           </Descriptions.Item>
         </Descriptions>
       </>
@@ -617,57 +620,57 @@ export default function OrgArchitecture() {
             type="warning"
             showIcon
             style={{ marginBottom: 12 }}
-            message={`人员主数据以 ${m.external_source} 为准，同步维护；本地仅可编辑岗位/技能/备注`}
+            message={t('admin.org.memberSyncedAlert', { source: m.external_source ?? '' })}
           />
         )}
         <Descriptions
-          title="HR 基础信息"
+          title={t('admin.org.hrInfo')}
           bordered
           size="small"
           column={2}
           extra={
             <Space>
               <Button icon={<EditOutlined />} onClick={() => openMemberEdit(m)}>
-                编辑
+                {t('common.edit')}
               </Button>
               {canDeleteMember && (
                 <Popconfirm
-                  title="删除后该人员将不可见，其绑定的登录账号会一并停用。确认删除？"
+                  title={t('admin.org.memberDeleteConfirm')}
                   onConfirm={() => void handleMemberDelete(m)}
                 >
                   <Button danger icon={<DeleteOutlined />}>
-                    删除人员
+                    {t('admin.org.deleteMember')}
                   </Button>
                 </Popconfirm>
               )}
             </Space>
           }
         >
-          <Descriptions.Item label="姓名">{m.name}</Descriptions.Item>
-          <Descriptions.Item label="英文名">{m.name_en || '-'}</Descriptions.Item>
-          <Descriptions.Item label="工号">{m.employee_no || '-'}</Descriptions.Item>
-          <Descriptions.Item label="性别">{m.gender || '-'}</Descriptions.Item>
-          <Descriptions.Item label="出生日期">{m.birth_date || '-'}</Descriptions.Item>
-          <Descriptions.Item label="用工类型">{m.employment_type || '-'}</Descriptions.Item>
-          <Descriptions.Item label="直属上级">{m.supervisor_name || '-'}</Descriptions.Item>
-          <Descriptions.Item label="办公地点">{m.work_location || '-'}</Descriptions.Item>
-          <Descriptions.Item label="部门">{deptNameOf(m.department_id) ?? '未分配'}</Descriptions.Item>
-          <Descriptions.Item label="入职日期">{m.hire_date || '-'}</Descriptions.Item>
-          <Descriptions.Item label="邮箱">{m.email || '-'}</Descriptions.Item>
-          <Descriptions.Item label="手机">{m.mobile || '-'}</Descriptions.Item>
-          <Descriptions.Item label="状态">
+          <Descriptions.Item label={t('admin.member.name')}>{m.name}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.nameEn')}>{m.name_en || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.employeeNo')}>{m.employee_no || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.gender')}>{m.gender || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.birthDate')}>{m.birth_date || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.employmentType')}>{m.employment_type || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.supervisor')}>{m.supervisor_name || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.workLocation')}>{m.work_location || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.dept')}>{deptNameOf(m.department_id) ?? t('admin.org.unassigned')}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.hireDate')}>{m.hire_date || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.email')}>{m.email || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.mobile')}>{m.mobile || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('common.status')}>
             {m.status ? <Tag color={m.status === '在岗' ? 'green' : 'default'}>{m.status}</Tag> : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="同步来源">{m.external_source || '本地维护'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.common.syncSource')}>{m.external_source || t('admin.common.localMaintained')}</Descriptions.Item>
         </Descriptions>
-        <Descriptions title="IT 扩展信息" bordered size="small" column={2} style={{ marginTop: 16 }}>
-          <Descriptions.Item label="岗位">{m.position_name || '-'}</Descriptions.Item>
-          <Descriptions.Item label="技能">
+        <Descriptions title={t('admin.org.itInfo')} bordered size="small" column={2} style={{ marginTop: 16 }}>
+          <Descriptions.Item label={t('admin.member.position')}>{m.position_name || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.skills')}>
             {(m.skills ?? []).length > 0
               ? (m.skills ?? []).map((s) => <Tag key={s}>{s}</Tag>)
               : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="备注" span={2}>
+          <Descriptions.Item label={t('common.remark')} span={2}>
             {m.remarks || '-'}
           </Descriptions.Item>
         </Descriptions>
@@ -689,12 +692,12 @@ export default function OrgArchitecture() {
           <Alert
             type="info"
             showIcon
-            message={`共 ${data.unassigned_members.length} 人未分配部门`}
-            description="编辑人员档案并选择部门后，将自动归入相应部门。"
+            message={t('admin.org.unassignedCount', { n: data.unassigned_members.length })}
+            description={t('admin.org.unassignedDesc')}
           />
         );
       default:
-        return <Empty description="请在左侧选择公司、部门或人员查看详情" style={{ marginTop: 48 }} />;
+        return <Empty description={t('admin.org.selectHint')} style={{ marginTop: 48 }} />;
     }
   };
 
@@ -706,20 +709,20 @@ export default function OrgArchitecture() {
 
   return (
     <Card
-      title="组织架构"
+      title={t('admin.org.title')}
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
+            {t('common.refresh')}
           </Button>
           {syncConfigured ? (
             <Button icon={<SyncOutlined />} loading={syncing} onClick={() => void handleSync()}>
-              从飞书同步
+              {t('admin.org.syncFeishu')}
             </Button>
           ) : (
-            <Tooltip title="飞书同步将于上线前配置凭据后启用">
+            <Tooltip title={t('admin.org.syncTooltip')}>
               <Button icon={<SyncOutlined />} disabled>
-                从飞书同步
+                {t('admin.org.syncFeishu')}
               </Button>
             </Tooltip>
           )}
@@ -729,7 +732,7 @@ export default function OrgArchitecture() {
       <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
         <div style={{ width: 320, flexShrink: 0 }}>
           <Input.Search
-            placeholder="搜索部门 / 人员名称"
+            placeholder={t('admin.org.searchPlaceholder')}
             allowClear
             onChange={(e) => onSearchChange(e.target.value)}
             style={{ marginBottom: 8 }}
@@ -754,10 +757,10 @@ export default function OrgArchitecture() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Space style={{ marginBottom: 16 }}>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => openDeptCreate(null)}>
-              新建部门
+              {t('admin.dept.new')}
             </Button>
             <Button icon={<UserAddOutlined />} onClick={openMemberCreate}>
-              新建人员
+              {t('admin.member.new')}
             </Button>
           </Space>
           {renderPanel()}
@@ -766,7 +769,7 @@ export default function OrgArchitecture() {
 
       {/* 公司名称编辑 */}
       <Modal
-        title="编辑公司名称"
+        title={t('admin.org.editCompany')}
         open={companyOpen}
         onOk={() => void handleCompanySave()}
         confirmLoading={saving}
@@ -777,13 +780,13 @@ export default function OrgArchitecture() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="将来接入飞书后组织架构以飞书为准"
+          message={t('admin.org.feishuNotice')}
         />
         <Form form={companyForm} layout="vertical" preserve={false}>
           <Form.Item
             name="name"
-            label="公司名称"
-            rules={[{ required: true, message: '请输入公司名称' }]}
+            label={t('admin.org.companyName')}
+            rules={[{ required: true, message: t('admin.org.companyNameRequired') }]}
           >
             <Input maxLength={100} />
           </Form.Item>
@@ -792,7 +795,7 @@ export default function OrgArchitecture() {
 
       {/* 部门新建 / 编辑 */}
       <Modal
-        title={deptModal.editing ? '编辑部门' : '新建部门'}
+        title={deptModal.editing ? t('admin.dept.edit') : t('admin.dept.new')}
         open={deptModal.open}
         onOk={() => void handleDeptSave()}
         confirmLoading={saving}
@@ -804,38 +807,38 @@ export default function OrgArchitecture() {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message="该部门由飞书同步，结构以外部源为准，仅可修改部门类型"
+            message={t('admin.org.deptSyncedModalAlert')}
           />
         )}
         <Form<DeptFormValues> form={deptForm} layout="vertical" preserve={false}>
           <Form.Item
             name="code"
-            label="编码"
+            label={t('admin.common.code')}
             rules={
               deptModal.editing
                 ? []
                 : [
-                    { required: true, message: '请输入部门编码' },
-                    { pattern: /^[a-zA-Z0-9_.-]{2,32}$/, message: '2-32 位字母、数字、下划线、点或中划线' },
+                    { required: true, message: t('admin.dept.codeRequired') },
+                    { pattern: /^[a-zA-Z0-9_.-]{2,32}$/, message: t('admin.org.deptCodePattern232') },
                   ]
             }
           >
-            <Input maxLength={32} disabled={!!deptModal.editing} placeholder="如 it.ops" />
+            <Input maxLength={32} disabled={!!deptModal.editing} placeholder={t('admin.dept.codePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入部门名称' }]}
+            label={t('admin.common.name')}
+            rules={[{ required: true, message: t('admin.dept.nameRequired') }]}
           >
             <Input maxLength={50} disabled={deptSynced} />
           </Form.Item>
-          <Form.Item name="parent_id" label="上级部门">
+          <Form.Item name="parent_id" label={t('admin.common.parentDept')}>
             <TreeSelect
               allowClear
               showSearch
               treeDefaultExpandAll
               treeNodeFilterProp="title"
-              placeholder="不选则为顶级部门"
+              placeholder={t('admin.dept.parentPlaceholder')}
               treeData={buildDeptTreeSelectData(deptList, deptModal.editing?.id)}
               disabled={deptSynced}
             />
@@ -843,19 +846,19 @@ export default function OrgArchitecture() {
           <Space.Compact block>
             <Form.Item
               name="dept_type"
-              label="类型"
+              label={t('admin.common.type')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ required: true, message: '请选择部门类型' }]}
+              rules={[{ required: true, message: t('admin.dept.typeRequired') }]}
             >
               <Select options={DEPT_TYPE_OPTIONS} />
             </Form.Item>
-            <Form.Item name="sort" label="排序" style={{ width: '50%' }}>
+            <Form.Item name="sort" label={t('admin.common.sort')} style={{ width: '50%' }}>
               <InputNumber min={0} style={{ width: '100%' }} disabled={deptSynced} />
             </Form.Item>
           </Space.Compact>
           {deptModal.editing && (
-            <Form.Item name="active" label="启用" valuePropName="checked">
-              <Switch checkedChildren="启用" unCheckedChildren="停用" disabled={deptSynced} />
+            <Form.Item name="active" label={t('admin.common.on')} valuePropName="checked">
+              <Switch checkedChildren={t('admin.common.on')} unCheckedChildren={t('admin.common.off')} disabled={deptSynced} />
             </Form.Item>
           )}
         </Form>
@@ -863,7 +866,7 @@ export default function OrgArchitecture() {
 
       {/* 人员新建 / 编辑 */}
       <Modal
-        title={memberModal.editing ? '编辑人员' : '新建人员'}
+        title={memberModal.editing ? t('admin.member.edit') : t('admin.member.new')}
         open={memberModal.open}
         onOk={() => void handleMemberSave()}
         confirmLoading={saving}
@@ -876,28 +879,28 @@ export default function OrgArchitecture() {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message="人员主数据以飞书为准，同步维护；仅岗位/技能/备注可本地编辑"
+            message={t('admin.org.memberSyncedModalAlert')}
           />
         )}
         <Form<MemberFormValues> form={memberForm} layout="vertical" preserve={false}>
           <Space.Compact block>
             <Form.Item
               name="name"
-              label="中文姓名"
+              label={t('admin.member.nameCn')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ required: true, message: '请输入中文姓名' }]}
+              rules={[{ required: true, message: t('admin.member.nameCnRequired') }]}
             >
               <Input maxLength={50} disabled={memberSynced} />
             </Form.Item>
-            <Form.Item name="name_en" label="英文名" style={{ width: '50%' }}>
-              <Input maxLength={50} placeholder="如 Zhang San" disabled={memberSynced} />
+            <Form.Item name="name_en" label={t('admin.member.nameEn')} style={{ width: '50%' }}>
+              <Input maxLength={50} placeholder={t('admin.member.nameEnPlaceholder')} disabled={memberSynced} />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="employee_no" label="工号" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="employee_no" label={t('admin.member.employeeNo')} style={{ width: '50%', marginRight: 8 }}>
               <Input maxLength={32} disabled={memberSynced} />
             </Form.Item>
-            <Form.Item name="gender" label="性别" style={{ width: '50%' }}>
+            <Form.Item name="gender" label={t('admin.member.gender')} style={{ width: '50%' }}>
               <Select
                 allowClear
                 disabled={memberSynced}
@@ -909,10 +912,10 @@ export default function OrgArchitecture() {
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="birth_date" label="出生日期" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="birth_date" label={t('admin.member.birthDate')} style={{ width: '50%', marginRight: 8 }}>
               <DatePicker style={{ width: '100%' }} disabled={memberSynced} />
             </Form.Item>
-            <Form.Item name="employment_type" label="用工类型" style={{ width: '50%' }}>
+            <Form.Item name="employment_type" label={t('admin.member.employmentType')} style={{ width: '50%' }}>
               <Select
                 allowClear
                 disabled={memberSynced}
@@ -925,44 +928,44 @@ export default function OrgArchitecture() {
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="supervisor_id" label="直属上级" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="supervisor_id" label={t('admin.member.supervisor')} style={{ width: '50%', marginRight: 8 }}>
               <Select
                 allowClear
                 showSearch
                 optionFilterProp="label"
-                placeholder="从人员列表中选择"
+                placeholder={t('admin.member.selectSupervisor')}
                 options={supervisorOptions}
                 disabled={memberSynced}
               />
             </Form.Item>
-            <Form.Item name="work_location" label="办公地点" style={{ width: '50%' }}>
+            <Form.Item name="work_location" label={t('admin.member.workLocation')} style={{ width: '50%' }}>
               <Input maxLength={100} disabled={memberSynced} />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="department_id" label="部门" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="department_id" label={t('admin.member.dept')} style={{ width: '50%', marginRight: 8 }}>
               <TreeSelect
                 allowClear
                 showSearch
                 treeDefaultExpandAll
                 treeNodeFilterProp="title"
-                placeholder="从部门树中选择"
+                placeholder={t('admin.member.selectDeptTree')}
                 treeData={deptTreeSelectData}
                 disabled={memberSynced}
               />
             </Form.Item>
-            <Form.Item name="position_id" label="岗位" style={{ width: '50%' }}>
+            <Form.Item name="position_id" label={t('admin.member.position')} style={{ width: '50%' }}>
               <Select
                 allowClear
                 showSearch
                 optionFilterProp="label"
-                placeholder="从岗位编制中选择"
+                placeholder={t('admin.member.selectPosition')}
                 options={positions.map((p) => ({ value: p.id, label: p.name }))}
               />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="status" label="状态" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="status" label={t('common.status')} style={{ width: '50%', marginRight: 8 }}>
               <Select
                 disabled={memberSynced}
                 options={[
@@ -971,27 +974,27 @@ export default function OrgArchitecture() {
                 ]}
               />
             </Form.Item>
-            <Form.Item name="hire_date" label="入职日期" style={{ width: '50%' }}>
+            <Form.Item name="hire_date" label={t('admin.member.hireDate')} style={{ width: '50%' }}>
               <DatePicker style={{ width: '100%' }} disabled={memberSynced} />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
             <Form.Item
               name="email"
-              label="邮箱"
+              label={t('admin.member.email')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ type: 'email', message: '邮箱格式不正确' }]}
+              rules={[{ type: 'email', message: t('admin.member.emailInvalid') }]}
             >
               <Input maxLength={100} disabled={memberSynced} />
             </Form.Item>
-            <Form.Item name="mobile" label="手机" style={{ width: '50%' }}>
+            <Form.Item name="mobile" label={t('admin.member.mobile')} style={{ width: '50%' }}>
               <Input maxLength={20} disabled={memberSynced} />
             </Form.Item>
           </Space.Compact>
-          <Form.Item name="skills" label="技能标签">
-            <Select mode="tags" placeholder="输入后回车添加" open={false} suffixIcon={null} />
+          <Form.Item name="skills" label={t('admin.member.skillsTag')}>
+            <Select mode="tags" placeholder={t('admin.member.skillsPlaceholder')} open={false} suffixIcon={null} />
           </Form.Item>
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>

@@ -26,8 +26,8 @@ export default function Identity() {
   return (
     <PermTabs
       tabs={[
-        { key: 'users', label: '用户', modules: ['admin_users'], children: <Users /> },
-        { key: 'groups', label: '用户组', modules: ['admin_groups'], children: <Groups /> },
+        { key: 'users', label: t('admin.identity.tabUsers'), modules: ['admin_users'], children: <Users /> },
+        { key: 'groups', label: t('admin.identity.tabGroups'), modules: ['admin_groups'], children: <Groups /> },
         {
           key: 'onboarding',
           label: (

@@ -18,6 +18,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import type { MasterDataItem } from '../../api/types';
 
 interface ItemForm {
@@ -29,6 +30,7 @@ interface ItemForm {
 }
 
 export default function MasterData() {
+  const t = useT();
   const [items, setItems] = useState<MasterDataItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState<string | null>(null);
@@ -97,10 +99,10 @@ export default function MasterData() {
     try {
       if (editing) {
         await api.patch(`/admin/master-data/${editing.id}`, values);
-        message.success('条目已更新');
+        message.success(t('admin.masterData.updated'));
       } else {
         await api.post('/admin/master-data', values);
-        message.success('条目已创建');
+        message.success(t('admin.masterData.created'));
       }
       setModalOpen(false);
       setCategory(values.category);
@@ -113,22 +115,23 @@ export default function MasterData() {
   };
 
   const columns: ColumnsType<MasterDataItem> = [
-    { title: '编码', dataIndex: 'code', width: 160 },
-    { title: '名称', dataIndex: 'name' },
-    { title: '排序', dataIndex: 'sort', width: 80 },
+    { title: t('admin.common.code'), dataIndex: 'code', width: 160 },
+    { title: t('admin.common.name'), dataIndex: 'name' },
+    { title: t('admin.common.sort'), dataIndex: 'sort', width: 80 },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'active',
       width: 90,
-      render: (v: boolean) => (v ? <Tag color="green">启用</Tag> : <Tag>停用</Tag>),
+      render: (v: boolean) =>
+        v ? <Tag color="green">{t('admin.common.on')}</Tag> : <Tag>{t('admin.common.off')}</Tag>,
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 90,
       render: (_, record) => (
         <Button type="link" size="small" onClick={() => openEdit(record)}>
-          编辑
+          {t('common.edit')}
         </Button>
       ),
     },
@@ -136,10 +139,10 @@ export default function MasterData() {
 
   return (
     <Card
-      title="数据字典"
+      title={t('admin.masterData.title')}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建条目
+          {t('admin.masterData.newItem')}
         </Button>
       }
     >
@@ -159,13 +162,13 @@ export default function MasterData() {
             loading={loading}
             columns={columns}
             dataSource={rows}
-            pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+            pagination={{ pageSize: 20, showTotal: (n) => t('admin.total', { n }) }}
           />
         </Col>
       </Row>
 
       <Modal
-        title={editing ? '编辑条目' : '新建条目'}
+        title={editing ? t('admin.masterData.editItem') : t('admin.masterData.newItem')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -175,35 +178,35 @@ export default function MasterData() {
         <Form<ItemForm> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="category"
-            label="类目"
-            rules={[{ required: true, message: '请输入类目' }]}
-            extra="输入新类目名称即可创建新类目"
+            label={t('admin.masterData.category')}
+            rules={[{ required: true, message: t('admin.masterData.categoryRequired') }]}
+            extra={t('admin.masterData.categoryHint')}
           >
             <Input maxLength={50} disabled={!!editing} />
           </Form.Item>
           <Space.Compact block>
             <Form.Item
               name="code"
-              label="编码"
+              label={t('admin.common.code')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ required: true, message: '请输入编码' }]}
+              rules={[{ required: true, message: t('admin.masterData.codeRequired') }]}
             >
               <Input maxLength={50} />
             </Form.Item>
             <Form.Item
               name="name"
-              label="名称"
+              label={t('admin.common.name')}
               style={{ width: '50%' }}
-              rules={[{ required: true, message: '请输入名称' }]}
+              rules={[{ required: true, message: t('admin.masterData.nameRequired') }]}
             >
               <Input maxLength={50} />
             </Form.Item>
           </Space.Compact>
-          <Form.Item name="sort" label="排序">
+          <Form.Item name="sort" label={t('admin.common.sort')}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="active" label="启用" valuePropName="checked" initialValue={true}>
-            <Switch checkedChildren="启用" unCheckedChildren="停用" />
+          <Form.Item name="active" label={t('admin.common.on')} valuePropName="checked" initialValue={true}>
+            <Switch checkedChildren={t('admin.common.on')} unCheckedChildren={t('admin.common.off')} />
           </Form.Item>
         </Form>
       </Modal>

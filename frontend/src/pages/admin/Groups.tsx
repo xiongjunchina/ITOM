@@ -16,8 +16,9 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
-import { ROLE_LABELS } from '../../api/types';
-import type { Member, Role, RoleDef, UserGroup } from '../../api/types';
+import type { Member, RoleDef, UserGroup } from '../../api/types';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface GroupForm {
   code: string;
@@ -28,6 +29,8 @@ interface GroupForm {
 }
 
 export default function Groups() {
+  const t = useT();
+  const et = useEnums();
   const [items, setItems] = useState<UserGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
@@ -123,7 +126,7 @@ export default function Groups() {
           owner_id: values.owner_id ?? null,
           roles: values.roles ?? [],
         });
-        message.success('用户组已更新');
+        message.success(t('admin.groups.updated'));
       } else {
         await api.post('/admin/groups', {
           code: values.code,
@@ -132,7 +135,7 @@ export default function Groups() {
           owner_id: values.owner_id ?? null,
           roles: values.roles ?? [],
         });
-        message.success('用户组已创建');
+        message.success(t('admin.groups.created'));
       }
       setModalOpen(false);
       void load();
@@ -146,7 +149,7 @@ export default function Groups() {
   const handleDelete = async (record: UserGroup) => {
     try {
       await api.delete(`/admin/groups/${record.id}`);
-      message.success('用户组已删除');
+      message.success(t('admin.groups.deleted'));
       void load();
     } catch {
       // 已统一提示（在用被拒的中文错误由后端返回）
@@ -165,7 +168,7 @@ export default function Groups() {
       await api.put(`/admin/groups/${memberTarget.id}/members`, {
         person_ids: memberIds,
       });
-      message.success('组成员已更新');
+      message.success(t('admin.groups.membersUpdated'));
       setMemberTarget(null);
       void load();
     } catch {
@@ -176,16 +179,16 @@ export default function Groups() {
   };
 
   const columns: ColumnsType<UserGroup> = [
-    { title: '代码', dataIndex: 'code', width: 140 },
-    { title: '名称', dataIndex: 'name', width: 160 },
+    { title: t('admin.common.codeShort'), dataIndex: 'code', width: 140 },
+    { title: t('admin.common.name'), dataIndex: 'name', width: 160 },
     {
-      title: '负责人',
+      title: t('admin.groups.owner'),
       dataIndex: 'owner_name',
       width: 110,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '授予角色',
+      title: t('admin.groups.grantedRoles'),
       dataIndex: 'roles',
       width: 220,
       render: (roles: string[] | undefined) =>
@@ -195,15 +198,15 @@ export default function Groups() {
           <>
             {(roles ?? []).map((code) => (
               <Tag key={code} color="geekblue">
-                {roleName.get(code) ?? ROLE_LABELS[code as Role] ?? code}
+                {roleName.get(code) ?? et.role(code) ?? code}
               </Tag>
             ))}
           </>
         ),
     },
-    { title: '描述', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('admin.common.description'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
     {
-      title: '成员',
+      title: t('admin.groups.members'),
       dataIndex: 'members',
       render: (list: UserGroup['members']) =>
         list.length === 0 ? (
@@ -217,23 +220,23 @@ export default function Groups() {
         ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 200,
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button type="link" size="small" onClick={() => openMembers(record)}>
-            管理成员
+            {t('admin.groups.manageMembers')}
           </Button>
           <Popconfirm
-            title="确定删除该用户组？"
+            title={t('admin.groups.deleteConfirm')}
             onConfirm={() => void handleDelete(record)}
           >
             <Button type="link" size="small" danger>
-              删除
+              {t('common.delete')}
             </Button>
           </Popconfirm>
         </Space>
@@ -243,10 +246,10 @@ export default function Groups() {
 
   return (
     <Card
-      title="用户组"
+      title={t('admin.groups.title')}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建用户组
+          {t('admin.groups.new')}
         </Button>
       }
     >
@@ -254,7 +257,7 @@ export default function Groups() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="用户组既是派单/协作单位，也是矩阵组织的纵向专业线（资源池）：指定负责人(TM)、配置组授予角色（如开发资源池授予 it_dev），人进组自动继承"
+        message={t('admin.groups.alert')}
       />
       <Table<UserGroup>
         rowKey="id"
@@ -265,7 +268,7 @@ export default function Groups() {
       />
 
       <Modal
-        title={editing ? '编辑用户组' : '新建用户组'}
+        title={editing ? t('admin.groups.edit') : t('admin.groups.new')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -275,54 +278,54 @@ export default function Groups() {
         <Form<GroupForm> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="code"
-            label="代码"
+            label={t('admin.common.codeShort')}
             rules={[
-              { required: true, message: '请输入组代码' },
+              { required: true, message: t('admin.groups.codeRequired') },
               {
                 pattern: /^[a-z0-9_]{2,32}$/,
-                message: '2-32 位小写字母、数字或下划线',
+                message: t('admin.common.codePattern232'),
               },
             ]}
           >
-            <Input maxLength={32} disabled={!!editing} placeholder="如 dba_team" />
+            <Input maxLength={32} disabled={!!editing} placeholder={t('admin.groups.codePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入组名称' }]}
+            label={t('admin.common.name')}
+            rules={[{ required: true, message: t('admin.groups.nameRequired') }]}
           >
             <Input maxLength={50} />
           </Form.Item>
-          <Form.Item name="owner_id" label="负责人（专业线 TM）">
+          <Form.Item name="owner_id" label={t('admin.groups.ownerLabel')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="从人员主数据中选择"
+              placeholder={t('admin.common.selectFromPeople')}
               options={ownerOptions}
             />
           </Form.Item>
           <Form.Item
             name="roles"
-            label="授予角色"
-            extra="人进组自动继承这些角色（ServiceNow 式）"
+            label={t('admin.groups.grantedRoles')}
+            extra={t('admin.groups.rolesExtra')}
           >
             <Select
               mode="multiple"
               allowClear
               optionFilterProp="label"
-              placeholder="可多选（不含系统管理员）"
+              placeholder={t('admin.groups.rolesPlaceholder')}
               options={roleOptions}
             />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('admin.common.description')}>
             <Input.TextArea rows={2} maxLength={200} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={`管理成员：${memberTarget?.name ?? ''}`}
+        title={t('admin.groups.manageMembersTitle', { name: memberTarget?.name ?? '' })}
         open={!!memberTarget}
         onOk={() => void handleSaveMembers()}
         confirmLoading={savingMembers}
@@ -335,7 +338,7 @@ export default function Groups() {
           value={memberIds}
           onChange={setMemberIds}
           optionFilterProp="label"
-          placeholder="从人员主数据中选择成员"
+          placeholder={t('admin.groups.selectMembers')}
           options={members.map((m) => ({
             value: m.id,
             label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,

@@ -19,6 +19,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import type { Department, Member, Position } from '../../api/types';
 import { buildDeptTreeSelectData } from '../../utils/dept';
+import { useT } from '../../i18n';
 
 interface MemberForm {
   name: string;
@@ -34,6 +35,7 @@ interface MemberForm {
 }
 
 export default function Members() {
+  const t = useT();
   const [items, setItems] = useState<Member[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -123,10 +125,10 @@ export default function Members() {
     try {
       if (editing) {
         await api.patch(`/members/${editing.id}`, payload);
-        message.success('人员信息已更新');
+        message.success(t('admin.member.updated'));
       } else {
         await api.post('/members', payload);
-        message.success('人员已创建');
+        message.success(t('admin.member.created'));
       }
       setModalOpen(false);
       void load();
@@ -138,48 +140,48 @@ export default function Members() {
   };
 
   const columns: ColumnsType<Member> = [
-    { title: '姓名', dataIndex: 'name', width: 100, fixed: 'left' },
+    { title: t('admin.member.name'), dataIndex: 'name', width: 100, fixed: 'left' },
     {
-      title: '英文名',
+      title: t('admin.member.nameEn'),
       dataIndex: 'name_en',
       width: 110,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '部门',
+      title: t('admin.member.dept'),
       dataIndex: 'department_name',
       width: 140,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '岗位',
+      title: t('admin.member.position'),
       dataIndex: 'position_name',
       width: 120,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 80,
       render: (v: Member['status']) =>
         v ? <Tag color={v === '在岗' ? 'green' : 'default'}>{v}</Tag> : '-',
     },
-    { title: '入职日期', dataIndex: 'hire_date', width: 110 },
+    { title: t('admin.member.hireDate'), dataIndex: 'hire_date', width: 110 },
     {
-      title: '邮箱',
+      title: t('admin.member.email'),
       dataIndex: 'email',
       width: 180,
       ellipsis: true,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '手机',
+      title: t('admin.member.mobile'),
       dataIndex: 'mobile',
       width: 130,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '技能',
+      title: t('admin.member.skills'),
       dataIndex: 'skills',
       width: 160,
       render: (skills: string[] | null) =>
@@ -194,19 +196,19 @@ export default function Members() {
         ),
     },
     {
-      title: '同步来源',
+      title: t('admin.common.syncSource'),
       dataIndex: 'external_source',
       width: 100,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 80,
       fixed: 'right',
       render: (_, record) => (
         <Button type="link" size="small" onClick={() => openEdit(record)}>
-          编辑
+          {t('common.edit')}
         </Button>
       ),
     },
@@ -214,11 +216,11 @@ export default function Members() {
 
   return (
     <Card
-      title="人员主数据"
+      title={t('admin.member.title')}
       extra={
         <Space>
           <Input.Search
-            placeholder="搜索姓名"
+            placeholder={t('admin.member.searchPlaceholder')}
             allowClear
             onSearch={(v) => {
               setPage(1);
@@ -227,7 +229,7 @@ export default function Members() {
             style={{ width: 220 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建人员
+            {t('admin.member.new')}
           </Button>
         </Space>
       }
@@ -243,7 +245,7 @@ export default function Members() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('admin.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -252,7 +254,7 @@ export default function Members() {
       />
 
       <Modal
-        title={editing ? '编辑人员' : '新建人员'}
+        title={editing ? t('admin.member.edit') : t('admin.member.new')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -269,39 +271,39 @@ export default function Members() {
           <Space.Compact block>
             <Form.Item
               name="name"
-              label="中文姓名"
+              label={t('admin.member.nameCn')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ required: true, message: '请输入中文姓名' }]}
+              rules={[{ required: true, message: t('admin.member.nameCnRequired') }]}
             >
               <Input maxLength={50} />
             </Form.Item>
-            <Form.Item name="name_en" label="英文姓名" style={{ width: '50%' }}>
-              <Input maxLength={50} placeholder="如 Zhang San" />
+            <Form.Item name="name_en" label={t('admin.member.nameEnCn')} style={{ width: '50%' }}>
+              <Input maxLength={50} placeholder={t('admin.member.nameEnPlaceholder')} />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="department_id" label="部门" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="department_id" label={t('admin.member.dept')} style={{ width: '50%', marginRight: 8 }}>
               <TreeSelect
                 allowClear
                 showSearch
                 treeDefaultExpandAll
                 treeNodeFilterProp="title"
-                placeholder="从部门树中选择"
+                placeholder={t('admin.member.selectDeptTree')}
                 treeData={deptTreeData}
               />
             </Form.Item>
-            <Form.Item name="position_id" label="岗位" style={{ width: '50%' }}>
+            <Form.Item name="position_id" label={t('admin.member.position')} style={{ width: '50%' }}>
               <Select
                 allowClear
                 showSearch
                 optionFilterProp="label"
-                placeholder="从岗位编制中选择"
+                placeholder={t('admin.member.selectPosition')}
                 options={positions.map((p) => ({ value: p.id, label: p.name }))}
               />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
-            <Form.Item name="status" label="状态" style={{ width: '50%', marginRight: 8 }}>
+            <Form.Item name="status" label={t('common.status')} style={{ width: '50%', marginRight: 8 }}>
               <Select
                 options={[
                   { value: '在岗', label: '在岗' },
@@ -309,27 +311,27 @@ export default function Members() {
                 ]}
               />
             </Form.Item>
-            <Form.Item name="hire_date" label="入职日期" style={{ width: '50%' }}>
+            <Form.Item name="hire_date" label={t('admin.member.hireDate')} style={{ width: '50%' }}>
               <DatePicker style={{ width: '100%' }} />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
             <Form.Item
               name="email"
-              label="邮箱"
+              label={t('admin.member.email')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ type: 'email', message: '邮箱格式不正确' }]}
+              rules={[{ type: 'email', message: t('admin.member.emailInvalid') }]}
             >
               <Input maxLength={100} />
             </Form.Item>
-            <Form.Item name="mobile" label="手机" style={{ width: '50%' }}>
+            <Form.Item name="mobile" label={t('admin.member.mobile')} style={{ width: '50%' }}>
               <Input maxLength={20} />
             </Form.Item>
           </Space.Compact>
-          <Form.Item name="skills" label="技能标签">
-            <Select mode="tags" placeholder="输入后回车添加" open={false} suffixIcon={null} />
+          <Form.Item name="skills" label={t('admin.member.skillsTag')}>
+            <Select mode="tags" placeholder={t('admin.member.skillsPlaceholder')} open={false} suffixIcon={null} />
           </Form.Item>
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>

@@ -16,8 +16,10 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
-import { ALL_ROLES, ROLE_LABELS } from '../../api/types';
+import { ALL_ROLES } from '../../api/types';
 import type { Role, RoleDef } from '../../api/types';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface RoleForm {
   code: string;
@@ -26,13 +28,14 @@ interface RoleForm {
   description?: string;
 }
 
-/** 可作为权限模板的内置角色：排除 admin（隐式全权，无矩阵可复制） */
-const BASE_ROLE_OPTIONS = ALL_ROLES.filter((r) => r !== 'admin').map((r) => ({
-  value: r,
-  label: ROLE_LABELS[r],
-}));
-
 export default function Roles() {
+  const t = useT();
+  const et = useEnums();
+  /** 可作为权限模板的内置角色：排除 admin（隐式全权，无矩阵可复制） */
+  const BASE_ROLE_OPTIONS = ALL_ROLES.filter((r) => r !== 'admin').map((r) => ({
+    value: r,
+    label: et.role(r),
+  }));
   const [items, setItems] = useState<RoleDef[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -88,7 +91,7 @@ export default function Roles() {
         };
         if (!editing.is_builtin) payload.base_role = values.base_role;
         await api.patch(`/admin/roles/${editing.id}`, payload);
-        message.success('角色已更新');
+        message.success(t('admin.roles.updated'));
       } else {
         await api.post('/admin/roles', {
           code: values.code,
@@ -96,7 +99,7 @@ export default function Roles() {
           base_role: values.base_role,
           description: values.description ?? null,
         });
-        message.success('角色已创建');
+        message.success(t('admin.roles.created'));
       }
       setModalOpen(false);
       void load();
@@ -110,7 +113,7 @@ export default function Roles() {
   const handleDelete = async (record: RoleDef) => {
     try {
       await api.delete(`/admin/roles/${record.id}`);
-      message.success('角色已删除');
+      message.success(t('admin.roles.deleted'));
       void load();
     } catch {
       // 已统一提示（内置/在用角色的中文错误由后端返回）
@@ -118,40 +121,40 @@ export default function Roles() {
   };
 
   const columns: ColumnsType<RoleDef> = [
-    { title: '代码', dataIndex: 'code', width: 160 },
-    { title: '名称', dataIndex: 'name', width: 160 },
+    { title: t('admin.common.codeShort'), dataIndex: 'code', width: 160 },
+    { title: t('admin.common.name'), dataIndex: 'name', width: 160 },
     {
-      title: '类型',
+      title: t('admin.common.type'),
       dataIndex: 'is_builtin',
       width: 100,
       render: (v: boolean) =>
-        v ? <Tag color="blue">内置</Tag> : <Tag color="green">自定义</Tag>,
+        v ? <Tag color="blue">{t('admin.roles.builtin')}</Tag> : <Tag color="green">{t('admin.roles.custom')}</Tag>,
     },
     {
-      title: '权限模板',
+      title: t('admin.roles.permTemplate'),
       dataIndex: 'base_role',
       width: 160,
       render: (v: Role | null | undefined, record) =>
-        record.is_builtin || !v ? '—' : ROLE_LABELS[v] ?? v,
+        record.is_builtin || !v ? '—' : et.role(v) || v,
     },
-    { title: '描述', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
-    { title: '持有用户数', dataIndex: 'user_count', width: 110 },
+    { title: t('admin.common.description'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('admin.roles.userCount'), dataIndex: 'user_count', width: 110 },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 140,
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
           {!record.is_builtin && (
             <Popconfirm
-              title="确定删除该角色？"
+              title={t('admin.roles.deleteConfirm')}
               onConfirm={() => void handleDelete(record)}
             >
               <Button type="link" size="small" danger>
-                删除
+                {t('common.delete')}
               </Button>
             </Popconfirm>
           )}
@@ -162,10 +165,10 @@ export default function Roles() {
 
   return (
     <Card
-      title="角色管理"
+      title={t('admin.roles.title')}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建角色
+          {t('admin.roles.new')}
         </Button>
       }
     >
@@ -178,7 +181,7 @@ export default function Roles() {
       />
 
       <Modal
-        title={editing ? '编辑角色' : '新建角色'}
+        title={editing ? t('admin.roles.edit') : t('admin.roles.new')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -191,45 +194,45 @@ export default function Roles() {
           style={{ marginBottom: 16 }}
           message={
             editingBuiltin
-              ? '内置角色仅可修改名称与描述；代码与权限模板锁定，权限矩阵请在权限配置页调整'
-              : '将复制所选角色的权限矩阵作为初始值，之后可在权限配置页独立调整'
+              ? t('admin.roles.alertBuiltin')
+              : t('admin.roles.alertCustom')
           }
         />
         <Form<RoleForm> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="code"
-            label="代码"
+            label={t('admin.common.codeShort')}
             rules={[
-              { required: true, message: '请输入角色代码' },
+              { required: true, message: t('admin.roles.codeRequired') },
               {
                 pattern: /^[a-z0-9_]{2,32}$/,
-                message: '2-32 位小写字母、数字或下划线',
+                message: t('admin.common.codePattern232'),
               },
             ]}
           >
-            <Input maxLength={32} disabled={!!editing} placeholder="如 db_admin" />
+            <Input maxLength={32} disabled={!!editing} placeholder={t('admin.roles.codePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入角色名称' }]}
+            label={t('admin.common.name')}
+            rules={[{ required: true, message: t('admin.roles.nameRequired') }]}
           >
             <Input maxLength={50} />
           </Form.Item>
           {editingBuiltin ? (
-            <Form.Item label="权限模板">
-              <Input disabled value="—（内置角色，无权限模板）" />
+            <Form.Item label={t('admin.roles.permTemplate')}>
+              <Input disabled value={t('admin.roles.permTemplateNone')} />
             </Form.Item>
           ) : (
             <Form.Item
               name="base_role"
-              label="权限模板（内置角色）"
-              rules={[{ required: true, message: '请选择权限模板角色' }]}
+              label={t('admin.roles.permTemplateBuiltin')}
+              rules={[{ required: true, message: t('admin.roles.permTemplateRequired') }]}
             >
-              <Select options={BASE_ROLE_OPTIONS} placeholder="选择内置角色" />
+              <Select options={BASE_ROLE_OPTIONS} placeholder={t('admin.roles.selectBuiltin')} />
             </Form.Item>
           )}
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('admin.common.description')}>
             <Input.TextArea rows={2} maxLength={200} />
           </Form.Item>
         </Form>

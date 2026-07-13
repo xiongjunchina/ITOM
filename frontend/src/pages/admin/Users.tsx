@@ -16,8 +16,9 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
-import { ROLE_LABELS } from '../../api/types';
 import type { AdminUser, Member, Role, RoleDef, UserGroup } from '../../api/types';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface UserForm {
   username: string;
@@ -28,6 +29,8 @@ interface UserForm {
 }
 
 export default function Users() {
+  const t = useT();
+  const et = useEnums();
   const [items, setItems] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -109,7 +112,7 @@ export default function Users() {
     () =>
       roleDefs.map((r) => ({
         value: r.code,
-        label: r.is_builtin ? r.name : `${r.name}（自定义）`,
+        label: r.is_builtin ? r.name : `${r.name}${t('admin.users.customSuffix')}`,
       })),
     [roleDefs],
   );
@@ -162,7 +165,7 @@ export default function Users() {
           group_ids: values.group_ids ?? [],
         });
       }
-      message.success(editing ? '用户已更新' : '用户已创建');
+      message.success(editing ? t('admin.users.updated') : t('admin.users.created'));
       setModalOpen(false);
       loadGroups();
       void load();
@@ -176,7 +179,7 @@ export default function Users() {
   const toggleActive = async (record: AdminUser, checked: boolean) => {
     try {
       await api.patch(`/admin/users/${record.id}`, { is_active: checked });
-      message.success(checked ? '已启用' : '已禁用');
+      message.success(checked ? t('admin.common.enabledMsg') : t('admin.users.disabledMsg'));
       setItems((prev) =>
         prev.map((u) => (u.id === record.id ? { ...u, is_active: checked } : u)),
       );
@@ -191,7 +194,7 @@ export default function Users() {
     setResetting(true);
     try {
       await api.patch(`/admin/users/${resetTarget.id}`, { password });
-      message.success('密码已重置');
+      message.success(t('admin.users.passwordReset'));
       setResetTarget(null);
     } catch {
       // 已统一提示
@@ -201,35 +204,35 @@ export default function Users() {
   };
 
   const columns: ColumnsType<AdminUser> = [
-    { title: '用户名', dataIndex: 'username', width: 160 },
+    { title: t('admin.users.username'), dataIndex: 'username', width: 160 },
     {
-      title: '角色',
+      title: t('admin.users.role'),
       dataIndex: 'roles',
       render: (roles: Role[]) => (
         <>
           {(roles ?? []).map((r) => (
             <Tag key={r} color="blue">
-              {roleName.get(r) ?? ROLE_LABELS[r] ?? r}
+              {roleName.get(r) ?? et.role(r) ?? r}
             </Tag>
           ))}
         </>
       ),
     },
     {
-      title: '关联人员',
+      title: t('admin.users.linkedPerson'),
       dataIndex: 'person_id',
       width: 140,
       render: (id: string | null) => (id != null ? memberName.get(id) ?? id : "-"),
     },
     {
-      title: '认证源',
+      title: t('admin.users.authSource'),
       dataIndex: 'auth_source',
       width: 90,
       render: (v: AdminUser['auth_source'] | undefined) =>
-        v === 'local' ? '本地' : v || '-',
+        v === 'local' ? t('admin.users.authLocal') : v || '-',
     },
     {
-      title: '用户组',
+      title: t('admin.users.group'),
       key: 'groups',
       width: 180,
       render: (_, record) =>
@@ -246,33 +249,33 @@ export default function Users() {
         ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'is_active',
       width: 100,
       render: (_, record) => (
         <Switch
           checked={record.is_active}
-          checkedChildren="启用"
-          unCheckedChildren="禁用"
+          checkedChildren={t('admin.common.on')}
+          unCheckedChildren={t('admin.users.switchOff')}
           onChange={(checked) => void toggleActive(record, checked)}
         />
       ),
     },
     {
-      title: '最后登录',
+      title: t('admin.users.lastLogin'),
       dataIndex: 'last_login_at',
       width: 170,
       render: (v: string | null | undefined) =>
         v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-',
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 160,
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button
             type="link"
@@ -282,7 +285,7 @@ export default function Users() {
               setResetTarget(record);
             }}
           >
-            重置密码
+            {t('admin.users.resetPassword')}
           </Button>
         </Space>
       ),
@@ -291,11 +294,11 @@ export default function Users() {
 
   return (
     <Card
-      title="用户管理"
+      title={t('admin.users.title')}
       extra={
         <Space>
           <Input.Search
-            placeholder="搜索用户名"
+            placeholder={t('admin.users.searchPlaceholder')}
             allowClear
             onSearch={(v) => {
               setPage(1);
@@ -304,7 +307,7 @@ export default function Users() {
             style={{ width: 220 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建用户
+            {t('admin.users.new')}
           </Button>
         </Space>
       }
@@ -319,7 +322,7 @@ export default function Users() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('admin.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -328,7 +331,7 @@ export default function Users() {
       />
 
       <Modal
-        title={editing ? '编辑用户' : '新建用户'}
+        title={editing ? t('admin.users.edit') : t('admin.users.new')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -338,38 +341,38 @@ export default function Users() {
         <Form<UserForm> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="username"
-            label="用户名"
-            rules={[{ required: true, message: '请输入用户名' }]}
+            label={t('admin.users.username')}
+            rules={[{ required: true, message: t('admin.users.usernameRequired') }]}
           >
             <Input maxLength={50} autoComplete="off" />
           </Form.Item>
           {!editing && (
             <Form.Item
               name="password"
-              label="初始密码"
-              rules={[{ required: true, message: '请输入初始密码' }]}
+              label={t('admin.users.initialPassword')}
+              rules={[{ required: true, message: t('admin.users.initialPasswordRequired') }]}
             >
               <Input.Password maxLength={64} autoComplete="new-password" />
             </Form.Item>
           )}
           <Form.Item
             name="roles"
-            label="角色"
-            extra="可留空——将按开通规则取默认角色（依据关联人员的部门）；用户可持有多个角色"
+            label={t('admin.users.role')}
+            extra={t('admin.users.roleExtra')}
           >
             <Select
               mode="multiple"
               allowClear
               options={roleOptions}
-              placeholder="可多选（含自定义角色），可留空"
+              placeholder={t('admin.users.rolePlaceholder')}
             />
           </Form.Item>
-          <Form.Item name="person_id" label="关联人员">
+          <Form.Item name="person_id" label={t('admin.users.linkedPerson')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="从人员主数据中选择"
+              placeholder={t('admin.common.selectFromPeople')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
@@ -380,18 +383,18 @@ export default function Users() {
             {({ getFieldValue }) => (
               <Form.Item
                 name="group_ids"
-                label="所属用户组"
+                label={t('admin.users.groupLabel')}
                 extra={
                   getFieldValue('person_id')
-                    ? '用户组随关联人员保存，可用于流程指派与状态机授权'
-                    : '需先选择关联人员后才能分配用户组'
+                    ? t('admin.users.groupExtraHas')
+                    : t('admin.users.groupExtraNo')
                 }
               >
                 <Select
                   mode="multiple"
                   allowClear
                   disabled={!getFieldValue('person_id')}
-                  placeholder="可多选"
+                  placeholder={t('admin.common.selectMultiple')}
                   options={groups.map((g) => ({ value: g.id, label: g.name }))}
                 />
               </Form.Item>
@@ -401,7 +404,7 @@ export default function Users() {
       </Modal>
 
       <Modal
-        title={`重置密码：${resetTarget?.username ?? ''}`}
+        title={t('admin.users.resetTitle', { name: resetTarget?.username ?? '' })}
         open={!!resetTarget}
         onOk={() => void handleReset()}
         confirmLoading={resetting}
@@ -411,8 +414,8 @@ export default function Users() {
         <Form form={resetForm} layout="vertical" preserve={false}>
           <Form.Item
             name="password"
-            label="新密码"
-            rules={[{ required: true, message: '请输入新密码' }]}
+            label={t('admin.users.newPassword')}
+            rules={[{ required: true, message: t('admin.users.newPasswordRequired') }]}
           >
             <Input.Password maxLength={64} autoComplete="new-password" />
           </Form.Item>

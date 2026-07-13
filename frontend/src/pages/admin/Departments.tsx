@@ -23,6 +23,8 @@ import { api } from '../../api/client';
 import { DEPT_TYPE_COLORS, DEPT_TYPE_LABELS } from '../../api/types';
 import type { Department, DeptType } from '../../api/types';
 import { buildDeptTree, buildDeptTreeSelectData } from '../../utils/dept';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface DeptForm {
   code: string;
@@ -34,12 +36,13 @@ interface DeptForm {
 
 type DeptRow = Department & { children?: DeptRow[] };
 
-const DEPT_TYPE_OPTIONS = (Object.keys(DEPT_TYPE_LABELS) as DeptType[]).map((k) => ({
-  value: k,
-  label: DEPT_TYPE_LABELS[k],
-}));
-
 export default function Departments() {
+  const t = useT();
+  const et = useEnums();
+  const DEPT_TYPE_OPTIONS = (Object.keys(DEPT_TYPE_LABELS) as DeptType[]).map((k) => ({
+    value: k,
+    label: et.deptType(k),
+  }));
   const [items, setItems] = useState<Department[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<readonly Key[]>([]);
@@ -108,7 +111,7 @@ export default function Departments() {
           dept_type: values.dept_type,
           sort: values.sort ?? 0,
         });
-        message.success('部门已更新');
+        message.success(t('admin.dept.updated'));
       } else {
         await api.post('/admin/departments', {
           code: values.code,
@@ -117,7 +120,7 @@ export default function Departments() {
           dept_type: values.dept_type,
           sort: values.sort ?? 0,
         });
-        message.success('部门已创建');
+        message.success(t('admin.dept.created'));
       }
       setModalOpen(false);
       void load();
@@ -131,7 +134,7 @@ export default function Departments() {
   const handleDelete = async (record: Department) => {
     try {
       await api.delete(`/admin/departments/${record.id}`);
-      message.success('部门已删除');
+      message.success(t('admin.dept.deleted'));
       void load();
     } catch {
       // 有人员或下级时后端返回 400 中文错误，已统一提示
@@ -141,7 +144,7 @@ export default function Departments() {
   const toggleActive = async (record: Department, checked: boolean) => {
     try {
       await api.patch(`/admin/departments/${record.id}`, { active: checked });
-      message.success(checked ? '已启用' : '已停用');
+      message.success(checked ? t('admin.common.enabledMsg') : t('admin.common.disabledMsg'));
       setItems((prev) =>
         prev.map((d) => (d.id === record.id ? { ...d, active: checked } : d)),
       );
@@ -151,47 +154,47 @@ export default function Departments() {
   };
 
   const columns: ColumnsType<DeptRow> = [
-    { title: '编码', dataIndex: 'code', width: 220 },
-    { title: '名称', dataIndex: 'name', width: 200 },
+    { title: t('admin.common.code'), dataIndex: 'code', width: 220 },
+    { title: t('admin.common.name'), dataIndex: 'name', width: 200 },
     {
-      title: '类型',
+      title: t('admin.common.type'),
       dataIndex: 'dept_type',
       width: 90,
-      render: (v: DeptType) => <Tag color={DEPT_TYPE_COLORS[v]}>{DEPT_TYPE_LABELS[v]}</Tag>,
+      render: (v: DeptType) => <Tag color={DEPT_TYPE_COLORS[v]}>{et.deptType(v)}</Tag>,
     },
     {
-      title: '同步来源',
+      title: t('admin.common.syncSource'),
       dataIndex: 'external_source',
       width: 100,
       render: (v: string | null | undefined) => v || '-',
     },
-    { title: '人数', dataIndex: 'member_count', width: 80, align: 'right' },
-    { title: '排序', dataIndex: 'sort', width: 80, align: 'right' },
+    { title: t('admin.common.memberCount'), dataIndex: 'member_count', width: 80, align: 'right' },
+    { title: t('admin.common.sort'), dataIndex: 'sort', width: 80, align: 'right' },
     {
-      title: '启用',
+      title: t('admin.common.on'),
       dataIndex: 'active',
       width: 100,
       render: (_, record) => (
         <Switch
           checked={record.active}
-          checkedChildren="启用"
-          unCheckedChildren="停用"
+          checkedChildren={t('admin.common.on')}
+          unCheckedChildren={t('admin.common.off')}
           onChange={(checked) => void toggleActive(record, checked)}
         />
       ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 140,
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
-          <Popconfirm title="确定删除该部门？" onConfirm={() => void handleDelete(record)}>
+          <Popconfirm title={t('admin.dept.deleteConfirm')} onConfirm={() => void handleDelete(record)}>
             <Button type="link" size="small" danger>
-              删除
+              {t('common.delete')}
             </Button>
           </Popconfirm>
         </Space>
@@ -201,10 +204,10 @@ export default function Departments() {
 
   return (
     <Card
-      title="部门管理"
+      title={t('admin.dept.title')}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建部门
+          {t('admin.dept.new')}
         </Button>
       }
     >
@@ -212,7 +215,7 @@ export default function Departments() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="部门是公司组织架构（一人一部门），仅作数据归属不带权限；上线前可切换为飞书/AD 同步（external_source 显示同步来源，本地维护为空）"
+        message={t('admin.dept.alert')}
       />
       <Table<DeptRow>
         rowKey="id"
@@ -227,7 +230,7 @@ export default function Departments() {
       />
 
       <Modal
-        title={editing ? '编辑部门' : '新建部门'}
+        title={editing ? t('admin.dept.edit') : t('admin.dept.new')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -242,41 +245,41 @@ export default function Departments() {
         >
           <Form.Item
             name="code"
-            label="编码"
+            label={t('admin.common.code')}
             rules={[
-              { required: true, message: '请输入部门编码' },
-              { pattern: /^[a-zA-Z0-9_.-]{2,64}$/, message: '2-64 位字母、数字、下划线、点或中划线' },
+              { required: true, message: t('admin.dept.codeRequired') },
+              { pattern: /^[a-zA-Z0-9_.-]{2,64}$/, message: t('admin.dept.codePattern') },
             ]}
           >
-            <Input maxLength={64} disabled={!!editing} placeholder="如 it.ops" />
+            <Input maxLength={64} disabled={!!editing} placeholder={t('admin.dept.codePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入部门名称' }]}
+            label={t('admin.common.name')}
+            rules={[{ required: true, message: t('admin.dept.nameRequired') }]}
           >
             <Input maxLength={50} />
           </Form.Item>
-          <Form.Item name="parent_id" label="上级部门">
+          <Form.Item name="parent_id" label={t('admin.common.parentDept')}>
             <TreeSelect
               allowClear
               showSearch
               treeDefaultExpandAll
               treeNodeFilterProp="title"
-              placeholder="不选则为顶级部门"
+              placeholder={t('admin.dept.parentPlaceholder')}
               treeData={parentTreeData}
             />
           </Form.Item>
           <Space.Compact block>
             <Form.Item
               name="dept_type"
-              label="类型"
+              label={t('admin.common.type')}
               style={{ width: '50%', marginRight: 8 }}
-              rules={[{ required: true, message: '请选择部门类型' }]}
+              rules={[{ required: true, message: t('admin.dept.typeRequired') }]}
             >
               <Select options={DEPT_TYPE_OPTIONS} />
             </Form.Item>
-            <Form.Item name="sort" label="排序" style={{ width: '50%' }}>
+            <Form.Item name="sort" label={t('admin.common.sort')} style={{ width: '50%' }}>
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
           </Space.Compact>

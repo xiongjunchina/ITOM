@@ -3,6 +3,7 @@ import { Card, Input, Table, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import type { AuditLog } from '../../api/types';
 
 const ACTION_COLORS: Record<string, string> = {
@@ -12,6 +13,7 @@ const ACTION_COLORS: Record<string, string> = {
 };
 
 export default function AuditLogs() {
+  const t = useT();
   const [items, setItems] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -42,29 +44,29 @@ export default function AuditLogs() {
 
   const columns: ColumnsType<AuditLog> = [
     {
-      title: '时间',
+      title: t('admin.audit.time'),
       dataIndex: 'created_at',
       width: 170,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-'),
     },
-    { title: '实体类型', dataIndex: 'entity_type', width: 130 },
-    { title: '实体 ID', dataIndex: 'entity_id', width: 100 },
+    { title: t('admin.audit.entityType'), dataIndex: 'entity_type', width: 130 },
+    { title: t('admin.audit.entityId'), dataIndex: 'entity_id', width: 100 },
     {
-      title: '动作',
+      title: t('admin.audit.action'),
       dataIndex: 'action',
       width: 100,
       render: (v: string) => <Tag color={ACTION_COLORS[v] ?? 'default'}>{v}</Tag>,
     },
-    { title: '操作人', dataIndex: 'actor_name', width: 120 },
-    { title: '摘要', dataIndex: 'summary', ellipsis: true },
+    { title: t('admin.audit.actor'), dataIndex: 'actor_name', width: 120 },
+    { title: t('admin.audit.summary'), dataIndex: 'summary', ellipsis: true },
   ];
 
   return (
     <Card
-      title="审计日志"
+      title={t('admin.audit.title')}
       extra={
         <Input.Search
-          placeholder="按实体类型筛选，如 user / member"
+          placeholder={t('admin.audit.filterPlaceholder')}
           allowClear
           onSearch={(v) => {
             setPage(1);
@@ -84,7 +86,7 @@ export default function AuditLogs() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('admin.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);

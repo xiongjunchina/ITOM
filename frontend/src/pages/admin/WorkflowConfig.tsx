@@ -26,6 +26,8 @@ import type {
   WorkflowConfig as WorkflowConfigData,
   WorkflowEntityType,
 } from '../../api/types';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface StatusRow {
   _key: string;
@@ -47,6 +49,8 @@ let keySeq = 0;
 const nextKey = () => `row-${++keySeq}`;
 
 export default function WorkflowConfig() {
+  const t = useT();
+  const et = useEnums();
   const [entityType, setEntityType] = useState<WorkflowEntityType>('ticket');
   const [statuses, setStatuses] = useState<StatusRow[]>([]);
   const [transitions, setTransitions] = useState<TransitionRow[]>([]);
@@ -100,7 +104,7 @@ export default function WorkflowConfig() {
     ]).then(([roles, groups]) => {
       setRoleOptions([
         ...roles.items.map((r) => ({ value: r.code, label: r.name })),
-        ...groups.items.map((g) => ({ value: `group:${g.code}`, label: `组：${g.name}` })),
+        ...groups.items.map((g) => ({ value: `group:${g.code}`, label: `${t('admin.workflow.groupPrefix')}${g.name}` })),
       ]);
     });
   }, []);
@@ -133,11 +137,11 @@ export default function WorkflowConfig() {
 
   const handleSave = async () => {
     if (statuses.some((s) => !s.code.trim() || !s.name.trim())) {
-      message.error('存在代码或名称为空的状态行，请补全后再保存');
+      message.error(t('admin.workflow.statusEmptyError'));
       return;
     }
-    if (transitions.some((t) => !t.from_code || !t.to_code)) {
-      message.error('存在未选择从状态/到状态的流转行，请补全后再保存');
+    if (transitions.some((tr) => !tr.from_code || !tr.to_code)) {
+      message.error(t('admin.workflow.transitionEmptyError'));
       return;
     }
     setSaving(true);
@@ -157,7 +161,7 @@ export default function WorkflowConfig() {
           allowed_roles: t.allowed_roles,
         })),
       });
-      message.success('状态机配置已保存');
+      message.success(t('admin.workflow.saved'));
       void load(entityType);
     } catch {
       // 后端校验失败的中文错误已由拦截器统一 message.error
@@ -168,33 +172,33 @@ export default function WorkflowConfig() {
 
   const statusColumns: ColumnsType<StatusRow> = [
     {
-      title: '代码',
+      title: t('admin.common.codeShort'),
       dataIndex: 'code',
       width: 180,
       render: (_, record) => (
         <Input
           value={record.code}
           maxLength={32}
-          placeholder="如 pending"
+          placeholder={t('admin.workflow.codePlaceholder')}
           onChange={(e) => updateStatus(record._key, { code: e.target.value })}
         />
       ),
     },
     {
-      title: '名称',
+      title: t('admin.common.name'),
       dataIndex: 'name',
       width: 180,
       render: (_, record) => (
         <Input
           value={record.name}
           maxLength={50}
-          placeholder="如 待处理"
+          placeholder={t('admin.workflow.namePlaceholder')}
           onChange={(e) => updateStatus(record._key, { name: e.target.value })}
         />
       ),
     },
     {
-      title: '初始态',
+      title: t('admin.workflow.initial'),
       dataIndex: 'is_initial',
       width: 90,
       align: 'center',
@@ -206,7 +210,7 @@ export default function WorkflowConfig() {
       ),
     },
     {
-      title: '终态',
+      title: t('admin.workflow.terminal'),
       dataIndex: 'is_terminal',
       width: 90,
       align: 'center',
@@ -218,7 +222,7 @@ export default function WorkflowConfig() {
       ),
     },
     {
-      title: '排序',
+      title: t('admin.common.sort'),
       dataIndex: 'sort',
       width: 110,
       render: (_, record) => (
@@ -230,18 +234,18 @@ export default function WorkflowConfig() {
       ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 80,
       render: (_, record) => (
         <Popconfirm
-          title="删除该状态行？"
+          title={t('admin.workflow.deleteStatus')}
           onConfirm={() =>
             setStatuses((prev) => prev.filter((r) => r._key !== record._key))
           }
         >
           <Button type="link" size="small" danger>
-            删除
+            {t('common.delete')}
           </Button>
         </Popconfirm>
       ),
@@ -250,42 +254,42 @@ export default function WorkflowConfig() {
 
   const transitionColumns: ColumnsType<TransitionRow> = [
     {
-      title: '从状态',
+      title: t('admin.workflow.fromStatus'),
       dataIndex: 'from_code',
       width: 200,
       render: (_, record) => (
         <Select
           style={{ width: '100%' }}
           value={record.from_code || undefined}
-          placeholder="选择状态"
+          placeholder={t('admin.workflow.selectStatus')}
           options={statusOptions}
           onChange={(v) => updateTransition(record._key, { from_code: v })}
         />
       ),
     },
     {
-      title: '到状态',
+      title: t('admin.workflow.toStatus'),
       dataIndex: 'to_code',
       width: 200,
       render: (_, record) => (
         <Select
           style={{ width: '100%' }}
           value={record.to_code || undefined}
-          placeholder="选择状态"
+          placeholder={t('admin.workflow.selectStatus')}
           options={statusOptions}
           onChange={(v) => updateTransition(record._key, { to_code: v })}
         />
       ),
     },
     {
-      title: '允许角色（留空 = 不限）',
+      title: t('admin.workflow.allowedRoles'),
       dataIndex: 'allowed_roles',
       render: (_, record) => (
         <Select
           mode="multiple"
           style={{ width: '100%' }}
           value={record.allowed_roles}
-          placeholder="不限角色"
+          placeholder={t('admin.workflow.anyRole')}
           optionFilterProp="label"
           options={roleOptions}
           onChange={(v) => updateTransition(record._key, { allowed_roles: v })}
@@ -293,18 +297,18 @@ export default function WorkflowConfig() {
       ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 80,
       render: (_, record) => (
         <Popconfirm
-          title="删除该流转行？"
+          title={t('admin.workflow.deleteTransition')}
           onConfirm={() =>
             setTransitions((prev) => prev.filter((r) => r._key !== record._key))
           }
         >
           <Button type="link" size="small" danger>
-            删除
+            {t('common.delete')}
           </Button>
         </Popconfirm>
       ),
@@ -313,7 +317,7 @@ export default function WorkflowConfig() {
 
   return (
     <Card
-      title="状态机配置"
+      title={t('admin.workflow.title')}
       extra={
         <Space>
           <Segmented<WorkflowEntityType>
@@ -321,7 +325,7 @@ export default function WorkflowConfig() {
             onChange={(v) => setEntityType(v)}
             options={(
               Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[]
-            ).map((k) => ({ value: k, label: WORKFLOW_ENTITY_LABELS[k] }))}
+            ).map((k) => ({ value: k, label: et.workflowEntity(k) }))}
           />
           <Button
             type="primary"
@@ -329,7 +333,7 @@ export default function WorkflowConfig() {
             loading={saving}
             onClick={() => void handleSave()}
           >
-            保存
+            {t('common.save')}
           </Button>
         </Space>
       }
@@ -338,10 +342,10 @@ export default function WorkflowConfig() {
         type="warning"
         showIcon
         style={{ marginBottom: 16 }}
-        message="修改立即对所有该类型单据生效；存量单据正在使用的状态不可删除"
+        message={t('admin.workflow.alert')}
       />
 
-      <Typography.Title level={5}>状态定义</Typography.Title>
+      <Typography.Title level={5}>{t('admin.workflow.statusDef')}</Typography.Title>
       <Table<StatusRow>
         rowKey="_key"
         size="small"
@@ -369,12 +373,12 @@ export default function WorkflowConfig() {
           ])
         }
       >
-        添加状态
+        {t('admin.workflow.addStatus')}
       </Button>
 
       <Divider />
 
-      <Typography.Title level={5}>流转规则</Typography.Title>
+      <Typography.Title level={5}>{t('admin.workflow.transitionRules')}</Typography.Title>
       <Table<TransitionRow>
         rowKey="_key"
         size="small"
@@ -395,7 +399,7 @@ export default function WorkflowConfig() {
           ])
         }
       >
-        添加流转
+        {t('admin.workflow.addTransition')}
       </Button>
     </Card>
   );

@@ -17,9 +17,9 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { SaveOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
-import { PERM_ACTION_LABELS } from '../../api/types';
 import type { PermAction, PermissionModule, RoleDef, RolePermissionEntry } from '../../api/types';
-import { translate } from '../../i18n';
+import { translate, useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import { useLangStore } from '../../i18n/store';
 
 interface ModulesResp {
@@ -47,6 +47,8 @@ interface GridRow {
 }
 
 export default function Permissions() {
+  const t = useT();
+  const et = useEnums();
   const lang = useLangStore((s) => s.lang);
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [modules, setModules] = useState<PermissionModule[]>([]);
@@ -131,10 +133,10 @@ export default function Permissions() {
     if (roleCode === selected) return;
     if (dirty) {
       Modal.confirm({
-        title: '有未保存的修改',
-        content: '切换角色将丢弃当前未保存的权限修改，确定切换？',
-        okText: '放弃修改并切换',
-        cancelText: '留在当前角色',
+        title: t('admin.permissions.unsavedTitle'),
+        content: t('admin.permissions.unsavedContent'),
+        okText: t('admin.permissions.discardSwitch'),
+        cancelText: t('admin.permissions.stay'),
         onOk: () => void loadMatrix(roleCode),
       });
       return;
@@ -163,7 +165,7 @@ export default function Permissions() {
         role_code: selected,
         entries: modules.map((m) => ({ module: m.code, actions: matrix[m.code] ?? [] })),
       });
-      message.success('权限矩阵已保存');
+      message.success(t('admin.permissions.saved'));
       setSavedSnapshot(normalize(matrix, actions));
     } catch {
       // 已统一提示（如 ADMIN_LOCKED）
@@ -191,7 +193,7 @@ export default function Permissions() {
   const columns: ColumnsType<GridRow> = useMemo(() => {
     const cols: ColumnsType<GridRow> = [
       {
-        title: '模块',
+        title: t('admin.permissions.colModule'),
         key: 'name',
         width: 220,
         onCell: (row) => (row.groupHeader ? { colSpan: columnCount } : {}),
@@ -203,7 +205,7 @@ export default function Permissions() {
           ) : null,
       },
       {
-        title: '全选',
+        title: t('admin.permissions.colAll'),
         key: 'all',
         width: 80,
         align: 'center',
@@ -223,7 +225,7 @@ export default function Permissions() {
         },
       },
       ...actions.map<ColumnsType<GridRow>[number]>((action) => ({
-        title: PERM_ACTION_LABELS[action as PermAction] ?? action,
+        title: et.permAction(action as PermAction) || action,
         key: action,
         width: 80,
         align: 'center',
@@ -248,15 +250,15 @@ export default function Permissions() {
   const selectedRole = roles.find((r) => r.code === selected);
 
   return (
-    <Card title="权限配置">
+    <Card title={t('admin.permissions.title')}>
       <Alert
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="权限矩阵控制功能开关；数据范围规则（如业务用户仅见自己的工单）与流程审批权限（状态机/流程步骤）由各自配置管理"
+        message={t('admin.permissions.alert')}
       />
       <Flex gap={16} align="flex-start">
-        <Card size="small" title="角色" style={{ width: 260, flexShrink: 0 }} styles={{ body: { padding: 8 } }}>
+        <Card size="small" title={t('admin.permissions.rolesTitle')} style={{ width: 260, flexShrink: 0 }} styles={{ body: { padding: 8 } }}>
           <Spin spinning={metaLoading}>
             <div>
               {roles.map((r) => {
@@ -287,18 +289,18 @@ export default function Permissions() {
                     </Typography.Text>
                     <Space size={4} style={{ flexShrink: 0 }}>
                       {admin ? (
-                        <Tag>隐式全权</Tag>
+                        <Tag>{t('admin.permissions.implicitAll')}</Tag>
                       ) : r.is_builtin ? (
-                        <Tag color="blue">内置</Tag>
+                        <Tag color="blue">{t('admin.roles.builtin')}</Tag>
                       ) : (
-                        <Tag color="green">自定义</Tag>
+                        <Tag color="green">{t('admin.roles.custom')}</Tag>
                       )}
                     </Space>
                   </div>
                 );
               })}
               {!metaLoading && roles.length === 0 && (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无角色" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('admin.permissions.noRoles')} />
               )}
             </div>
           </Spin>
@@ -314,10 +316,10 @@ export default function Permissions() {
                 <Typography.Text type="secondary" style={{ fontWeight: 'normal' }}>
                   {selectedRole.code}
                 </Typography.Text>
-                {dirty && <Tag color="orange">未保存</Tag>}
+                {dirty && <Tag color="orange">{t('admin.permissions.unsaved')}</Tag>}
               </Space>
             ) : (
-              '权限矩阵'
+              t('admin.permissions.matrixTitle')
             )
           }
           extra={
@@ -328,7 +330,7 @@ export default function Permissions() {
               disabled={isAdmin || !selected || !dirty}
               onClick={() => void handleSave()}
             >
-              保存
+              {t('common.save')}
             </Button>
           }
         >
@@ -337,7 +339,7 @@ export default function Permissions() {
               type="warning"
               showIcon
               style={{ marginBottom: 12 }}
-              message="admin 隐式拥有全部权限，矩阵不可配置（防止系统被锁死）"
+              message={t('admin.permissions.adminAlert')}
             />
           )}
           {selected ? (
@@ -350,7 +352,7 @@ export default function Permissions() {
               pagination={false}
             />
           ) : (
-            <Empty description="请选择左侧角色" />
+            <Empty description={t('admin.permissions.selectRole')} />
           )}
         </Card>
       </Flex>

@@ -18,6 +18,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import type { BusinessDomain, Member } from '../../api/types';
+import { useT } from '../../i18n';
 
 interface DomainForm {
   code: string;
@@ -29,6 +30,7 @@ interface DomainForm {
 }
 
 export default function BusinessDomains() {
+  const t = useT();
   const [items, setItems] = useState<BusinessDomain[]>([]);
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
@@ -106,10 +108,10 @@ export default function BusinessDomains() {
     try {
       if (editing) {
         await api.patch(`/admin/business-domains/${editing.id}`, payload);
-        message.success('业务域已更新');
+        message.success(t('admin.domains.updated'));
       } else {
         await api.post('/admin/business-domains', { code: values.code, ...payload });
-        message.success('业务域已创建');
+        message.success(t('admin.domains.created'));
       }
       setModalOpen(false);
       void load();
@@ -132,7 +134,7 @@ export default function BusinessDomains() {
       await api.put(`/admin/business-domains/${teamTarget.id}/members`, {
         person_ids: teamIds,
       });
-      message.success('服务团队已更新');
+      message.success(t('admin.domains.teamUpdated'));
       setTeamTarget(null);
       void load();
     } catch {
@@ -145,7 +147,7 @@ export default function BusinessDomains() {
   const toggleActive = async (record: BusinessDomain, checked: boolean) => {
     try {
       await api.patch(`/admin/business-domains/${record.id}`, { active: checked });
-      message.success(checked ? '已启用' : '已停用');
+      message.success(checked ? t('admin.common.enabledMsg') : t('admin.common.disabledMsg'));
       setItems((prev) =>
         prev.map((d) => (d.id === record.id ? { ...d, active: checked } : d)),
       );
@@ -155,22 +157,22 @@ export default function BusinessDomains() {
   };
 
   const columns: ColumnsType<BusinessDomain> = [
-    { title: '编码', dataIndex: 'code', width: 140 },
-    { title: '名称', dataIndex: 'name', width: 180 },
+    { title: t('admin.common.code'), dataIndex: 'code', width: 140 },
+    { title: t('admin.common.name'), dataIndex: 'name', width: 180 },
     {
-      title: '负责人（BM）',
+      title: t('admin.domains.owner'),
       dataIndex: 'owner_name',
       width: 130,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '备份负责人',
+      title: t('admin.domains.backupOwner'),
       dataIndex: 'backup_owner_name',
       width: 120,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '服务团队',
+      title: t('admin.domains.team'),
       dataIndex: 'members',
       render: (list: BusinessDomain['members']) =>
         (list ?? []).length === 0 ? (
@@ -184,35 +186,35 @@ export default function BusinessDomains() {
         ),
     },
     {
-      title: '描述',
+      title: t('admin.common.description'),
       dataIndex: 'description',
       ellipsis: true,
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: '启用',
+      title: t('admin.common.on'),
       dataIndex: 'active',
       width: 100,
       render: (_, record) => (
         <Switch
           checked={record.active}
-          checkedChildren="启用"
-          unCheckedChildren="停用"
+          checkedChildren={t('admin.common.on')}
+          unCheckedChildren={t('admin.common.off')}
           onChange={(checked) => void toggleActive(record, checked)}
         />
       ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 160,
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>
-            编辑
+            {t('common.edit')}
           </Button>
           <Button type="link" size="small" onClick={() => openTeam(record)}>
-            管理团队
+            {t('admin.domains.manageTeam')}
           </Button>
         </Space>
       ),
@@ -221,10 +223,10 @@ export default function BusinessDomains() {
 
   return (
     <Card
-      title="业务域"
+      title={t('admin.domains.title')}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建业务域
+          {t('admin.domains.new')}
         </Button>
       }
     >
@@ -232,7 +234,7 @@ export default function BusinessDomains() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="横向服务线：负责人(BM)总体负责该业务域 IT 支持，服务团队为跟随的 BP/开发等成员；负责人是数据字段而非角色"
+        message={t('admin.domains.alert')}
       />
       <Table<BusinessDomain>
         rowKey="id"
@@ -243,7 +245,7 @@ export default function BusinessDomains() {
       />
 
       <Modal
-        title={editing ? '编辑业务域' : '新建业务域'}
+        title={editing ? t('admin.domains.edit') : t('admin.domains.new')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -253,50 +255,50 @@ export default function BusinessDomains() {
         <Form<DomainForm> form={form} layout="vertical" preserve={false} initialValues={{ sort: 0 }}>
           <Form.Item
             name="code"
-            label="编码"
+            label={t('admin.common.code')}
             rules={[
-              { required: true, message: '请输入业务域编码' },
-              { pattern: /^[a-z0-9_-]{2,32}$/, message: '2-32 位小写字母、数字、下划线或中划线' },
+              { required: true, message: t('admin.domains.codeRequired') },
+              { pattern: /^[a-z0-9_-]{2,32}$/, message: t('admin.domains.codePattern') },
             ]}
           >
-            <Input maxLength={32} disabled={!!editing} placeholder="如 finance" />
+            <Input maxLength={32} disabled={!!editing} placeholder={t('admin.domains.codePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="name"
-            label="名称"
-            rules={[{ required: true, message: '请输入业务域名称' }]}
+            label={t('admin.common.name')}
+            rules={[{ required: true, message: t('admin.domains.nameRequired') }]}
           >
             <Input maxLength={50} />
           </Form.Item>
-          <Form.Item name="owner_id" label="负责人（BM）">
+          <Form.Item name="owner_id" label={t('admin.domains.ownerLabel')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="从人员主数据中选择"
+              placeholder={t('admin.common.selectFromPeople')}
               options={ownerOptions}
             />
           </Form.Item>
-          <Form.Item name="backup_owner_id" label="备份负责人">
+          <Form.Item name="backup_owner_id" label={t('admin.domains.backupOwner')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="从人员主数据中选择"
+              placeholder={t('admin.common.selectFromPeople')}
               options={ownerOptions}
             />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('admin.common.description')}>
             <Input.TextArea rows={2} maxLength={200} />
           </Form.Item>
-          <Form.Item name="sort" label="排序">
+          <Form.Item name="sort" label={t('admin.common.sort')}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title={`管理服务团队：${teamTarget?.name ?? ''}`}
+        title={t('admin.domains.teamTitle', { name: teamTarget?.name ?? '' })}
         open={!!teamTarget}
         onOk={() => void handleSaveTeam()}
         confirmLoading={savingTeam}
@@ -309,7 +311,7 @@ export default function BusinessDomains() {
           value={teamIds}
           onChange={setTeamIds}
           optionFilterProp="label"
-          placeholder="从人员主数据中选择服务团队成员"
+          placeholder={t('admin.domains.selectTeam')}
           options={members.map((m) => ({
             value: m.id,
             label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,

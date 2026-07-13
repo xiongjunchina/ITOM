@@ -23,6 +23,8 @@ import type {
   RoleDef,
 } from '../../api/types';
 import { buildDeptTreeSelectData } from '../../utils/dept';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 interface RuleRow {
   _key: string;
@@ -36,16 +38,16 @@ interface RuleRow {
 let keySeq = 0;
 const nextKey = () => `rule-${++keySeq}`;
 
-const MATCH_TYPE_OPTIONS = (Object.keys(PROVISION_MATCH_LABELS) as ProvisionMatchType[]).map(
-  (k) => ({ value: k, label: PROVISION_MATCH_LABELS[k] }),
-);
-
-const DEPT_TYPE_VALUE_OPTIONS = (Object.keys(DEPT_TYPE_LABELS) as DeptType[]).map((k) => ({
-  value: k,
-  label: DEPT_TYPE_LABELS[k],
-}));
-
 export default function ProvisionRules() {
+  const t = useT();
+  const et = useEnums();
+  const MATCH_TYPE_OPTIONS = (Object.keys(PROVISION_MATCH_LABELS) as ProvisionMatchType[]).map(
+    (k) => ({ value: k, label: et.provisionMatch(k) }),
+  );
+  const DEPT_TYPE_VALUE_OPTIONS = (Object.keys(DEPT_TYPE_LABELS) as DeptType[]).map((k) => ({
+    value: k,
+    label: et.deptType(k),
+  }));
   const [rows, setRows] = useState<RuleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -102,7 +104,7 @@ export default function ProvisionRules() {
 
   const handleSave = async () => {
     if (rows.some((r) => !r.match_value)) {
-      message.error('存在未填写匹配值的规则行，请补全后再保存');
+      message.error(t('admin.provision.emptyError'));
       return;
     }
     setSaving(true);
@@ -117,7 +119,7 @@ export default function ProvisionRules() {
           active: r.active,
         })),
       );
-      message.success('预分配规则已保存');
+      message.success(t('admin.provision.saved'));
       void load();
     } catch {
       // 已统一提示
@@ -128,7 +130,7 @@ export default function ProvisionRules() {
 
   const columns: ColumnsType<RuleRow> = [
     {
-      title: '匹配类型',
+      title: t('admin.provision.matchType'),
       dataIndex: 'match_type',
       width: 160,
       render: (_, record) => (
@@ -143,7 +145,7 @@ export default function ProvisionRules() {
       ),
     },
     {
-      title: '匹配值',
+      title: t('admin.provision.matchValue'),
       dataIndex: 'match_value',
       width: 220,
       render: (_, record) =>
@@ -151,7 +153,7 @@ export default function ProvisionRules() {
           <Select
             style={{ width: '100%' }}
             value={record.match_value || undefined}
-            placeholder="选择部门类型"
+            placeholder={t('admin.provision.selectDeptType')}
             options={DEPT_TYPE_VALUE_OPTIONS}
             onChange={(v: string) => updateRow(record._key, { match_value: v })}
           />
@@ -159,7 +161,7 @@ export default function ProvisionRules() {
           <TreeSelect
             style={{ width: '100%' }}
             value={record.match_value || undefined}
-            placeholder="选择部门"
+            placeholder={t('admin.provision.selectDept')}
             showSearch
             treeDefaultExpandAll
             treeNodeFilterProp="title"
@@ -169,14 +171,14 @@ export default function ProvisionRules() {
         ),
     },
     {
-      title: '默认角色',
+      title: t('admin.provision.defaultRoles'),
       dataIndex: 'default_roles',
       render: (_, record) => (
         <Select
           mode="multiple"
           style={{ width: '100%' }}
           value={record.default_roles}
-          placeholder="选择默认角色"
+          placeholder={t('admin.provision.selectDefaultRoles')}
           optionFilterProp="label"
           options={roleOptions}
           onChange={(v: string[]) => updateRow(record._key, { default_roles: v })}
@@ -184,7 +186,7 @@ export default function ProvisionRules() {
       ),
     },
     {
-      title: '排序',
+      title: t('admin.common.sort'),
       dataIndex: 'sort',
       width: 100,
       render: (_, record) => (
@@ -196,7 +198,7 @@ export default function ProvisionRules() {
       ),
     },
     {
-      title: '启用',
+      title: t('admin.common.on'),
       dataIndex: 'active',
       width: 90,
       align: 'center',
@@ -208,16 +210,16 @@ export default function ProvisionRules() {
       ),
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 80,
       render: (_, record) => (
         <Popconfirm
-          title="删除该规则行？"
+          title={t('admin.provision.deleteRule')}
           onConfirm={() => setRows((prev) => prev.filter((r) => r._key !== record._key))}
         >
           <Button type="link" size="small" danger>
-            删除
+            {t('common.delete')}
           </Button>
         </Popconfirm>
       ),
@@ -226,7 +228,7 @@ export default function ProvisionRules() {
 
   return (
     <Card
-      title="预分配规则"
+      title={t('admin.provision.title')}
       extra={
         <Button
           type="primary"
@@ -234,7 +236,7 @@ export default function ProvisionRules() {
           loading={saving}
           onClick={() => void handleSave()}
         >
-          保存
+          {t('common.save')}
         </Button>
       }
     >
@@ -242,7 +244,7 @@ export default function ProvisionRules() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="规则仅在账号首次开通时赋默认角色；之后角色可自由增减，用户永远可持有多个角色"
+        message={t('admin.provision.alert')}
       />
       <Table<RuleRow>
         rowKey="_key"
@@ -271,7 +273,7 @@ export default function ProvisionRules() {
           ])
         }
       >
-        添加规则
+        {t('admin.provision.addRule')}
       </Button>
     </Card>
   );
