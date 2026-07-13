@@ -1005,18 +1005,23 @@ export interface CostEntry {
 
 /** 章程解析：WBS 草稿行 */
 export interface CharterWbsDraft {
-  code?: string | null;
   name: string;
-  description?: string | null;
-  deliverable?: string | null;
+  assignee_name?: string | null;
   start_date?: string | null;
   end_date?: string | null;
+  /** 上级任务名称（建立层级） */
+  parent_name?: string | null;
+  /** 前置任务名称，逗号分隔（甘特图依赖） */
+  predecessor_names?: string | null;
+  deliverable?: string | null;
+  description?: string | null;
 }
 
 /** 章程解析：里程碑草稿行 */
 export interface CharterMilestoneDraft {
   name: string;
   target_date?: string | null;
+  description?: string | null;
 }
 
 /** 章程解析：风险草稿行 */

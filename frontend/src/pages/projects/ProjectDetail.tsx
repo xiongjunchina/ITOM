@@ -671,6 +671,8 @@ export default function ProjectDetail() {
       : []),
   ];
 
+  const wbsNameById: Record<string, string> = Object.fromEntries(wbs.map((t) => [t.id, t.name]));
+
   const wbsColumns: ColumnsType<WbsNode> = [
     { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 90 },
     { title: t('proj.wbs.col.name'), dataIndex: 'name', ellipsis: true },
@@ -698,7 +700,16 @@ export default function ProjectDetail() {
           <Tag color={WBS_TAG_COLORS[v]}>{et.wbsStatus(v)}</Tag>
         ),
     },
+    {
+      title: t('proj.wbs.col.predecessors'),
+      key: 'predecessors',
+      width: 150,
+      ellipsis: true,
+      render: (_, r) =>
+        r.predecessor_ids?.length ? r.predecessor_ids.map((pid) => wbsNameById[pid] || '?').join('、') : '-',
+    },
     { title: t('proj.wbs.col.deliverable'), dataIndex: 'deliverable', width: 150, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.desc'), dataIndex: 'description', width: 160, ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {

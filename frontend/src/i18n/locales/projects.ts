@@ -2,6 +2,10 @@
 import type { Dict } from '../dict';
 
 export const zh: Dict = {
+  'proj.wbs.col.predecessors': '前置任务',
+  'proj.wbs.col.desc': '说明',
+  'proj.charter.wbs.col.parent': '上级任务',
+
   'proj.charterTemplate': '下载章程模板',
   // 页面 / Tabs
   'proj.title': '项目管理',
@@ -238,6 +242,10 @@ export const zh: Dict = {
 };
 
 export const en: Dict = {
+  'proj.wbs.col.predecessors': 'Predecessors',
+  'proj.wbs.col.desc': 'Description',
+  'proj.charter.wbs.col.parent': 'Parent',
+
   'proj.charterTemplate': 'Download Charter Template',
   // Page / Tabs
   'proj.title': 'Project Management',
