@@ -78,10 +78,12 @@ def transition(
 
 
 def status_names(db: Session, entity_type: str) -> dict[str, str]:
+    from app.core.i18n import localize_status_map
+
     rows = db.query(WorkflowStatus).filter(
         WorkflowStatus.entity_type == entity_type, WorkflowStatus.is_deleted.is_(False)
     )
-    return {s.code: s.name for s in rows}
+    return localize_status_map(entity_type, {s.code: s.name for s in rows})
 
 
 def allowed_targets(db: Session, entity_type: str, from_code: str, actor: AuthUser) -> list[str]:

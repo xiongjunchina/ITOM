@@ -22,6 +22,7 @@ from app.schemas.common import ok, paginate
 from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
+from app.core.i18n import localize_status
 from app.services.points import award, award_by_rule, current_period, period_clause
 
 router = APIRouter(tags=["team"])
@@ -76,7 +77,7 @@ def _idea_row(i: Idea, liked_ids: set[str]) -> dict:
     return {
         "id": i.id, "idea_code": i.idea_code, "title": i.title, "content": i.content,
         "proposer_name": i.proposer_name, "status": i.status,
-        "status_name": IDEA_STATUS_NAMES.get(i.status, i.status),
+        "status_name": localize_status("idea", i.status, IDEA_STATUS_NAMES.get(i.status, i.status)),
         "like_count": i.like_count, "liked": i.id in liked_ids,
         "adopted_at": i.adopted_at, "decline_reason": i.decline_reason,
         "created_at": i.created_at, "is_example": i.is_example,
@@ -166,7 +167,7 @@ def _campaign_row(c: ActivityCampaign, db: Session, detail: bool = False, person
         "id": c.id, "name": c.name, "description": c.description,
         "period_label": c.period_label, "start_date": c.start_date, "end_date": c.end_date,
         "performance_ratio": c.performance_ratio,
-        "status": c.status, "status_name": CAMPAIGN_STATUS_NAMES.get(c.status, c.status),
+        "status": c.status, "status_name": localize_status("campaign", c.status, CAMPAIGN_STATUS_NAMES.get(c.status, c.status)),
         "is_example": c.is_example,
         "total_awarded": float(total_awarded or 0),
         "tasks": [

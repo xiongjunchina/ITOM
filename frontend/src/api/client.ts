@@ -2,6 +2,7 @@ import axios from 'axios';
 import type { AxiosError, AxiosRequestConfig } from 'axios';
 import { message } from 'antd';
 import { useAuthStore } from '../stores/auth';
+import { useLangStore } from '../i18n/store';
 import type { Envelope } from './types';
 
 const http = axios.create({
@@ -15,6 +16,8 @@ http.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  // 当前显示语言：后端据此本地化 status_name 与错误消息
+  config.headers['X-Lang'] = useLangStore.getState().lang;
   return config;
 });
 

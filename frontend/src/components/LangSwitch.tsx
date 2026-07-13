@@ -19,9 +19,14 @@ export default function LangSwitch() {
     useLangStore.getState().setLang(next);
     const { token, user, setUser } = useAuthStore.getState();
     if (token && user) {
-      // 已登录：持久化到后端（失败不阻塞，本地已切换；拦截器会提示错误）
-      void api.patch('/auth/me/preferences', { language: next }).catch(() => undefined);
+      // 已登录：持久化到后端偏好（失败不阻塞，本地已切换）
       setUser({ ...user, language: next });
+      void api
+        .patch('/auth/me/preferences', { language: next })
+        .catch(() => undefined)
+        .finally(() => window.location.reload()); // 刷新以按新语言重新拉取 status_name/错误等后端本地化字段
+    } else {
+      window.location.reload();
     }
   };
 

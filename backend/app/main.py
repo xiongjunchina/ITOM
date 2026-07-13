@@ -62,32 +62,46 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="IT运营管理平台 API", version="0.7.1-m7-i18n", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="IT运营管理平台 API", version="0.7.2-m7.2", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
 async def app_error_handler(_: Request, exc: AppError):
+    from app.core.i18n import localize_message
+
     return JSONResponse(
         status_code=exc.status_code,
-        content={"success": False, "error": {"code": exc.code, "message": exc.message}},
+        content={"success": False, "error": {"code": exc.code, "message": localize_message(exc.message)}},
     )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_handler(_: Request, exc: RequestValidationError):
+    from app.core.i18n import get_lang
+
     first = exc.errors()[0] if exc.errors() else {}
     loc = ".".join(str(x) for x in first.get("loc", []))
+    prefix = "Invalid parameter" if get_lang() == "en" else "参数错误"
     return JSONResponse(
         status_code=422,
         content={
             "success": False,
-            "error": {"code": "VALIDATION_ERROR", "message": f"参数错误: {loc} {first.get('msg', '')}"},
+            "error": {"code": "VALIDATION_ERROR", "message": f"{prefix}: {loc} {first.get('msg', '')}"},
         },
     )
 
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 READONLY_EXEMPT_PREFIXES = ("/api/auth/login", "/api/notifications")  # 登录与已读回执放行
+
+
+@app.middleware("http")
+async def lang_middleware(request: Request, call_next):
+    """按请求头 X-Lang 设置当前语言（zh/en，默认 zh），供 status_name/错误消息本地化。"""
+    from app.core.i18n import set_lang
+
+    set_lang(request.headers.get("x-lang", "zh"))
+    return await call_next(request)
 
 
 @app.middleware("http")
