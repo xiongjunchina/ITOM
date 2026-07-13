@@ -37,6 +37,8 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import PermTabs from '../../components/PermTabs';
 import { ExampleAlert, ExampleTag } from '../../components/ExampleTag';
 import { hasPermission, useAuthStore } from '../../stores/auth';
@@ -53,7 +55,7 @@ import type {
   PointRule,
   PointsLeaderboard,
 } from '../../api/types';
-import { CAMPAIGN_STATUS_COLORS, IDEA_STATUS_COLORS, POINT_SOURCE_LABELS } from '../../api/types';
+import { CAMPAIGN_STATUS_COLORS, IDEA_STATUS_COLORS } from '../../api/types';
 
 /** 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示） */
 function useIdeasPerm(action: 'create' | 'edit'): boolean {
@@ -67,6 +69,8 @@ const fmtTime = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') 
 // ---------------- 我的积分卡片 ----------------
 
 function MyPointsCard() {
+  const t = useT();
+  const et = useEnums();
   const [data, setData] = useState<MyPoints | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -80,15 +84,15 @@ function MyPointsCard() {
   }, []);
 
   const entryColumns: ColumnsType<MyPoints['entries'][number]> = [
-    { title: '时间', dataIndex: 'created_at', width: 150, render: (v: string) => fmtTime(v) },
+    { title: t('team.col.time'), dataIndex: 'created_at', width: 150, render: (v: string) => fmtTime(v) },
     {
-      title: '来源',
+      title: t('team.points.source'),
       dataIndex: 'source_type',
       width: 110,
-      render: (v: string) => <Tag>{POINT_SOURCE_LABELS[v] ?? v}</Tag>,
+      render: (v: string) => <Tag>{et.pointSource(v)}</Tag>,
     },
     {
-      title: '积分',
+      title: t('team.col.points'),
       dataIndex: 'points',
       width: 80,
       render: (v: number) => (
@@ -97,25 +101,25 @@ function MyPointsCard() {
         </Typography.Text>
       ),
     },
-    { title: '考核期', dataIndex: 'period', width: 90 },
-    { title: '备注', dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
+    { title: t('team.points.period'), dataIndex: 'period', width: 90 },
+    { title: t('common.remark'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
   ];
 
   return (
     <Card loading={loading} style={{ marginBottom: 16 }}>
       <Space size={48} wrap align="center">
         <Statistic
-          title={`本期积分（${periodLabel(data?.period ?? currentPeriod())}）`}
+          title={t('team.points.periodPoints', { period: periodLabel(data?.period ?? currentPeriod()) })}
           value={data?.period_total ?? 0}
           precision={1}
           prefix={<TrophyOutlined />}
           valueStyle={{ color: '#1677ff' }}
         />
-        <Statistic title="累计积分" value={data?.total ?? 0} precision={1} />
-        <Button onClick={() => setOpen(true)}>积分明细</Button>
+        <Statistic title={t('team.points.total')} value={data?.total ?? 0} precision={1} />
+        <Button onClick={() => setOpen(true)}>{t('team.points.detail')}</Button>
       </Space>
       <Drawer
-        title="我的积分明细（最近 100 条）"
+        title={t('team.points.myDetail')}
         width={640}
         open={open}
         onClose={() => setOpen(false)}
@@ -126,7 +130,7 @@ function MyPointsCard() {
           columns={entryColumns}
           dataSource={data?.entries ?? []}
           pagination={false}
-          locale={{ emptyText: '暂无积分流水' }}
+          locale={{ emptyText: t('team.points.empty') }}
         />
       </Drawer>
     </Card>
@@ -159,20 +163,22 @@ interface AwardFormValues {
   note?: string;
 }
 
-const taskColumns: ColumnsType<CampaignTaskRow> = [
-  { title: '任务名', dataIndex: 'name', width: 180 },
-  { title: '说明', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
-  { title: '每次积分', dataIndex: 'points', width: 90 },
-  {
-    title: '每人上限',
-    dataIndex: 'max_times',
-    width: 90,
-    render: (v: number) => (v === 0 ? '不限' : `${v} 次`),
-  },
-];
-
 function CampaignsTab() {
+  const t = useT();
+  const et = useEnums();
   const canManage = useIdeasPerm('edit');
+
+  const taskColumns: ColumnsType<CampaignTaskRow> = [
+    { title: t('team.campaign.col.taskName'), dataIndex: 'name', width: 180 },
+    { title: t('team.campaign.col.taskDesc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('team.campaign.col.pointsEach'), dataIndex: 'points', width: 90 },
+    {
+      title: t('team.campaign.col.maxTimes'),
+      dataIndex: 'max_times',
+      width: 90,
+      render: (v: number) => (v === 0 ? t('team.campaign.unlimited') : t('team.campaign.times', { n: v })),
+    },
+  ];
 
   const [items, setItems] = useState<CampaignRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -284,10 +290,10 @@ function CampaignsTab() {
     try {
       if (editing) {
         await api.patch(`/campaigns/${editing.id}`, payload);
-        message.success('活动已更新');
+        message.success(t('team.campaign.updated'));
       } else {
         await api.post('/campaigns', payload);
-        message.success('活动已创建（草稿），上架后对全员可见');
+        message.success(t('team.campaign.created'));
       }
       setFormOpen(false);
       void load();
@@ -302,7 +308,7 @@ function CampaignsTab() {
   const setStatus = async (c: { id: string }, status: CampaignStatus) => {
     try {
       await api.post(`/campaigns/${c.id}/status`, { status });
-      message.success(status === 'active' ? '活动已上架' : status === 'offline' ? '活动已下架' : '已转为草稿');
+      message.success(status === 'active' ? t('team.campaign.setActive') : status === 'offline' ? t('team.campaign.setOffline') : t('team.campaign.setDraft'));
       void load();
       if (detailOpen && detail?.id === c.id) void loadDetail(c.id);
     } catch {
@@ -333,7 +339,7 @@ function CampaignsTab() {
         times: values.times,
         note: values.note || null,
       });
-      message.success(`已发放 ${res.awarded} 分`);
+      message.success(t('team.campaign.awardedMsg', { n: res.awarded }));
       setAwardOpen(false);
       void loadDetail(detail.id);
       void load();
@@ -347,32 +353,32 @@ function CampaignsTab() {
   /** 上架/下架按钮（列表卡片与详情复用）；示例活动不显示 */
   const statusActions = (c: { id: string; status: CampaignRow['status'] }) =>
     c.status === 'active' ? (
-      <Popconfirm key="offline" title="下架该活动？下架后普通成员不再可见" onConfirm={() => void setStatus(c, 'offline')}>
+      <Popconfirm key="offline" title={t('team.campaign.offlineConfirm')} onConfirm={() => void setStatus(c, 'offline')}>
         <Button type="link" size="small" danger onClick={(e) => e.stopPropagation()}>
-          下架
+          {t('team.campaign.offline')}
         </Button>
       </Popconfirm>
     ) : (
-      <Popconfirm key="active" title="上架该活动？上架后对全员可见" onConfirm={() => void setStatus(c, 'active')}>
+      <Popconfirm key="active" title={t('team.campaign.onlineConfirm')} onConfirm={() => void setStatus(c, 'active')}>
         <Button type="link" size="small" onClick={(e) => e.stopPropagation()}>
-          上架
+          {t('team.campaign.online')}
         </Button>
       </Popconfirm>
     );
 
   const awardColumns: ColumnsType<CampaignDetail['awards'][number]> = [
-    { title: '人员', dataIndex: 'person_name', width: 100, render: (v) => v || '-' },
-    { title: '任务', dataIndex: 'task_name', width: 160, ellipsis: true, render: (v) => v || '-' },
-    { title: '积分', dataIndex: 'points', width: 70 },
-    { title: '备注', dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
-    { title: '时间', dataIndex: 'created_at', width: 150, render: (v: string) => fmtTime(v) },
+    { title: t('team.col.person'), dataIndex: 'person_name', width: 100, render: (v) => v || '-' },
+    { title: t('team.campaign.col.task'), dataIndex: 'task_name', width: 160, ellipsis: true, render: (v) => v || '-' },
+    { title: t('team.col.points'), dataIndex: 'points', width: 70 },
+    { title: t('common.remark'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
+    { title: t('team.col.time'), dataIndex: 'created_at', width: 150, render: (v: string) => fmtTime(v) },
   ];
 
   const boardColumns: ColumnsType<CampaignDetail['leaderboard'][number]> = [
-    { title: '名次', key: 'rank', width: 60, render: (_, __, i) => i + 1 },
-    { title: '人员', dataIndex: 'person_name', render: (v) => v || '-' },
-    { title: '积分', dataIndex: 'points', width: 90 },
-    { title: '折算绩效', dataIndex: 'performance', width: 100 },
+    { title: t('team.col.rank'), key: 'rank', width: 60, render: (_, __, i) => i + 1 },
+    { title: t('team.col.person'), dataIndex: 'person_name', render: (v) => v || '-' },
+    { title: t('team.col.points'), dataIndex: 'points', width: 90 },
+    { title: t('team.campaign.col.perf'), dataIndex: 'performance', width: 100 },
   ];
 
   return (
@@ -383,26 +389,26 @@ function CampaignsTab() {
             value={statusFilter}
             onChange={(v) => setStatusFilter(v as string)}
             options={[
-              { value: 'all', label: '全部' },
-              { value: 'active', label: '上架中' },
-              { value: 'draft', label: '草稿' },
-              { value: 'offline', label: '已下架' },
+              { value: 'all', label: t('common.all') },
+              { value: 'active', label: et.campaignStatus('active') },
+              { value: 'draft', label: et.campaignStatus('draft') },
+              { value: 'offline', label: et.campaignStatus('offline') },
             ]}
           />
         )}
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
         {canManage && (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建活动
+            {t('team.campaign.create')}
           </Button>
         )}
       </Space>
 
       <Spin spinning={loading}>
         {filtered.length === 0 && !loading ? (
-          <Empty description="暂无专项活动" />
+          <Empty description={t('team.campaign.empty')} />
         ) : (
           <List
             grid={{ gutter: 16, xs: 1, sm: 2, xl: 3 }}
@@ -433,7 +439,7 @@ function CampaignsTab() {
                               openEdit(c);
                             }}
                           >
-                            编辑
+                            {t('common.edit')}
                           </Button>,
                           <span key="status" onClick={(e) => e.stopPropagation()}>
                             {statusActions(c)}
@@ -447,18 +453,18 @@ function CampaignsTab() {
                     ellipsis={{ rows: 2 }}
                     style={{ whiteSpace: 'pre-wrap', minHeight: 44 }}
                   >
-                    {c.description || '（暂无活动说明）'}
+                    {c.description || t('team.campaign.noDesc')}
                   </Typography.Paragraph>
                   <Space direction="vertical" size={4} style={{ display: 'flex' }}>
                     <Typography.Text type="secondary">
-                      考核期 {c.period_label} · {fmtDay(c.start_date)} ~ {fmtDay(c.end_date)}
+                      {t('team.campaign.periodPrefix')} {c.period_label} · {fmtDay(c.start_date)} ~ {fmtDay(c.end_date)}
                     </Typography.Text>
                     <Typography.Text type="secondary">
-                      绩效折算：积分 × {c.performance_ratio} · 激励任务 {c.tasks.length} 项
+                      {t('team.campaign.ratioLine', { ratio: c.performance_ratio, n: c.tasks.length })}
                     </Typography.Text>
                     <Typography.Text>
-                      我的积分 <Typography.Text strong style={{ color: '#1677ff' }}>{c.my_points ?? 0}</Typography.Text>
-                      {' · '}折算绩效 <Typography.Text strong>{c.my_performance ?? 0}</Typography.Text>
+                      {t('team.campaign.myPoints')} <Typography.Text strong style={{ color: '#1677ff' }}>{c.my_points ?? 0}</Typography.Text>
+                      {' · '}{t('team.campaign.myPerf')} <Typography.Text strong>{c.my_performance ?? 0}</Typography.Text>
                     </Typography.Text>
                   </Space>
                 </Card>
@@ -480,7 +486,7 @@ function CampaignsTab() {
               </Tag>
             </Space>
           ) : (
-            '活动详情'
+            t('team.campaign.detailTitle')
           )
         }
         width={720}
@@ -491,10 +497,10 @@ function CampaignsTab() {
             <Space>
               {detail.status === 'active' && (
                 <Button type="primary" onClick={openAward}>
-                  发放积分
+                  {t('team.campaign.award')}
                 </Button>
               )}
-              <Button onClick={() => openEdit(detail)}>编辑</Button>
+              <Button onClick={() => openEdit(detail)}>{t('common.edit')}</Button>
               {statusActions(detail)}
             </Space>
           )
@@ -505,19 +511,19 @@ function CampaignsTab() {
             <Space direction="vertical" size={16} style={{ display: 'flex' }}>
               {detail.is_example && <ExampleAlert />}
               <Descriptions size="small" column={2}>
-                <Descriptions.Item label="考核期">{detail.period_label}</Descriptions.Item>
-                <Descriptions.Item label="起止日期">
+                <Descriptions.Item label={t('team.points.period')}>{detail.period_label}</Descriptions.Item>
+                <Descriptions.Item label={t('team.campaign.dateRange')}>
                   {fmtDay(detail.start_date)} ~ {fmtDay(detail.end_date)}
                 </Descriptions.Item>
-                <Descriptions.Item label="绩效折算">积分 × {detail.performance_ratio}</Descriptions.Item>
-                <Descriptions.Item label="已发放合计">{detail.total_awarded} 分</Descriptions.Item>
-                <Descriptions.Item label="我的积分">{detail.my_points ?? 0}</Descriptions.Item>
-                <Descriptions.Item label="我的折算绩效">{detail.my_performance ?? 0}</Descriptions.Item>
+                <Descriptions.Item label={t('team.campaign.ratio')}>{t('team.campaign.ratioValue', { ratio: detail.performance_ratio })}</Descriptions.Item>
+                <Descriptions.Item label={t('team.campaign.totalAwarded')}>{t('team.campaign.points', { n: detail.total_awarded })}</Descriptions.Item>
+                <Descriptions.Item label={t('team.campaign.myPoints')}>{detail.my_points ?? 0}</Descriptions.Item>
+                <Descriptions.Item label={t('team.campaign.myPerfFull')}>{detail.my_performance ?? 0}</Descriptions.Item>
               </Descriptions>
               {detail.description && (
                 <Alert
                   type="info"
-                  message="活动说明"
+                  message={t('team.campaign.descTitle')}
                   description={
                     <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
                       {detail.description}
@@ -527,7 +533,7 @@ function CampaignsTab() {
               )}
 
               <div>
-                <Typography.Title level={5}>激励任务</Typography.Title>
+                <Typography.Title level={5}>{t('team.campaign.tasks')}</Typography.Title>
                 <Table<CampaignTaskRow>
                   rowKey="id"
                   size="small"
@@ -538,26 +544,26 @@ function CampaignsTab() {
               </div>
 
               <div>
-                <Typography.Title level={5}>活动排行榜（折算后绩效分）</Typography.Title>
+                <Typography.Title level={5}>{t('team.campaign.leaderboard')}</Typography.Title>
                 <Table
                   rowKey={(r, i) => `${i}-${r.person_name ?? ''}`}
                   size="small"
                   columns={boardColumns}
                   dataSource={detail.leaderboard}
                   pagination={false}
-                  locale={{ emptyText: '暂无积分发放' }}
+                  locale={{ emptyText: t('team.campaign.noAward') }}
                 />
               </div>
 
               <div>
-                <Typography.Title level={5}>发放记录（最近 100 条）</Typography.Title>
+                <Typography.Title level={5}>{t('team.campaign.awardRecords')}</Typography.Title>
                 <Table
                   rowKey={(r, i) => r.id ?? String(i)}
                   size="small"
                   columns={awardColumns}
                   dataSource={detail.awards}
                   pagination={false}
-                  locale={{ emptyText: '暂无发放记录' }}
+                  locale={{ emptyText: t('team.campaign.noAwardRecord') }}
                 />
               </div>
             </Space>
@@ -567,16 +573,16 @@ function CampaignsTab() {
 
       {/* 新建/编辑活动 */}
       <Drawer
-        title={editing ? `编辑活动：${editing.name}` : '新建活动'}
+        title={editing ? t('team.campaign.editTitle', { name: editing.name }) : t('team.campaign.create')}
         width={640}
         open={formOpen}
         onClose={() => setFormOpen(false)}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setFormOpen(false)}>取消</Button>
+            <Button onClick={() => setFormOpen(false)}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
@@ -586,19 +592,19 @@ function CampaignsTab() {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message="该活动已有积分发放记录：激励任务只增不删，已有任务的改动不会生效（保护积分台账引用）。"
+            message={t('team.campaign.editWarn')}
           />
         )}
         <Form<CampaignFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="活动名称" rules={[{ required: true, message: '请输入活动名称' }, { min: 2, message: '至少 2 个字符' }]}>
-            <Input maxLength={200} placeholder="如：2026 下半年知识分享季" />
+          <Form.Item name="name" label={t('team.campaign.nameLabel')} rules={[{ required: true, message: t('team.campaign.nameRequired') }, { min: 2, message: t('team.minChars', { n: 2 }) }]}>
+            <Input maxLength={200} placeholder={t('team.campaign.namePlaceholder')} />
           </Form.Item>
-          <Form.Item name="description" label="活动说明">
-            <Input.TextArea rows={3} maxLength={2000} placeholder="活动背景、参与方式与激励说明" />
+          <Form.Item name="description" label={t('team.campaign.descTitle')}>
+            <Input.TextArea rows={3} maxLength={2000} placeholder={t('team.campaign.descPlaceholder')} />
           </Form.Item>
           <Row gutter={16}>
             <Col span={8}>
-              <Form.Item name="period_label" label="考核期" rules={[{ required: true, message: '请选择考核期' }]}>
+              <Form.Item name="period_label" label={t('team.points.period')} rules={[{ required: true, message: t('team.campaign.periodRequired') }]}>
                 <Select
                   options={[0, 1]
                     .flatMap((offset) => {
@@ -610,22 +616,22 @@ function CampaignsTab() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="start_date" label="开始日期" rules={[{ required: true, message: '请选择开始日期' }]}>
+              <Form.Item name="start_date" label={t('team.campaign.startLabel')} rules={[{ required: true, message: t('team.campaign.startRequired') }]}>
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
                 name="end_date"
-                label="结束日期"
+                label={t('team.campaign.endLabel')}
                 dependencies={['start_date']}
                 rules={[
-                  { required: true, message: '请选择结束日期' },
+                  { required: true, message: t('team.campaign.endRequired') },
                   ({ getFieldValue }) => ({
                     validator(_, v: Dayjs | undefined) {
                       const s: Dayjs | undefined = getFieldValue('start_date');
                       if (!v || !s || !v.isBefore(s, 'day')) return Promise.resolve();
-                      return Promise.reject(new Error('结束日期不能早于开始日期'));
+                      return Promise.reject(new Error(t('team.campaign.endBeforeStart')));
                     },
                   }),
                 ]}
@@ -636,19 +642,19 @@ function CampaignsTab() {
           </Row>
           <Form.Item
             name="performance_ratio"
-            label="绩效折算系数（绩效分 = 积分 × 系数）"
-            rules={[{ required: true, message: '请输入折算系数' }]}
+            label={t('team.campaign.ratioCoef')}
+            rules={[{ required: true, message: t('team.campaign.ratioRequired') }]}
           >
             <InputNumber min={0.01} step={0.05} style={{ width: 200 }} />
           </Form.Item>
 
-          <Typography.Title level={5}>激励任务</Typography.Title>
+          <Typography.Title level={5}>{t('team.campaign.tasks')}</Typography.Title>
           <Form.List
             name="tasks"
             rules={[
               {
                 validator: async (_, tasks?: CampaignTaskForm[]) => {
-                  if (!tasks || tasks.length < 1) throw new Error('至少添加 1 条激励任务');
+                  if (!tasks || tasks.length < 1) throw new Error(t('team.campaign.taskMin'));
                 },
               },
             ]}
@@ -671,29 +677,29 @@ function CampaignsTab() {
                         <Col span={9}>
                           <Form.Item
                             name={[field.name, 'name']}
-                            rules={[{ required: true, message: '任务名必填' }]}
+                            rules={[{ required: true, message: t('team.campaign.taskNameRequired') }]}
                             style={{ marginBottom: 8 }}
                           >
-                            <Input placeholder="任务名" maxLength={200} />
+                            <Input placeholder={t('team.campaign.taskNamePlaceholder')} maxLength={200} />
                           </Form.Item>
                         </Col>
                         <Col span={7}>
                           <Form.Item
                             name={[field.name, 'points']}
-                            rules={[{ required: true, message: '积分必填' }]}
+                            rules={[{ required: true, message: t('team.campaign.taskPointsRequired') }]}
                             style={{ marginBottom: 8 }}
                           >
-                            <InputNumber min={0.5} step={0.5} placeholder="每次积分" style={{ width: '100%' }} />
+                            <InputNumber min={0.5} step={0.5} placeholder={t('team.campaign.taskPointsPlaceholder')} style={{ width: '100%' }} />
                           </Form.Item>
                         </Col>
                         <Col span={8}>
                           <Form.Item name={[field.name, 'max_times']} style={{ marginBottom: 8 }}>
-                            <InputNumber min={0} placeholder="每人上限（0=不限）" style={{ width: '100%' }} />
+                            <InputNumber min={0} placeholder={t('team.campaign.taskMaxPlaceholder')} style={{ width: '100%' }} />
                           </Form.Item>
                         </Col>
                       </Row>
                       <Form.Item name={[field.name, 'description']} style={{ marginBottom: 8 }}>
-                        <Input placeholder="任务说明（可选）" maxLength={500} />
+                        <Input placeholder={t('team.campaign.taskDescPlaceholder')} maxLength={500} />
                       </Form.Item>
                     </Col>
                     <Col flex="24px" style={{ paddingTop: 5 }}>
@@ -712,7 +718,7 @@ function CampaignsTab() {
                   icon={<PlusOutlined />}
                   onClick={() => add({ max_times: 1 })}
                 >
-                  添加激励任务
+                  {t('team.campaign.addTask')}
                 </Button>
                 <Form.ErrorList errors={errors} />
               </>
@@ -723,7 +729,7 @@ function CampaignsTab() {
 
       {/* 发放积分 */}
       <Modal
-        title={detail ? `发放积分：${detail.name}` : '发放积分'}
+        title={detail ? t('team.campaign.awardTitle', { name: detail.name }) : t('team.campaign.award')}
         open={awardOpen}
         onOk={() => void handleAward()}
         confirmLoading={awarding}
@@ -731,31 +737,35 @@ function CampaignsTab() {
         destroyOnClose
       >
         <Form<AwardFormValues> form={awardForm} layout="vertical" preserve={false}>
-          <Form.Item name="person_id" label="人员" rules={[{ required: true, message: '请选择人员' }]}>
+          <Form.Item name="person_id" label={t('team.col.person')} rules={[{ required: true, message: t('team.campaign.personRequired') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择获得积分的人员"
+              placeholder={t('team.campaign.personPlaceholder')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
               }))}
             />
           </Form.Item>
-          <Form.Item name="task_id" label="激励任务" rules={[{ required: true, message: '请选择任务' }]}>
+          <Form.Item name="task_id" label={t('team.campaign.taskLabel')} rules={[{ required: true, message: t('team.campaign.taskRequired') }]}>
             <Select
-              placeholder="选择完成的任务"
-              options={(detail?.tasks ?? []).map((t) => ({
-                value: t.id,
-                label: `${t.name}（${t.points} 分/次${t.max_times ? `，上限 ${t.max_times} 次` : ''}）`,
+              placeholder={t('team.campaign.taskPlaceholder')}
+              options={(detail?.tasks ?? []).map((tk) => ({
+                value: tk.id,
+                label: t('team.campaign.awardTaskOption', {
+                  name: tk.name,
+                  points: tk.points,
+                  limit: tk.max_times ? t('team.campaign.awardLimit', { n: tk.max_times }) : '',
+                }),
               }))}
             />
           </Form.Item>
-          <Form.Item name="times" label="次数" rules={[{ required: true, message: '请输入次数' }]}>
+          <Form.Item name="times" label={t('team.campaign.timesLabel')} rules={[{ required: true, message: t('team.campaign.timesRequired') }]}>
             <InputNumber min={1} max={10} style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="note" label="备注">
-            <Input maxLength={200} placeholder="如：7 月技术分享《xxx》" />
+          <Form.Item name="note" label={t('common.remark')}>
+            <Input maxLength={200} placeholder={t('team.campaign.notePlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
@@ -771,6 +781,7 @@ interface IdeaFormValues {
 }
 
 function IdeasTab() {
+  const t = useT();
   const canCreate = useIdeasPerm('create');
   const canManage = useIdeasPerm('edit');
 
@@ -830,7 +841,7 @@ function IdeasTab() {
     setSaving(true);
     try {
       await api.post('/ideas', values);
-      message.success('建言已提交，自动获得建言积分');
+      message.success(t('team.idea.submitted'));
       setCreateOpen(false);
       void load();
     } catch {
@@ -851,7 +862,7 @@ function IdeasTab() {
 
   const setIdeaStatus = async (r: IdeaRow, status: IdeaStatus, reason?: string) => {
     await api.patch(`/ideas/${r.id}/status`, { status, reason });
-    message.success('状态已更新');
+    message.success(t('team.idea.statusUpdated'));
     void load();
   };
 
@@ -882,7 +893,7 @@ function IdeasTab() {
   const saveRule = async (code: string, points: number, active: boolean) => {
     try {
       await api.patch(`/point-rules/${code}`, { points, active });
-      message.success('积分规则已更新');
+      message.success(t('team.idea.ruleUpdated'));
       void loadRules();
     } catch {
       // 已统一提示
@@ -891,7 +902,7 @@ function IdeasTab() {
 
   const columns: ColumnsType<IdeaRow> = [
     {
-      title: '标题',
+      title: t('team.col.title'),
       dataIndex: 'title',
       ellipsis: true,
       render: (v: string, r) => (
@@ -901,15 +912,15 @@ function IdeasTab() {
         </Space>
       ),
     },
-    { title: '提出人', dataIndex: 'proposer_name', width: 100, render: (v) => v || '-' },
+    { title: t('team.idea.proposer'), dataIndex: 'proposer_name', width: 100, render: (v) => v || '-' },
     {
-      title: '时间',
+      title: t('team.col.time'),
       dataIndex: 'created_at',
       width: 110,
       render: (v: string) => fmtDay(v),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status_name',
       width: 90,
       render: (v: string, r) => (
@@ -917,7 +928,7 @@ function IdeasTab() {
       ),
     },
     {
-      title: '点赞',
+      title: t('team.idea.likeCol'),
       key: 'like',
       width: 80,
       render: (_, r) =>
@@ -935,7 +946,7 @@ function IdeasTab() {
     ...(canManage
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'actions',
             width: 150,
             render: (_: unknown, r: IdeaRow) => {
@@ -944,9 +955,9 @@ function IdeasTab() {
                 <Space size={0}>
                   {r.status === 'submitted' && (
                     <>
-                      <Popconfirm title="采纳该建言？提出人将获得采纳积分" onConfirm={() => void setIdeaStatus(r, 'adopted').catch(() => undefined)}>
+                      <Popconfirm title={t('team.idea.adoptConfirm')} onConfirm={() => void setIdeaStatus(r, 'adopted').catch(() => undefined)}>
                         <Button type="link" size="small">
-                          采纳
+                          {t('team.idea.adopt')}
                         </Button>
                       </Popconfirm>
                       <Button
@@ -957,14 +968,14 @@ function IdeasTab() {
                           setDeclineTarget(r);
                         }}
                       >
-                        婉拒
+                        {t('team.idea.decline')}
                       </Button>
                     </>
                   )}
                   {r.status === 'adopted' && (
-                    <Popconfirm title="标记为已实现？" onConfirm={() => void setIdeaStatus(r, 'implemented').catch(() => undefined)}>
+                    <Popconfirm title={t('team.idea.implementConfirm')} onConfirm={() => void setIdeaStatus(r, 'implemented').catch(() => undefined)}>
                       <Button type="link" size="small">
-                        已实现
+                        {t('team.idea.implemented')}
                       </Button>
                     </Popconfirm>
                   )}
@@ -977,9 +988,9 @@ function IdeasTab() {
   ];
 
   const ruleColumns: ColumnsType<PointRule> = [
-    { title: '规则', dataIndex: 'name', ellipsis: true },
+    { title: t('team.rule.col.name'), dataIndex: 'name', ellipsis: true },
     {
-      title: '分值',
+      title: t('team.rule.col.points'),
       dataIndex: 'points',
       width: 100,
       render: (v: number, r) =>
@@ -1003,14 +1014,14 @@ function IdeasTab() {
         ),
     },
     {
-      title: '启用',
+      title: t('team.enableCol'),
       dataIndex: 'active',
       width: 70,
       render: (v: boolean, r) =>
         canManage ? (
           <Switch size="small" checked={v} onChange={(checked) => void saveRule(r.code, r.points, checked)} />
         ) : (
-          <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '停用'}</Tag>
+          <Tag color={v ? 'green' : 'default'}>{v ? t('team.enabled') : t('team.disabled')}</Tag>
         ),
     },
   ];
@@ -1019,18 +1030,18 @@ function IdeasTab() {
     <Row gutter={[16, 16]}>
       <Col xs={24} lg={16}>
         <Card
-          title="建言献策"
+          title={t('team.idea.title')}
           extra={
             <Space>
               <Button icon={<TrophyOutlined />} onClick={openBoard}>
-                排行榜
+                {t('team.idea.leaderboard')}
               </Button>
               {canCreate && (
                 <Button type="primary" icon={<PlusOutlined />} onClick={() => {
                   form.resetFields();
                   setCreateOpen(true);
                 }}>
-                  提交建言
+                  {t('team.idea.submit')}
                 </Button>
               )}
             </Space>
@@ -1042,7 +1053,7 @@ function IdeasTab() {
             loading={loading}
             columns={columns}
             dataSource={items}
-            pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 条` }}
+            pagination={{ pageSize: 10, showTotal: (n) => t('team.total', { n }) }}
             expandable={{
               expandedRowRender: (r) => (
                 <Space direction="vertical" size={8} style={{ display: 'flex' }}>
@@ -1050,10 +1061,10 @@ function IdeasTab() {
                     {r.content}
                   </Typography.Paragraph>
                   {r.status === 'declined' && r.decline_reason && (
-                    <Typography.Text type="secondary">婉拒原因：{r.decline_reason}</Typography.Text>
+                    <Typography.Text type="secondary">{t('team.idea.declineReasonExpand', { reason: r.decline_reason })}</Typography.Text>
                   )}
                   {r.adopted_at && (
-                    <Typography.Text type="secondary">采纳时间：{fmtTime(r.adopted_at)}</Typography.Text>
+                    <Typography.Text type="secondary">{t('team.idea.adoptedAt', { time: fmtTime(r.adopted_at) })}</Typography.Text>
                   )}
                 </Space>
               ),
@@ -1063,10 +1074,10 @@ function IdeasTab() {
       </Col>
       <Col xs={24} lg={8}>
         <Card
-          title="积分规则（自动计分）"
+          title={t('team.rule.title')}
           extra={
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {canManage ? '分值失焦保存' : ''}
+              {canManage ? t('team.rule.blurHint') : ''}
             </Typography.Text>
           }
         >
@@ -1083,7 +1094,7 @@ function IdeasTab() {
 
       {/* 提交建言 */}
       <Modal
-        title="提交建言"
+        title={t('team.idea.submit')}
         open={createOpen}
         onOk={() => void handleCreate()}
         confirmLoading={saving}
@@ -1093,20 +1104,20 @@ function IdeasTab() {
         <Form<IdeaFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="title"
-            label="标题"
-            rules={[{ required: true, message: '请输入标题' }, { min: 2, message: '至少 2 个字符' }]}
+            label={t('team.col.title')}
+            rules={[{ required: true, message: t('team.idea.titleRequired') }, { min: 2, message: t('team.minChars', { n: 2 }) }]}
           >
-            <Input maxLength={200} placeholder="一句话说清你的建议" />
+            <Input maxLength={200} placeholder={t('team.idea.titlePlaceholder')} />
           </Form.Item>
-          <Form.Item name="content" label="内容" rules={[{ required: true, message: '请输入内容' }]}>
-            <Input.TextArea rows={5} maxLength={2000} placeholder="现状问题、改进建议与预期收益" />
+          <Form.Item name="content" label={t('team.idea.contentLabel')} rules={[{ required: true, message: t('team.idea.contentRequired') }]}>
+            <Input.TextArea rows={5} maxLength={2000} placeholder={t('team.idea.contentPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 婉拒原因 */}
       <Modal
-        title={declineTarget ? `婉拒建言：${declineTarget.title}` : '婉拒建言'}
+        title={declineTarget ? t('team.idea.declineTitle', { title: declineTarget.title }) : t('team.idea.declineTitlePlain')}
         open={!!declineTarget}
         onOk={() => void handleDecline()}
         confirmLoading={declining}
@@ -1114,15 +1125,15 @@ function IdeasTab() {
         destroyOnClose
       >
         <Form form={declineForm} layout="vertical" preserve={false}>
-          <Form.Item name="reason" label="婉拒原因" rules={[{ required: true, message: '请填写婉拒原因' }]}>
-            <Input.TextArea rows={3} maxLength={500} placeholder="向提出人说明暂不采纳的原因" />
+          <Form.Item name="reason" label={t('team.idea.declineReasonLabel')} rules={[{ required: true, message: t('team.idea.declineReasonRequired') }]}>
+            <Input.TextArea rows={3} maxLength={500} placeholder={t('team.idea.declineReasonPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 本期积分排行榜 */}
       <Drawer
-        title={`本期积分榜${board ? `（${board.period}）` : ''}`}
+        title={`${t('team.overview.widget.pointsBoard')}${board ? `（${board.period}）` : ''}`}
         width={420}
         open={boardOpen}
         onClose={() => setBoardOpen(false)}
@@ -1132,13 +1143,13 @@ function IdeasTab() {
             rowKey={(r, i) => `${i}-${r.person_name ?? ''}`}
             size="small"
             columns={[
-              { title: '名次', key: 'rank', width: 70, render: (_, __, i) => i + 1 },
-              { title: '人员', dataIndex: 'person_name', render: (v) => v || '-' },
-              { title: '积分', dataIndex: 'points', width: 100 },
+              { title: t('team.col.rank'), key: 'rank', width: 70, render: (_, __, i) => i + 1 },
+              { title: t('team.col.person'), dataIndex: 'person_name', render: (v) => v || '-' },
+              { title: t('team.col.points'), dataIndex: 'points', width: 100 },
             ]}
             dataSource={board?.board ?? []}
             pagination={false}
-            locale={{ emptyText: '本期暂无积分记录' }}
+            locale={{ emptyText: t('team.overview.board.empty') }}
           />
         </Spin>
       </Drawer>
@@ -1150,13 +1161,14 @@ function IdeasTab() {
 
 /** 活动积分复合页：专项活动 | 建言献策（顶部我的积分卡片） */
 export default function ActivityPoints() {
+  const t = useT();
   return (
     <div>
       <MyPointsCard />
       <PermTabs
         tabs={[
-          { key: 'campaigns', label: '专项活动', modules: ['ideas'], children: <CampaignsTab /> },
-          { key: 'ideas', label: '建言献策', modules: ['ideas'], children: <IdeasTab /> },
+          { key: 'campaigns', label: t('team.campaign.tab'), modules: ['ideas'], children: <CampaignsTab /> },
+          { key: 'ideas', label: t('team.idea.title'), modules: ['ideas'], children: <IdeasTab /> },
         ]}
       />
     </div>

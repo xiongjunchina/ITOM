@@ -18,6 +18,8 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import type { Member, TrainingRow } from '../../api/types';
 
@@ -41,6 +43,8 @@ interface TrainingFormValues {
 
 /** 培训发展：内部交叉培训 / 外部技术交流 / 新技术研究 登记（登记即自动计分） */
 export default function Activities() {
+  const t = useT();
+  const et = useEnums();
   const user = useAuthStore((s) => s.user);
   const canCreate = user?.permissions ? hasPermission(user, 'activities', 'create') : true;
 
@@ -92,7 +96,7 @@ export default function Activities() {
         output_link: values.output_link || null,
         remarks: values.remarks || null,
       });
-      message.success('活动已登记，主讲与参与人已自动计分');
+      message.success(t('team.activities.registered'));
       setDrawerOpen(false);
       void load();
     } catch {
@@ -109,21 +113,21 @@ export default function Activities() {
 
   const columns: ColumnsType<TrainingRow> = [
     {
-      title: '类型',
+      title: t('team.activities.col.type'),
       dataIndex: 'activity_type',
       width: 120,
-      render: (v: string) => <Tag color={TYPE_COLORS[v] ?? 'default'}>{v}</Tag>,
+      render: (v: string) => <Tag color={TYPE_COLORS[v] ?? 'default'}>{et.trainingType(v)}</Tag>,
     },
-    { title: '主题', dataIndex: 'topic', width: 240, ellipsis: true },
+    { title: t('team.activities.col.topic'), dataIndex: 'topic', width: 240, ellipsis: true },
     {
-      title: '日期',
+      title: t('team.col.date'),
       dataIndex: 'activity_date',
       width: 110,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD') : '-'),
     },
-    { title: '主讲/组织', dataIndex: 'host_name', width: 110, render: (v) => v || '-' },
+    { title: t('team.activities.col.host'), dataIndex: 'host_name', width: 110, render: (v) => v || '-' },
     {
-      title: '参与人',
+      title: t('team.activities.col.participants'),
       dataIndex: 'participant_names',
       width: 240,
       render: (names: string[]) =>
@@ -138,7 +142,7 @@ export default function Activities() {
         ),
     },
     {
-      title: '产出链接',
+      title: t('team.activities.col.output'),
       dataIndex: 'output_link',
       width: 180,
       ellipsis: true,
@@ -151,20 +155,20 @@ export default function Activities() {
           '-'
         ),
     },
-    { title: '备注', dataIndex: 'remarks', ellipsis: true, render: (v) => v || '-' },
+    { title: t('common.remark'), dataIndex: 'remarks', ellipsis: true, render: (v) => v || '-' },
   ];
 
   return (
     <Card
-      title="培训发展"
+      title={t('team.activities.title')}
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
+            {t('common.refresh')}
           </Button>
           {canCreate && (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              登记活动
+              {t('team.activities.register')}
             </Button>
           )}
         </Space>
@@ -174,7 +178,7 @@ export default function Activities() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="登记后自动计分：主讲 +15 / 参与 +3（实际分值以「活动积分 → 积分规则」页配置为准）。"
+        message={t('team.activities.pointsHint')}
       />
       <Table<TrainingRow>
         rowKey="id"
@@ -182,56 +186,56 @@ export default function Activities() {
         columns={columns}
         dataSource={items}
         scroll={{ x: 1200 }}
-        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+        pagination={{ pageSize: 20, showTotal: (n) => t('team.total', { n }) }}
       />
 
       <Drawer
-        title="登记活动"
+        title={t('team.activities.register')}
         width={480}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>取消</Button>
+            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
       >
         <Form<TrainingFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="activity_type" label="活动类型" rules={[{ required: true, message: '请选择活动类型' }]}>
-            <Select options={ACTIVITY_TYPES.map((t) => ({ value: t, label: t }))} placeholder="选择类型" />
+          <Form.Item name="activity_type" label={t('team.activities.form.type')} rules={[{ required: true, message: t('team.activities.form.typeRequired') }]}>
+            <Select options={ACTIVITY_TYPES.map((v) => ({ value: v, label: et.trainingType(v) }))} placeholder={t('team.activities.form.typePlaceholder')} />
           </Form.Item>
           <Form.Item
             name="topic"
-            label="主题"
-            rules={[{ required: true, message: '请输入主题' }, { min: 2, message: '至少 2 个字符' }]}
+            label={t('team.activities.col.topic')}
+            rules={[{ required: true, message: t('team.activities.form.topicRequired') }, { min: 2, message: t('team.minChars', { n: 2 }) }]}
           >
-            <Input maxLength={200} placeholder="如：K8s 故障排查实战分享" />
+            <Input maxLength={200} placeholder={t('team.activities.form.topicPlaceholder')} />
           </Form.Item>
-          <Form.Item name="activity_date" label="活动日期" rules={[{ required: true, message: '请选择日期' }]}>
+          <Form.Item name="activity_date" label={t('team.activities.form.date')} rules={[{ required: true, message: t('team.activities.form.dateRequired') }]}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="host_id" label="主讲/组织人">
-            <Select allowClear showSearch optionFilterProp="label" placeholder="选择主讲人" options={memberOptions} />
+          <Form.Item name="host_id" label={t('team.activities.form.host')}>
+            <Select allowClear showSearch optionFilterProp="label" placeholder={t('team.activities.form.hostPlaceholder')} options={memberOptions} />
           </Form.Item>
-          <Form.Item name="participant_ids" label="参与人">
+          <Form.Item name="participant_ids" label={t('team.activities.col.participants')}>
             <Select
               mode="multiple"
               allowClear
               showSearch
               optionFilterProp="label"
               maxTagCount="responsive"
-              placeholder="选择参与人员（可多选）"
+              placeholder={t('team.activities.form.participantsPlaceholder')}
               options={memberOptions}
             />
           </Form.Item>
-          <Form.Item name="output_link" label="产出链接">
-            <Input maxLength={500} placeholder="课件/纪要/知识库文章链接" />
+          <Form.Item name="output_link" label={t('team.activities.form.output')}>
+            <Input maxLength={500} placeholder={t('team.activities.form.outputPlaceholder')} />
           </Form.Item>
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>

@@ -5,6 +5,7 @@ import { Button, Card, Col, Row, Statistic, Table, Tag, Typography } from 'antd'
 import type { ColumnsType } from 'antd/es/table';
 import { FundOutlined, SettingOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import { WidgetBoardDrawer, WidgetTitle, useWidgetBoard } from '../../components/WidgetBoard';
 import type { TeamOverviewData } from '../../api/types';
 
@@ -12,22 +13,25 @@ type WorkloadRow = TeamOverviewData['workload'][number];
 type BoardRow = TeamOverviewData['points_board'][number];
 
 /** 团队总览 widget 注册表：key 有序持久化在 preferences.team_overview_widgets（数组顺序=显示顺序） */
-const TEAM_WIDGETS = [
-  { key: 'stats', name: '关键指标', icon: <FundOutlined style={{ color: '#1677ff' }} /> },
-  { key: 'workload', name: '人员负载', icon: <TeamOutlined style={{ color: '#52c41a' }} /> },
-  { key: 'points_board', name: '本期积分榜', icon: <TrophyOutlined style={{ color: '#faad14' }} /> },
+const TEAM_WIDGET_META = [
+  { key: 'stats', nameKey: 'team.overview.widget.stats', icon: <FundOutlined style={{ color: '#1677ff' }} /> },
+  { key: 'workload', nameKey: 'team.overview.widget.workload', icon: <TeamOutlined style={{ color: '#52c41a' }} /> },
+  { key: 'points_board', nameKey: 'team.overview.widget.pointsBoard', icon: <TrophyOutlined style={{ color: '#faad14' }} /> },
 ] as const;
 
-type TeamWidgetKey = (typeof TEAM_WIDGETS)[number]['key'];
-
-/** 按 key 取注册项（卡片标题/图标与注册表保持一致） */
-const widgetOf = (key: TeamWidgetKey) =>
-  TEAM_WIDGETS.find((w) => w.key === key) as (typeof TEAM_WIDGETS)[number];
+type TeamWidgetKey = (typeof TEAM_WIDGET_META)[number]['key'];
 
 /** 团队总览：关键指标 / 人员负载 / 本期积分榜（widget 化，支持自定义显隐 + 拖拽排序） */
 export default function Overview() {
+  const t = useT();
   const [data, setData] = useState<TeamOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // 注册表 name 按当前语言解析（key/icon 稳定，name 随语言切换）
+  const TEAM_WIDGETS = TEAM_WIDGET_META.map((w) => ({ key: w.key, name: t(w.nameKey), icon: w.icon }));
+  /** 按 key 取注册项（卡片标题/图标与注册表保持一致） */
+  const widgetOf = (key: TeamWidgetKey) =>
+    TEAM_WIDGETS.find((w) => w.key === key) as (typeof TEAM_WIDGETS)[number];
   const board = useWidgetBoard(TEAM_WIDGETS, 'team_overview_widgets');
 
   const load = useCallback(async () => {
@@ -49,12 +53,12 @@ export default function Overview() {
   const maxTotal = workload.reduce((mx, r) => Math.max(mx, r.total), 0);
 
   const workloadColumns: ColumnsType<WorkloadRow> = [
-    { title: '姓名', dataIndex: 'person_name', width: 100 },
-    { title: '工单', dataIndex: 'tickets', width: 70 },
-    { title: '项目任务', dataIndex: 'wbs_tasks', width: 90 },
-    { title: '需求任务', dataIndex: 'req_tasks', width: 90 },
+    { title: t('team.col.name'), dataIndex: 'person_name', width: 100 },
+    { title: t('team.overview.workload.tickets'), dataIndex: 'tickets', width: 70 },
+    { title: t('team.overview.workload.wbsTasks'), dataIndex: 'wbs_tasks', width: 90 },
+    { title: t('team.overview.workload.reqTasks'), dataIndex: 'req_tasks', width: 90 },
     {
-      title: '合计',
+      title: t('team.overview.workload.total'),
       dataIndex: 'total',
       width: 110,
       render: (v: number) =>
@@ -64,7 +68,7 @@ export default function Overview() {
               {v}
             </Typography.Text>
             <Tag color="red" style={{ marginLeft: 8 }}>
-              负载最高
+              {t('team.overview.workload.highest')}
             </Tag>
           </span>
         ) : (
@@ -74,9 +78,9 @@ export default function Overview() {
   ];
 
   const boardColumns: ColumnsType<BoardRow> = [
-    { title: '名次', key: 'rank', width: 70, render: (_, __, i) => i + 1 },
-    { title: '姓名', dataIndex: 'person_name', render: (v) => v || '-' },
-    { title: '积分', dataIndex: 'points', width: 90 },
+    { title: t('team.col.rank'), key: 'rank', width: 70, render: (_, __, i) => i + 1 },
+    { title: t('team.col.name'), dataIndex: 'person_name', render: (v) => v || '-' },
+    { title: t('team.col.points'), dataIndex: 'points', width: 90 },
   ];
 
   /** 各 widget 渲染器：按偏好数组顺序流式布局 */
@@ -91,17 +95,17 @@ export default function Overview() {
           >
             <Row gutter={[16, 16]}>
               <Col xs={12} lg={6}>
-                <Statistic title="在岗人数" value={data?.onboard_count ?? 0} />
+                <Statistic title={t('team.overview.stat.onboard')} value={data?.onboard_count ?? 0} />
               </Col>
               <Col xs={12} lg={6}>
-                <Statistic title="本月培训" value={data?.trainings_month ?? 0} />
+                <Statistic title={t('team.overview.stat.trainingsMonth')} value={data?.trainings_month ?? 0} />
               </Col>
               <Col xs={12} lg={6}>
-                <Statistic title="进行中专项活动" value={data?.active_campaigns ?? 0} />
+                <Statistic title={t('team.overview.stat.activeCampaigns')} value={data?.active_campaigns ?? 0} />
               </Col>
               <Col xs={12} lg={6}>
                 <Statistic
-                  title="待招聘"
+                  title={t('team.overview.stat.openHirings')}
                   value={data?.open_hirings ?? 0}
                   valueStyle={(data?.open_hirings ?? 0) > 0 ? { color: '#fa8c16' } : undefined}
                 />
@@ -116,7 +120,7 @@ export default function Overview() {
       <Col key="workload" xs={24} lg={14}>
         <div {...board.dragProps('workload')}>
           <Card
-            title={<WidgetTitle widget={widgetOf('workload')} suffix="（未完成事项，按合计降序）" />}
+            title={<WidgetTitle widget={widgetOf('workload')} suffix={t('team.overview.workload.suffix')} />}
             style={{ height: '100%' }}
           >
             <Table<WorkloadRow>
@@ -126,7 +130,7 @@ export default function Overview() {
               columns={workloadColumns}
               dataSource={workload}
               pagination={false}
-              locale={{ emptyText: '暂无在岗人员负载数据' }}
+              locale={{ emptyText: t('team.overview.workload.empty') }}
             />
           </Card>
         </div>
@@ -152,7 +156,7 @@ export default function Overview() {
               columns={boardColumns}
               dataSource={data?.points_board ?? []}
               pagination={false}
-              locale={{ emptyText: '本期暂无积分记录' }}
+              locale={{ emptyText: t('team.overview.board.empty') }}
             />
           </Card>
         </div>
@@ -164,7 +168,7 @@ export default function Overview() {
     <>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <Button icon={<SettingOutlined />} onClick={board.openCustomize}>
-          自定义面板
+          {t('team.overview.customize')}
         </Button>
       </div>
 
@@ -172,7 +176,7 @@ export default function Overview() {
         {(board.orderedKeys as TeamWidgetKey[]).map((k) => renderers[k]())}
       </Row>
 
-      <WidgetBoardDrawer board={board} description="选择团队总览页要显示的板块，仅影响当前账号。" />
+      <WidgetBoardDrawer board={board} description={t('team.overview.boardDesc')} />
     </>
   );
 }

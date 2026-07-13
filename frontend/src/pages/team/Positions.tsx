@@ -3,6 +3,8 @@ import { Button, Card, Form, Input, InputNumber, Modal, Select, Space, Table, Ta
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import PermTabs from '../../components/PermTabs';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import type { HiringNeedRow, Position } from '../../api/types';
@@ -23,6 +25,7 @@ interface PositionForm {
 }
 
 function PositionsTab() {
+  const t = useT();
   const [items, setItems] = useState<Position[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -78,10 +81,10 @@ function PositionsTab() {
     try {
       if (editing) {
         await api.patch(`/positions/${editing.id}`, values);
-        message.success('岗位已更新');
+        message.success(t('team.positions.def.updated'));
       } else {
         await api.post('/positions', values);
-        message.success('岗位已创建');
+        message.success(t('team.positions.def.created'));
       }
       setModalOpen(false);
       void load();
@@ -93,16 +96,16 @@ function PositionsTab() {
   };
 
   const columns: ColumnsType<Position> = [
-    { title: '岗位名称', dataIndex: 'name', width: 200 },
-    { title: '职责', dataIndex: 'duties', ellipsis: true },
-    { title: '编制数', dataIndex: 'headcount', width: 100 },
+    { title: t('team.positions.col.name'), dataIndex: 'name', width: 200 },
+    { title: t('team.positions.col.duties'), dataIndex: 'duties', ellipsis: true },
+    { title: t('team.positions.col.headcount'), dataIndex: 'headcount', width: 100 },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 100,
       render: (_, record) => (
         <Button type="link" size="small" onClick={() => openEdit(record)}>
-          编辑
+          {t('common.edit')}
         </Button>
       ),
     },
@@ -110,11 +113,11 @@ function PositionsTab() {
 
   return (
     <Card
-      title="岗位定义"
+      title={t('team.positions.def.title')}
       extra={
         <Space>
           <Input.Search
-            placeholder="搜索岗位"
+            placeholder={t('team.positions.def.searchPlaceholder')}
             allowClear
             onSearch={(v) => {
               setPage(1);
@@ -123,7 +126,7 @@ function PositionsTab() {
             style={{ width: 220 }}
           />
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建岗位
+            {t('team.positions.def.create')}
           </Button>
         </Space>
       }
@@ -138,7 +141,7 @@ function PositionsTab() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('team.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -146,7 +149,7 @@ function PositionsTab() {
         }}
       />
       <Modal
-        title={editing ? '编辑岗位' : '新建岗位'}
+        title={editing ? t('team.positions.def.editTitle') : t('team.positions.def.create')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -154,13 +157,13 @@ function PositionsTab() {
         destroyOnClose
       >
         <Form<PositionForm> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="岗位名称" rules={[{ required: true, message: '请输入岗位名称' }]}>
+          <Form.Item name="name" label={t('team.positions.col.name')} rules={[{ required: true, message: t('team.positions.form.nameRequired') }]}>
             <Input maxLength={50} />
           </Form.Item>
-          <Form.Item name="duties" label="职责">
+          <Form.Item name="duties" label={t('team.positions.col.duties')}>
             <Input.TextArea rows={3} maxLength={500} />
           </Form.Item>
-          <Form.Item name="headcount" label="编制数">
+          <Form.Item name="headcount" label={t('team.positions.col.headcount')}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
         </Form>
@@ -181,6 +184,8 @@ interface HiringFormValues {
 }
 
 function HiringTab() {
+  const t = useT();
+  const et = useEnums();
   const canCreate = usePositionsPerm('create');
   const canEdit = usePositionsPerm('edit');
 
@@ -256,10 +261,10 @@ function HiringTab() {
     try {
       if (editing) {
         await api.patch(`/hiring-needs/${editing.id}`, payload);
-        message.success('招聘需求已更新');
+        message.success(t('team.positions.hiring.updated'));
       } else {
         await api.post('/hiring-needs', payload);
-        message.success('招聘需求已创建');
+        message.success(t('team.positions.hiring.created'));
       }
       setModalOpen(false);
       void load();
@@ -271,22 +276,22 @@ function HiringTab() {
   };
 
   const columns: ColumnsType<HiringNeedRow> = [
-    { title: '岗位', dataIndex: 'position_name', width: 180, render: (v) => v || '-' },
+    { title: t('team.positions.hiring.col.position'), dataIndex: 'position_name', width: 180, render: (v) => v || '-' },
     {
-      title: '级别',
+      title: t('team.positions.hiring.col.level'),
       dataIndex: 'level',
       width: 80,
-      render: (v: string) => <Tag color={HIRING_LEVEL_COLORS[v] ?? 'default'}>{v || '中级'}</Tag>,
+      render: (v: string) => <Tag color={HIRING_LEVEL_COLORS[v] ?? 'default'}>{et.hiringLevel(v || '中级')}</Tag>,
     },
-    { title: '人数', dataIndex: 'headcount', width: 70 },
+    { title: t('team.positions.hiring.col.headcount'), dataIndex: 'headcount', width: 70 },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 100,
-      render: (v: string) => <Tag color={HIRING_STATUS_COLORS[v] ?? 'default'}>{v}</Tag>,
+      render: (v: string) => <Tag color={HIRING_STATUS_COLORS[v] ?? 'default'}>{et.hiringStatus(v)}</Tag>,
     },
     {
-      title: '任职资格',
+      title: t('team.positions.hiring.col.qualification'),
       dataIndex: 'qualification',
       ellipsis: { showTitle: false },
       render: (v: string | null) =>
@@ -298,16 +303,16 @@ function HiringTab() {
           '-'
         ),
     },
-    { title: '进度备注', dataIndex: 'progress_note', ellipsis: true, render: (v) => v || '-' },
+    { title: t('team.positions.hiring.col.progressNote'), dataIndex: 'progress_note', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 90,
             render: (_: unknown, r: HiringNeedRow) => (
               <Button type="link" size="small" onClick={() => openEdit(r)}>
-                更新
+                {t('team.positions.hiring.update')}
               </Button>
             ),
           } as ColumnsType<HiringNeedRow>[number],
@@ -317,15 +322,15 @@ function HiringTab() {
 
   return (
     <Card
-      title="招聘需求"
+      title={t('team.positions.hiring.title')}
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
+            {t('common.refresh')}
           </Button>
           {canCreate && (
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新增招聘需求
+              {t('team.positions.hiring.create')}
             </Button>
           )}
         </Space>
@@ -336,11 +341,11 @@ function HiringTab() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+        pagination={{ pageSize: 20, showTotal: (n) => t('team.total', { n }) }}
       />
 
       <Modal
-        title={editing ? '更新招聘需求' : '新增招聘需求'}
+        title={editing ? t('team.positions.hiring.editTitle') : t('team.positions.hiring.create')}
         open={modalOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -348,39 +353,39 @@ function HiringTab() {
         destroyOnClose
       >
         <Form<HiringFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="position_id" label="岗位" rules={[{ required: true, message: '请选择岗位' }]}>
+          <Form.Item name="position_id" label={t('team.positions.hiring.col.position')} rules={[{ required: true, message: t('team.positions.hiring.form.positionRequired') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择岗位"
+              placeholder={t('team.positions.hiring.form.positionPlaceholder')}
               options={positions.map((p) => ({ value: p.id, label: p.name }))}
             />
           </Form.Item>
-          <Form.Item name="level" label="级别" rules={[{ required: true, message: '请选择级别' }]}>
-            <Select options={HIRING_LEVELS.map((l) => ({ value: l, label: l }))} />
+          <Form.Item name="level" label={t('team.positions.hiring.col.level')} rules={[{ required: true, message: t('team.positions.hiring.form.levelRequired') }]}>
+            <Select options={HIRING_LEVELS.map((l) => ({ value: l, label: et.hiringLevel(l) }))} />
           </Form.Item>
-          <Form.Item name="headcount" label="招聘人数" rules={[{ required: true, message: '请输入人数' }]}>
+          <Form.Item name="headcount" label={t('team.positions.hiring.form.headcountLabel')} rules={[{ required: true, message: t('team.positions.hiring.form.headcountRequired') }]}>
             <InputNumber min={1} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
             name="qualification"
-            label="任职资格"
+            label={t('team.positions.hiring.col.qualification')}
             rules={[
-              { required: true, message: '请填写任职资格要求' },
-              { min: 5, message: '至少 5 个字符' },
+              { required: true, message: t('team.positions.hiring.form.qualRequired') },
+              { min: 5, message: t('team.minChars', { n: 5 }) },
             ]}
           >
             <Input.TextArea
               rows={3}
               maxLength={500}
-              placeholder="写清楚硬性条件与优先项，如：5 年以上运维经验；精通 K8s；有金融行业经验优先"
+              placeholder={t('team.positions.hiring.form.qualPlaceholder')}
             />
           </Form.Item>
-          <Form.Item name="status" label="状态" rules={[{ required: true, message: '请选择状态' }]}>
-            <Select options={HIRING_STATUSES.map((s) => ({ value: s, label: s }))} />
+          <Form.Item name="status" label={t('common.status')} rules={[{ required: true, message: t('team.positions.hiring.form.statusRequired') }]}>
+            <Select options={HIRING_STATUSES.map((s) => ({ value: s, label: et.hiringStatus(s) }))} />
           </Form.Item>
-          <Form.Item name="progress_note" label="进度备注">
-            <Input.TextArea rows={2} maxLength={500} placeholder="如：已约 3 位候选人下周二面" />
+          <Form.Item name="progress_note" label={t('team.positions.hiring.col.progressNote')}>
+            <Input.TextArea rows={2} maxLength={500} placeholder={t('team.positions.hiring.form.progressPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
@@ -392,11 +397,12 @@ function HiringTab() {
 
 /** 岗位编制复合页：岗位定义 | 招聘需求 */
 export default function Positions() {
+  const t = useT();
   return (
     <PermTabs
       tabs={[
-        { key: 'definition', label: '岗位定义', modules: ['positions'], children: <PositionsTab /> },
-        { key: 'hiring', label: '招聘需求', modules: ['positions'], children: <HiringTab /> },
+        { key: 'definition', label: t('team.positions.def.title'), modules: ['positions'], children: <PositionsTab /> },
+        { key: 'hiring', label: t('team.positions.hiring.title'), modules: ['positions'], children: <HiringTab /> },
       ]}
     />
   );

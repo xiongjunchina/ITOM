@@ -3,6 +3,7 @@ import { Button, Card, Col, Form, Input, Row, Space, Spin, Typography, message }
 import { EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import type { TeamCharterData } from '../../api/types';
 
@@ -12,14 +13,15 @@ interface CharterFormValues {
   principles?: string;
 }
 
-const SECTIONS: { key: keyof CharterFormValues; title: string; hint: string }[] = [
-  { key: 'vision', title: '愿景', hint: '我们为什么存在：用一段话说清团队的长期方向与价值主张。' },
-  { key: 'goals', title: '年度目标', hint: '今年要达成的 3-5 条可衡量目标，建议一行一条。' },
-  { key: 'principles', title: '行为准则', hint: '团队协作的基本约定：如响应时限、评审规则、值班纪律等，一行一条。' },
+const SECTIONS: { key: keyof CharterFormValues; titleKey: string; hintKey: string }[] = [
+  { key: 'vision', titleKey: 'team.charter.vision.title', hintKey: 'team.charter.vision.hint' },
+  { key: 'goals', titleKey: 'team.charter.goals.title', hintKey: 'team.charter.goals.hint' },
+  { key: 'principles', titleKey: 'team.charter.principles.title', hintKey: 'team.charter.principles.hint' },
 ];
 
 /** 团队文化（单例）：愿景 / 年度目标 / 行为准则 */
 export default function Charter() {
+  const t = useT();
   const user = useAuthStore((s) => s.user);
   const canEdit = user?.permissions ? hasPermission(user, 'charter', 'edit') : true;
 
@@ -62,7 +64,7 @@ export default function Charter() {
         goals: values.goals?.trim() || null,
         principles: values.principles?.trim() || null,
       });
-      message.success('团队文化已保存');
+      message.success(t('team.charter.saved'));
       setEditing(false);
       void load();
     } catch {
@@ -74,25 +76,25 @@ export default function Charter() {
 
   return (
     <Card
-      title="团队文化"
+      title={t('team.charter.title')}
       extra={
         <Space>
           {data?.updated_at && !editing && (
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              最近更新：{dayjs(data.updated_at).format('YYYY-MM-DD HH:mm')}
+              {t('team.charter.lastUpdated', { time: dayjs(data.updated_at).format('YYYY-MM-DD HH:mm') })}
             </Typography.Text>
           )}
           {canEdit &&
             (editing ? (
               <>
-                <Button onClick={() => setEditing(false)}>取消</Button>
+                <Button onClick={() => setEditing(false)}>{t('common.cancel')}</Button>
                 <Button type="primary" loading={saving} onClick={() => void handleSave()}>
-                  保存
+                  {t('common.save')}
                 </Button>
               </>
             ) : (
               <Button icon={<EditOutlined />} onClick={startEdit}>
-                编辑
+                {t('common.edit')}
               </Button>
             ))}
         </Space>
@@ -103,10 +105,10 @@ export default function Charter() {
           <Row gutter={[16, 16]}>
             {SECTIONS.map((s) => (
               <Col key={s.key} xs={24} lg={8}>
-                <Card type="inner" title={s.title} style={{ height: '100%' }}>
+                <Card type="inner" title={t(s.titleKey)} style={{ height: '100%' }}>
                   {editing ? (
                     <Form.Item name={s.key} noStyle>
-                      <Input.TextArea rows={8} maxLength={2000} placeholder={s.hint} />
+                      <Input.TextArea rows={8} maxLength={2000} placeholder={t(s.hintKey)} />
                     </Form.Item>
                   ) : data?.[s.key] ? (
                     <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
@@ -114,7 +116,9 @@ export default function Charter() {
                     </Typography.Paragraph>
                   ) : (
                     <Typography.Text type="secondary">
-                      {canEdit ? `尚未填写。点击右上角「编辑」开始：${s.hint}` : '尚未填写。'}
+                      {canEdit
+                        ? t('team.charter.emptyEditable', { hint: t(s.hintKey) })
+                        : t('team.charter.empty')}
                     </Typography.Text>
                   )}
                 </Card>

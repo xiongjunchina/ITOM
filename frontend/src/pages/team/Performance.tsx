@@ -34,6 +34,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import PermTabs from '../../components/PermTabs';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import { currentPeriod, periodLabel, recentPeriods } from '../../utils/period';
@@ -59,6 +60,7 @@ interface AdjFormValues {
 }
 
 function PerfOverview() {
+  const t = useT();
   const [period, setPeriod] = useState(currentPeriod());
   const [data, setData] = useState<PerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -109,7 +111,7 @@ function PerfOverview() {
         dimension_code: editor.code,
         score,
       });
-      message.success(score == null ? '已清除核定，恢复系统参考值' : '核定分已保存');
+      message.success(score == null ? t('team.performance.overrideCleared') : t('team.performance.overrideSaved'));
       setEditor(null);
       void load();
     } catch {
@@ -125,7 +127,7 @@ function PerfOverview() {
     setAdjSaving(true);
     try {
       await api.post('/perf/adjustments', { period, person_id: adjPersonId, ...values });
-      message.success('加减分事项已添加');
+      message.success(t('team.performance.adjAdded'));
       adjForm.resetFields();
       void load();
     } catch {
@@ -138,7 +140,7 @@ function PerfOverview() {
   const removeAdjustment = async (id: string) => {
     try {
       await api.delete(`/perf/adjustments/${id}`);
-      message.success('加减分事项已删除');
+      message.success(t('team.performance.adjRemoved'));
       void load();
     } catch {
       // 已统一提示
@@ -148,7 +150,7 @@ function PerfOverview() {
   if (forbidden) {
     return (
       <Card>
-        <Result status="403" title="无权限" subTitle="您没有人效评分的查看权限，请联系管理员开通。" />
+        <Result status="403" title={t('team.performance.noPermTitle')} subTitle={t('team.performance.noPermDesc')} />
       </Card>
     );
   }
@@ -165,7 +167,7 @@ function PerfOverview() {
         value={editorValue}
         onChange={(v) => setEditorValue(v)}
         style={{ width: '100%' }}
-        placeholder="核定分（0-100）"
+        placeholder={t('team.performance.editorPlaceholder')}
       />
       <Space>
         <Button
@@ -174,13 +176,13 @@ function PerfOverview() {
           loading={editorSaving}
           onClick={() => {
             if (editorValue == null) {
-              message.warning('请输入 0-100 的核定分');
+              message.warning(t('team.performance.editorWarn'));
               return;
             }
             void saveOverride(editorValue);
           }}
         >
-          保存核定
+          {t('team.performance.saveOverride')}
         </Button>
         <Button
           size="small"
@@ -188,20 +190,20 @@ function PerfOverview() {
           loading={editorSaving && editor?.override != null}
           onClick={() => void saveOverride(null)}
         >
-          清除核定（恢复系统值）
+          {t('team.performance.clearOverride')}
         </Button>
       </Space>
     </Space>
   );
 
   const columns: ColumnsType<PerformanceRow> = [
-    { title: '姓名', dataIndex: 'person_name', width: 100, fixed: 'left' },
-    { title: '岗位', dataIndex: 'position_name', width: 130, render: (v: string | null) => v || '-' },
+    { title: t('team.col.name'), dataIndex: 'person_name', width: 100, fixed: 'left' },
+    { title: t('team.performance.col.position'), dataIndex: 'position_name', width: 130, render: (v: string | null) => v || '-' },
     {
-      title: '适用方案',
+      title: t('team.performance.col.scheme'),
       dataIndex: 'scheme_name',
       width: 150,
-      render: (v: string | null) => (v ? v : <Tag>未配置方案</Tag>),
+      render: (v: string | null) => (v ? v : <Tag>{t('team.performance.noScheme')}</Tag>),
     },
     ...dimensions.map<ColumnsType<PerformanceRow>[number]>((d) => ({
       title: (
@@ -219,8 +221,9 @@ function PerfOverview() {
           <Tooltip
             title={
               overridden
-                ? `系统参考值：${cell.score ?? '无数据'}，已人工核定`
-                : `权重 ${cell.weight}${canEdit ? '，点击可人工核定' : ''}`
+                ? t('team.performance.cellOverridden', { score: cell.score ?? t('team.performance.noValue') })
+                : t('team.performance.weight', { weight: cell.weight }) +
+                  (canEdit ? t('team.performance.clickToOverride') : '')
             }
           >
             <span
@@ -251,7 +254,7 @@ function PerfOverview() {
                 );
               }
             }}
-            title={`核定维度分：${r.person_name} · ${d.name}`}
+            title={t('team.performance.editorTitle', { name: r.person_name, dim: d.name })}
             content={editorContent}
           >
             {inner}
@@ -260,21 +263,21 @@ function PerfOverview() {
       },
     })),
     {
-      title: '加分项',
+      title: t('team.performance.col.bonus'),
       dataIndex: 'bonus',
       width: 80,
       render: (v: number) =>
         v > 0 ? <span style={{ color: '#52c41a', fontWeight: 600 }}>+{v}</span> : <span style={{ color: GRAY }}>-</span>,
     },
     {
-      title: '扣分项',
+      title: t('team.performance.col.penalty'),
       dataIndex: 'penalty',
       width: 80,
       render: (v: number) =>
         v > 0 ? <span style={{ color: '#ff4d4f', fontWeight: 600 }}>−{v}</span> : <span style={{ color: GRAY }}>-</span>,
     },
     {
-      title: '加减分说明',
+      title: t('team.performance.col.adjReasons'),
       key: 'adj_reasons',
       width: 180,
       ellipsis: { showTitle: false },
@@ -289,13 +292,13 @@ function PerfOverview() {
       },
     },
     {
-      title: '总分',
+      title: t('team.performance.col.total'),
       dataIndex: 'total',
       width: 90,
       sorter: (a, b) => (a.total ?? -1) - (b.total ?? -1),
       defaultSortOrder: 'descend',
       render: (v: number | null, r) => (
-        <Tooltip title={`基础分 ${r.base_score ?? '—'} + 加分 ${r.bonus ?? 0} − 扣分 ${r.penalty ?? 0}`}>
+        <Tooltip title={t('team.performance.totalTip', { base: r.base_score ?? '—', bonus: r.bonus ?? 0, penalty: r.penalty ?? 0 })}>
           {v == null ? EMPTY_CELL : <Typography.Text strong>{v}</Typography.Text>}
         </Tooltip>
       ),
@@ -303,13 +306,13 @@ function PerfOverview() {
     ...(canEdit
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 90,
             fixed: 'right',
             render: (_: unknown, r: PerformanceRow) => (
               <Button type="link" size="small" onClick={() => setAdjPersonId(r.person_id)}>
-                加减分
+                {t('team.performance.adjust')}
               </Button>
             ),
           } as ColumnsType<PerformanceRow>[number],
@@ -319,7 +322,7 @@ function PerfOverview() {
 
   return (
     <Card
-      title="人效总览"
+      title={t('team.performance.overviewTitle')}
       extra={
         <Select
           value={period}
@@ -339,7 +342,7 @@ function PerfOverview() {
         items={[
           {
             key: 'dims',
-            label: '维度口径说明',
+            label: t('team.performance.dimSpec'),
             children: (
               <ul style={{ margin: 0, paddingLeft: 20 }}>
                 {dimensions.map((d) => (
@@ -359,11 +362,11 @@ function PerfOverview() {
         columns={columns}
         dataSource={data?.rows ?? []}
         scroll={{ x: 810 + dimensions.length * 110 + (canEdit ? 90 : 0) }}
-        pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 人` }}
+        pagination={{ pageSize: 20, showTotal: (n) => t('team.totalPeople', { n }) }}
       />
 
       <Drawer
-        title={`加减分事项：${adjRow?.person_name ?? ''}（${period}）`}
+        title={t('team.performance.adjDrawerTitle', { name: adjRow?.person_name ?? '', period })}
         width={440}
         open={adjPersonId != null}
         onClose={() => setAdjPersonId(null)}
@@ -373,17 +376,17 @@ function PerfOverview() {
           size="small"
           header={
             <Typography.Text type="secondary">
-              本期事项（{adjRow?.adjustments.length ?? 0} 条）
+              {t('team.performance.periodItems', { n: adjRow?.adjustments.length ?? 0 })}
             </Typography.Text>
           }
           dataSource={adjRow?.adjustments ?? []}
-          locale={{ emptyText: '本期暂无加减分事项' }}
+          locale={{ emptyText: t('team.performance.adjEmpty') }}
           renderItem={(a) => (
             <List.Item
               actions={[
                 <Popconfirm
                   key="del"
-                  title="确定删除该加减分事项？"
+                  title={t('team.performance.delAdjConfirm')}
                   onConfirm={() => void removeAdjustment(a.id)}
                 >
                   <Button type="link" size="small" danger icon={<DeleteOutlined />} />
@@ -394,7 +397,7 @@ function PerfOverview() {
                 title={
                   <Space size={8}>
                     <Tag color={a.kind === 'bonus' ? 'green' : 'red'}>
-                      {a.kind === 'bonus' ? '加分' : '扣分'}
+                      {a.kind === 'bonus' ? t('team.performance.bonus') : t('team.performance.penalty')}
                     </Tag>
                     <span style={{ color: a.kind === 'bonus' ? '#52c41a' : '#ff4d4f', fontWeight: 600 }}>
                       {a.kind === 'bonus' ? `+${a.points}` : `−${a.points}`}
@@ -413,34 +416,34 @@ function PerfOverview() {
             </List.Item>
           )}
         />
-        <Divider style={{ margin: '16px 0 12px' }}>添加事项</Divider>
+        <Divider style={{ margin: '16px 0 12px' }}>{t('team.performance.addItem')}</Divider>
         <Form<AdjFormValues> form={adjForm} layout="vertical" preserve={false} initialValues={{ kind: 'bonus' }}>
-          <Form.Item name="kind" label="类型" rules={[{ required: true, message: '请选择类型' }]}>
+          <Form.Item name="kind" label={t('team.performance.typeLabel')} rules={[{ required: true, message: t('team.performance.typeRequired') }]}>
             <Radio.Group
               optionType="button"
               buttonStyle="solid"
               options={[
-                { value: 'bonus', label: '加分' },
-                { value: 'penalty', label: '扣分' },
+                { value: 'bonus', label: t('team.performance.bonus') },
+                { value: 'penalty', label: t('team.performance.penalty') },
               ]}
             />
           </Form.Item>
-          <Form.Item name="points" label="分值" rules={[{ required: true, message: '请输入分值' }]}>
-            <InputNumber min={0.1} max={1000} style={{ width: '100%' }} placeholder="须大于 0" />
+          <Form.Item name="points" label={t('team.performance.pointsLabel')} rules={[{ required: true, message: t('team.performance.pointsRequired') }]}>
+            <InputNumber min={0.1} max={1000} style={{ width: '100%' }} placeholder={t('team.performance.pointsPlaceholder')} />
           </Form.Item>
           <Form.Item
             name="reason"
-            label="事项说明"
+            label={t('team.performance.reasonLabel')}
             rules={[
-              { required: true, message: '请填写事项说明' },
-              { min: 2, message: '至少 2 个字符' },
+              { required: true, message: t('team.performance.reasonRequired') },
+              { min: 2, message: t('team.minChars', { n: 2 }) },
             ]}
           >
             <Input.TextArea
               rows={3}
               maxLength={200}
               showCount
-              placeholder="如：重保期间通宵处置故障 / 违规操作生产库"
+              placeholder={t('team.performance.reasonPlaceholder')}
             />
           </Form.Item>
           <Button
@@ -450,7 +453,7 @@ function PerfOverview() {
             loading={adjSaving}
             onClick={() => void submitAdjustment()}
           >
-            添加
+            {t('team.add')}
           </Button>
         </Form>
       </Drawer>
@@ -469,6 +472,7 @@ interface SchemeFormValues {
 }
 
 function PerfSchemes() {
+  const t = useT();
   const [items, setItems] = useState<PerfScheme[]>([]);
   const [loading, setLoading] = useState(true);
   const [dims, setDims] = useState<PerfDimension[]>([]);
@@ -541,10 +545,10 @@ function PerfSchemes() {
     try {
       if (drawer.editing) {
         await api.patch(`/perf/schemes/${drawer.editing.id}`, payload);
-        message.success('方案已更新');
+        message.success(t('team.performance.schemeUpdated'));
       } else {
         await api.post('/perf/schemes', payload);
-        message.success('方案已创建');
+        message.success(t('team.performance.schemeCreated'));
       }
       setDrawer({ open: false, editing: null });
       void load();
@@ -565,7 +569,7 @@ function PerfSchemes() {
         is_default: s.is_default,
         active,
       });
-      message.success(active ? '方案已启用' : '方案已停用');
+      message.success(active ? t('team.performance.schemeEnabled') : t('team.performance.schemeDisabled'));
       void load();
     } catch {
       // 已统一提示
@@ -575,7 +579,7 @@ function PerfSchemes() {
   const handleDelete = async (s: PerfScheme) => {
     try {
       await api.delete(`/perf/schemes/${s.id}`);
-      message.success('方案已删除');
+      message.success(t('team.performance.schemeDeleted'));
       void load();
     } catch {
       // 已统一提示
@@ -584,18 +588,18 @@ function PerfSchemes() {
 
   const columns: ColumnsType<PerfScheme> = [
     {
-      title: '方案名',
+      title: t('team.performance.col.schemeName'),
       dataIndex: 'name',
       width: 200,
       render: (v: string, r) => (
         <Space size={4}>
           <span>{v}</span>
-          {r.is_default && <Tag color="blue">默认兜底</Tag>}
+          {r.is_default && <Tag color="blue">{t('team.performance.defaultScheme')}</Tag>}
         </Space>
       ),
     },
     {
-      title: '适用岗位',
+      title: t('team.performance.col.positions'),
       dataIndex: 'position_names',
       render: (names: string[], r) => {
         if (names.length > 0) {
@@ -608,44 +612,44 @@ function PerfSchemes() {
           );
         }
         return r.is_default ? (
-          <Typography.Text type="secondary">（未匹配方案的人员兜底）</Typography.Text>
+          <Typography.Text type="secondary">{t('team.performance.defaultFallback')}</Typography.Text>
         ) : (
-          <span style={{ color: GRAY }}>未绑定岗位（不生效）</span>
+          <span style={{ color: GRAY }}>{t('team.performance.noPosition')}</span>
         );
       },
     },
-    { title: '维度数', width: 80, render: (_, r) => r.dimensions.length },
+    { title: t('team.performance.col.dimCount'), width: 80, render: (_, r) => r.dimensions.length },
     {
-      title: '权重合计',
+      title: t('team.performance.col.weightTotal'),
       dataIndex: 'weight_total',
       width: 100,
       render: (v: number) =>
         v === 100 ? (
           v
         ) : (
-          <Tooltip title="权重合计非 100：计分时按各维度权重占比归一">
+          <Tooltip title={t('team.performance.weightTip')}>
             <span style={{ color: '#fa8c16' }}>{v}</span>
           </Tooltip>
         ),
     },
     {
-      title: '启用',
+      title: t('team.enableCol'),
       dataIndex: 'active',
       width: 80,
       render: (v: boolean, r) => <Switch checked={v} onChange={(next) => void toggleActive(r, next)} />,
     },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'action',
       width: 140,
       render: (_, r) => (
         <Space size={0}>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>
-            编辑
+            {t('common.edit')}
           </Button>
-          <Popconfirm title="确定删除该计分方案？" onConfirm={() => void handleDelete(r)}>
+          <Popconfirm title={t('team.performance.delSchemeConfirm')} onConfirm={() => void handleDelete(r)}>
             <Button type="link" size="small" danger icon={<DeleteOutlined />}>
-              删除
+              {t('common.delete')}
             </Button>
           </Popconfirm>
         </Space>
@@ -659,14 +663,14 @@ function PerfSchemes() {
 
   return (
     <Card
-      title="计分规则"
+      title={t('team.performance.schemesTitle')}
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-            刷新
+            {t('common.refresh')}
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-            新建方案
+            {t('team.performance.createScheme')}
           </Button>
         </Space>
       }
@@ -675,7 +679,7 @@ function PerfSchemes() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="不同岗位可配置不同的评分维度与权重；未匹配任何方案的人员按默认兜底方案计分。维度口径为 v1 默认实现，正式口径确认后可调整。"
+        message={t('team.performance.schemeAlert')}
       />
       <Table<PerfScheme>
         rowKey="id"
@@ -687,16 +691,16 @@ function PerfSchemes() {
       />
 
       <Drawer
-        title={drawer.editing ? '编辑方案' : '新建方案'}
+        title={drawer.editing ? t('team.performance.editScheme') : t('team.performance.createScheme')}
         open={drawer.open}
         width={560}
         onClose={() => setDrawer({ open: false, editing: null })}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawer({ open: false, editing: null })}>取消</Button>
+            <Button onClick={() => setDrawer({ open: false, editing: null })}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
@@ -704,44 +708,44 @@ function PerfSchemes() {
         <Form<SchemeFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="name"
-            label="方案名称"
-            rules={[{ required: true, message: '请输入方案名称' }, { min: 2, message: '至少 2 个字符' }]}
+            label={t('team.performance.schemeNameLabel')}
+            rules={[{ required: true, message: t('team.performance.schemeNameRequired') }, { min: 2, message: t('team.minChars', { n: 2 }) }]}
           >
-            <Input maxLength={128} placeholder="如：开发岗计分方案" />
+            <Input maxLength={128} placeholder={t('team.performance.schemeNamePlaceholder')} />
           </Form.Item>
-          <Form.Item name="description" label="说明">
-            <Input.TextArea rows={2} maxLength={500} placeholder="方案适用范围与说明" />
+          <Form.Item name="description" label={t('team.performance.descLabel')}>
+            <Input.TextArea rows={2} maxLength={500} placeholder={t('team.performance.descPlaceholder')} />
           </Form.Item>
           <Form.Item
             name="is_default"
-            label="默认兜底方案"
+            label={t('team.performance.defaultSchemeLabel')}
             valuePropName="checked"
-            extra="全局唯一：勾选后原默认方案自动取消，未匹配任何方案的人员按本方案计分"
+            extra={t('team.performance.defaultSchemeExtra')}
           >
             <Switch />
           </Form.Item>
           <Form.Item
             name="position_ids"
-            label="适用岗位"
-            extra="非默认方案不绑定岗位时不生效；同一岗位只能命中一个启用方案"
+            label={t('team.performance.col.positions')}
+            extra={t('team.performance.positionExtra')}
           >
             <Select
               mode="multiple"
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="从岗位编制中多选"
+              placeholder={t('team.performance.positionPlaceholder')}
               options={positions.map((p) => ({ value: p.id, label: p.name }))}
             />
           </Form.Item>
 
-          <Form.Item label="评分维度与权重" required style={{ marginBottom: 0 }}>
+          <Form.Item label={t('team.performance.dimWeight')} required style={{ marginBottom: 0 }}>
             <Form.List
               name="dimensions"
               rules={[
                 {
                   validator: async (_, value: unknown[]) => {
-                    if (!value || value.length === 0) throw new Error('至少配置一个维度');
+                    if (!value || value.length === 0) throw new Error(t('team.performance.dimMin'));
                   },
                 },
               ]}
@@ -752,11 +756,11 @@ function PerfSchemes() {
                     <Space key={field.key} align="baseline" style={{ display: 'flex' }}>
                       <Form.Item
                         name={[field.name, 'code']}
-                        rules={[{ required: true, message: '请选择维度' }]}
+                        rules={[{ required: true, message: t('team.performance.dimRequired') }]}
                         style={{ width: 300 }}
                       >
                         <Select
-                          placeholder="评分维度"
+                          placeholder={t('team.performance.dimPlaceholder')}
                           popupMatchSelectWidth={420}
                           options={dims.map((d) => ({
                             value: d.code,
@@ -788,15 +792,15 @@ function PerfSchemes() {
                       </Form.Item>
                       <Form.Item
                         name={[field.name, 'weight']}
-                        rules={[{ required: true, message: '请输入权重' }]}
+                        rules={[{ required: true, message: t('team.performance.weightRequired') }]}
                       >
-                        <InputNumber min={0.1} max={1000} placeholder="权重" style={{ width: 110 }} />
+                        <InputNumber min={0.1} max={1000} placeholder={t('team.performance.weightPlaceholder')} style={{ width: 110 }} />
                       </Form.Item>
                       <MinusCircleOutlined onClick={() => remove(field.name)} />
                     </Space>
                   ))}
                   <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({})}>
-                    添加维度
+                    {t('team.performance.addDim')}
                   </Button>
                   <Form.ErrorList errors={errors} />
                 </>
@@ -805,7 +809,7 @@ function PerfSchemes() {
           </Form.Item>
           <Typography.Text
             style={weightTotal === 100 ? undefined : { color: '#fa8c16' }}
-          >{`权重合计：${Math.round(weightTotal * 10) / 10}（建议 100，非强制；计分时按占比归一）`}</Typography.Text>
+          >{t('team.performance.weightSum', { n: Math.round(weightTotal * 10) / 10 })}</Typography.Text>
         </Form>
       </Drawer>
     </Card>
@@ -816,11 +820,12 @@ function PerfSchemes() {
 
 /** 人效评分（M6.1）：总览（按方案加权计分） | 计分规则（方案 CRUD） */
 export default function Performance() {
+  const t = useT();
   return (
     <PermTabs
       tabs={[
-        { key: 'overview', label: '总览', modules: ['performance'], children: <PerfOverview /> },
-        { key: 'schemes', label: '计分规则', modules: ['performance'], children: <PerfSchemes /> },
+        { key: 'overview', label: t('team.performance.tabOverview'), modules: ['performance'], children: <PerfOverview /> },
+        { key: 'schemes', label: t('team.performance.schemesTitle'), modules: ['performance'], children: <PerfSchemes /> },
       ]}
     />
   );
