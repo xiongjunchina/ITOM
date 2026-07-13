@@ -4,6 +4,7 @@ import { Button, Drawer, List, Space, Switch, Typography, message } from 'antd';
 import { HolderOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
+import { useT } from '../i18n';
 import type { UserPreferences } from '../api/types';
 
 /** widget 注册项（页面各自维护注册表，key 有序持久化在个人偏好） */
@@ -35,6 +36,7 @@ export function useWidgetBoard(
   prefKey: 'dashboard_widgets' | 'team_overview_widgets',
 ) {
   const { user, setUser } = useAuthStore();
+  const t = useT();
   const registryKeys = useMemo(() => registry.map((w) => w.key), [registry]);
 
   // 生效顺序：偏好数组过滤掉已下线的 key；空/缺省回退注册表默认序（全显）
@@ -77,7 +79,7 @@ export function useWidgetBoard(
     try {
       // 偏好原本为空（=全显默认序）时，这里写入的就是完整注册表的新顺序
       await patchPrefs(next);
-      message.success('布局已保存');
+      message.success(t('comp.layoutSaved'));
     } catch {
       // 已统一提示；清除乐观顺序即回退服务端顺序
     } finally {
@@ -143,7 +145,7 @@ export function useWidgetBoard(
     setPrefSaving(true);
     try {
       await patchPrefs(isDefault ? [] : list);
-      message.success('面板配置已保存');
+      message.success(t('comp.panelSaved'));
       setCustomOpen(false);
     } catch {
       // 已统一提示
@@ -194,9 +196,10 @@ export function WidgetBoardDrawer({
   board: WidgetBoard;
   description: string;
 }) {
+  const t = useT();
   return (
     <Drawer
-      title="自定义面板"
+      title={t('comp.customPanel')}
       width={360}
       open={board.customOpen}
       onClose={board.closeCustomize}
@@ -207,7 +210,7 @@ export function WidgetBoardDrawer({
           disabled={board.selected.length === 0}
           onClick={() => void board.saveSelected()}
         >
-          保存
+          {t('common.save')}
         </Button>
       }
     >
@@ -236,7 +239,7 @@ export function WidgetBoardDrawer({
       />
       {board.selected.length === 0 && (
         <Typography.Paragraph type="warning" style={{ fontSize: 12, marginTop: 8 }}>
-          至少保留一个板块
+          {t('comp.keepOne')}
         </Typography.Paragraph>
       )}
       <Button
@@ -245,7 +248,7 @@ export function WidgetBoardDrawer({
         loading={board.prefSaving}
         onClick={() => void board.resetDefault()}
       >
-        恢复默认（全部显示）
+        {t('comp.resetDefault')}
       </Button>
     </Drawer>
   );

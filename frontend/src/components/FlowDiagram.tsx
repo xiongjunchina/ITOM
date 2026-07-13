@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react';
 import { Tag, Typography } from 'antd';
 import { SoundOutlined, UserOutlined } from '@ant-design/icons';
-import { AUTONOMY_LABELS } from '../api/types';
+import { useT } from '../i18n';
+import { useEnums } from '../i18n/enums';
 
 /** 流程示意图单步（兼容定义视图 ProcessStepDef 与实例视图 ProcessStep） */
 export interface FlowDiagramStep {
@@ -42,8 +43,10 @@ const CARD_CURRENT: CSSProperties = {
  * 纯 CSS/antd 实现，不依赖第三方图库。
  */
 export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagramProps) {
+  const t = useT();
+  const et = useEnums();
   if (!steps || steps.length === 0) {
-    return <Typography.Text type="secondary">暂无步骤</Typography.Text>;
+    return <Typography.Text type="secondary">{t('comp.flow.noStep')}</Typography.Text>;
   }
   return (
     <div style={{ overflowX: 'auto', padding: '2px 0' }}>
@@ -53,9 +56,7 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagra
           const cc = (s.cc_roles ?? []).filter(Boolean);
           const notes: string[] = [];
           if (s.autonomy_level) {
-            notes.push(
-              (AUTONOMY_LABELS as Record<string, string>)[s.autonomy_level] ?? s.autonomy_level,
-            );
+            notes.push(et.autonomy(s.autonomy_level));
           }
           if (s.sla_hours != null) {
             notes.push(`SLA ${s.sla_hours}h`);
@@ -81,13 +82,13 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagra
                     {s.seq}
                   </span>
                   <Typography.Text strong style={{ fontSize: 13 }}>
-                    {s.name || '（未命名）'}
+                    {s.name || t('comp.flow.unnamed')}
                   </Typography.Text>
                 </div>
                 {/* 处理人 */}
                 <div style={{ marginTop: 6 }}>
                   <Tag icon={<UserOutlined />} color="blue" style={{ marginInlineEnd: 0 }}>
-                    {s.default_role ? roleLabel(s.default_role) : '未指派'}
+                    {s.default_role ? roleLabel(s.default_role) : t('comp.flow.unassigned')}
                   </Tag>
                 </div>
                 {/* 知会人（有才显示） */}
@@ -99,7 +100,7 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagra
                         icon={<SoundOutlined />}
                         style={{ marginInlineEnd: 0, color: 'rgba(0,0,0,0.45)' }}
                       >
-                        知会 {roleLabel(k)}
+                        {t('comp.flow.cc', { name: roleLabel(k) })}
                       </Tag>
                     ))}
                   </div>

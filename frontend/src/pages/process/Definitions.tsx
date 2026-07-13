@@ -43,6 +43,8 @@ import FlowDiagram from '../../components/FlowDiagram';
 import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 type DrawerMode = 'create' | 'edit' | 'new-version';
 
@@ -65,27 +67,24 @@ interface DefinitionForm {
   steps: StepFormRow[];
 }
 
-const ENTITY_OPTIONS = (
-  Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[]
-).map((k) => ({ value: k, label: WORKFLOW_ENTITY_LABELS[k] }));
-
-const TICKET_TYPE_OPTIONS = (
-  Object.keys(TICKET_TYPE_LABELS) as TicketType[]
-).map((k) => ({ value: k, label: TICKET_TYPE_LABELS[k] }));
-
-const AUTONOMY_OPTIONS = (
-  Object.keys(AUTONOMY_LABELS) as AutonomyLevel[]
-).map((k) => ({ value: k, label: AUTONOMY_LABELS[k] }));
-
-const DRAWER_TITLES: Record<DrawerMode, string> = {
-  create: '新建流程',
-  edit: '编辑流程',
-  'new-version': '另存新版本',
-};
-
 export default function Definitions() {
+  const t = useT();
+  const et = useEnums();
   const user = useAuthStore((s) => s.user);
   const isAdmin = hasAnyRole(user, ['admin']);
+
+  const entityOptions = (Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[]).map((k) => ({
+    value: k,
+    label: et.workflowEntity(k),
+  }));
+  const ticketTypeOptions = (Object.keys(TICKET_TYPE_LABELS) as TicketType[]).map((k) => ({
+    value: k,
+    label: et.ticketType(k),
+  }));
+  const autonomyOptions = (Object.keys(AUTONOMY_LABELS) as AutonomyLevel[]).map((k) => ({
+    value: k,
+    label: et.autonomy(k),
+  }));
 
   const [items, setItems] = useState<ProcessDefinition[]>([]);
   const [loading, setLoading] = useState(false);
@@ -182,7 +181,7 @@ export default function Definitions() {
       }
       return parsed as Record<string, unknown>;
     } catch {
-      throw new Error('触发条件不是合法的 JSON 对象，请检查“高级 JSON”内容');
+      throw new Error(t('proc.triggerInvalid'));
     }
   };
 
@@ -208,7 +207,7 @@ export default function Definitions() {
     try {
       if (mode === 'create') {
         if (steps.length === 0) {
-          message.error('请至少配置一个步骤');
+          message.error(t('proc.stepAtLeastOne'));
           return;
         }
         await api.post('/admin/process-definitions', {
@@ -219,7 +218,7 @@ export default function Definitions() {
           description: values.description ?? null,
           steps,
         });
-        message.success('流程已创建');
+        message.success(t('proc.created'));
       } else if (mode === 'edit' && target) {
         await api.patch(`/admin/process-definitions/${target.id}`, {
           name: values.name,
@@ -227,7 +226,7 @@ export default function Definitions() {
           description: values.description ?? null,
           ...(stepsEditable ? { steps } : {}),
         });
-        message.success('流程已更新');
+        message.success(t('proc.updated'));
       } else if (mode === 'new-version' && target) {
         await api.post(`/admin/process-definitions/${target.id}/new-version`, {
           name: values.name,
@@ -235,7 +234,7 @@ export default function Definitions() {
           description: values.description ?? null,
           steps,
         });
-        message.success('新版本已创建，旧版本已停用');
+        message.success(t('proc.newVersionCreated'));
       }
       setDrawerOpen(false);
       void load();
@@ -249,7 +248,7 @@ export default function Definitions() {
   const toggleActive = async (record: ProcessDefinition, checked: boolean) => {
     try {
       await api.patch(`/admin/process-definitions/${record.id}`, { active: checked });
-      message.success(checked ? '流程已激活' : '流程已停用');
+      message.success(checked ? t('proc.activated') : t('proc.deactivated'));
       setItems((prev) =>
         prev.map((d) => (d.id === record.id ? { ...d, active: checked } : d)),
       );
@@ -261,31 +260,31 @@ export default function Definitions() {
 
   const lockedStepColumns: ColumnsType<ProcessStepDef> = [
     { title: '#', dataIndex: 'seq', width: 50 },
-    { title: '名称', dataIndex: 'name' },
+    { title: t('proc.col.name'), dataIndex: 'name' },
     {
-      title: '默认指派',
+      title: t('proc.col.defaultAssign'),
       dataIndex: 'default_role',
       render: (v: string | null | undefined) => roleLabel(v),
     },
     {
-      title: '知会人',
+      title: t('proc.col.cc'),
       dataIndex: 'cc_roles',
       render: (v: string[] | undefined) =>
         v && v.length > 0 ? v.map((k) => roleLabel(k)).join('、') : '-',
     },
     {
-      title: '自治级别',
+      title: t('proc.col.autonomy'),
       dataIndex: 'autonomy_level',
       width: 160,
-      render: (v: AutonomyLevel) => AUTONOMY_LABELS[v] ?? v,
+      render: (v: AutonomyLevel) => et.autonomy(v),
     },
     {
-      title: 'SLA(小时)',
+      title: t('proc.col.sla'),
       dataIndex: 'sla_hours',
       width: 100,
       render: (v: number | null) => v ?? '-',
     },
-    { title: '说明', dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proc.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
   ];
 
   const renderCard = (def: ProcessDefinition) => (
@@ -304,14 +303,14 @@ export default function Definitions() {
             <Switch
               size="small"
               checked={def.active}
-              checkedChildren="激活"
-              unCheckedChildren="停用"
+              checkedChildren={t('proc.active')}
+              unCheckedChildren={t('proc.inactive')}
               disabled={!isAdmin}
               onChange={(checked) => void toggleActive(def, checked)}
             />
             {isAdmin && (
               <Button type="link" size="small" onClick={() => openDrawer('edit', def)}>
-                编辑
+                {t('common.edit')}
               </Button>
             )}
             {isAdmin && def.steps_locked && (
@@ -320,7 +319,7 @@ export default function Definitions() {
                 size="small"
                 onClick={() => openDrawer('new-version', def)}
               >
-                另存新版本
+                {t('proc.drawer.new-version')}
               </Button>
             )}
           </Space>
@@ -329,21 +328,21 @@ export default function Definitions() {
         <Space direction="vertical" style={{ width: '100%' }} size={8}>
           <Space wrap size={16}>
             <Typography.Text type="secondary">
-              实例数：{def.instance_count}
+              {t('proc.instanceCount', { n: def.instance_count })}
               {def.steps_locked && (
                 <Tag color="orange" style={{ marginLeft: 8 }}>
-                  步骤已锁定
+                  {t('proc.stepsLocked')}
                 </Tag>
               )}
             </Typography.Text>
             <Typography.Text type="secondary">
-              触发条件：
+              {t('proc.triggerLabel')}
               {def.trigger_condition && Object.keys(def.trigger_condition).length > 0 ? (
                 <Typography.Text code>
                   {JSON.stringify(def.trigger_condition)}
                 </Typography.Text>
               ) : (
-                '（无）'
+                t('proc.triggerNone')
               )}
             </Typography.Text>
           </Space>
@@ -358,28 +357,26 @@ export default function Definitions() {
     </Col>
   );
 
-  const grouped = (Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[]).map(
-    (et) => ({
-      et,
-      label: WORKFLOW_ENTITY_LABELS[et],
-      defs: items.filter((d) => d.entity_type === et),
-    }),
-  );
+  const grouped = (Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[]).map((ent) => ({
+    et: ent,
+    label: et.workflowEntity(ent),
+    defs: items.filter((d) => d.entity_type === ent),
+  }));
 
   return (
     <Card
-      title="流程定义"
+      title={t('proc.title')}
       extra={
         isAdmin && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openDrawer('create')}>
-            新建流程
+            {t('proc.drawer.create')}
           </Button>
         )
       }
     >
       <Spin spinning={loading}>
         {items.length === 0 && !loading ? (
-          <Empty description="暂无流程定义" />
+          <Empty description={t('proc.emptyDefs')} />
         ) : (
           grouped
             .filter((g) => g.defs.length > 0)
@@ -393,16 +390,16 @@ export default function Definitions() {
       </Spin>
 
       <Drawer
-        title={DRAWER_TITLES[mode]}
+        title={t('proc.drawer.' + mode)}
         width={760}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>取消</Button>
+            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
@@ -412,8 +409,8 @@ export default function Definitions() {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message={`该流程已有 ${target.instance_count} 个实例，步骤已锁定`}
-            description="如需调整步骤，请使用“另存新版本”。"
+            message={t('proc.lockedAlertMsg', { n: target.instance_count })}
+            description={t('proc.lockedAlertDesc')}
           />
         )}
         {mode === 'new-version' && target && (
@@ -421,44 +418,48 @@ export default function Definitions() {
             type="info"
             showIcon
             style={{ marginBottom: 16 }}
-            message={`将基于 v${target.version} 创建新版本（code 自动变更，如 ${target.code}@v${target.version + 1}），并停用旧版本`}
+            message={t('proc.newVersionAlert', {
+              version: target.version,
+              code: target.code,
+              next: target.version + 1,
+            })}
           />
         )}
         <Card
           size="small"
-          title="流程预览"
+          title={t('proc.preview')}
           style={{ marginBottom: 16 }}
           styles={{ body: { background: '#fafafa' } }}
         >
           <FlowDiagram steps={previewSteps} roleLabel={roleLabel} />
         </Card>
         <Form<DefinitionForm> form={form} layout="vertical" preserve={false}>
-          <Typography.Title level={5}>基本信息</Typography.Title>
+          <Typography.Title level={5}>{t('proc.basicInfo')}</Typography.Title>
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item
                 name="code"
-                label="代码"
+                label={t('proc.code')}
                 rules={
                   mode === 'create'
                     ? [
-                        { required: true, message: '请输入流程代码' },
+                        { required: true, message: t('proc.codeRequired') },
                         {
                           pattern: /^[a-z0-9_]{2,32}$/,
-                          message: '2-32 位小写字母、数字或下划线',
+                          message: t('proc.codePattern'),
                         },
                       ]
                     : []
                 }
               >
-                <Input maxLength={32} disabled={mode !== 'create'} placeholder="如 incident_std" />
+                <Input maxLength={32} disabled={mode !== 'create'} placeholder={t('proc.codePlaceholder')} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item
                 name="name"
-                label="名称"
-                rules={[{ required: true, message: '请输入流程名称' }]}
+                label={t('proc.name')}
+                rules={[{ required: true, message: t('proc.nameRequired') }]}
               >
                 <Input maxLength={50} />
               </Form.Item>
@@ -466,10 +467,10 @@ export default function Definitions() {
             <Col span={8}>
               <Form.Item
                 name="entity_type"
-                label="单据类型"
-                rules={[{ required: true, message: '请选择单据类型' }]}
+                label={t('proc.entityType')}
+                rules={[{ required: true, message: t('proc.entityTypeRequired') }]}
               >
-                <Select options={ENTITY_OPTIONS} disabled={mode !== 'create'} />
+                <Select options={entityOptions} disabled={mode !== 'create'} />
               </Form.Item>
             </Col>
           </Row>
@@ -477,13 +478,13 @@ export default function Definitions() {
             <Col span={8}>
               <Form.Item
                 name="trigger_ticket_type"
-                label="触发条件（工单类型）"
-                tooltip='选择后自动生成 {"ticket_type": ...}；留空表示不按工单类型过滤'
+                label={t('proc.triggerTicketType')}
+                tooltip={t('proc.triggerTooltip')}
               >
                 <Select
                   allowClear
-                  options={TICKET_TYPE_OPTIONS}
-                  placeholder="不限"
+                  options={ticketTypeOptions}
+                  placeholder={t('proc.triggerAny')}
                   onChange={(v: TicketType | undefined) => {
                     form.setFieldValue(
                       'trigger_json',
@@ -496,17 +497,17 @@ export default function Definitions() {
             <Col span={16}>
               <Form.Item
                 name="trigger_json"
-                label="高级 JSON（触发条件，可直接编辑；留空 = 无条件）"
+                label={t('proc.advancedJson')}
               >
-                <Input.TextArea rows={2} placeholder='如 {"ticket_type": "incident"}' />
+                <Input.TextArea rows={2} placeholder={t('proc.advancedJsonPlaceholder')} />
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('proc.desc')}>
             <Input.TextArea rows={2} maxLength={200} />
           </Form.Item>
 
-          <Typography.Title level={5}>步骤定义</Typography.Title>
+          <Typography.Title level={5}>{t('proc.stepDef')}</Typography.Title>
           {stepsEditable ? (
             <Form.List name="steps">
               {(fields, { add, remove, move }) => (
@@ -532,10 +533,10 @@ export default function Definitions() {
                           <Col span={7}>
                             <Form.Item
                               name={[field.name, 'name']}
-                              rules={[{ required: true, message: '步骤名称必填' }]}
+                              rules={[{ required: true, message: t('proc.stepNameRequired') }]}
                               style={{ marginBottom: 8 }}
                             >
-                              <Input placeholder="步骤名称" maxLength={50} />
+                              <Input placeholder={t('proc.stepNamePlaceholder')} maxLength={50} />
                             </Form.Item>
                           </Col>
                           <Col span={7}>
@@ -547,7 +548,7 @@ export default function Definitions() {
                                 allowClear
                                 showSearch
                                 optionFilterProp="label"
-                                placeholder="默认指派（角色/组）"
+                                placeholder={t('proc.defaultAssignPlaceholder')}
                                 options={roleOptions}
                               />
                             </Form.Item>
@@ -555,10 +556,10 @@ export default function Definitions() {
                           <Col span={6}>
                             <Form.Item
                               name={[field.name, 'autonomy_level']}
-                              rules={[{ required: true, message: '必选' }]}
+                              rules={[{ required: true, message: t('proc.required') }]}
                               style={{ marginBottom: 8 }}
                             >
-                              <Select placeholder="自治级别" options={AUTONOMY_OPTIONS} />
+                              <Select placeholder={t('proc.autonomyPlaceholder')} options={autonomyOptions} />
                             </Form.Item>
                           </Col>
                           <Col span={4}>
@@ -568,7 +569,7 @@ export default function Definitions() {
                             >
                               <InputNumber
                                 min={0}
-                                placeholder="SLA(h)"
+                                placeholder={t('proc.slaPlaceholder')}
                                 style={{ width: '100%' }}
                               />
                             </Form.Item>
@@ -586,7 +587,7 @@ export default function Definitions() {
                                 showSearch
                                 optionFilterProp="label"
                                 maxTagCount="responsive"
-                                placeholder="知会人（可多选，仅通知不产生任务）"
+                                placeholder={t('proc.ccPlaceholder')}
                                 options={roleOptions}
                               />
                             </Form.Item>
@@ -596,7 +597,7 @@ export default function Definitions() {
                               name={[field.name, 'description']}
                               style={{ marginBottom: 8 }}
                             >
-                              <Input placeholder="说明" maxLength={100} />
+                              <Input placeholder={t('proc.stepDescPlaceholder')} maxLength={100} />
                             </Form.Item>
                           </Col>
                         </Row>
@@ -634,11 +635,10 @@ export default function Definitions() {
                     icon={<PlusOutlined />}
                     onClick={() => add({ name: '', autonomy_level: 'L4', cc_roles: [] })}
                   >
-                    添加步骤
+                    {t('proc.addStep')}
                   </Button>
                   <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>
-                    步骤顺序即执行顺序（保存时自动按当前顺序编号）。自治级别：L1 全自动 ~ L4
-                    纯人工。「知会人」在步骤激活时仅发送站内通知，不产生任务、不阻塞流程。
+                    {t('proc.stepHint')}
                   </Typography.Paragraph>
                 </>
               )}

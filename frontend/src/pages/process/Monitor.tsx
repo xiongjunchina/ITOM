@@ -6,11 +6,15 @@ import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import type { ProcessInstanceRow } from '../../api/types';
 import { PROCESS_ENTITY_LABELS, PROCESS_INSTANCE_STATUS } from '../../api/types';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 
 const fmtTime = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-');
 
 /** 流程监控：实例列表 + 当前卡点步骤 + 超时标记 */
 export default function Monitor() {
+  const t = useT();
+  const et = useEnums();
   const [items, setItems] = useState<ProcessInstanceRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -43,26 +47,26 @@ export default function Monitor() {
   }, [load]);
 
   const columns: ColumnsType<ProcessInstanceRow> = [
-    { title: '流程名', dataIndex: 'definition_name', width: 200, ellipsis: true },
+    { title: t('proc.col.definition'), dataIndex: 'definition_name', width: 200, ellipsis: true },
     {
-      title: '实体类型',
+      title: t('proc.col.entityType'),
       dataIndex: 'entity_type',
       width: 90,
-      render: (v: string) => PROCESS_ENTITY_LABELS[v] ?? v,
+      render: (v: string) => et.processEntity(v),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 90,
       render: (v: string) => {
         const meta = PROCESS_INSTANCE_STATUS[v];
-        return <Tag color={meta?.color ?? 'default'}>{meta?.label ?? v}</Tag>;
+        return <Tag color={meta?.color ?? 'default'}>{et.processInstanceStatus(v)}</Tag>;
       },
     },
-    { title: '当前步骤', dataIndex: 'current_step', width: 150, ellipsis: true, render: (v) => v || '-' },
-    { title: '当前处理人', dataIndex: 'current_assignee', width: 110, render: (v) => v || '-' },
+    { title: t('proc.col.currentStep'), dataIndex: 'current_step', width: 150, ellipsis: true, render: (v) => v || '-' },
+    { title: t('proc.col.currentAssignee'), dataIndex: 'current_assignee', width: 110, render: (v) => v || '-' },
     {
-      title: '截止时间',
+      title: t('proc.col.dueAt'),
       dataIndex: 'current_due_at',
       width: 180,
       render: (v: string | null, r) =>
@@ -71,21 +75,21 @@ export default function Monitor() {
             <Typography.Text style={r.overdue ? { color: '#ff4d4f' } : undefined}>
               {fmtTime(v)}
             </Typography.Text>
-            {r.overdue && <Tag color="red">已超时</Tag>}
+            {r.overdue && <Tag color="red">{t('proc.overdue')}</Tag>}
           </Space>
         ) : (
           '-'
         ),
     },
-    { title: '发起时间', dataIndex: 'started_at', width: 150, render: (v: string) => fmtTime(v) },
-    { title: '完成时间', dataIndex: 'completed_at', width: 150, render: (v: string | null) => fmtTime(v) },
+    { title: t('proc.col.startedAt'), dataIndex: 'started_at', width: 150, render: (v: string) => fmtTime(v) },
+    { title: t('proc.col.completedAt'), dataIndex: 'completed_at', width: 150, render: (v: string | null) => fmtTime(v) },
   ];
 
   return (
-    <Card title="流程监控">
+    <Card title={t('proc.monitorTitle')}>
       <Space wrap style={{ marginBottom: 16 }}>
         <Select
-          placeholder="状态"
+          placeholder={t('common.status')}
           allowClear
           style={{ width: 130 }}
           value={status}
@@ -93,13 +97,13 @@ export default function Monitor() {
             setPage(1);
             setStatus(v);
           }}
-          options={Object.entries(PROCESS_INSTANCE_STATUS).map(([value, meta]) => ({
+          options={Object.keys(PROCESS_INSTANCE_STATUS).map((value) => ({
             value,
-            label: meta.label,
+            label: et.processInstanceStatus(value),
           }))}
         />
         <Select
-          placeholder="实体类型"
+          placeholder={t('proc.col.entityType')}
           allowClear
           style={{ width: 130 }}
           value={entityType}
@@ -107,10 +111,13 @@ export default function Monitor() {
             setPage(1);
             setEntityType(v);
           }}
-          options={Object.entries(PROCESS_ENTITY_LABELS).map(([value, label]) => ({ value, label }))}
+          options={Object.keys(PROCESS_ENTITY_LABELS).map((value) => ({
+            value,
+            label: et.processEntity(value),
+          }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
       </Space>
 
@@ -125,7 +132,7 @@ export default function Monitor() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (total) => t('proc.totalN', { n: total }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);

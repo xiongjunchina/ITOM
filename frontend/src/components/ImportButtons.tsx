@@ -9,7 +9,10 @@ import {
   UploadOutlined,
 } from '@ant-design/icons';
 import { api } from '../api/client';
+import { useT } from '../i18n';
 import type { ImportFailedRow, ImportResult } from '../api/types';
+
+type TFn = ReturnType<typeof useT>;
 
 interface ImportButtonsProps {
   /** 模板下载地址（相对 /api，如 /itsm-import/ci/template） */
@@ -21,20 +24,18 @@ interface ImportButtonsProps {
   buttonText?: string;
 }
 
-const CREATED_LABELS: Record<string, string> = {
-  catalogs: '目录',
-  items: '服务项',
-  wbs: 'WBS 任务',
-  milestones: '里程碑',
-};
+const CREATED_KEYS = ['catalogs', 'items', 'wbs', 'milestones'] as const;
 
-/** 成功数文案：created 为数字或分项对象（键经 CREATED_LABELS 映射） */
-function createdText(created: ImportResult['created']): string {
-  if (typeof created === 'number') return `成功导入 ${created} 条`;
-  const parts = Object.entries(created as Record<string, number>).map(
-    ([k, v]) => `${CREATED_LABELS[k] ?? k} ${v} 条`,
+/** 成功数文案：created 为数字或分项对象（键经 comp.import.created.* 映射） */
+function createdText(created: ImportResult['created'], t: TFn): string {
+  if (typeof created === 'number') return t('comp.import.successN', { n: created });
+  const parts = Object.entries(created as Record<string, number>).map(([k, v]) =>
+    t('comp.import.itemN', {
+      label: (CREATED_KEYS as readonly string[]).includes(k) ? t('comp.import.created.' + k) : k,
+      n: v,
+    }),
   );
-  return `成功导入：${parts.join('、')}`;
+  return t('comp.import.successPrefix') + parts.join(t('comp.listSep'));
 }
 
 /**
@@ -45,8 +46,9 @@ export default function ImportButtons({
   templateUrl,
   importUrl,
   onDone,
-  buttonText = '批量导入',
+  buttonText,
 }: ImportButtonsProps) {
+  const t = useT();
   const [downloading, setDownloading] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -64,7 +66,7 @@ export default function ImportButtons({
 
   const beforeUpload: UploadProps['beforeUpload'] = (file) => {
     if (!file.name.toLowerCase().endsWith('.xlsx')) {
-      message.error('仅支持 .xlsx 文件（请使用下载的模板填写）');
+      message.error(t('comp.import.xlsxOnly'));
       return Upload.LIST_IGNORE;
     }
     return true;
@@ -95,17 +97,17 @@ export default function ImportButtons({
   const showSheet = failed.some((f) => !!f.sheet);
   const failedColumns: ColumnsType<ImportFailedRow> = [
     ...(showSheet
-      ? ([{ title: '工作表', dataIndex: 'sheet', width: 100, render: (v: string) => v || '-' }] as ColumnsType<ImportFailedRow>)
+      ? ([{ title: t('comp.import.col.sheet'), dataIndex: 'sheet', width: 100, render: (v: string) => v || '-' }] as ColumnsType<ImportFailedRow>)
       : []),
-    { title: '行号', dataIndex: 'row', width: 80, align: 'right' },
-    { title: '失败原因', dataIndex: 'error' },
+    { title: t('comp.import.col.row'), dataIndex: 'row', width: 80, align: 'right' },
+    { title: t('comp.import.col.error'), dataIndex: 'error' },
   ];
 
   return (
     <>
       <Space>
         <Button icon={<DownloadOutlined />} loading={downloading} onClick={() => void handleDownload()}>
-          下载模板
+          {t('comp.import.downloadTemplate')}
         </Button>
         <Upload
           accept=".xlsx"
@@ -115,7 +117,7 @@ export default function ImportButtons({
           disabled={importing}
         >
           <Button icon={<UploadOutlined />} loading={importing}>
-            {buttonText}
+            {buttonText ?? t('comp.import.batchImport')}
           </Button>
         </Upload>
       </Space>
@@ -125,12 +127,12 @@ export default function ImportButtons({
           allOk ? (
             <Space>
               <CheckCircleOutlined style={{ color: '#52c41a' }} />
-              导入成功
+              {t('comp.import.successTitle')}
             </Space>
           ) : (
             <Space>
               <ExclamationCircleOutlined style={{ color: '#faad14' }} />
-              导入完成（部分行失败）
+              {t('comp.import.partialTitle')}
             </Space>
           )
         }
@@ -138,18 +140,18 @@ export default function ImportButtons({
         onCancel={closeResult}
         footer={
           <Button type="primary" onClick={closeResult}>
-            知道了
+            {t('comp.import.gotIt')}
           </Button>
         }
         width={620}
       >
         {result && (
           <Space direction="vertical" size={12} style={{ width: '100%' }}>
-            <Typography.Text strong>{createdText(result.created)}</Typography.Text>
+            <Typography.Text strong>{createdText(result.created, t)}</Typography.Text>
             {!allOk && (
               <>
                 <Typography.Text type="warning">
-                  {failed.length} 行未导入：失败行修正后可重新导入（已导入的行会自动跳过）
+                  {t('comp.import.failedHint', { n: failed.length })}
                 </Typography.Text>
                 <Table<ImportFailedRow>
                   size="small"
@@ -158,7 +160,7 @@ export default function ImportButtons({
                   dataSource={failed}
                   pagination={
                     failed.length > 10
-                      ? { pageSize: 10, size: 'small', showTotal: (t) => `共 ${t} 条` }
+                      ? { pageSize: 10, size: 'small', showTotal: (total) => t('comp.totalN', { n: total }) }
                       : false
                   }
                 />

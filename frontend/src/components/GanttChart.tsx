@@ -3,6 +3,8 @@ import { Tooltip, Typography } from 'antd';
 import dayjs, { Dayjs } from 'dayjs';
 import type { Milestone, WbsTask } from '../api/types';
 import { WBS_STATUS_COLORS } from '../api/types';
+import { useT } from '../i18n';
+import { useEnums } from '../i18n/enums';
 
 /**
  * 自研轻量甘特图（纯 CSS / 绝对定位，无第三方图库）：
@@ -52,6 +54,8 @@ function flattenTree(tasks: WbsTask[]): FlatRow[] {
 }
 
 export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEnd }: GanttChartProps) {
+  const t = useT();
+  const et = useEnums();
   const rows = useMemo(() => flattenTree(tasks), [tasks]);
 
   const model = useMemo(() => {
@@ -104,7 +108,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
   }, [tasks, milestones, rangeStart, rangeEnd]);
 
   if (!model || (rows.length === 0 && milestones.length === 0)) {
-    return <Typography.Text type="secondary">暂无任务或里程碑，无法绘制甘特图</Typography.Text>;
+    return <Typography.Text type="secondary">{t('comp.gantt.empty')}</Typography.Text>;
   }
 
   const { min, max, dayWidth, chartW, ticks } = model;
@@ -184,7 +188,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
                 marginRight: 4,
               }}
             />
-            {s}
+            {et.wbsStatus(s)}
           </span>
         ))}
         <span>
@@ -198,7 +202,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
               marginRight: 6,
             }}
           />
-          里程碑（绿=达成 / 红=逾期）
+          {t('comp.gantt.milestone')}
         </span>
         <span>
           <span
@@ -211,7 +215,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
               verticalAlign: 'middle',
             }}
           />
-          今日
+          {t('comp.gantt.today')}
         </span>
         <span>
           <span
@@ -224,7 +228,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
               verticalAlign: 'middle',
             }}
           />
-          依赖线
+          {t('comp.gantt.depLine')}
         </span>
       </div>
 
@@ -247,7 +251,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
 
           {/* 表头：刻度标签 */}
           <div style={{ display: 'flex', position: 'relative', zIndex: 1 }}>
-            {labelCell('任务', HEADER_H, true)}
+            {labelCell(t('comp.gantt.task'), HEADER_H, true)}
             <div style={{ position: 'relative', width: chartW, height: HEADER_H, borderBottom: '1px solid #f0f0f0' }}>
               {ticks.map((t, i) => (
                 <span
@@ -270,11 +274,15 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
           {/* 里程碑行 */}
           {hasMsRow && (
             <div style={{ display: 'flex', position: 'relative', zIndex: 1 }}>
-              {labelCell('里程碑', ROW_H, true)}
+              {labelCell(t('comp.gantt.milestoneCol'), ROW_H, true)}
               <div style={{ position: 'relative', width: chartW, height: ROW_H, borderBottom: '1px solid #f0f0f0' }}>
                 {milestones.map((m) => {
                   const color = m.achieved_at ? '#52c41a' : m.overdue ? '#ff4d4f' : '#1677ff';
-                  const state = m.achieved_at ? `已达成（${m.achieved_at}）` : m.overdue ? '已逾期' : '未达成';
+                  const state = m.achieved_at
+                    ? t('comp.gantt.achieved', { date: m.achieved_at })
+                    : m.overdue
+                      ? t('comp.gantt.overdue')
+                      : t('comp.gantt.notAchieved');
                   return (
                     <Tooltip key={m.id} title={`${m.name} · ${m.target_date} · ${state}`}>
                       <span
@@ -316,7 +324,7 @@ export default function GanttChart({ tasks, milestones = [], rangeStart, rangeEn
                 )}
                 <div style={{ position: 'relative', width: chartW, height: ROW_H, borderBottom: '1px solid #f0f0f0' }}>
                   <Tooltip
-                    title={`${task.wbs_code} ${task.name} · ${task.start_date} ~ ${task.end_date} · ${task.status}${task.assignee_name ? ` · ${task.assignee_name}` : ''}`}
+                    title={`${task.wbs_code} ${task.name} · ${task.start_date} ~ ${task.end_date} · ${et.wbsStatus(task.status)}${task.assignee_name ? ` · ${task.assignee_name}` : ''}`}
                   >
                     <div
                       style={{

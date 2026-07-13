@@ -1,6 +1,120 @@
-/** dashboard 域页面文案（M7 增量双语）。键名以 dashboard. 前缀，zh/en 成对补充；缺 key 回退中文。 */
+/** dashboard 域页面文案（M7 增量双语）。键名以 dash. 前缀，zh/en 成对补充；缺 key 回退中文。 */
 import type { Dict } from '../dict';
 
-export const zh: Dict = {};
+export const zh: Dict = {
+  'dash.title': '运营总览',
+  'dash.customize': '自定义面板',
+  'dash.boardDesc': '选择总览页要显示的板块，仅影响当前账号。',
+  'dash.view': '查看',
+  'dash.days': '天',
+  'dash.alertsCount': '{n} 项待关注',
+  'dash.noAlerts': '暂无风险告警，运行平稳',
 
-export const en: Dict = {};
+  // widget 注册表显示名
+  'dash.widget.alerts': '风险与告警',
+  'dash.widget.itsm_service_request': '服务工单',
+  'dash.widget.itsm_change': '变更',
+  'dash.widget.itsm_incident': '事件',
+  'dash.widget.itsm_problem': '问题',
+  'dash.widget.service_overview': '服务概览',
+  'dash.widget.project': '项目',
+  'dash.widget.requirement': '需求',
+  'dash.widget.team': '团队动态',
+
+  // 告警类型标签
+  'dash.alert.sla_warning': 'SLA 临期',
+  'dash.alert.project_red': '项目风险',
+  'dash.alert.milestone_overdue': '里程碑逾期',
+  'dash.alert.contract_expiring': '合同临期',
+  'dash.alert.error': '错误',
+  'dash.alert.warning': '预警',
+  'dash.alert.info': '提示',
+
+  // 各板块指标标签
+  'dash.sr.open': '待处理',
+  'dash.sr.monthResolved': '本月解决',
+  'dash.sr.slaRate': 'SLA 达成率',
+  'dash.change.pending': '待审批',
+  'dash.change.implementing': '实施中',
+  'dash.change.successRate': '成功率',
+  'dash.incident.open': '处理中',
+  'dash.incident.slaWarn': 'SLA 临期',
+  'dash.incident.monthResolved': '本月解决',
+  'dash.problem.open': '进行中',
+  'dash.problem.knownErrors': '已知错误',
+  'dash.problem.closeRate': '关闭率',
+  'dash.service.openTickets': '未关闭工单',
+  'dash.service.slaRate': '本月 SLA 达成率',
+  'dash.project.active': '进行中项目',
+  'dash.project.health': '健康度(绿/黄/红)',
+  'dash.project.overdueMs': '逾期里程碑',
+  'dash.project.budget': '预算使用率',
+  'dash.req.registered': '已登记',
+  'dash.req.analyzing': '分析中',
+  'dash.req.implementing': '实现中',
+  'dash.req.closed': '已关闭',
+  'dash.req.avgLead': '平均交付周期',
+  'dash.team.trainings': '本月培训',
+  'dash.team.hirings': '招聘中',
+  'dash.team.topWorkload': '负载 Top5',
+  'dash.team.topPoints': '本期积分 Top5',
+};
+
+export const en: Dict = {
+  'dash.title': 'Operations Overview',
+  'dash.customize': 'Customize Panel',
+  'dash.boardDesc': 'Choose which panels to show on the overview; affects only your account.',
+  'dash.view': 'View',
+  'dash.days': 'd',
+  'dash.alertsCount': '{n} to review',
+  'dash.noAlerts': 'No risk alerts; running smoothly',
+
+  // Widget registry display names
+  'dash.widget.alerts': 'Risks & Alerts',
+  'dash.widget.itsm_service_request': 'Service Requests',
+  'dash.widget.itsm_change': 'Changes',
+  'dash.widget.itsm_incident': 'Incidents',
+  'dash.widget.itsm_problem': 'Problems',
+  'dash.widget.service_overview': 'Service Overview',
+  'dash.widget.project': 'Projects',
+  'dash.widget.requirement': 'Requirements',
+  'dash.widget.team': 'Team Activity',
+
+  // Alert type labels
+  'dash.alert.sla_warning': 'SLA Due Soon',
+  'dash.alert.project_red': 'Project Risk',
+  'dash.alert.milestone_overdue': 'Milestone Overdue',
+  'dash.alert.contract_expiring': 'Contract Expiring',
+  'dash.alert.error': 'Error',
+  'dash.alert.warning': 'Warning',
+  'dash.alert.info': 'Info',
+
+  // Per-block metric labels
+  'dash.sr.open': 'Open',
+  'dash.sr.monthResolved': 'Resolved (Month)',
+  'dash.sr.slaRate': 'SLA Rate',
+  'dash.change.pending': 'Pending Approval',
+  'dash.change.implementing': 'Implementing',
+  'dash.change.successRate': 'Success Rate',
+  'dash.incident.open': 'In Progress',
+  'dash.incident.slaWarn': 'SLA Due Soon',
+  'dash.incident.monthResolved': 'Resolved (Month)',
+  'dash.problem.open': 'In Progress',
+  'dash.problem.knownErrors': 'Known Errors',
+  'dash.problem.closeRate': 'Close Rate',
+  'dash.service.openTickets': 'Open Tickets',
+  'dash.service.slaRate': 'SLA Rate (Month)',
+  'dash.project.active': 'Active Projects',
+  'dash.project.health': 'Health (G/Y/R)',
+  'dash.project.overdueMs': 'Overdue Milestones',
+  'dash.project.budget': 'Budget Usage',
+  'dash.req.registered': 'Registered',
+  'dash.req.analyzing': 'Analyzing',
+  'dash.req.implementing': 'Implementing',
+  'dash.req.closed': 'Closed',
+  'dash.req.avgLead': 'Avg Lead Time',
+  'dash.team.trainings': 'Trainings (Month)',
+  'dash.team.hirings': 'Hiring',
+  'dash.team.topWorkload': 'Top 5 Workload',
+  'dash.team.topPoints': 'Top 5 Points',
+};
