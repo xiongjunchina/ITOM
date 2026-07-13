@@ -116,37 +116,33 @@ def parse_charter(raw: bytes) -> dict:
             description_parts.append(f"{label}：{content}")
     fields["description"] = "\n".join(description_parts) or None
 
+    # 三张表按结构区分（位置化单元格，保留空列）：里程碑 3 列 / WBS 8 列 / 风险 5 列
     wbs, milestones, risks = [], [], []
-    in_risk = False
     for ln in lines:
-        if re.match(r"^7\.1\s*关键风险", ln):
-            in_risk = True
-            continue
-        if re.match(r"^7\.2", ln):
-            in_risk = False
-        cells = [c.strip() for c in ln.split("\t") if c.strip()]
-        if len(cells) == 5 and re.fullmatch(r"M\d+", cells[0]):
-            code, title, actions, deliverable, planned = cells
-            wbs.append({"code": code, "name": title, "description": actions,
-                        "deliverable": deliverable, "end_date": _normalize_date(planned)})
-            milestones.append({"name": title, "target_date": _normalize_date(planned)})
-            continue
-        if in_risk and len(cells) == 5 and cells[2] in ("高", "中", "低"):  # 数据行：概率列为 高/中/低（表头 概率/Prob 自动跳过）
-            category, desc, prob, impact, mitigation = cells
-            risks.append({
-                "title": f"{category}：{desc}"[:200],
-                "probability": prob if prob in ("高", "中", "低") else "中",
-                "impact": impact if impact in ("高", "中", "低") else "中",
-                "mitigation": mitigation,
+        cells = [c.strip() for c in ln.split("\t")]
+        if len(cells) == 8 and _normalize_date(cells[2]) and cells[0]:  # WBS 数据行（开始日期列为日期；表头自动跳过）
+            name, assignee, start, end, parent, preds, deliverable, desc = cells
+            wbs.append({
+                "name": name, "assignee_name": assignee or None,
+                "start_date": _normalize_date(start), "end_date": _normalize_date(end),
+                "parent_name": parent or None, "predecessor_names": preds or None,
+                "deliverable": deliverable or None, "description": desc or None,
             })
+        elif len(cells) == 3 and _normalize_date(cells[1]) and cells[0]:  # 里程碑数据行（目标日期列）
+            milestones.append({"name": cells[0], "target_date": _normalize_date(cells[1]), "description": cells[2] or None})
+        elif len(cells) == 5 and cells[2] in ("高", "中", "低"):  # 风险数据行（概率列 高/中/低；表头自动跳过）
+            category, rdesc, prob, impact, mitigation = cells
+            risks.append({"title": f"{category}：{rdesc}"[:200], "probability": prob, "impact": impact, "mitigation": mitigation})
 
     warnings = []
     for key, label in (("name", "项目名称"), ("pm_name", "项目经理"), ("planned_start", "计划开始"), ("planned_end", "计划完成")):
         if not fields.get(key):
             warnings.append(f"未解析到「{label}」，请手工补充")
     if not wbs:
-        warnings.append("未解析到 WBS/里程碑表格（需 M1/M2… 编号的 5 列行）")
+        warnings.append("未解析到 WBS 任务表（第 6 节，8 列）")
+    if not milestones:
+        warnings.append("未解析到里程碑表（第 5 节，3 列）")
     if not risks:
-        warnings.append("未解析到风险表格（7.1 关键风险节）")
+        warnings.append("未解析到风险表（8.1 关键风险，5 列）")
 
-    return {"fields": fields, "drafts": {"wbs": wbs[:20], "milestones": milestones[:12], "risks": risks[:10]}, "warnings": warnings}
+    return {"fields": fields, "drafts": {"wbs": wbs[:50], "milestones": milestones[:20], "risks": risks[:10]}, "warnings": warnings}

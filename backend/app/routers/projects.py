@@ -368,19 +368,45 @@ def charter_create(body: CharterCreateIn, db: Session = Depends(get_db), actor=D
     }, actor)
 
     created = {"wbs": 0, "milestones": 0, "risks": 0}
-    default_start = project.planned_start
+    members = {
+        m.name: m.id
+        for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
+    }
+    # WBS：两遍——先建任务（负责人按姓名解析，未匹配默认项目经理），再按任务名称挂上级/前置
+    file_tasks: dict[str, WbsTask] = {}
+    pending_links: list[tuple[dict, WbsTask]] = []
     for idx, w in enumerate(body.wbs):
+        name = (w.get("name") or "").strip() or f"任务{idx + 1}"
+        if name in file_tasks:
+            continue
         end = date.fromisoformat(str(w["end_date"])) if w.get("end_date") else project.planned_end
-        start = date.fromisoformat(str(w["start_date"])) if w.get("start_date") else default_start
+        start = date.fromisoformat(str(w["start_date"])) if w.get("start_date") else project.planned_start
         if start > end:
             start = end
-        db.add(WbsTask(
-            project_id=project.id, name=w.get("name") or f"任务{idx+1}", assignee=w.get("assignee") or project.pm,
+        assignee = members.get((w.get("assignee_name") or "").strip()) or w.get("assignee") or project.pm
+        task = WbsTask(
+            project_id=project.id, name=name, assignee=assignee,
             start_date=start, end_date=end, description=w.get("description"),
-            deliverable=w.get("deliverable"), sort=idx, wbs_code=str(idx + 1),
-        ))
-        default_start = end
+            deliverable=w.get("deliverable"), sort=idx, wbs_code="0",
+        )
+        db.add(task)
+        db.flush()
+        file_tasks[name] = task
+        pending_links.append((w, task))
         created["wbs"] += 1
+    for w, task in pending_links:  # 第二遍：上级/前置按名称挂接（仅引用本次导入的任务）
+        parent_name = (w.get("parent_name") or "").strip()
+        parent = file_tasks.get(parent_name)
+        if parent and parent.id != task.id:
+            task.parent_task_id = parent.id
+        preds = w.get("predecessor_names")
+        if preds:
+            pred_ids = []
+            for pn in [x.strip() for x in str(preds).replace("，", ",").split(",") if x.strip()]:
+                p = file_tasks.get(pn)
+                if p and p.id != task.id:
+                    pred_ids.append(p.id)
+            task.predecessor_ids = pred_ids
     for m in body.milestones:
         if not m.get("target_date"):
             continue
