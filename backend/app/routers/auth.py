@@ -123,14 +123,15 @@ def _notify(db: Session, event_type: str, req: LoginRequest, title: str, content
     notifier.notify(db, event_type, "login_request", req.id, recipients, title, content, link)
 
 
-@router.post("/feishu/scan")
-def feishu_scan(body: FeishuScanIn, db: Session = Depends(get_db)):
-    """飞书扫码回调（当前模拟）：已开通用户直登；未开通则落待处理请求并通知管理员。"""
+def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
+                            email: str | None = None, mobile: str | None = None,
+                            avatar_url: str | None = None) -> dict:
+    """飞书身份 → 已开通直登 / 未开通落 LoginRequest 返回 pending 凭据（模拟与真实 OAuth 共用）。"""
     existing = (
         db.query(AuthUser)
         .filter(
             AuthUser.auth_source == "feishu",
-            AuthUser.external_id == body.external_id,
+            AuthUser.external_id == external_id,
             AuthUser.is_deleted.is_(False),
         )
         .first()
@@ -140,12 +141,12 @@ def feishu_scan(body: FeishuScanIn, db: Session = Depends(get_db)):
             raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
         existing.last_login_at = datetime.now()
         db.commit()
-        return ok({"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)})
+        return {"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)}
 
     req = (
         db.query(LoginRequest)
         .filter(
-            LoginRequest.external_id == body.external_id,
+            LoginRequest.external_id == external_id,
             LoginRequest.status == "pending",
             LoginRequest.is_deleted.is_(False),
         )
@@ -154,15 +155,16 @@ def feishu_scan(body: FeishuScanIn, db: Session = Depends(get_db)):
     new_request = req is None
     if new_request:
         req = LoginRequest(
-            external_source="feishu", external_id=body.external_id, display_name=body.display_name,
-            email=body.email, mobile=body.mobile, avatar_url=body.avatar_url, status="pending",
+            external_source="feishu", external_id=external_id, display_name=display_name,
+            email=email, mobile=mobile, avatar_url=avatar_url, status="pending",
         )
         db.add(req)
         db.flush()
     else:
-        req.display_name = body.display_name  # 刷新展示名
-        req.email = body.email or req.email
-        req.mobile = body.mobile or req.mobile
+        req.display_name = display_name  # 刷新展示名
+        req.email = email or req.email
+        req.mobile = mobile or req.mobile
+        req.avatar_url = avatar_url or req.avatar_url
     if new_request:
         _notify(
             db, "onboarding.requested", req,
@@ -171,10 +173,63 @@ def feishu_scan(body: FeishuScanIn, db: Session = Depends(get_db)):
             recipients=_admin_person_ids(db), link="/admin/identity?tab=onboarding",
         )
     db.commit()
-    return ok({
+    return {
         "status": "pending", "request_id": req.id, "pending_token": create_pending_token(req.id),
         "display_name": req.display_name,
-    })
+    }
+
+
+@router.post("/feishu/scan")
+def feishu_scan(body: FeishuScanIn, db: Session = Depends(get_db)):
+    """模拟扫码入口（开发/演示用）：真实飞书启用后禁用，防止伪造身份。"""
+    from app.services.feishu import is_enabled
+
+    if is_enabled(db):
+        raise AppError("SIMULATOR_DISABLED", "已启用真实飞书扫码，模拟入口关闭", 403)
+    return ok(_handle_feishu_identity(
+        db, external_id=body.external_id, display_name=body.display_name,
+        email=body.email, mobile=body.mobile, avatar_url=body.avatar_url,
+    ))
+
+
+class FeishuCallbackIn(BaseModel):
+    code: str = Field(min_length=1, max_length=256)
+    state: str = Field(min_length=1, max_length=512)
+
+
+@router.get("/feishu/authorize-url")
+def feishu_authorize_url(redirect_uri: str, db: Session = Depends(get_db)):
+    """登录页取飞书扫码授权地址（公开）。未启用真实飞书 → 501，前端回退模拟入口。"""
+    from app.services.feishu import build_client, get_config, is_enabled
+
+    if not is_enabled(db):
+        raise AppError("FEISHU_NOT_ENABLED", "飞书扫码未启用", 501)
+    client = build_client(get_config(db))
+    state = create_pending_token("oauth-state")  # 复用短时签名令牌做 anti-CSRF state
+    db.commit()
+    return ok({"url": client.authorize_url(redirect_uri, state)})
+
+
+@router.post("/feishu/callback")
+def feishu_callback(body: FeishuCallbackIn, db: Session = Depends(get_db)):
+    """OAuth 回调（公开）：code 换飞书身份 → 直登或落开通请求。"""
+    from app.services.feishu import build_client, get_config, is_enabled
+
+    if not is_enabled(db):
+        raise AppError("FEISHU_NOT_ENABLED", "飞书扫码未启用", 501)
+    if decode_pending_token(body.state) != "oauth-state":
+        raise AppError("INVALID_STATE", "登录会话校验失败，请重新扫码", 401)
+    client = build_client(get_config(db))
+    info = client.oauth_user_info(body.code)
+    external_id = info.get("open_id") or info.get("union_id")
+    if not external_id:
+        raise AppError("FEISHU_ERROR", "飞书未返回用户标识", 502)
+    return ok(_handle_feishu_identity(
+        db, external_id=external_id,
+        display_name=info.get("name") or info.get("en_name") or external_id,
+        email=info.get("enterprise_email") or info.get("email"),
+        mobile=info.get("mobile"), avatar_url=info.get("avatar_url"),
+    ))
 
 
 @router.get("/onboarding/status")
@@ -200,11 +255,24 @@ def onboarding_status(authorization: str = Header(default=""), db: Session = Dep
 
 
 def _request_row(db: Session, req: LoginRequest) -> dict:
+    # 自动匹配同步人员：external_id（组织同步的 open_id）优先，其次手机号/邮箱
+    person = (
+        db.query(OrgMember)
+        .filter(OrgMember.external_source == req.external_source,
+                OrgMember.external_id == req.external_id, OrgMember.is_deleted.is_(False))
+        .first()
+    )
+    if not person and req.mobile:
+        person = db.query(OrgMember).filter(OrgMember.mobile == req.mobile, OrgMember.is_deleted.is_(False)).first()
+    if not person and req.email:
+        person = db.query(OrgMember).filter(OrgMember.email == req.email, OrgMember.is_deleted.is_(False)).first()
     return {
         "id": req.id, "external_source": req.external_source, "external_id": req.external_id,
         "display_name": req.display_name, "email": req.email, "mobile": req.mobile,
         "status": req.status, "note": req.note, "requested_at": req.created_at,
         "processed_at": req.processed_at, "auth_user_id": req.auth_user_id,
+        "matched_person_id": person.id if person else None,
+        "matched_person_name": person.name if person else None,
     }
 
 

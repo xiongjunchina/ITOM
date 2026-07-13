@@ -23,6 +23,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [feishuOpen, setFeishuOpen] = useState(false);
   const [feishuLoading, setFeishuLoading] = useState(false);
+  const [feishuStarting, setFeishuStarting] = useState(false);
   const [feishuForm] = Form.useForm<FeishuForm>();
   const navigate = useNavigate();
   const { token, setAuth } = useAuthStore();
@@ -45,6 +46,29 @@ export default function Login() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // 飞书扫码入口：真实飞书优先——取授权 URL 整页跳转；未启用(501/FEISHU_NOT_ENABLED)则回退模拟扫码 Modal
+  const onFeishuClick = async () => {
+    setFeishuStarting(true);
+    try {
+      const redirectUri = window.location.origin + '/login/feishu-callback';
+      const res = await fetch('/api/auth/feishu/authorize-url?redirect_uri=' + encodeURIComponent(redirectUri));
+      const env = (await res.json().catch(() => undefined)) as Envelope<{ url: string }> | undefined;
+      if (res.ok && env?.success && env.data?.url) {
+        window.location.href = env.data.url; // 整页跳转飞书扫码授权页
+        return;
+      }
+      if (res.status === 501 || env?.error?.code === 'FEISHU_NOT_ENABLED') {
+        setFeishuOpen(true); // 真实飞书未启用：打开模拟扫码
+      } else {
+        message.error(env?.error?.message || t('common.requestFailed'));
+      }
+    } catch {
+      message.error(t('common.requestFailed'));
+    } finally {
+      setFeishuStarting(false);
     }
   };
 
@@ -127,7 +151,7 @@ export default function Login() {
         <Divider plain style={{ color: 'rgba(0,0,0,0.45)' }}>
           {t('login.orDivider')}
         </Divider>
-        <Button block icon={<QrcodeOutlined />} onClick={() => setFeishuOpen(true)}>
+        <Button block icon={<QrcodeOutlined />} loading={feishuStarting} onClick={() => void onFeishuClick()}>
           {t('login.feishu')}
         </Button>
       </Card>

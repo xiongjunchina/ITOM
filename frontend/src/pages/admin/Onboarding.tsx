@@ -83,7 +83,8 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
   const openApprove = (record: OnboardingRequest) => {
     setApproveTarget(record);
     approveForm.resetFields();
-    approveForm.setFieldsValue({ language: 'zh' });
+    // 组织同步自动匹配到的人员（open_id/手机/邮箱）→ 预填关联人员
+    approveForm.setFieldsValue({ language: 'zh', person_id: record.matched_person_id ?? undefined });
   };
 
   const submitApprove = async () => {

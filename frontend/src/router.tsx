@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter } from 'react-router-dom';
 import MainLayout from './components/MainLayout';
 import Login from './pages/Login';
 import OnboardingPending from './pages/OnboardingPending';
+import FeishuCallback from './pages/FeishuCallback';
 import Dashboard from './pages/Dashboard';
 import Positions from './pages/team/Positions';
 import Overview from './pages/team/Overview';
@@ -17,6 +18,7 @@ import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
 import RequirementScoring from './pages/admin/RequirementScoring';
+import FeishuIntegration from './pages/admin/FeishuIntegration';
 import Definitions from './pages/process/Definitions';
 import Tickets from './pages/itsm/Tickets';
 import TicketDetail from './pages/itsm/TicketDetail';
@@ -39,6 +41,8 @@ export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
   // 飞书扫码未开通的过渡页：公开路由，与 /login 平级（不在 MainLayout 内）
   { path: '/onboarding/pending', element: <OnboardingPending /> },
+  // 真实飞书 OAuth 回调页：公开路由，飞书扫码后跳回此处兑换 code
+  { path: '/login/feishu-callback', element: <FeishuCallback /> },
   {
     path: '/',
     element: <MainLayout />,
@@ -90,6 +94,7 @@ export const router = createBrowserRouter([
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
       { path: 'admin/requirement-scoring', element: <RequirementScoring /> },
+      { path: 'admin/feishu', element: <FeishuIntegration /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
 
       // 旧路由 → 新复合页对应 Tab（M3.9 前的书签/外链兼容）

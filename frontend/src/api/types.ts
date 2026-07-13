@@ -106,6 +106,34 @@ export interface OnboardingRequest {
   note: string | null;
   requested_at: string;
   processed_at: string | null;
+  /** 组织同步自动匹配到的人员（external_id/手机/邮箱），审批时预填关联人员 */
+  matched_person_id?: string | null;
+  matched_person_name?: string | null;
+}
+
+// ============ M11 飞书集成 ============
+
+/** 飞书组织同步统计（GET /admin/feishu-config.last_sync_stats / POST /admin/org-sync 返回） */
+export interface FeishuSyncStats {
+  dept_created: number;
+  dept_updated: number;
+  dept_deactivated: number;
+  member_created: number;
+  member_updated: number;
+  member_left: number;
+}
+
+/** 飞书集成配置（GET/PUT /admin/feishu-config）；app_secret 只写不读，读取侧仅返回掩码 */
+export interface FeishuConfig {
+  api_base: string;
+  app_id: string;
+  app_secret_masked: string;
+  has_secret: boolean;
+  /** IT 团队根部门 open_department_id，仅同步该子树 */
+  it_department_id: string;
+  enabled: boolean;
+  last_sync_at: string | null;
+  last_sync_stats: FeishuSyncStats | null;
 }
 
 /** 系统用户（管理端） */

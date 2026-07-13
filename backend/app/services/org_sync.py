@@ -152,9 +152,13 @@ def apply_org_snapshot(db: Session, source: str, snapshot: OrgSnapshot) -> dict:
 
 
 def run_sync(db: Session, source: str) -> dict:
-    provider = SYNC_PROVIDERS.get(source)
-    if not provider:
-        from app.core.errors import AppError
+    provider = SYNC_PROVIDERS.get(source)  # 测试可注入假 provider 覆盖
+    if provider:
+        return apply_org_snapshot(db, source, provider.fetch())
+    if source == "feishu":
+        from app.services.feishu import run_feishu_sync
 
-        raise AppError("SYNC_NOT_CONFIGURED", f"{source} 同步尚未配置凭据（上线前接入）", 501)
-    return apply_org_snapshot(db, source, provider.fetch())
+        return run_feishu_sync(db)
+    from app.core.errors import AppError
+
+    raise AppError("SYNC_NOT_CONFIGURED", f"{source} 同步尚未配置凭据（上线前接入）", 501)

@@ -9,6 +9,7 @@ from app.deps import get_current_user, require_perm, require_roles
 from app.models import BusinessDomain, BusinessDomainMember, Department, OrgMember, ProvisionRule
 from app.schemas.common import ok
 from app.services.audit import audit
+from app.services.feishu import is_enabled as feishu_enabled
 from app.services.rbac import valid_role_codes
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -300,7 +301,7 @@ def org_tree(db: Session = Depends(get_db), _=Depends(require_perm("admin_depart
                 for d in depts
             ],
             "unassigned_members": unassigned,
-            "sync_sources": sorted(SYNC_PROVIDERS.keys()),  # 空=尚未配置外部同步
+            "sync_sources": sorted(set(SYNC_PROVIDERS) | ({"feishu"} if feishu_enabled(db) else set())),  # 空=未配置外部同步
         }
     )
 
@@ -315,3 +316,78 @@ def trigger_org_sync(body: dict, db: Session = Depends(get_db), actor=Depends(re
     audit(db, "org_sync", source, "run", actor, stats)
     db.commit()
     return ok(stats)
+
+
+# ==================== 飞书集成配置（M11，仅 admin） ====================
+
+from pydantic import BaseModel as _BM  # noqa: E402
+
+
+class FeishuConfigIn(_BM):
+    api_base: str | None = None
+    app_id: str | None = None
+    app_secret: str | None = None  # 留空=不修改
+    it_department_id: str | None = None
+    enabled: bool | None = None
+
+
+def _mask(secret: str | None) -> str | None:
+    if not secret:
+        return None
+    return secret[:4] + "*" * 8 if len(secret) > 4 else "****"
+
+
+def _feishu_cfg_payload(cfg) -> dict:
+    return {
+        "api_base": cfg.api_base, "app_id": cfg.app_id,
+        "app_secret_masked": _mask(cfg.app_secret), "has_secret": bool(cfg.app_secret),
+        "it_department_id": cfg.it_department_id, "enabled": cfg.enabled,
+        "last_sync_at": cfg.last_sync_at, "last_sync_stats": cfg.last_sync_stats,
+    }
+
+
+@router.get("/feishu-config")
+def get_feishu_config(db: Session = Depends(get_db), _=Depends(require_roles("admin"))):
+    from app.services.feishu import get_config
+
+    cfg = get_config(db)
+    db.commit()
+    return ok(_feishu_cfg_payload(cfg))
+
+
+@router.put("/feishu-config")
+def update_feishu_config(body: FeishuConfigIn, db: Session = Depends(get_db), actor=Depends(require_roles("admin"))):
+    from app.services.feishu import get_config
+
+    cfg = get_config(db)
+    data = body.model_dump(exclude_unset=True)
+    if data.get("enabled"):
+        app_id = data.get("app_id") or cfg.app_id
+        secret = data.get("app_secret") or cfg.app_secret
+        if not (app_id and secret):
+            raise AppError("FEISHU_CONFIG_INCOMPLETE", "启用前需先配置 App ID 与 App Secret")
+    for k, v in data.items():
+        if k == "app_secret":
+            if v:  # 留空不改
+                cfg.app_secret = v
+            continue
+        setattr(cfg, k, v)
+    audit(db, "feishu_config", cfg.id, "update", actor,
+          {"fields": [k for k in data if k != "app_secret"], "secret_changed": bool(data.get("app_secret"))})
+    db.commit()
+    return ok(_feishu_cfg_payload(cfg))
+
+
+@router.post("/feishu-config/test")
+def test_feishu_config(db: Session = Depends(get_db), _=Depends(require_roles("admin"))):
+    """测试连接：换 tenant_token；配置了 IT 部门则顺带取部门名。"""
+    from app.services.feishu import build_client, get_config
+
+    cfg = get_config(db)
+    client = build_client(cfg)
+    token = client.tenant_access_token()
+    dept_name = None
+    if cfg.it_department_id:
+        dept_name = (client.get_department(token, cfg.it_department_id) or {}).get("name")
+    db.commit()
+    return ok({"connected": True, "it_department_name": dept_name})

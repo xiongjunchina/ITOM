@@ -52,11 +52,14 @@ const zh: Dict = {
   'login.orDivider': '或',
   'login.feishu': '飞书扫码登录',
   'login.feishuScanTitle': '飞书扫码登录',
-  'login.feishuScanHint': '飞书凭据接入前，此处以身份信息模拟扫码结果',
+  'login.feishuScanHint': '真实飞书未启用，当前为模拟扫码（系统管理→飞书集成 可启用）',
   'login.feishuName': '姓名',
   'login.feishuId': '飞书用户标识',
   'login.feishuIdPlaceholder': '如 open_id / 工号',
   'login.feishuGo': '模拟扫码',
+  'login.feishuCompleting': '正在完成飞书登录…',
+  'login.feishuCallbackMissing': '缺少飞书回调参数，请重新扫码',
+  'login.feishuFailed': '飞书登录失败',
 
   'onboarding.waitingTitle': '管理员正在处理您的登录请求，请稍后',
   'onboarding.waitingDesc': '您已通过飞书身份校验。管理员完成账号开通后，将自动进入系统。',
@@ -129,6 +132,7 @@ const zh: Dict = {
   'module.admin_master_data': '数据字典',
   'module.admin_workflow': '状态机配置',
   'module.admin_req_scoring': '需求评分规则',
+  'module.admin_feishu': '飞书集成',
   'module.admin_audit': '审计日志',
   // 权限配置：菜单页小标题（合并页）
   'permPage.admin_org': '组织管理',
@@ -176,6 +180,7 @@ const zh: Dict = {
   'menu./admin/master-data': '数据字典',
   'menu./admin/workflow-config': '状态机配置',
   'menu./admin/requirement-scoring': '需求评分规则',
+  'menu./admin/feishu': '飞书集成',
   'menu./admin/audit-logs': '审计日志',
 };
 
@@ -225,11 +230,14 @@ const en: Dict = {
   'login.orDivider': 'or',
   'login.feishu': 'Sign in with Feishu',
   'login.feishuScanTitle': 'Feishu QR sign-in',
-  'login.feishuScanHint': 'Feishu OAuth is simulated here until credentials are wired up',
+  'login.feishuScanHint': 'Real Feishu sign-in is not enabled; this simulates the scan (enable it in System → Feishu Integration)',
   'login.feishuName': 'Name',
   'login.feishuId': 'Feishu user ID',
   'login.feishuIdPlaceholder': 'e.g. open_id / employee no.',
   'login.feishuGo': 'Simulate scan',
+  'login.feishuCompleting': 'Completing Feishu sign-in…',
+  'login.feishuCallbackMissing': 'Missing Feishu callback parameters, please scan again',
+  'login.feishuFailed': 'Feishu sign-in failed',
 
   'onboarding.waitingTitle': 'The administrator is processing your login request, please wait',
   'onboarding.waitingDesc': 'Your Feishu identity is verified. You will enter the system automatically once the administrator provisions your account.',
@@ -300,6 +308,7 @@ const en: Dict = {
   'module.admin_master_data': 'Data Dictionary',
   'module.admin_workflow': 'State Machine',
   'module.admin_req_scoring': 'Requirement Scoring',
+  'module.admin_feishu': 'Feishu Integration',
   'module.admin_audit': 'Audit Log',
   'permPage.admin_org': 'Organization',
   'permPage.admin_identity': 'Users & Groups',
@@ -344,6 +353,7 @@ const en: Dict = {
   'menu./admin/master-data': 'Data Dictionary',
   'menu./admin/workflow-config': 'State Machine',
   'menu./admin/requirement-scoring': 'Req. Scoring Rules',
+  'menu./admin/feishu': 'Feishu Integration',
   'menu./admin/audit-logs': 'Audit Log',
 };
 
