@@ -314,6 +314,23 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
 
 # ---------- 章程导入（两步：解析 → 确认创建） ----------
 
+@router.get("/api/projects/charter/template")
+def charter_template(_=Depends(require_perm("projects", "create"))):
+    """下载项目章程模板 .docx（含示例，填好后经「导入章程」自动建项目）。"""
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    from app.services.charter_template import build_charter_template_docx
+
+    content = build_charter_template_docx()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename=charter_template.docx; filename*=UTF-8''{quote('项目章程模板.docx')}"},
+    )
+
+
 @router.post("/api/projects/charter/parse")
 async def charter_parse(file: UploadFile, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "create"))):
     content = await file.read()

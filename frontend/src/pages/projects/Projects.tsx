@@ -19,7 +19,7 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ImportOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, ImportOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -282,6 +282,12 @@ function ProjectList() {
         </Space>
         {canCreate && (
           <Space>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => void api.download('/projects/charter/template')}
+            >
+              {t('proj.charterTemplate')}
+            </Button>
             <Button icon={<ImportOutlined />} onClick={() => setCharterOpen(true)}>
               {t('proj.charterImport')}
             </Button>

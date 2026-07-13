@@ -95,12 +95,19 @@ def parse_charter(raw: bytes) -> dict:
                 collected.append(ln)
         return " ".join(collected)[:1000] or None
 
+    def find(*anchors: str) -> str | None:
+        """按锚点 contains 匹配 label（容忍双语/带注释标签，如「项目名称 / Project Name」）。"""
+        for key, value in row_map.items():
+            if any(a in key for a in anchors):
+                return value
+        return None
+
     fields = {
-        "name": row_map.get("项目名称"),
-        "pm_name": row_map.get("项目经理（IT 部）") or row_map.get("项目经理"),
-        "planned_start": _normalize_date(row_map.get("计划开始") or row_map.get("计划开始日期")),
-        "planned_end": _normalize_date(row_map.get("计划完成") or row_map.get("计划结束") or row_map.get("计划完成日期")),
-        "budget_10k": _parse_budget(row_map.get("项目预算")),
+        "name": find("项目名称"),
+        "pm_name": find("项目经理"),
+        "planned_start": _normalize_date(find("计划开始")),
+        "planned_end": _normalize_date(find("计划完成", "计划结束")),
+        "budget_10k": _parse_budget(find("项目预算")),
     }
     description_parts = []
     for label, pattern in (("项目背景", r"^1[\.、]\s*项目背景"), ("项目目标", r"^3[\.、]\s*项目目标"), ("项目范围", r"^4\.1\s*项目包含范围")):
@@ -124,7 +131,7 @@ def parse_charter(raw: bytes) -> dict:
                         "deliverable": deliverable, "end_date": _normalize_date(planned)})
             milestones.append({"name": title, "target_date": _normalize_date(planned)})
             continue
-        if in_risk and len(cells) == 5 and cells[0].endswith("风险") and cells[1] != "风险描述":
+        if in_risk and len(cells) == 5 and cells[2] in ("高", "中", "低"):  # 数据行：概率列为 高/中/低（表头 概率/Prob 自动跳过）
             category, desc, prob, impact, mitigation = cells
             risks.append({
                 "title": f"{category}：{desc}"[:200],

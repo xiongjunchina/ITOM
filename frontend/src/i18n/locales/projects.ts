@@ -2,6 +2,7 @@
 import type { Dict } from '../dict';
 
 export const zh: Dict = {
+  'proj.charterTemplate': '下载章程模板',
   // 页面 / Tabs
   'proj.title': '项目管理',
   'proj.tab.list': '项目列表',
@@ -237,6 +238,7 @@ export const zh: Dict = {
 };
 
 export const en: Dict = {
+  'proj.charterTemplate': 'Download Charter Template',
   // Page / Tabs
   'proj.title': 'Project Management',
   'proj.tab.list': 'Projects',
