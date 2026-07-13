@@ -23,6 +23,8 @@ import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { useAuthStore, hasAnyRole } from '../../stores/auth';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
 import { TIER_COLORS, TIER_LABELS } from '../../api/types';
 
@@ -49,6 +51,8 @@ interface ItemFormValues {
 export default function CatalogPage() {
   const user = useAuthStore((s) => s.user);
   const canManage = hasAnyRole(user, ['admin', 'cio']);
+  const t = useT();
+  const et = useEnums();
 
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null);
@@ -141,11 +145,11 @@ export default function CatalogPage() {
     try {
       if (editingCatalog) {
         await api.patch(`/catalogs/${editingCatalog.id}`, values);
-        message.success('目录已更新');
+        message.success(t('itsm.catalog.updated'));
       } else {
         const { status: _status, ...createPayload } = values;
         await api.post('/catalogs', createPayload);
-        message.success('目录已创建');
+        message.success(t('itsm.catalog.created'));
       }
       setCatalogModalOpen(false);
       void loadCatalogs();
@@ -191,11 +195,11 @@ export default function CatalogPage() {
     try {
       if (editingItem) {
         await api.patch(`/service-items/${editingItem.id}`, payload);
-        message.success('服务项已更新');
+        message.success(t('itsm.catalog.itemUpdated'));
       } else {
         const { status: _status, ...createPayload } = payload;
         await api.post('/service-items', createPayload);
-        message.success('服务项已创建');
+        message.success(t('itsm.catalog.itemCreated'));
       }
       setItemModalOpen(false);
       void loadItems();
@@ -208,9 +212,9 @@ export default function CatalogPage() {
   };
 
   const columns: ColumnsType<ServiceItem> = [
-    { title: '编号', dataIndex: 'item_code', width: 120 },
+    { title: t('itsm.f.code'), dataIndex: 'item_code', width: 120 },
     {
-      title: '名称',
+      title: t('itsm.f.name'),
       dataIndex: 'name',
       width: 180,
       ellipsis: true,
@@ -221,34 +225,34 @@ export default function CatalogPage() {
         </Space>
       ),
     },
-    { title: '类型', dataIndex: 'service_type', width: 110, render: (v) => v || '-' },
-    { title: '负责人', dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.f.type'), dataIndex: 'service_type', width: 110, render: (v) => v || '-' },
+    { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
     {
-      title: 'SLA(响应h/解决h)',
+      title: t('itsm.catalog.slaCol'),
       key: 'sla',
       width: 140,
       render: (_, r) =>
-        `${r.sla_response_hours ?? '全局'} / ${r.sla_resolution_hours ?? '全局'}`,
+        `${r.sla_response_hours ?? t('itsm.catalog.global')} / ${r.sla_resolution_hours ?? t('itsm.catalog.global')}`,
     },
-    { title: '服务对象', dataIndex: 'target_audience', width: 120, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.targetAudience'), dataIndex: 'target_audience', width: 120, ellipsis: true, render: (v) => v || '-' },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 80,
       render: (v: ServiceItem['status']) => (
-        <Badge status={v === '上架' ? 'success' : 'default'} text={v} />
+        <Badge status={v === '上架' ? 'success' : 'default'} text={et.catalogStatus(v)} />
       ),
     },
     ...(canManage
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'action',
             width: 80,
             render: (_: unknown, record: ServiceItem) =>
               record.is_example ? null : (
                 <Button type="link" size="small" onClick={() => openItemEdit(record)}>
-                  编辑
+                  {t('common.edit')}
                 </Button>
               ),
           } as ColumnsType<ServiceItem>[number],
@@ -260,12 +264,12 @@ export default function CatalogPage() {
     <Row gutter={16}>
       <Col xs={24} md={8} lg={7} xl={6}>
         <Card
-          title="服务目录"
+          title={t('itsm.catalog.title')}
           loading={catalogLoading}
           extra={
             canManage && (
               <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCatalogCreate}>
-                新建目录
+                {t('itsm.catalog.newCatalog')}
               </Button>
             )
           }
@@ -277,7 +281,7 @@ export default function CatalogPage() {
               onClick={() => setSelectedCatalog(null)}
               style={selectedCatalog === null ? { borderColor: '#1677ff' } : undefined}
             >
-              <Typography.Text strong>全部服务项</Typography.Text>
+              <Typography.Text strong>{t('itsm.catalog.allItems')}</Typography.Text>
             </Card>
             {catalogs.map((c) => (
               <Card
@@ -292,12 +296,12 @@ export default function CatalogPage() {
                     <Space size={6}>
                       <Typography.Text strong>{c.name}</Typography.Text>
                       {c.is_example && <ExampleTag />}
-                      <Tag color={TIER_COLORS[c.tier]}>{TIER_LABELS[c.tier] ?? c.tier}</Tag>
+                      <Tag color={TIER_COLORS[c.tier]}>{et.tier(c.tier)}</Tag>
                     </Space>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {c.code} · {c.item_count} 个服务项
+                      {c.code} · {t('itsm.catalog.itemCount', { n: c.item_count })}
                       {' · '}
-                      <Badge status={c.status === '上架' ? 'success' : 'default'} text={c.status} />
+                      <Badge status={c.status === '上架' ? 'success' : 'default'} text={et.catalogStatus(c.status)} />
                     </Typography.Text>
                   </Space>
                   {canManage && !c.is_example && (
@@ -321,11 +325,11 @@ export default function CatalogPage() {
 
       <Col xs={24} md={16} lg={17} xl={18}>
         <Card
-          title="服务项"
+          title={t('itsm.catalog.itemsTitle')}
           extra={
             <Space>
               <Input.Search
-                placeholder="搜索服务项"
+                placeholder={t('itsm.catalog.searchItem')}
                 allowClear
                 style={{ width: 200 }}
                 onSearch={setQ}
@@ -341,7 +345,7 @@ export default function CatalogPage() {
                     }}
                   />
                   <Button type="primary" icon={<PlusOutlined />} onClick={openItemCreate}>
-                    新建服务项
+                    {t('itsm.catalog.newItem')}
                   </Button>
                 </>
               )}
@@ -354,14 +358,14 @@ export default function CatalogPage() {
             columns={columns}
             dataSource={items}
             scroll={{ x: 900 }}
-            pagination={{ pageSize: 20, showTotal: (t) => `共 ${t} 条` }}
+            pagination={{ pageSize: 20, showTotal: (n) => t('itsm.total', { n }) }}
           />
         </Card>
       </Col>
 
       {/* 目录 Modal */}
       <Modal
-        title={editingCatalog ? '编辑目录' : '新建目录'}
+        title={editingCatalog ? t('itsm.catalog.editCatalog') : t('itsm.catalog.newCatalog')}
         open={catalogModalOpen}
         onOk={() => void saveCatalog()}
         confirmLoading={catalogSaving}
@@ -369,29 +373,29 @@ export default function CatalogPage() {
         destroyOnClose
       >
         <Form<CatalogFormValues> form={catalogForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入目录名称' }]}>
+          <Form.Item name="name" label={t('itsm.f.name')} rules={[{ required: true, message: t('itsm.catalog.nameRequired') }]}>
             <Input maxLength={100} />
           </Form.Item>
-          <Form.Item name="tier" label="等级" rules={[{ required: true, message: '请选择等级' }]}>
+          <Form.Item name="tier" label={t('itsm.f.tier')} rules={[{ required: true, message: t('itsm.catalog.tierRequired') }]}>
             <Select
-              options={(Object.keys(TIER_LABELS) as CatalogTier[]).map((t) => ({
-                value: t,
-                label: TIER_LABELS[t],
+              options={(Object.keys(TIER_LABELS) as CatalogTier[]).map((tv) => ({
+                value: tv,
+                label: et.tier(tv),
               }))}
             />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
-          <Form.Item name="sort" label="排序">
+          <Form.Item name="sort" label={t('itsm.f.sort')}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
           {editingCatalog && (
-            <Form.Item name="status" label="状态">
+            <Form.Item name="status" label={t('common.status')}>
               <Select
                 options={[
-                  { value: '上架', label: '上架' },
-                  { value: '下架', label: '下架' },
+                  { value: '上架', label: et.catalogStatus('上架') },
+                  { value: '下架', label: et.catalogStatus('下架') },
                 ]}
               />
             </Form.Item>
@@ -401,7 +405,7 @@ export default function CatalogPage() {
 
       {/* 服务项 Modal */}
       <Modal
-        title={editingItem ? '编辑服务项' : '新建服务项'}
+        title={editingItem ? t('itsm.catalog.editItem') : t('itsm.catalog.newItem')}
         open={itemModalOpen}
         onOk={() => void saveItem()}
         confirmLoading={itemSaving}
@@ -410,13 +414,13 @@ export default function CatalogPage() {
         width={560}
       >
         <Form<ItemFormValues> form={itemForm} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入服务项名称' }]}>
+          <Form.Item name="name" label={t('itsm.f.name')} rules={[{ required: true, message: t('itsm.catalog.itemNameRequired') }]}>
             <Input maxLength={100} />
           </Form.Item>
           <Form.Item
             name="catalog_id"
-            label="所属目录"
-            rules={[{ required: true, message: '请选择所属目录' }]}
+            label={t('itsm.catalog.parentCatalog')}
+            rules={[{ required: true, message: t('itsm.catalog.parentCatalogRequired') }]}
           >
             <Select
               showSearch
@@ -424,10 +428,10 @@ export default function CatalogPage() {
               options={catalogs.map((c) => ({ value: c.id, label: c.name }))}
             />
           </Form.Item>
-          <Form.Item name="service_type" label="服务类型">
-            <Input maxLength={50} placeholder="如：账号权限 / 软硬件 / 咨询" />
+          <Form.Item name="service_type" label={t('itsm.f.serviceType')}>
+            <Input maxLength={50} placeholder={t('itsm.catalog.serviceTypePlaceholder')} />
           </Form.Item>
-          <Form.Item name="owner" label="负责人">
+          <Form.Item name="owner" label={t('itsm.f.owner')}>
             <Select
               allowClear
               showSearch
@@ -441,33 +445,33 @@ export default function CatalogPage() {
           <Space.Compact block>
             <Form.Item
               name="sla_response_hours"
-              label="SLA 响应(小时)"
+              label={t('itsm.catalog.slaResponseH')}
               style={{ width: '50%', marginRight: 8 }}
-              extra="留空 = 使用全局策略"
+              extra={t('itsm.catalog.slaBlankHint')}
             >
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item
               name="sla_resolution_hours"
-              label="SLA 解决(小时)"
+              label={t('itsm.catalog.slaResolutionH')}
               style={{ width: '50%' }}
-              extra="留空 = 使用全局策略"
+              extra={t('itsm.catalog.slaBlankHint')}
             >
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
           </Space.Compact>
-          <Form.Item name="target_audience" label="服务对象">
-            <Input maxLength={100} placeholder="如：全体员工 / 研发团队" />
+          <Form.Item name="target_audience" label={t('itsm.f.targetAudience')}>
+            <Input maxLength={100} placeholder={t('itsm.catalog.audiencePlaceholder')} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
           {editingItem && (
-            <Form.Item name="status" label="状态">
+            <Form.Item name="status" label={t('common.status')}>
               <Select
                 options={[
-                  { value: '上架', label: '上架' },
-                  { value: '下架', label: '下架' },
+                  { value: '上架', label: et.catalogStatus('上架') },
+                  { value: '下架', label: et.catalogStatus('下架') },
                 ]}
               />
             </Form.Item>

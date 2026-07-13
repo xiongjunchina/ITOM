@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Alert, Button, Card, Form, Input, Select, Space, Spin, Typography, message } from 'antd';
 import { ArrowLeftOutlined, SaveOutlined, SendOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
+import { useT } from '../../i18n';
 import type { KnowledgeDetail as KnowledgeDetailData, KnowledgeStatus } from '../../api/types';
 
 interface ArticleFormValues {
@@ -15,6 +16,7 @@ interface ArticleFormValues {
 export default function KnowledgeEdit() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
+  const t = useT();
   const isEdit = !!id;
 
   const [form] = Form.useForm<ArticleFormValues>();
@@ -58,7 +60,7 @@ export default function KnowledgeEdit() {
         });
         articleId = created?.id;
       }
-      message.success(status === 'published' ? '文章已发布' : '草稿已保存');
+      message.success(status === 'published' ? t('itsm.kb.publishedMsg') : t('itsm.kb.draftSaved'));
       navigate(articleId ? `/itsm/knowledge/${articleId}` : '/itsm/knowledge');
     } catch {
       // 已统一提示
@@ -77,7 +79,7 @@ export default function KnowledgeEdit() {
   if (isEdit && !origin) {
     return (
       <Card>
-        <Typography.Text type="secondary">文章不存在或无权编辑</Typography.Text>
+        <Typography.Text type="secondary">{t('itsm.kb.notFoundEdit')}</Typography.Text>
       </Card>
     );
   }
@@ -90,9 +92,9 @@ export default function KnowledgeEdit() {
             icon={<ArrowLeftOutlined />}
             onClick={() => navigate(isEdit ? `/itsm/knowledge/${id}` : '/itsm/knowledge')}
           >
-            返回
+            {t('itsm.back')}
           </Button>
-          {isEdit ? `编辑文章：${origin?.article_code ?? ''}` : '写文章'}
+          {isEdit ? t('itsm.kb.editTitle', { code: origin?.article_code ?? '' }) : t('itsm.kb.write')}
         </Space>
       }
       extra={
@@ -103,7 +105,7 @@ export default function KnowledgeEdit() {
             disabled={saving === 'published'}
             onClick={() => void save('draft')}
           >
-            保存草稿
+            {t('itsm.kb.saveDraft')}
           </Button>
           <Button
             type="primary"
@@ -112,7 +114,7 @@ export default function KnowledgeEdit() {
             disabled={saving === 'draft'}
             onClick={() => void save('published')}
           >
-            发布
+            {t('itsm.kb.publish')}
           </Button>
         </Space>
       }
@@ -122,27 +124,27 @@ export default function KnowledgeEdit() {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="该文章由文档导入（HTML 格式），可直接编辑 HTML 源码"
+          message={t('itsm.kb.htmlAlert')}
         />
       )}
       <Form<ArticleFormValues> form={form} layout="vertical">
-        <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
-          <Input maxLength={200} placeholder="文章标题" />
+        <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+          <Input maxLength={200} placeholder={t('itsm.kb.titlePlaceholder')} />
         </Form.Item>
         <Form.Item
           name="content"
-          label={isHtml ? '内容（HTML）' : '内容（Markdown）'}
-          rules={[{ required: true, message: '请输入内容' }]}
-          extra={isHtml ? undefined : '支持 #/##/### 标题、> 引用、``` 代码块 等简单 Markdown 语法'}
+          label={isHtml ? t('itsm.kb.contentHtml') : t('itsm.kb.contentMd')}
+          rules={[{ required: true, message: t('itsm.kb.contentRequired') }]}
+          extra={isHtml ? undefined : t('itsm.kb.mdHint')}
         >
           <Input.TextArea
             rows={18}
-            placeholder={isHtml ? undefined : '## 问题现象\n\n…\n\n## 解决方案\n\n…'}
+            placeholder={isHtml ? undefined : t('itsm.kb.contentPlaceholder')}
             style={{ fontFamily: 'monospace' }}
           />
         </Form.Item>
-        <Form.Item name="tags" label="标签">
-          <Select mode="tags" placeholder="输入后回车添加标签" open={false} tokenSeparators={[',', '，']} />
+        <Form.Item name="tags" label={t('itsm.f.tags')}>
+          <Select mode="tags" placeholder={t('itsm.kb.tagsPlaceholder')} open={false} tokenSeparators={[',', '，']} />
         </Form.Item>
       </Form>
     </Card>

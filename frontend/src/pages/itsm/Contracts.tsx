@@ -21,6 +21,8 @@ import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type { Contract, ContractStatus, Member, Vendor } from '../../api/types';
 import { CONTRACT_STATUS_COLORS } from '../../api/types';
 
@@ -36,6 +38,8 @@ interface ContractFormValues {
 export default function Contracts() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, ['it_ops', 'cio', 'admin']);
+  const t = useT();
+  const et = useEnums();
 
   const [items, setItems] = useState<Contract[]>([]);
   const [total, setTotal] = useState(0);
@@ -129,10 +133,10 @@ export default function Contracts() {
     try {
       if (editing) {
         await api.patch(`/contracts/${editing.id}`, payload);
-        message.success('合同已更新');
+        message.success(t('itsm.contract.updated'));
       } else {
         await api.post('/contracts', payload);
-        message.success('合同已创建');
+        message.success(t('itsm.contract.created'));
       }
       setEditOpen(false);
       void load();
@@ -144,9 +148,9 @@ export default function Contracts() {
   };
 
   const columns: ColumnsType<Contract> = [
-    { title: '编号', dataIndex: 'code', width: 120, fixed: 'left' },
+    { title: t('itsm.f.code'), dataIndex: 'code', width: 120, fixed: 'left' },
     {
-      title: '名称',
+      title: t('itsm.f.name'),
       dataIndex: 'name',
       width: 220,
       ellipsis: true,
@@ -157,24 +161,24 @@ export default function Contracts() {
         </Space>
       ),
     },
-    { title: '供应商', dataIndex: 'vendor_name', width: 160, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.vendor'), dataIndex: 'vendor_name', width: 160, ellipsis: true, render: (v) => v || '-' },
     {
-      title: '金额（万元）',
+      title: t('itsm.contract.amount'),
       dataIndex: 'amount_10k',
       width: 110,
       align: 'right',
       render: (v: number | null) => (v != null ? v.toLocaleString() : '-'),
     },
-    { title: '开始日期', dataIndex: 'start_date', width: 110 },
+    { title: t('itsm.f.startDate'), dataIndex: 'start_date', width: 110 },
     {
-      title: '到期日期',
+      title: t('itsm.f.endDate'),
       dataIndex: 'end_date',
       width: 150,
       render: (v: string, r) => (
         <Space size={4}>
           {v}
           {r.days_to_expiry != null && r.days_to_expiry >= 0 && r.days_to_expiry <= 90 && (
-            <Tooltip title={`${r.days_to_expiry} 天后到期`}>
+            <Tooltip title={t('itsm.contract.expiresIn', { n: r.days_to_expiry })}>
               <WarningOutlined style={{ color: '#fa8c16' }} />
             </Tooltip>
           )}
@@ -182,29 +186,30 @@ export default function Contracts() {
       ),
     },
     {
-      title: '剩余天数',
+      title: t('itsm.contract.daysLeft'),
       dataIndex: 'days_to_expiry',
       width: 90,
       align: 'right',
-      render: (v: number | null) => (v == null ? '-' : v < 0 ? `已过期 ${-v} 天` : `${v} 天`),
+      render: (v: number | null) =>
+        v == null ? '-' : v < 0 ? t('itsm.contract.expiredDays', { n: -v }) : t('itsm.unit.days', { n: v }),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 90,
-      render: (v: ContractStatus) => <Tag color={CONTRACT_STATUS_COLORS[v] ?? 'default'}>{v}</Tag>,
+      render: (v: ContractStatus) => <Tag color={CONTRACT_STATUS_COLORS[v] ?? 'default'}>{et.contractStatus(v)}</Tag>,
     },
-    { title: '负责人', dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
     ...(canWrite
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'actions',
             width: 80,
             render: (_: unknown, r: Contract) =>
               r.is_example ? null : (
                 <Button type="link" size="small" onClick={() => openEdit(r)}>
-                  编辑
+                  {t('common.edit')}
                 </Button>
               ),
           } as ColumnsType<Contract>[number],
@@ -214,7 +219,7 @@ export default function Contracts() {
 
   return (
     <Card
-      title="合同"
+      title={t('itsm.contract.title')}
       extra={
         canWrite && (
           <Space>
@@ -224,7 +229,7 @@ export default function Contracts() {
               onDone={() => void load()}
             />
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建合同
+              {t('itsm.contract.new')}
             </Button>
           </Space>
         )
@@ -232,7 +237,7 @@ export default function Contracts() {
     >
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="搜索名称"
+          placeholder={t('itsm.searchName')}
           allowClear
           style={{ width: 220 }}
           onSearch={(v) => {
@@ -241,7 +246,7 @@ export default function Contracts() {
           }}
         />
         <Select
-          placeholder="供应商"
+          placeholder={t('itsm.f.vendor')}
           allowClear
           showSearch
           optionFilterProp="label"
@@ -254,7 +259,7 @@ export default function Contracts() {
           options={vendors.map((v) => ({ value: v.id, label: v.name }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
       </Space>
 
@@ -269,7 +274,7 @@ export default function Contracts() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('itsm.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -278,7 +283,7 @@ export default function Contracts() {
       />
 
       <Modal
-        title={editing ? `编辑合同：${editing.code}` : '新建合同'}
+        title={editing ? t('itsm.contract.edit', { code: editing.code }) : t('itsm.contract.new')}
         open={editOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -287,36 +292,36 @@ export default function Contracts() {
         width={560}
       >
         <Form<ContractFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+          <Form.Item name="name" label={t('itsm.f.name')} rules={[{ required: true, message: t('itsm.rule.name') }]}>
             <Input maxLength={200} />
           </Form.Item>
-          <Form.Item name="vendor_id" label="供应商" rules={[{ required: true, message: '请选择供应商' }]}>
+          <Form.Item name="vendor_id" label={t('itsm.f.vendor')} rules={[{ required: true, message: t('itsm.contract.vendorRequired') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择供应商"
+              placeholder={t('itsm.selectVendor')}
               options={vendors.map((v) => ({ value: v.id, label: v.name }))}
             />
           </Form.Item>
-          <Form.Item name="period" label="合同期限" rules={[{ required: true, message: '请选择起止日期' }]}>
+          <Form.Item name="period" label={t('itsm.contract.period')} rules={[{ required: true, message: t('itsm.contract.periodRequired') }]}>
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="amount_10k" label="金额（万元）">
+          <Form.Item name="amount_10k" label={t('itsm.contract.amount')}>
             <InputNumber style={{ width: '100%' }} min={0} precision={2} />
           </Form.Item>
-          <Form.Item name="owner" label="负责人">
+          <Form.Item name="owner" label={t('itsm.f.owner')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="选择负责人"
+              placeholder={t('itsm.ownerPlaceholder')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
               }))}
             />
           </Form.Item>
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>

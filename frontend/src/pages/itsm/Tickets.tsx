@@ -21,8 +21,10 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
-import { PRIORITY_COLORS, TICKET_TYPE_LABELS } from '../../api/types';
+import { PRIORITY_COLORS } from '../../api/types';
 
 /** 状态 → Badge 样式（按语义猜测，未匹配用 processing；含变更状态机 rejected/rolled_back） */
 function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning' | 'processing' {
@@ -33,21 +35,17 @@ function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning
   return 'processing';
 }
 
-/** 三个固定类型入口的页面标题 */
-const PAGE_TITLES: Record<TicketType, string> = {
-  service_request: '服务请求',
-  incident: '事件管理',
-  change: '变更管理',
-};
-
 /** SLA 达成状态渲染 */
-export function renderSla(row: {
-  sla_resolution_met: boolean | null;
-  sla_warned: boolean;
-}): JSX.Element | string {
-  if (row.sla_resolution_met === true) return <Tag color="green">达成 ✓</Tag>;
-  if (row.sla_resolution_met === false) return <Tag color="red">超时 ✗</Tag>;
-  if (row.sla_warned) return <Tag color="orange">临期 ⚠</Tag>;
+export function renderSla(
+  row: {
+    sla_resolution_met: boolean | null;
+    sla_warned: boolean;
+  },
+  t: (key: string) => string,
+): JSX.Element | string {
+  if (row.sla_resolution_met === true) return <Tag color="green">{t('itsm.sla.metMark')}</Tag>;
+  if (row.sla_resolution_met === false) return <Tag color="red">{t('itsm.sla.overdueMark')}</Tag>;
+  if (row.sla_warned) return <Tag color="orange">{t('itsm.sla.dueMark')}</Tag>;
   return '-';
 }
 
@@ -68,6 +66,8 @@ interface TicketFormValues {
 
 export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const navigate = useNavigate();
+  const t = useT();
+  const et = useEnums();
   const [items, setItems] = useState<TicketRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -163,7 +163,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     setSaving(true);
     try {
       const created = await api.post<{ id: number }>('/tickets', payload);
-      message.success(`${TICKET_TYPE_LABELS[fixedType]}已创建`);
+      message.success(t('itsm.ticket.createdTyped', { type: et.ticketType(fixedType) }));
       setDrawerOpen(false);
       if (created?.id) {
         navigate(`/itsm/tickets/${created.id}`);
@@ -179,7 +179,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
 
   const columns: ColumnsType<TicketRow> = [
     {
-      title: '编号',
+      title: t('itsm.f.code'),
       dataIndex: 'ticket_code',
       width: 140,
       fixed: 'left',
@@ -190,48 +190,48 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         </Space>
       ),
     },
-    { title: '标题', dataIndex: 'title', width: 220, ellipsis: true },
+    { title: t('itsm.f.title'), dataIndex: 'title', width: 220, ellipsis: true },
     {
-      title: '优先级',
+      title: t('itsm.f.priority'),
       dataIndex: 'priority',
       width: 80,
       render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag>,
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status_name',
       width: 110,
       render: (v: string, r) => <Badge status={statusBadge(r.status)} text={v || r.status} />,
     },
-    { title: '服务项', dataIndex: 'service_item_name', width: 150, ellipsis: true, render: (v) => v || '-' },
-    { title: '受理人', dataIndex: 'assignee_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.f.serviceItem'), dataIndex: 'service_item_name', width: 150, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.assignee'), dataIndex: 'assignee_name', width: 100, render: (v) => v || '-' },
     {
-      title: '提交人',
+      title: t('itsm.f.submitter'),
       dataIndex: 'submitter_name',
       width: 120,
       render: (v: string | null, r) => (v ? `${v}${r.submitter_dept ? `(${r.submitter_dept})` : ''}` : '-'),
     },
     {
-      title: '提交时间',
+      title: t('itsm.f.submittedAt'),
       dataIndex: 'submitted_at',
       width: 150,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
-    { title: 'SLA', key: 'sla', width: 90, render: (_, r) => renderSla(r) },
+    { title: 'SLA', key: 'sla', width: 90, render: (_, r) => renderSla(r, t) },
   ];
 
   return (
     <Card
-      title={PAGE_TITLES[fixedType]}
+      title={t('itsm.ticket.title.' + fixedType)}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          {`新建${TICKET_TYPE_LABELS[fixedType]}`}
+          {t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
         </Button>
       }
     >
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="搜索编号/标题"
+          placeholder={t('itsm.searchCodeTitle')}
           allowClear
           style={{ width: 220 }}
           onSearch={(v) => {
@@ -240,7 +240,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           }}
         />
         <Select
-          placeholder="状态"
+          placeholder={t('common.status')}
           allowClear
           style={{ width: 130 }}
           value={status}
@@ -251,7 +251,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           options={Object.entries(statusOptions).map(([value, label]) => ({ value, label }))}
         />
         <Select
-          placeholder="优先级"
+          placeholder={t('itsm.f.priority')}
           allowClear
           style={{ width: 110 }}
           value={priority}
@@ -262,7 +262,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))}
         />
         <span>
-          只看我的{' '}
+          {t('itsm.ticket.mineOnly')}{' '}
           <Switch
             checked={mineOnly}
             onChange={(v) => {
@@ -272,7 +272,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           />
         </span>
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
       </Space>
 
@@ -287,7 +287,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('itsm.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -296,16 +296,16 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       />
 
       <Drawer
-        title={`新建${TICKET_TYPE_LABELS[fixedType]}`}
+        title={t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
         open={drawerOpen}
         width={560}
         onClose={() => setDrawerOpen(false)}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>取消</Button>
+            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleCreate()}>
-              提交
+              {t('common.submit')}
             </Button>
           </Space>
         }
@@ -316,10 +316,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           preserve={false}
           initialValues={{ priority: 'P3' }}
         >
-          <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
-            <Input maxLength={200} placeholder="简要描述问题或请求" />
+          <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+            <Input maxLength={200} placeholder={t('itsm.ticket.titlePlaceholder')} />
           </Form.Item>
-          <Form.Item name="priority" label="优先级" rules={[{ required: true, message: '请选择优先级' }]}>
+          <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
             <Select
               options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({
                 value: p,
@@ -329,20 +329,20 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           </Form.Item>
           <Form.Item
             name="description"
-            label="描述"
-            rules={[{ required: true, message: '请输入描述' }]}
+            label={t('itsm.f.description')}
+            rules={[{ required: true, message: t('itsm.rule.description') }]}
           >
-            <Input.TextArea rows={4} maxLength={2000} placeholder="详细描述背景、现象与期望" />
+            <Input.TextArea rows={4} maxLength={2000} placeholder={t('itsm.ticket.descPlaceholder')} />
           </Form.Item>
           <Form.Item
             name="service_item_id"
-            label="服务项"
-            rules={[{ required: true, message: '请选择服务项' }]}
+            label={t('itsm.f.serviceItem')}
+            rules={[{ required: true, message: t('itsm.rule.serviceItem') }]}
           >
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择关联的服务项"
+              placeholder={t('itsm.selectServiceItem')}
               options={serviceItems.map((i) => ({
                 value: i.id,
                 label: `${i.name}（${i.catalog_name ?? i.item_code}）`,
@@ -351,34 +351,34 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           </Form.Item>
 
           {fixedType === 'change' && (
-            <Card size="small" title="变更信息" style={{ marginBottom: 16 }}>
+            <Card size="small" title={t('itsm.ticket.changeInfo')} style={{ marginBottom: 16 }}>
               <Form.Item
                 name="change_type"
-                label="变更类型"
-                rules={[{ required: true, message: '请选择变更类型' }]}
+                label={t('itsm.ticket.changeType')}
+                rules={[{ required: true, message: t('itsm.ticket.changeTypeRequired') }]}
               >
                 <Select
                   options={['标准', '普通', '紧急'].map((v) => ({ value: v, label: v }))}
-                  placeholder="标准 / 普通 / 紧急"
+                  placeholder={t('itsm.ticket.changeTypePlaceholder')}
                 />
               </Form.Item>
               <Form.Item
                 name="risk_level"
-                label="风险等级"
-                rules={[{ required: true, message: '请选择风险等级' }]}
+                label={t('itsm.ticket.riskLevel')}
+                rules={[{ required: true, message: t('itsm.ticket.riskLevelRequired') }]}
               >
                 <Select options={['高', '中', '低'].map((v) => ({ value: v, label: v }))} />
               </Form.Item>
-              <Form.Item name="change_reason" label="变更原因">
+              <Form.Item name="change_reason" label={t('itsm.ticket.changeReason')}>
                 <Input.TextArea rows={2} maxLength={1000} />
               </Form.Item>
-              <Form.Item name="rollback_plan" label="回退方案">
+              <Form.Item name="rollback_plan" label={t('itsm.ticket.rollbackPlan')}>
                 <Input.TextArea rows={2} maxLength={1000} />
               </Form.Item>
-              <Form.Item name="planned_window" label="变更窗口">
+              <Form.Item name="planned_window" label={t('itsm.ticket.changeWindow')}>
                 <DatePicker.RangePicker showTime format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
               </Form.Item>
-              <Form.Item name="implementation_plan" label="实施方案">
+              <Form.Item name="implementation_plan" label={t('itsm.ticket.implementationPlan')}>
                 <Input.TextArea rows={2} maxLength={2000} />
               </Form.Item>
             </Card>
@@ -389,22 +389,22 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
             items={[
               {
                 key: 'more',
-                label: '更多选项',
+                label: t('itsm.ticket.moreOptions'),
                 children: (
                   <>
-                    <Form.Item name="assignee" label="受理人">
+                    <Form.Item name="assignee" label={t('itsm.f.assignee')}>
                       <Select
                         allowClear
                         showSearch
                         optionFilterProp="label"
-                        placeholder="留空由后台分派"
+                        placeholder={t('itsm.ticket.assigneePlaceholder')}
                         options={members.map((m) => ({
                           value: m.id,
                           label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
                         }))}
                       />
                     </Form.Item>
-                    <Form.Item name="remarks" label="备注">
+                    <Form.Item name="remarks" label={t('common.remark')}>
                       <Input.TextArea rows={2} maxLength={500} />
                     </Form.Item>
                   </>

@@ -35,6 +35,8 @@ import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type {
   CiImpact,
   CiRelationEntry,
@@ -72,6 +74,8 @@ const CI_WRITERS = ['it_ops', 'is_mgr', 'cio', 'admin'] as const;
 export default function Cmdb() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, [...CI_WRITERS]);
+  const t = useT();
+  const et = useEnums();
 
   const [items, setItems] = useState<CiRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -203,10 +207,10 @@ export default function Cmdb() {
     try {
       if (editing) {
         await api.patch(`/cis/${editing.id}`, payload);
-        message.success('配置项已更新');
+        message.success(t('itsm.cmdb.updated'));
       } else {
         await api.post('/cis', payload);
-        message.success('配置项已创建');
+        message.success(t('itsm.cmdb.created'));
       }
       setEditOpen(false);
       void load();
@@ -258,7 +262,7 @@ export default function Cmdb() {
         target_ci_id,
         relation_type: values.relation_type,
       });
-      message.success('关系已添加');
+      message.success(t('itsm.cmdb.relAdded'));
       relForm.resetFields();
       void loadImpact(impactCi);
     } catch {
@@ -272,7 +276,7 @@ export default function Cmdb() {
     if (!impactCi) return;
     try {
       await api.delete(`/ci-relationships/${relationId}`);
-      message.success('关系已删除');
+      message.success(t('itsm.cmdb.relDeleted'));
       void loadImpact(impactCi);
     } catch {
       // 已统一提示
@@ -281,14 +285,14 @@ export default function Cmdb() {
 
   const columns: ColumnsType<CiRow> = [
     {
-      title: '编号',
+      title: t('itsm.f.code'),
       dataIndex: 'ci_code',
       width: 130,
       fixed: 'left',
       render: (v: string, r) => <a onClick={() => openImpact(r)}>{v}</a>,
     },
     {
-      title: '名称',
+      title: t('itsm.f.name'),
       dataIndex: 'name',
       width: 200,
       ellipsis: true,
@@ -299,28 +303,28 @@ export default function Cmdb() {
         </Space>
       ),
     },
-    { title: '类别', dataIndex: 'category', width: 120, render: (v: string) => categoryName(v) },
-    { title: '环境', dataIndex: 'environment', width: 80, render: (v) => v || '-' },
+    { title: t('itsm.f.category'), dataIndex: 'category', width: 120, render: (v: string) => categoryName(v) },
+    { title: t('itsm.f.env'), dataIndex: 'environment', width: 80, render: (v) => (v ? et.ciEnv(v) : '-') },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 90,
-      render: (v: string) => <Tag color={CI_STATUS_COLORS[v] ?? 'default'}>{v}</Tag>,
+      render: (v: string) => <Tag color={CI_STATUS_COLORS[v] ?? 'default'}>{et.ciStatus(v)}</Tag>,
     },
-    { title: '负责人', dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
-    { title: '供应商', dataIndex: 'vendor_name', width: 140, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.f.vendor'), dataIndex: 'vendor_name', width: 140, ellipsis: true, render: (v) => v || '-' },
     {
-      title: '操作',
+      title: t('common.actions'),
       key: 'actions',
       width: 150,
       render: (_, r) => (
         <Space size={0}>
           <Button type="link" size="small" icon={<ApartmentOutlined />} onClick={() => openImpact(r)}>
-            影响分析
+            {t('itsm.cmdb.impact')}
           </Button>
           {canWrite && !r.is_example && (
             <Button type="link" size="small" onClick={() => openEdit(r)}>
-              编辑
+              {t('common.edit')}
             </Button>
           )}
         </Space>
@@ -344,7 +348,7 @@ export default function Cmdb() {
                 ? [
                     <Popconfirm
                       key="del"
-                      title="删除该关系？"
+                      title={t('itsm.cmdb.delRelConfirm')}
                       onConfirm={() => void deleteRelation(e.relation_id)}
                     >
                       <Button type="text" size="small" danger icon={<DeleteOutlined />} />
@@ -354,11 +358,11 @@ export default function Cmdb() {
             }
           >
             <Space>
-              <Tag>{e.relation_type}</Tag>
+              <Tag>{et.ciRelation(e.relation_type)}</Tag>
               <span>{e.ci.name}</span>
               <Typography.Text type="secondary">
                 {e.ci.category ? categoryName(e.ci.category) : ''}
-                {e.ci.status ? ` · ${e.ci.status}` : ''}
+                {e.ci.status ? ` · ${et.ciStatus(e.ci.status)}` : ''}
               </Typography.Text>
             </Space>
           </List.Item>
@@ -369,21 +373,21 @@ export default function Cmdb() {
 
   const impactTicketColumns: ColumnsType<CiImpact['tickets'][number]> = [
     {
-      title: '编号',
+      title: t('itsm.f.code'),
       dataIndex: 'ticket_code',
       width: 140,
       render: (v: string, r) => <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>,
     },
-    { title: '标题', dataIndex: 'title', ellipsis: true },
+    { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
     {
-      title: '优先级',
+      title: t('itsm.f.priority'),
       dataIndex: 'priority',
       width: 80,
       render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag>,
     },
-    { title: '状态', dataIndex: 'status', width: 100 },
+    { title: t('common.status'), dataIndex: 'status', width: 100 },
     {
-      title: '提交时间',
+      title: t('itsm.f.submittedAt'),
       dataIndex: 'submitted_at',
       width: 140,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
@@ -392,7 +396,7 @@ export default function Cmdb() {
 
   return (
     <Card
-      title="CMDB 配置管理"
+      title={t('itsm.cmdb.title')}
       extra={
         canWrite && (
           <Space>
@@ -402,7 +406,7 @@ export default function Cmdb() {
               onDone={() => void load()}
             />
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建配置项
+              {t('itsm.cmdb.newCi')}
             </Button>
           </Space>
         )
@@ -415,14 +419,14 @@ export default function Cmdb() {
           setCategory(k);
         }}
         items={[
-          { key: '', label: '全部' },
+          { key: '', label: t('common.all') },
           ...categories.map((c) => ({ key: c.code, label: c.name })),
         ]}
       />
 
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="搜索编号/名称"
+          placeholder={t('itsm.cmdb.searchPlaceholder')}
           allowClear
           style={{ width: 220 }}
           onSearch={(v) => {
@@ -431,7 +435,7 @@ export default function Cmdb() {
           }}
         />
         <Select
-          placeholder="状态"
+          placeholder={t('common.status')}
           allowClear
           style={{ width: 110 }}
           value={status}
@@ -439,10 +443,10 @@ export default function Cmdb() {
             setPage(1);
             setStatus(v);
           }}
-          options={CI_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))}
+          options={CI_STATUS_OPTIONS.map((s) => ({ value: s, label: et.ciStatus(s) }))}
         />
         <Select
-          placeholder="环境"
+          placeholder={t('itsm.f.env')}
           allowClear
           style={{ width: 110 }}
           value={environment}
@@ -450,10 +454,10 @@ export default function Cmdb() {
             setPage(1);
             setEnvironment(v);
           }}
-          options={CI_ENV_OPTIONS.map((s) => ({ value: s, label: s }))}
+          options={CI_ENV_OPTIONS.map((s) => ({ value: s, label: et.ciEnv(s) }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
       </Space>
 
@@ -468,7 +472,7 @@ export default function Cmdb() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('itsm.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -478,69 +482,69 @@ export default function Cmdb() {
 
       {/* 新建/编辑 Drawer */}
       <Drawer
-        title={editing ? `编辑配置项：${editing.ci_code}` : '新建配置项'}
+        title={editing ? t('itsm.cmdb.editCi', { code: editing.ci_code }) : t('itsm.cmdb.newCi')}
         open={editOpen}
         width={560}
         onClose={() => setEditOpen(false)}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setEditOpen(false)}>取消</Button>
+            <Button onClick={() => setEditOpen(false)}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
-              保存
+              {t('common.save')}
             </Button>
           </Space>
         }
       >
         <Form<CiFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-            <Input maxLength={128} placeholder="如：订单服务生产库" />
+          <Form.Item name="name" label={t('itsm.f.name')} rules={[{ required: true, message: t('itsm.rule.name') }]}>
+            <Input maxLength={128} placeholder={t('itsm.cmdb.namePlaceholder')} />
           </Form.Item>
-          <Form.Item name="category" label="类别" rules={[{ required: true, message: '请选择类别' }]}>
+          <Form.Item name="category" label={t('itsm.f.category')} rules={[{ required: true, message: t('itsm.cmdb.categoryRequired') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择配置项类别"
+              placeholder={t('itsm.cmdb.categoryPlaceholder')}
               options={categories.map((c) => ({ value: c.code, label: c.name }))}
             />
           </Form.Item>
-          <Form.Item name="owner" label="负责人" rules={[{ required: true, message: '请选择负责人' }]}>
+          <Form.Item name="owner" label={t('itsm.f.owner')} rules={[{ required: true, message: t('itsm.rule.owner') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder="选择负责人"
+              placeholder={t('itsm.ownerPlaceholder')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
               }))}
             />
           </Form.Item>
-          <Form.Item name="status" label="状态" rules={[{ required: true }]}>
-            <Select options={CI_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))} />
+          <Form.Item name="status" label={t('common.status')} rules={[{ required: true }]}>
+            <Select options={CI_STATUS_OPTIONS.map((s) => ({ value: s, label: et.ciStatus(s) }))} />
           </Form.Item>
-          <Form.Item name="environment" label="环境">
-            <Select allowClear options={CI_ENV_OPTIONS.map((s) => ({ value: s, label: s }))} />
+          <Form.Item name="environment" label={t('itsm.f.env')}>
+            <Select allowClear options={CI_ENV_OPTIONS.map((s) => ({ value: s, label: et.ciEnv(s) }))} />
           </Form.Item>
-          <Form.Item name="business_owner" label="业务负责人">
-            <Input maxLength={64} placeholder="业务侧对接人" />
+          <Form.Item name="business_owner" label={t('itsm.cmdb.businessOwner')}>
+            <Input maxLength={64} placeholder={t('itsm.cmdb.businessOwnerPlaceholder')} />
           </Form.Item>
-          <Form.Item name="vendor_id" label="供应商">
+          <Form.Item name="vendor_id" label={t('itsm.f.vendor')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="选择供应商"
+              placeholder={t('itsm.selectVendor')}
               options={vendors.map((v) => ({ value: v.id, label: v.name }))}
             />
           </Form.Item>
-          <Form.Item name="launch_date" label="上线日期">
+          <Form.Item name="launch_date" label={t('itsm.f.launchDate')}>
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
-          <Form.Item name="description" label="描述">
+          <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={3} maxLength={2000} />
           </Form.Item>
 
-          <Form.Item label="扩展属性">
+          <Form.Item label={t('itsm.cmdb.attrs')}>
             <Form.List name="attrs">
               {(fields, { add, remove }) => (
                 <>
@@ -549,26 +553,26 @@ export default function Cmdb() {
                       <Form.Item
                         {...rest}
                         name={[name, 'key']}
-                        rules={[{ required: true, message: '属性名必填' }]}
+                        rules={[{ required: true, message: t('itsm.cmdb.attrKeyRequired') }]}
                         style={{ marginBottom: 0 }}
                       >
-                        <Input placeholder="属性名，如 IP" style={{ width: 160 }} />
+                        <Input placeholder={t('itsm.cmdb.attrKeyPlaceholder')} style={{ width: 160 }} />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'value']} style={{ marginBottom: 0 }}>
-                        <Input placeholder="属性值" style={{ width: 240 }} />
+                        <Input placeholder={t('itsm.cmdb.attrValuePlaceholder')} style={{ width: 240 }} />
                       </Form.Item>
                       <MinusCircleOutlined onClick={() => remove(name)} />
                     </Space>
                   ))}
                   <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add({ key: '', value: '' })}>
-                    添加属性
+                    {t('itsm.cmdb.addAttr')}
                   </Button>
                 </>
               )}
             </Form.List>
           </Form.Item>
 
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>
@@ -576,7 +580,7 @@ export default function Cmdb() {
 
       {/* 影响分析 Drawer */}
       <Drawer
-        title={impactCi ? `影响分析：${impactCi.ci_code} ${impactCi.name}` : '影响分析'}
+        title={impactCi ? t('itsm.cmdb.impactTitle', { code: impactCi.ci_code, name: impactCi.name }) : t('itsm.cmdb.impact')}
         open={!!impactCi}
         width={680}
         onClose={() => setImpactCi(null)}
@@ -589,12 +593,12 @@ export default function Cmdb() {
         ) : (
           <Space direction="vertical" size={16} style={{ width: '100%' }}>
             <Descriptions column={2} size="small" bordered>
-              <Descriptions.Item label="类别">{categoryName(impact.ci.category)}</Descriptions.Item>
-              <Descriptions.Item label="状态">
-                <Tag color={CI_STATUS_COLORS[impact.ci.status] ?? 'default'}>{impact.ci.status}</Tag>
+              <Descriptions.Item label={t('itsm.f.category')}>{categoryName(impact.ci.category)}</Descriptions.Item>
+              <Descriptions.Item label={t('common.status')}>
+                <Tag color={CI_STATUS_COLORS[impact.ci.status] ?? 'default'}>{et.ciStatus(impact.ci.status)}</Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="环境">{impact.ci.environment ?? '-'}</Descriptions.Item>
-              <Descriptions.Item label="负责人">{impact.ci.owner_name ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label={t('itsm.f.env')}>{impact.ci.environment ? et.ciEnv(impact.ci.environment) : '-'}</Descriptions.Item>
+              <Descriptions.Item label={t('itsm.f.owner')}>{impact.ci.owner_name ?? '-'}</Descriptions.Item>
               {Object.entries(impact.ci.attrs ?? {}).map(([k, v]) => (
                 <Descriptions.Item key={k} label={k}>
                   {String(v ?? '-')}
@@ -603,22 +607,22 @@ export default function Cmdb() {
             </Descriptions>
 
             {relationList(
-              '上游（本 CI 依赖的）',
+              t('itsm.cmdb.upstream'),
               <ArrowUpOutlined />,
               impact.upstream,
-              '暂无上游关系',
+              t('itsm.cmdb.noUpstream'),
             )}
             {relationList(
-              '下游（依赖本 CI 的）',
+              t('itsm.cmdb.downstream'),
               <ArrowDownOutlined />,
               impact.downstream,
-              '暂无下游关系',
+              t('itsm.cmdb.noDownstream'),
             )}
 
             {canWrite && !impactCi?.is_example && (
               <>
                 <Divider style={{ margin: '8px 0' }} />
-                <Typography.Text strong>添加关系</Typography.Text>
+                <Typography.Text strong>{t('itsm.cmdb.addRel')}</Typography.Text>
                 <Form
                   form={relForm}
                   layout="inline"
@@ -628,33 +632,33 @@ export default function Cmdb() {
                     <Select
                       style={{ width: 150 }}
                       options={[
-                        { value: 'upstream', label: '本 CI → 目标' },
-                        { value: 'downstream', label: '目标 → 本 CI' },
+                        { value: 'upstream', label: t('itsm.cmdb.dirUpstream') },
+                        { value: 'downstream', label: t('itsm.cmdb.dirDownstream') },
                       ]}
                     />
                   </Form.Item>
-                  <Form.Item name="relation_type" rules={[{ required: true, message: '请选择类型' }]}>
+                  <Form.Item name="relation_type" rules={[{ required: true, message: t('itsm.cmdb.relTypeRequired') }]}>
                     <Select
                       style={{ width: 110 }}
-                      options={CI_RELATION_TYPES.map((t) => ({ value: t, label: t }))}
+                      options={CI_RELATION_TYPES.map((rt) => ({ value: rt, label: et.ciRelation(rt) }))}
                     />
                   </Form.Item>
-                  <Form.Item name="other_ci_id" rules={[{ required: true, message: '请选择目标 CI' }]}>
+                  <Form.Item name="other_ci_id" rules={[{ required: true, message: t('itsm.cmdb.targetCiRequired') }]}>
                     <Select
                       style={{ width: 200 }}
                       showSearch
                       filterOption={false}
                       loading={ciSearching}
-                      placeholder="搜索目标 CI"
+                      placeholder={t('itsm.cmdb.searchTargetCi')}
                       onSearch={searchCis}
                       onFocus={() => searchCis('')}
-                      notFoundContent={ciSearching ? <Spin size="small" /> : '无匹配 CI'}
+                      notFoundContent={ciSearching ? <Spin size="small" /> : t('itsm.cmdb.noMatchCi')}
                       options={ciOptions.map((c) => ({ value: c.id, label: `${c.ci_code} ${c.name}` }))}
                     />
                   </Form.Item>
                   <Form.Item>
                     <Button type="primary" loading={relSaving} onClick={() => void submitRelation()}>
-                      添加
+                      {t('itsm.add')}
                     </Button>
                   </Form.Item>
                 </Form>
@@ -662,14 +666,14 @@ export default function Cmdb() {
             )}
 
             <Divider style={{ margin: '8px 0' }} />
-            <Typography.Text strong>关联工单（近 20 条）</Typography.Text>
+            <Typography.Text strong>{t('itsm.cmdb.linkedTickets')}</Typography.Text>
             <Table<CiImpact['tickets'][number]>
               rowKey="id"
               size="small"
               columns={impactTicketColumns}
               dataSource={impact.tickets}
               pagination={false}
-              locale={{ emptyText: '暂无关联工单' }}
+              locale={{ emptyText: t('itsm.noLinkedTickets') }}
             />
           </Space>
         )}

@@ -31,6 +31,7 @@ import type {
 } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import { useRoleOptions } from '../../utils/roleOptions';
+import { useT } from '../../i18n';
 import { problemStatusBadge } from './Problems';
 
 const fmt = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-');
@@ -47,6 +48,7 @@ const NEEDS_ROOT_CAUSE = new Set(['known_error', 'resolved']);
 export default function ProblemDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const t = useT();
 
   /** 角色/组 code → 中文名（流程条处理人与知会人展示） */
   const { roleLabel } = useRoleOptions();
@@ -88,13 +90,13 @@ export default function ProblemDetail() {
     void load();
   }, [load]);
 
-  const openTransition = (t: AllowedTransition) => {
-    if (!NEEDS_ROOT_CAUSE.has(t.to)) {
+  const openTransition = (tr: AllowedTransition) => {
+    if (!NEEDS_ROOT_CAUSE.has(tr.to)) {
       Modal.confirm({
-        title: `确认执行「${t.to_name}」？`,
+        title: t('itsm.confirmAction', { name: tr.to_name }),
         onOk: async () => {
-          await api.post(`/problems/${id}/transition`, { to: t.to, fields: {} });
-          message.success('操作成功');
+          await api.post(`/problems/${id}/transition`, { to: tr.to, fields: {} });
+          message.success(t('itsm.actionOk'));
           void load();
         },
       });
@@ -105,7 +107,7 @@ export default function ProblemDetail() {
       root_cause: detail?.root_cause ?? '',
       workaround: detail?.workaround ?? '',
     });
-    setTransition(t);
+    setTransition(tr);
   };
 
   const submitTransition = async () => {
@@ -116,7 +118,7 @@ export default function ProblemDetail() {
     setTransSaving(true);
     try {
       await api.post(`/problems/${id}/transition`, { to: transition.to, fields });
-      message.success('操作成功');
+      message.success(t('itsm.actionOk'));
       setTransition(null);
       void load();
     } catch {
@@ -143,13 +145,13 @@ export default function ProblemDetail() {
 
   const submitLink = async () => {
     if (!linkTicketId) {
-      message.warning('请选择要关联的工单');
+      message.warning(t('itsm.problem.selectTicketToLink'));
       return;
     }
     setLinkSaving(true);
     try {
       await api.post(`/problems/${id}/link-ticket`, { ticket_id: linkTicketId });
-      message.success('工单已关联');
+      message.success(t('itsm.problem.ticketLinked'));
       setLinkOpen(false);
       void load();
     } catch {
@@ -164,7 +166,7 @@ export default function ProblemDetail() {
     setTaskSaving(true);
     try {
       await api.post(`/process-tasks/${completingTask.task_id}/complete`, { comment: taskComment });
-      message.success('步骤已完成');
+      message.success(t('itsm.stepDone'));
       setCompletingTask(null);
       setTaskComment('');
       void load();
@@ -185,7 +187,7 @@ export default function ProblemDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">问题不存在或无权查看</Typography.Text>
+        <Typography.Text type="secondary">{t('itsm.problem.notFound')}</Typography.Text>
       </Card>
     );
   }
@@ -196,13 +198,13 @@ export default function ProblemDetail() {
 
   const linkedColumns: ColumnsType<LinkedTicketBrief> = [
     {
-      title: '工单编号',
+      title: t('itsm.problem.ticketCode'),
       dataIndex: 'ticket_code',
       width: 160,
       render: (v: string, r) => <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>,
     },
-    { title: '标题', dataIndex: 'title', ellipsis: true },
-    { title: '状态', dataIndex: 'status', width: 140, render: (v?: string) => v || '-' },
+    { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
+    { title: t('common.status'), dataIndex: 'status', width: 140, render: (v?: string) => v || '-' },
   ];
 
   return (
@@ -212,7 +214,7 @@ export default function ProblemDetail() {
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/itsm/problems')}>
-              返回
+              {t('itsm.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>
               {detail.problem_code} · {detail.title}
@@ -221,9 +223,9 @@ export default function ProblemDetail() {
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
           </Space>
           <Space wrap>
-            {(detail.allowed_transitions ?? []).map((t) => (
-              <Button key={t.to} type="primary" onClick={() => openTransition(t)}>
-                {t.to_name}
+            {(detail.allowed_transitions ?? []).map((tr) => (
+              <Button key={tr.to} type="primary" onClick={() => openTransition(tr)}>
+                {tr.to_name}
               </Button>
             ))}
           </Space>
@@ -231,7 +233,7 @@ export default function ProblemDetail() {
       </Card>
 
       {process && process.steps?.length > 0 && (
-        <Card title={`流程：${process.definition_name}`} size="small">
+        <Card title={t('itsm.processTitle', { name: process.definition_name })} size="small">
           <Steps
             size="small"
             current={Math.max(
@@ -249,7 +251,7 @@ export default function ProblemDetail() {
                   </span>
                   {(s.cc_roles?.length ?? 0) > 0 && (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      知会：{(s.cc_roles ?? []).map((k) => roleLabel(k)).join('、')}
+                      {t('itsm.ccPrefix')}{(s.cc_roles ?? []).map((k) => roleLabel(k)).join('、')}
                     </Typography.Text>
                   )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
@@ -263,7 +265,7 @@ export default function ProblemDetail() {
                         setCompletingTask(s);
                       }}
                     >
-                      完成此步骤
+                      {t('itsm.completeStep')}
                     </Button>
                   )}
                 </Space>
@@ -273,21 +275,21 @@ export default function ProblemDetail() {
         </Card>
       )}
 
-      <Card title="基本信息" size="small">
+      <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>
-          <Descriptions.Item label="服务项">{detail.service_item_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="负责人">{detail.owner_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="创建时间">{fmt(detail.created_at)}</Descriptions.Item>
-          <Descriptions.Item label="来源工单">
+          <Descriptions.Item label={t('itsm.f.serviceItem')}>{detail.service_item_name ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.f.owner')}>{detail.owner_name ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.f.createdAt')}>{fmt(detail.created_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.problem.sourceTicket')}>
             {detail.source_ticket_id ? (
               <Link to={`/itsm/tickets/${detail.source_ticket_id}`}>
-                {detail.linked_tickets.find((t) => t.id === detail.source_ticket_id)?.ticket_code ?? '查看'}
+                {detail.linked_tickets.find((lt) => lt.id === detail.source_ticket_id)?.ticket_code ?? t('itsm.view')}
               </Link>
             ) : (
               '-'
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="描述" span={2}>
+          <Descriptions.Item label={t('itsm.f.description')} span={2}>
             <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
               {detail.description || '-'}
             </Typography.Paragraph>
@@ -295,36 +297,36 @@ export default function ProblemDetail() {
         </Descriptions>
       </Card>
 
-      <Card title="根因 / 规避方案" size="small">
+      <Card title={t('itsm.problem.rootCauseCard')} size="small">
         <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label="根因">
+          <Descriptions.Item label={t('itsm.ticket.rootCause')}>
             {detail.root_cause ? (
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {detail.root_cause}
               </Typography.Paragraph>
             ) : (
-              <Typography.Text type="secondary">待分析（转「已知错误/已解决」时填写）</Typography.Text>
+              <Typography.Text type="secondary">{t('itsm.problem.rootCauseHint')}</Typography.Text>
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="临时规避">
+          <Descriptions.Item label={t('itsm.problem.workaround')}>
             {detail.workaround ? (
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {detail.workaround}
               </Typography.Paragraph>
             ) : (
-              <Typography.Text type="secondary">暂无</Typography.Text>
+              <Typography.Text type="secondary">{t('itsm.none')}</Typography.Text>
             )}
           </Descriptions.Item>
         </Descriptions>
       </Card>
 
       <Card
-        title={`关联工单（${detail.linked_tickets.length}）`}
+        title={t('itsm.problem.linkedTicketsCount', { n: detail.linked_tickets.length })}
         size="small"
         extra={
           !isExample && (
             <Button icon={<LinkOutlined />} onClick={openLink}>
-              关联工单
+              {t('itsm.problem.linkTicket')}
             </Button>
           )
         }
@@ -335,13 +337,13 @@ export default function ProblemDetail() {
           columns={linkedColumns}
           dataSource={detail.linked_tickets}
           pagination={false}
-          locale={{ emptyText: '暂无关联工单' }}
+          locale={{ emptyText: t('itsm.noLinkedTickets') }}
         />
       </Card>
 
       {/* 状态流转 Modal：根因 + 规避 */}
       <Modal
-        title={transition ? `${transition.to_name} — 填写根因` : ''}
+        title={transition ? t('itsm.problem.transModalTitle', { name: transition.to_name }) : ''}
         open={!!transition}
         onOk={() => void submitTransition()}
         confirmLoading={transSaving}
@@ -349,18 +351,18 @@ export default function ProblemDetail() {
         destroyOnClose
       >
         <Form form={transForm} layout="vertical" preserve={false}>
-          <Form.Item name="root_cause" label="根因" rules={[{ required: true, message: '请填写根因' }]}>
-            <Input.TextArea rows={4} maxLength={2000} placeholder="问题的根本原因分析" />
+          <Form.Item name="root_cause" label={t('itsm.ticket.rootCause')} rules={[{ required: true, message: t('itsm.problem.rootCauseRequired') }]}>
+            <Input.TextArea rows={4} maxLength={2000} placeholder={t('itsm.problem.rootCausePlaceholder')} />
           </Form.Item>
-          <Form.Item name="workaround" label="临时规避（可选）">
-            <Input.TextArea rows={3} maxLength={2000} placeholder="根治前的临时规避方案" />
+          <Form.Item name="workaround" label={t('itsm.problem.workaroundOptional')}>
+            <Input.TextArea rows={3} maxLength={2000} placeholder={t('itsm.problem.workaroundPlaceholder')} />
           </Form.Item>
         </Form>
       </Modal>
 
       {/* 关联工单 Modal */}
       <Modal
-        title="关联工单"
+        title={t('itsm.problem.linkTicket')}
         open={linkOpen}
         onOk={() => void submitLink()}
         confirmLoading={linkSaving}
@@ -372,11 +374,11 @@ export default function ProblemDetail() {
           showSearch
           filterOption={false}
           loading={ticketSearching}
-          placeholder="输入编号/标题搜索工单"
+          placeholder={t('itsm.problem.searchTicketPlaceholder')}
           value={linkTicketId}
           onChange={setLinkTicketId}
           onSearch={searchTickets}
-          notFoundContent={ticketSearching ? <Spin size="small" /> : '无匹配工单'}
+          notFoundContent={ticketSearching ? <Spin size="small" /> : t('itsm.problem.noMatchTicket')}
           options={ticketOptions.map((t) => ({
             value: t.id,
             label: `${t.ticket_code} ${t.title}`,
@@ -386,7 +388,7 @@ export default function ProblemDetail() {
 
       {/* 完成流程步骤 Modal */}
       <Modal
-        title={completingTask ? `完成步骤：${completingTask.name}` : ''}
+        title={completingTask ? t('itsm.completeStepTitle', { name: completingTask.name }) : ''}
         open={!!completingTask}
         onOk={() => void submitTaskComplete()}
         confirmLoading={taskSaving}
@@ -396,7 +398,7 @@ export default function ProblemDetail() {
         <Input.TextArea
           rows={3}
           maxLength={500}
-          placeholder="处理说明（可选）"
+          placeholder={t('itsm.taskCommentPlaceholder')}
           value={taskComment}
           onChange={(e) => setTaskComment(e.target.value)}
         />

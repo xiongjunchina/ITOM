@@ -6,6 +6,8 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type { Member, ProblemRow, ServiceItem, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS, PROBLEM_STATUS_LABELS } from '../../api/types';
 
@@ -28,6 +30,8 @@ interface ProblemFormValues {
 
 export default function Problems() {
   const navigate = useNavigate();
+  const t = useT();
+  const et = useEnums();
   const [items, setItems] = useState<ProblemRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -97,7 +101,7 @@ export default function Problems() {
         service_item_id: values.service_item_id ?? undefined,
         owner: values.owner ?? undefined,
       });
-      message.success('问题已创建');
+      message.success(t('itsm.problem.created'));
       setCreateOpen(false);
       if (created?.id) {
         navigate(`/itsm/problems/${created.id}`);
@@ -113,7 +117,7 @@ export default function Problems() {
 
   const columns: ColumnsType<ProblemRow> = [
     {
-      title: '编号',
+      title: t('itsm.f.code'),
       dataIndex: 'problem_code',
       width: 140,
       fixed: 'left',
@@ -124,24 +128,24 @@ export default function Problems() {
         </Space>
       ),
     },
-    { title: '标题', dataIndex: 'title', width: 260, ellipsis: true },
+    { title: t('itsm.f.title'), dataIndex: 'title', width: 260, ellipsis: true },
     {
-      title: '优先级',
+      title: t('itsm.f.priority'),
       dataIndex: 'priority',
       width: 90,
       render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag>,
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status_name',
       width: 110,
       render: (v: string, r) => <Badge status={problemStatusBadge(r.status)} text={v || r.status} />,
     },
-    { title: '服务项', dataIndex: 'service_item_name', width: 160, ellipsis: true, render: (v) => v || '-' },
-    { title: '负责人', dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
-    { title: '关联工单', dataIndex: 'linked_ticket_count', width: 90 },
+    { title: t('itsm.f.serviceItem'), dataIndex: 'service_item_name', width: 160, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.problem.linkedCount'), dataIndex: 'linked_ticket_count', width: 90 },
     {
-      title: '创建时间',
+      title: t('itsm.f.createdAt'),
       dataIndex: 'created_at',
       width: 150,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
@@ -150,16 +154,16 @@ export default function Problems() {
 
   return (
     <Card
-      title="问题管理"
+      title={t('itsm.problem.title')}
       extra={
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          新建问题
+          {t('itsm.problem.new')}
         </Button>
       }
     >
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="搜索编号/标题"
+          placeholder={t('itsm.searchCodeTitle')}
           allowClear
           style={{ width: 220 }}
           onSearch={(v) => {
@@ -168,7 +172,7 @@ export default function Problems() {
           }}
         />
         <Select
-          placeholder="状态"
+          placeholder={t('common.status')}
           allowClear
           style={{ width: 130 }}
           value={status}
@@ -176,10 +180,10 @@ export default function Problems() {
             setPage(1);
             setStatus(v);
           }}
-          options={Object.entries(PROBLEM_STATUS_LABELS).map(([value, label]) => ({ value, label }))}
+          options={Object.keys(PROBLEM_STATUS_LABELS).map((value) => ({ value, label: et.problemStatus(value) }))}
         />
         <Select
-          placeholder="优先级"
+          placeholder={t('itsm.f.priority')}
           allowClear
           style={{ width: 110 }}
           value={priority}
@@ -190,7 +194,7 @@ export default function Problems() {
           options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
       </Space>
 
@@ -205,7 +209,7 @@ export default function Problems() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('itsm.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -214,7 +218,7 @@ export default function Problems() {
       />
 
       <Modal
-        title="新建问题"
+        title={t('itsm.problem.new')}
         open={createOpen}
         onOk={() => void handleCreate()}
         confirmLoading={saving}
@@ -223,35 +227,35 @@ export default function Problems() {
         width={560}
       >
         <Form<ProblemFormValues> form={form} layout="vertical" preserve={false} initialValues={{ priority: 'P3' }}>
-          <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
-            <Input maxLength={200} placeholder="简要描述问题" />
+          <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+            <Input maxLength={200} placeholder={t('itsm.problem.titlePlaceholder')} />
           </Form.Item>
-          <Form.Item name="description" label="描述" rules={[{ required: true, message: '请输入描述' }]}>
-            <Input.TextArea rows={4} maxLength={2000} placeholder="问题现象、影响范围与已知信息" />
+          <Form.Item name="description" label={t('itsm.f.description')} rules={[{ required: true, message: t('itsm.rule.description') }]}>
+            <Input.TextArea rows={4} maxLength={2000} placeholder={t('itsm.problem.descPlaceholder')} />
           </Form.Item>
-          <Form.Item name="priority" label="优先级" rules={[{ required: true, message: '请选择优先级' }]}>
+          <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
             <Select
               options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))}
             />
           </Form.Item>
-          <Form.Item name="service_item_id" label="服务项（可选）">
+          <Form.Item name="service_item_id" label={t('itsm.problem.serviceItemOptional')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="选择关联的服务项"
+              placeholder={t('itsm.selectServiceItem')}
               options={serviceItems.map((i) => ({
                 value: i.id,
                 label: `${i.name}（${i.catalog_name ?? i.item_code}）`,
               }))}
             />
           </Form.Item>
-          <Form.Item name="owner" label="负责人（可选）">
+          <Form.Item name="owner" label={t('itsm.problem.ownerOptional')}>
             <Select
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder="选择负责人"
+              placeholder={t('itsm.ownerPlaceholder')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,

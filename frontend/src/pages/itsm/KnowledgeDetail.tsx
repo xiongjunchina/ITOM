@@ -7,6 +7,7 @@ import DOMPurify from 'dompurify';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { useT } from '../../i18n';
 import type { KnowledgeDetail as KnowledgeDetailData } from '../../api/types';
 import './knowledge-html.css';
 
@@ -108,6 +109,7 @@ export default function KnowledgeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const t = useT();
 
   const [detail, setDetail] = useState<KnowledgeDetailData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -134,7 +136,7 @@ export default function KnowledgeDetail() {
     setVoting(true);
     try {
       const res = await api.post<{ helpful_count: number }>(`/knowledge/${id}/vote`);
-      message.success('感谢反馈');
+      message.success(t('itsm.kb.thanksFeedback'));
       setDetail((d) => (d ? { ...d, voted: true, helpful_count: res.helpful_count ?? d.helpful_count + 1 } : d));
     } catch {
       // 已统一提示（SELF_VOTE / DUPLICATE）
@@ -153,7 +155,7 @@ export default function KnowledgeDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">文章不存在或无权查看</Typography.Text>
+        <Typography.Text type="secondary">{t('itsm.kb.notFound')}</Typography.Text>
       </Card>
     );
   }
@@ -171,12 +173,12 @@ export default function KnowledgeDetail() {
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/itsm/knowledge')}>
-              返回
+              {t('itsm.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>
               {detail.title}
             </Typography.Title>
-            {detail.status === 'draft' && <Tag>草稿</Tag>}
+            {detail.status === 'draft' && <Tag>{t('itsm.kb.draft')}</Tag>}
           </Space>
           <Space wrap>
             {!isExample && (
@@ -186,21 +188,21 @@ export default function KnowledgeDetail() {
                 loading={voting}
                 onClick={() => void vote()}
               >
-                有用（{detail.helpful_count}）
+                {t('itsm.kb.helpfulCount', { n: detail.helpful_count })}
               </Button>
             )}
             {canEdit && (
               <Button icon={<EditOutlined />} onClick={() => navigate(`/itsm/knowledge/${detail.id}/edit`)}>
-                编辑
+                {t('common.edit')}
               </Button>
             )}
           </Space>
         </Space>
         <Space size="middle" wrap style={{ marginTop: 8 }}>
           <Typography.Text type="secondary">{detail.article_code}</Typography.Text>
-          <Typography.Text type="secondary">作者：{detail.author_name ?? '-'}</Typography.Text>
+          <Typography.Text type="secondary">{t('itsm.kb.authorPrefix', { name: detail.author_name ?? '-' })}</Typography.Text>
           <Typography.Text type="secondary">
-            更新于 {detail.updated_at ? dayjs(detail.updated_at).format('YYYY-MM-DD HH:mm') : '-'}
+            {t('itsm.kb.updatedAtPrefix', { time: detail.updated_at ? dayjs(detail.updated_at).format('YYYY-MM-DD HH:mm') : '-' })}
           </Typography.Text>
           <Typography.Text type="secondary">
             <EyeOutlined /> {detail.view_count}
@@ -226,7 +228,7 @@ export default function KnowledgeDetail() {
       </Card>
 
       {detail.linked_tickets?.length > 0 && (
-        <Card title="关联工单" size="small">
+        <Card title={t('itsm.kb.linkedTickets')} size="small">
           <Space direction="vertical">
             {detail.linked_tickets.map((t) => (
               <Link key={t.id} to={`/itsm/tickets/${t.id}`}>

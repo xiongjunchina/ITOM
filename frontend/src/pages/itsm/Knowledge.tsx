@@ -7,10 +7,12 @@ import { EditOutlined, EyeOutlined, ImportOutlined, LikeOutlined, ReloadOutlined
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import { useT } from '../../i18n';
 import type { KnowledgeImportResult, KnowledgeRow, KnowledgeStatus } from '../../api/types';
 
 export default function Knowledge() {
   const navigate = useNavigate();
+  const t = useT();
   const [items, setItems] = useState<KnowledgeRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -26,7 +28,7 @@ export default function Knowledge() {
     api
       .upload<KnowledgeImportResult>('/knowledge/import', file as File)
       .then((res) => {
-        message.success(`已导入「${res.title}」，当前为草稿`);
+        message.success(t('itsm.kb.imported', { title: res.title }));
         onSuccess?.(res);
         navigate(`/itsm/knowledge/${res.article_id}`);
       })
@@ -61,14 +63,14 @@ export default function Knowledge() {
 
   const columns: ColumnsType<KnowledgeRow> = [
     {
-      title: '编号',
+      title: t('itsm.f.code'),
       dataIndex: 'article_code',
       width: 120,
       fixed: 'left',
       render: (v: string, r) => <Link to={`/itsm/knowledge/${r.id}`}>{v}</Link>,
     },
     {
-      title: '标题',
+      title: t('itsm.f.title'),
       dataIndex: 'title',
       width: 280,
       ellipsis: true,
@@ -80,14 +82,14 @@ export default function Knowledge() {
       ),
     },
     {
-      title: '标签',
+      title: t('itsm.f.tags'),
       dataIndex: 'tags',
       width: 200,
       render: (tags: string[]) =>
         tags?.length ? (
           <Space size={4} wrap>
-            {tags.map((t) => (
-              <Tag key={t}>{t}</Tag>
+            {tags.map((tag) => (
+              <Tag key={tag}>{tag}</Tag>
             ))}
           </Space>
         ) : (
@@ -95,17 +97,17 @@ export default function Knowledge() {
         ),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 90,
       render: (v: KnowledgeStatus) =>
-        v === 'draft' ? <Tag color="default">草稿</Tag> : <Tag color="green">已发布</Tag>,
+        v === 'draft' ? <Tag color="default">{t('itsm.kb.draft')}</Tag> : <Tag color="green">{t('itsm.kb.published')}</Tag>,
     },
-    { title: '作者', dataIndex: 'author_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.f.author'), dataIndex: 'author_name', width: 100, render: (v) => v || '-' },
     {
       title: (
         <span>
-          <EyeOutlined /> 浏览
+          <EyeOutlined /> {t('itsm.kb.views')}
         </span>
       ),
       dataIndex: 'view_count',
@@ -115,7 +117,7 @@ export default function Knowledge() {
     {
       title: (
         <span>
-          <LikeOutlined /> 有用
+          <LikeOutlined /> {t('itsm.kb.helpful')}
         </span>
       ),
       dataIndex: 'helpful_count',
@@ -123,7 +125,7 @@ export default function Knowledge() {
       align: 'right',
     },
     {
-      title: '更新时间',
+      title: t('itsm.f.updatedAt'),
       dataIndex: 'updated_at',
       width: 150,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
@@ -132,16 +134,16 @@ export default function Knowledge() {
 
   return (
     <Card
-      title="知识库"
+      title={t('itsm.kb.title')}
       extra={
         <Button type="primary" icon={<EditOutlined />} onClick={() => navigate('/itsm/knowledge/new')}>
-          写文章
+          {t('itsm.kb.write')}
         </Button>
       }
     >
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="搜索标题/内容"
+          placeholder={t('itsm.kb.searchPlaceholder')}
           allowClear
           style={{ width: 240 }}
           onSearch={(v) => {
@@ -150,7 +152,7 @@ export default function Knowledge() {
           }}
         />
         <Select
-          placeholder="状态"
+          placeholder={t('common.status')}
           allowClear
           style={{ width: 120 }}
           value={status}
@@ -159,12 +161,12 @@ export default function Knowledge() {
             setStatus(v);
           }}
           options={[
-            { value: 'published', label: '已发布' },
-            { value: 'draft', label: '草稿' },
+            { value: 'published', label: t('itsm.kb.published') },
+            { value: 'draft', label: t('itsm.kb.draft') },
           ]}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
         <Upload
           accept=".docx,.md,.markdown,.html,.htm,.txt"
@@ -173,7 +175,7 @@ export default function Knowledge() {
           disabled={importing}
         >
           <Button icon={<ImportOutlined />} loading={importing}>
-            导入文档
+            {t('itsm.kb.importDoc')}
           </Button>
         </Upload>
       </Space>
@@ -189,7 +191,7 @@ export default function Knowledge() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('itsm.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);

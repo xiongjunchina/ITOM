@@ -23,6 +23,8 @@ import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type {
   AllowedTransition,
   MasterDataItem,
@@ -31,7 +33,7 @@ import type {
   TicketDetail as TicketDetailData,
   TicketType,
 } from '../../api/types';
-import { PRIORITY_COLORS, TICKET_TYPE_COLORS, TICKET_TYPE_LABELS } from '../../api/types';
+import { PRIORITY_COLORS, TICKET_TYPE_COLORS } from '../../api/types';
 
 const fmt = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-');
 
@@ -53,6 +55,8 @@ export default function TicketDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const t = useT();
+  const et = useEnums();
 
   /** 角色/组 code → 中文名（流程条处理人与知会人展示） */
   const { roleLabel } = useRoleOptions();
@@ -111,20 +115,20 @@ export default function TicketDetail() {
     }
   };
 
-  const openTransition = (t: AllowedTransition) => {
-    const needsForm = t.to === 'resolved' || t.to === 'closed' || t.to === 'approved' || t.to === 'rejected';
+  const openTransition = (tr: AllowedTransition) => {
+    const needsForm = tr.to === 'resolved' || tr.to === 'closed' || tr.to === 'approved' || tr.to === 'rejected';
     if (!needsForm) {
       Modal.confirm({
-        title: `确认执行「${t.to_name}」？`,
+        title: t('itsm.confirmAction', { name: tr.to_name }),
         onOk: async () => {
-          await api.post(`/tickets/${id}/transition`, { to: t.to, fields: {} });
-          message.success('操作成功');
+          await api.post(`/tickets/${id}/transition`, { to: tr.to, fields: {} });
+          message.success(t('itsm.actionOk'));
           void load();
         },
       });
       return;
     }
-    if (t.to === 'closed' && closureCodes.length === 0) {
+    if (tr.to === 'closed' && closureCodes.length === 0) {
       api
         .getList<MasterDataItem>('/admin/master-data', {
           category: 'closure_code',
@@ -135,7 +139,7 @@ export default function TicketDetail() {
         .catch(() => undefined);
     }
     transForm.resetFields();
-    setTransition(t);
+    setTransition(tr);
   };
 
   const submitTransition = async () => {
@@ -153,7 +157,7 @@ export default function TicketDetail() {
     setTransSaving(true);
     try {
       await api.post(`/tickets/${id}/transition`, { to: transition.to, fields });
-      message.success('操作成功');
+      message.success(t('itsm.actionOk'));
       setTransition(null);
       void load();
     } catch {
@@ -165,13 +169,13 @@ export default function TicketDetail() {
 
   const submitReassign = async () => {
     if (reassignTo == null) {
-      message.warning('请选择受理人');
+      message.warning(t('itsm.ticket.selectAssignee'));
       return;
     }
     setReassignSaving(true);
     try {
       await api.patch(`/tickets/${id}`, { assignee: reassignTo });
-      message.success('受理人已更新');
+      message.success(t('itsm.ticket.assigneeUpdated'));
       setReassignOpen(false);
       void load();
     } catch {
@@ -186,7 +190,7 @@ export default function TicketDetail() {
     setTaskSaving(true);
     try {
       await api.post(`/process-tasks/${completingTask.task_id}/complete`, { comment: taskComment });
-      message.success('步骤已完成');
+      message.success(t('itsm.stepDone'));
       setCompletingTask(null);
       setTaskComment('');
       void load();
@@ -203,7 +207,7 @@ export default function TicketDetail() {
       const res = await api.post<{ problem_id: string; problem_code: string }>(
         `/tickets/${id}/escalate-problem`,
       );
-      message.success(`已升级为问题 ${res.problem_code}`);
+      message.success(t('itsm.ticket.escalated', { code: res.problem_code }));
       navigate(`/itsm/problems/${res.problem_id}`);
     } catch {
       // 已统一提示（含 ALREADY_ESCALATED）
@@ -218,7 +222,7 @@ export default function TicketDetail() {
       const res = await api.post<{ article_id: string; article_code: string }>(
         `/tickets/${id}/to-knowledge`,
       );
-      message.success(`已生成知识草稿 ${res.article_code ?? ''}`);
+      message.success(t('itsm.ticket.toKnowledgeOk', { code: res.article_code ?? '' }));
       navigate(`/itsm/knowledge/${res.article_id}`);
     } catch {
       // 已统一提示
@@ -229,13 +233,13 @@ export default function TicketDetail() {
 
   const submitRating = async () => {
     if (!rating) {
-      message.warning('请先选择评分');
+      message.warning(t('itsm.ticket.selectRating'));
       return;
     }
     setRatingSaving(true);
     try {
       await api.post(`/tickets/${id}/satisfaction`, { score: rating });
-      message.success('感谢您的评价');
+      message.success(t('itsm.ticket.thanksRating'));
       void load();
     } catch {
       // 已统一提示
@@ -254,7 +258,7 @@ export default function TicketDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">工单不存在或无权查看</Typography.Text>
+        <Typography.Text type="secondary">{t('itsm.ticket.notFound')}</Typography.Text>
       </Card>
     );
   }
@@ -277,7 +281,7 @@ export default function TicketDetail() {
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
             <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/itsm/tickets')}>
-              返回
+              {t('itsm.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>
               {detail.ticket_code} · {detail.title}
@@ -285,28 +289,28 @@ export default function TicketDetail() {
             <Badge status={statusBadge(detail.status)} text={detail.status_name || detail.status} />
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
             <Tag color={TICKET_TYPE_COLORS[detail.ticket_type as TicketType]}>
-              {TICKET_TYPE_LABELS[detail.ticket_type as TicketType] ?? detail.ticket_type}
+              {et.ticketType(detail.ticket_type)}
             </Tag>
           </Space>
           <Space wrap>
             {canEscalate && (
               <Button loading={escalating} onClick={() => void escalateProblem()}>
-                升级为问题
+                {t('itsm.ticket.escalate')}
               </Button>
             )}
             {canToKnowledge && (
               <Button loading={toKnowledgeSaving} onClick={() => void toKnowledge()}>
-                沉淀为知识
+                {t('itsm.ticket.toKnowledge')}
               </Button>
             )}
-            {(detail.allowed_transitions ?? []).map((t) => (
+            {(detail.allowed_transitions ?? []).map((tr) => (
               <Button
-                key={t.to}
-                type={t.to === 'rejected' ? 'default' : 'primary'}
-                danger={t.to === 'rejected'}
-                onClick={() => openTransition(t)}
+                key={tr.to}
+                type={tr.to === 'rejected' ? 'default' : 'primary'}
+                danger={tr.to === 'rejected'}
+                onClick={() => openTransition(tr)}
               >
-                {t.to_name}
+                {tr.to_name}
               </Button>
             ))}
           </Space>
@@ -314,7 +318,7 @@ export default function TicketDetail() {
       </Card>
 
       {process && process.steps?.length > 0 && (
-        <Card title={`流程：${process.definition_name}`} size="small">
+        <Card title={t('itsm.processTitle', { name: process.definition_name })} size="small">
           <Steps
             size="small"
             current={Math.max(
@@ -332,7 +336,7 @@ export default function TicketDetail() {
                   </span>
                   {(s.cc_roles?.length ?? 0) > 0 && (
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      知会：{(s.cc_roles ?? []).map((k) => roleLabel(k)).join('、')}
+                      {t('itsm.ccPrefix')}{(s.cc_roles ?? []).map((k) => roleLabel(k)).join('、')}
                     </Typography.Text>
                   )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
@@ -346,7 +350,7 @@ export default function TicketDetail() {
                         setCompletingTask(s);
                       }}
                     >
-                      完成此步骤
+                      {t('itsm.completeStep')}
                     </Button>
                   )}
                 </Space>
@@ -356,15 +360,15 @@ export default function TicketDetail() {
         </Card>
       )}
 
-      <Card title="基本信息" size="small">
+      <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>
-          <Descriptions.Item label="服务项">{detail.service_item_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="服务线">{detail.service_line ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label="提交人">
+          <Descriptions.Item label={t('itsm.f.serviceItem')}>{detail.service_item_name ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.serviceLine')}>{detail.service_line ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.f.submitter')}>
             {detail.submitter_name ?? '-'}
             {detail.submitter_dept ? `（${detail.submitter_dept}）` : ''}
           </Descriptions.Item>
-          <Descriptions.Item label="受理人">
+          <Descriptions.Item label={t('itsm.f.assignee')}>
             <Space>
               {detail.assignee_name ?? '-'}
               {!isExample && (
@@ -378,68 +382,68 @@ export default function TicketDetail() {
                     setReassignOpen(true);
                   }}
                 >
-                  改派
+                  {t('itsm.ticket.reassign')}
                 </Button>
               )}
             </Space>
           </Descriptions.Item>
-          <Descriptions.Item label="提交时间">{fmt(detail.submitted_at)}</Descriptions.Item>
-          <Descriptions.Item label="首次响应">{fmt(detail.first_response_at)}</Descriptions.Item>
-          <Descriptions.Item label="解决时间">{fmt(detail.resolved_at)}</Descriptions.Item>
-          <Descriptions.Item label="关闭时间">{fmt(detail.closed_at)}</Descriptions.Item>
-          <Descriptions.Item label="SLA 响应目标">
-            {detail.sla_response_min != null ? `${detail.sla_response_min} 分钟` : '-'}
+          <Descriptions.Item label={t('itsm.f.submittedAt')}>{fmt(detail.submitted_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.firstResponse')}>{fmt(detail.first_response_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.resolvedAt')}>{fmt(detail.resolved_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.closedAt')}>{fmt(detail.closed_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.slaResponseTarget')}>
+            {detail.sla_response_min != null ? t('itsm.unit.minutes', { n: detail.sla_response_min }) : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="实际响应">
+          <Descriptions.Item label={t('itsm.ticket.actualResponse')}>
             {detail.actual_response_min != null ? (
               <Space>
-                {detail.actual_response_min} 分钟
-                {detail.sla_response_met === true && <Tag color="green">达成</Tag>}
-                {detail.sla_response_met === false && <Tag color="red">超时</Tag>}
+                {t('itsm.unit.minutes', { n: detail.actual_response_min })}
+                {detail.sla_response_met === true && <Tag color="green">{t('itsm.sla.met')}</Tag>}
+                {detail.sla_response_met === false && <Tag color="red">{t('itsm.sla.overdue')}</Tag>}
               </Space>
             ) : (
               '-'
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="SLA 解决目标">
-            {detail.sla_resolution_hours != null ? `${detail.sla_resolution_hours} 小时` : '-'}
+          <Descriptions.Item label={t('itsm.ticket.slaResolutionTarget')}>
+            {detail.sla_resolution_hours != null ? t('itsm.unit.hours', { n: detail.sla_resolution_hours }) : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="实际解决">
+          <Descriptions.Item label={t('itsm.ticket.actualResolution')}>
             {detail.actual_resolution_hours != null ? (
               <Space>
-                {detail.actual_resolution_hours} 小时
-                {detail.sla_resolution_met === true && <Tag color="green">达成</Tag>}
-                {detail.sla_resolution_met === false && <Tag color="red">超时</Tag>}
-                {detail.sla_resolution_met == null && detail.sla_warned && <Tag color="orange">临期</Tag>}
+                {t('itsm.unit.hours', { n: detail.actual_resolution_hours })}
+                {detail.sla_resolution_met === true && <Tag color="green">{t('itsm.sla.met')}</Tag>}
+                {detail.sla_resolution_met === false && <Tag color="red">{t('itsm.sla.overdue')}</Tag>}
+                {detail.sla_resolution_met == null && detail.sla_warned && <Tag color="orange">{t('itsm.sla.due')}</Tag>}
               </Space>
             ) : detail.sla_warned ? (
-              <Tag color="orange">临期 ⚠</Tag>
+              <Tag color="orange">{t('itsm.sla.dueMark')}</Tag>
             ) : (
               '-'
             )}
           </Descriptions.Item>
-          <Descriptions.Item label="重开次数">{detail.reopen_count ?? 0}</Descriptions.Item>
-          <Descriptions.Item label="一次解决">
-            {detail.first_time_fix == null ? '-' : detail.first_time_fix ? '是' : '否'}
+          <Descriptions.Item label={t('itsm.ticket.reopenCount')}>{detail.reopen_count ?? 0}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.firstTimeFix')}>
+            {detail.first_time_fix == null ? '-' : detail.first_time_fix ? t('common.yes') : t('common.no')}
           </Descriptions.Item>
-          <Descriptions.Item label="暂停时长">
-            {detail.paused_minutes != null ? `${detail.paused_minutes} 分钟` : '-'}
+          <Descriptions.Item label={t('itsm.ticket.pausedDuration')}>
+            {detail.paused_minutes != null ? t('itsm.unit.minutes', { n: detail.paused_minutes }) : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="满意度">
+          <Descriptions.Item label={t('itsm.ticket.satisfaction')}>
             {detail.satisfaction != null ? <Rate disabled value={detail.satisfaction} /> : '-'}
           </Descriptions.Item>
-          <Descriptions.Item label="描述" span={2}>
+          <Descriptions.Item label={t('itsm.f.description')} span={2}>
             <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
               {detail.description || '-'}
             </Typography.Paragraph>
           </Descriptions.Item>
           {detail.remarks && (
-            <Descriptions.Item label="备注" span={2}>
+            <Descriptions.Item label={t('common.remark')} span={2}>
               {detail.remarks}
             </Descriptions.Item>
           )}
           {detail.closure_code && (
-            <Descriptions.Item label="关闭代码" span={2}>
+            <Descriptions.Item label={t('itsm.ticket.closureCode')} span={2}>
               {detail.closure_code}
             </Descriptions.Item>
           )}
@@ -447,39 +451,39 @@ export default function TicketDetail() {
       </Card>
 
       {isChange && (
-        <Card title="变更信息" size="small">
+        <Card title={t('itsm.ticket.changeInfo')} size="small">
           <Descriptions column={2} size="small" bordered>
-            <Descriptions.Item label="变更类型">{detail.change_type ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="风险等级">{detail.risk_level ?? '-'}</Descriptions.Item>
-            <Descriptions.Item label="计划开始">{fmt(detail.planned_start_at)}</Descriptions.Item>
-            <Descriptions.Item label="计划结束">{fmt(detail.planned_end_at)}</Descriptions.Item>
-            <Descriptions.Item label="变更原因" span={2}>
+            <Descriptions.Item label={t('itsm.ticket.changeType')}>{detail.change_type ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.riskLevel')}>{detail.risk_level ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.plannedStart')}>{fmt(detail.planned_start_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.plannedEnd')}>{fmt(detail.planned_end_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.changeReason')} span={2}>
               {detail.change_reason ?? '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="回退方案" span={2}>
+            <Descriptions.Item label={t('itsm.ticket.rollbackPlan')} span={2}>
               {detail.rollback_plan ?? '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="实施方案" span={2}>
+            <Descriptions.Item label={t('itsm.ticket.implementationPlan')} span={2}>
               {detail.implementation_plan ?? '-'}
             </Descriptions.Item>
-            <Descriptions.Item label="审批时间">{fmt(detail.approved_at)}</Descriptions.Item>
-            <Descriptions.Item label="审批意见">{detail.approval_comment ?? '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.approvedAt')}>{fmt(detail.approved_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.approvalComment')}>{detail.approval_comment ?? '-'}</Descriptions.Item>
           </Descriptions>
         </Card>
       )}
 
       {(detail.solution || detail.root_cause) && (
-        <Card title="解决方案 / 根因" size="small">
+        <Card title={t('itsm.ticket.solutionRootCause')} size="small">
           <Descriptions column={1} size="small" bordered>
             {detail.solution && (
-              <Descriptions.Item label="解决方案">
+              <Descriptions.Item label={t('itsm.ticket.solution')}>
                 <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                   {detail.solution}
                 </Typography.Paragraph>
               </Descriptions.Item>
             )}
             {detail.root_cause && (
-              <Descriptions.Item label="根因">
+              <Descriptions.Item label={t('itsm.ticket.rootCause')}>
                 <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                   {detail.root_cause}
                 </Typography.Paragraph>
@@ -490,11 +494,11 @@ export default function TicketDetail() {
       )}
 
       {canRate && (
-        <Card title="满意度评价" size="small">
+        <Card title={t('itsm.ticket.ratingCard')} size="small">
           <Space>
             <Rate value={rating} onChange={setRating} />
             <Button type="primary" loading={ratingSaving} onClick={() => void submitRating()}>
-              提交评价
+              {t('itsm.ticket.submitRating')}
             </Button>
           </Space>
         </Card>
@@ -514,12 +518,12 @@ export default function TicketDetail() {
             <>
               <Form.Item
                 name="solution"
-                label="解决方案"
-                rules={[{ required: true, message: '请填写解决方案' }]}
+                label={t('itsm.ticket.solution')}
+                rules={[{ required: true, message: t('itsm.ticket.solutionRequired') }]}
               >
                 <Input.TextArea rows={4} maxLength={2000} />
               </Form.Item>
-              <Form.Item name="root_cause" label="根因（可选）">
+              <Form.Item name="root_cause" label={t('itsm.ticket.rootCauseOptional')}>
                 <Input.TextArea rows={3} maxLength={2000} />
               </Form.Item>
             </>
@@ -527,17 +531,17 @@ export default function TicketDetail() {
           {transition?.to === 'closed' && (
             <Form.Item
               name="closure_code"
-              label="关闭代码"
-              rules={[{ required: true, message: '请选择关闭代码' }]}
+              label={t('itsm.ticket.closureCode')}
+              rules={[{ required: true, message: t('itsm.ticket.closureCodeRequired') }]}
             >
               <Select
-                placeholder="选择关闭代码"
+                placeholder={t('itsm.ticket.closureCodePlaceholder')}
                 options={closureCodes.map((c) => ({ value: c.code, label: c.name }))}
               />
             </Form.Item>
           )}
           {(transition?.to === 'approved' || transition?.to === 'rejected') && (
-            <Form.Item name="approval_comment" label="审批意见">
+            <Form.Item name="approval_comment" label={t('itsm.ticket.approvalComment')}>
               <Input.TextArea rows={3} maxLength={1000} />
             </Form.Item>
           )}
@@ -546,7 +550,7 @@ export default function TicketDetail() {
 
       {/* 改派 Modal */}
       <Modal
-        title="改派受理人"
+        title={t('itsm.ticket.reassignTitle')}
         open={reassignOpen}
         onOk={() => void submitReassign()}
         confirmLoading={reassignSaving}
@@ -557,7 +561,7 @@ export default function TicketDetail() {
           style={{ width: '100%' }}
           showSearch
           optionFilterProp="label"
-          placeholder="选择新的受理人"
+          placeholder={t('itsm.ticket.reassignPlaceholder')}
           value={reassignTo}
           onChange={setReassignTo}
           options={members.map((m) => ({
@@ -569,7 +573,7 @@ export default function TicketDetail() {
 
       {/* 完成流程步骤 Modal */}
       <Modal
-        title={completingTask ? `完成步骤：${completingTask.name}` : ''}
+        title={completingTask ? t('itsm.completeStepTitle', { name: completingTask.name }) : ''}
         open={!!completingTask}
         onOk={() => void submitTaskComplete()}
         confirmLoading={taskSaving}
@@ -579,7 +583,7 @@ export default function TicketDetail() {
         <Input.TextArea
           rows={3}
           maxLength={500}
-          placeholder="处理说明（可选）"
+          placeholder={t('itsm.taskCommentPlaceholder')}
           value={taskComment}
           onChange={(e) => setTaskComment(e.target.value)}
         />

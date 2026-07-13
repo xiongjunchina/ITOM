@@ -19,6 +19,7 @@ import { SaveOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { useAuthStore, hasAnyRole } from '../../stores/auth';
+import { useT } from '../../i18n';
 import type { SlaDashboard, SlaPolicy, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 
@@ -30,6 +31,7 @@ export default function SlaBoard() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const isAdmin = hasAnyRole(user, ['admin']);
+  const t = useT();
 
   const [board, setBoard] = useState<SlaDashboard | null>(null);
   const [boardLoading, setBoardLoading] = useState(true);
@@ -86,7 +88,7 @@ export default function SlaBoard() {
           active: p.active,
         })),
       );
-      message.success('SLA 策略已保存');
+      message.success(t('itsm.sla.policySaved'));
       setDirty(false);
       void loadBoard();
     } catch {
@@ -97,23 +99,23 @@ export default function SlaBoard() {
   };
 
   const warningColumns: ColumnsType<WarningTicket> = [
-    { title: '编号', dataIndex: 'ticket_code', width: 140 },
-    { title: '标题', dataIndex: 'title', ellipsis: true },
+    { title: t('itsm.f.code'), dataIndex: 'ticket_code', width: 140 },
+    { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
     {
-      title: '优先级',
+      title: t('itsm.f.priority'),
       dataIndex: 'priority',
       width: 90,
       render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag>,
     },
-    { title: '状态', dataIndex: 'status', width: 110 },
+    { title: t('common.status'), dataIndex: 'status', width: 110 },
     {
-      title: '提交时间',
+      title: t('itsm.f.submittedAt'),
       dataIndex: 'submitted_at',
       width: 150,
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     {
-      title: 'SLA 解决目标(h)',
+      title: t('itsm.sla.resolutionTargetH'),
       dataIndex: 'sla_resolution_hours',
       width: 130,
       render: (v: number | null) => v ?? '-',
@@ -122,13 +124,13 @@ export default function SlaBoard() {
 
   const policyColumns: ColumnsType<SlaPolicy> = [
     {
-      title: '优先级',
+      title: t('itsm.f.priority'),
       dataIndex: 'priority',
       width: 100,
       render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag>,
     },
     {
-      title: '响应时限(分钟)',
+      title: t('itsm.sla.responseLimitMin'),
       dataIndex: 'response_minutes',
       width: 180,
       render: (v: number, r) =>
@@ -143,7 +145,7 @@ export default function SlaBoard() {
         ),
     },
     {
-      title: '解决时限(小时)',
+      title: t('itsm.sla.resolutionLimitH'),
       dataIndex: 'resolution_hours',
       width: 180,
       render: (v: number, r) =>
@@ -158,14 +160,14 @@ export default function SlaBoard() {
         ),
     },
     {
-      title: '启用',
+      title: t('itsm.sla.enabled'),
       dataIndex: 'active',
       width: 100,
       render: (v: boolean, r) =>
         isAdmin ? (
           <Switch checked={v} onChange={(val) => updatePolicy(r.priority, { active: val })} />
         ) : (
-          <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '停用'}</Tag>
+          <Tag color={v ? 'green' : 'default'}>{v ? t('itsm.sla.enabled') : t('itsm.sla.disabled')}</Tag>
         ),
     },
   ];
@@ -175,7 +177,7 @@ export default function SlaBoard() {
       <Card
         title={
           <span>
-            本月 SLA 达成率
+            {t('itsm.sla.monthlyRate')}
             {board?.month && (
               <Typography.Text type="secondary" style={{ marginLeft: 8, fontWeight: 'normal' }}>
                 （{board.month}）
@@ -195,7 +197,7 @@ export default function SlaBoard() {
                     title={
                       <Space>
                         <Tag color={PRIORITY_COLORS[p]}>{p}</Tag>
-                        达成率
+                        {t('itsm.sla.rate')}
                       </Space>
                     }
                     value={stat?.rate ?? '-'}
@@ -205,7 +207,7 @@ export default function SlaBoard() {
                     }
                   />
                   <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    已解决 {stat?.resolved ?? 0} · 达成 {stat?.met ?? 0}
+                    {t('itsm.sla.resolvedMet', { resolved: stat?.resolved ?? 0, met: stat?.met ?? 0 })}
                   </Typography.Text>
                 </Card>
               </Col>
@@ -214,7 +216,7 @@ export default function SlaBoard() {
         </Row>
       </Card>
 
-      <Card title="临期 / 超时工单">
+      <Card title={t('itsm.sla.warnCard')}>
         <Table<WarningTicket>
           rowKey="id"
           loading={boardLoading}
@@ -226,12 +228,12 @@ export default function SlaBoard() {
             onClick: () => navigate(`/itsm/tickets/${record.id}`),
             style: { cursor: 'pointer' },
           })}
-          locale={{ emptyText: '暂无临期或超时工单' }}
+          locale={{ emptyText: t('itsm.sla.noWarn') }}
         />
       </Card>
 
       <Card
-        title="SLA 策略"
+        title={t('itsm.sla.policyCard')}
         extra={
           isAdmin && (
             <Button
@@ -241,7 +243,7 @@ export default function SlaBoard() {
               loading={policySaving}
               onClick={() => void savePolicies()}
             >
-              保存策略
+              {t('itsm.sla.savePolicy')}
             </Button>
           )
         }

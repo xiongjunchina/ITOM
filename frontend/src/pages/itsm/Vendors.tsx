@@ -6,6 +6,8 @@ import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { useT } from '../../i18n';
+import { useEnums } from '../../i18n/enums';
 import type { Vendor, VendorRating } from '../../api/types';
 import { VENDOR_RATING_COLORS } from '../../api/types';
 
@@ -23,6 +25,8 @@ interface VendorFormValues {
 export default function Vendors() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, ['it_ops', 'cio', 'admin']);
+  const t = useT();
+  const et = useEnums();
 
   const [items, setItems] = useState<Vendor[]>([]);
   const [total, setTotal] = useState(0);
@@ -96,10 +100,10 @@ export default function Vendors() {
         // 状态仅编辑时可改（后端创建接口不接收 status）
         payload.status = values.status;
         await api.patch(`/vendors/${editing.id}`, payload);
-        message.success('供应商已更新');
+        message.success(t('itsm.vendor.updated'));
       } else {
         await api.post('/vendors', payload);
-        message.success('供应商已创建');
+        message.success(t('itsm.vendor.created'));
       }
       setEditOpen(false);
       void load();
@@ -111,9 +115,9 @@ export default function Vendors() {
   };
 
   const columns: ColumnsType<Vendor> = [
-    { title: '编号', dataIndex: 'code', width: 120, fixed: 'left' },
+    { title: t('itsm.f.code'), dataIndex: 'code', width: 120, fixed: 'left' },
     {
-      title: '名称',
+      title: t('itsm.f.name'),
       dataIndex: 'name',
       width: 200,
       ellipsis: true,
@@ -124,34 +128,34 @@ export default function Vendors() {
         </Space>
       ),
     },
-    { title: '联系人', dataIndex: 'contact', width: 100, render: (v) => v || '-' },
-    { title: '电话', dataIndex: 'phone', width: 130, render: (v) => v || '-' },
-    { title: '邮箱', dataIndex: 'email', width: 180, ellipsis: true, render: (v) => v || '-' },
-    { title: '服务范围', dataIndex: 'service_scope', width: 180, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.contact'), dataIndex: 'contact', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.f.phone'), dataIndex: 'phone', width: 130, render: (v) => v || '-' },
+    { title: t('itsm.f.email'), dataIndex: 'email', width: 180, ellipsis: true, render: (v) => v || '-' },
+    { title: t('itsm.f.serviceScope'), dataIndex: 'service_scope', width: 180, ellipsis: true, render: (v) => v || '-' },
     {
-      title: '评级',
+      title: t('itsm.f.rating'),
       dataIndex: 'rating',
       width: 80,
       render: (v: VendorRating | null) => (v ? <Tag color={VENDOR_RATING_COLORS[v]}>{v}</Tag> : '-'),
     },
     {
-      title: '状态',
+      title: t('common.status'),
       dataIndex: 'status',
       width: 90,
-      render: (v: Vendor['status']) => <Tag color={v === '合作中' ? 'green' : 'default'}>{v}</Tag>,
+      render: (v: Vendor['status']) => <Tag color={v === '合作中' ? 'green' : 'default'}>{et.vendorStatus(v)}</Tag>,
     },
-    { title: '合同数', dataIndex: 'contract_count', width: 80 },
-    { title: 'CI 数', dataIndex: 'ci_count', width: 80 },
+    { title: t('itsm.vendor.contractCount'), dataIndex: 'contract_count', width: 80 },
+    { title: t('itsm.vendor.ciCount'), dataIndex: 'ci_count', width: 80 },
     ...(canWrite
       ? [
           {
-            title: '操作',
+            title: t('common.actions'),
             key: 'actions',
             width: 80,
             render: (_: unknown, r: Vendor) =>
               r.is_example ? null : (
                 <Button type="link" size="small" onClick={() => openEdit(r)}>
-                  编辑
+                  {t('common.edit')}
                 </Button>
               ),
           } as ColumnsType<Vendor>[number],
@@ -161,7 +165,7 @@ export default function Vendors() {
 
   return (
     <Card
-      title="供应商"
+      title={t('itsm.vendor.title')}
       extra={
         canWrite && (
           <Space>
@@ -171,7 +175,7 @@ export default function Vendors() {
               onDone={() => void load()}
             />
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建供应商
+              {t('itsm.vendor.new')}
             </Button>
           </Space>
         )
@@ -179,7 +183,7 @@ export default function Vendors() {
     >
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
-          placeholder="搜索名称"
+          placeholder={t('itsm.searchName')}
           allowClear
           style={{ width: 220 }}
           onSearch={(v) => {
@@ -188,7 +192,7 @@ export default function Vendors() {
           }}
         />
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
-          刷新
+          {t('common.refresh')}
         </Button>
       </Space>
 
@@ -203,7 +207,7 @@ export default function Vendors() {
           pageSize,
           total,
           showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 条`,
+          showTotal: (n) => t('itsm.total', { n }),
           onChange: (p, ps) => {
             setPage(p);
             setPageSize(ps);
@@ -212,7 +216,7 @@ export default function Vendors() {
       />
 
       <Modal
-        title={editing ? `编辑供应商：${editing.code}` : '新建供应商'}
+        title={editing ? t('itsm.vendor.edit', { code: editing.code }) : t('itsm.vendor.new')}
         open={editOpen}
         onOk={() => void handleSave()}
         confirmLoading={saving}
@@ -221,33 +225,33 @@ export default function Vendors() {
         width={560}
       >
         <Form<VendorFormValues> form={form} layout="vertical" preserve={false}>
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+          <Form.Item name="name" label={t('itsm.f.name')} rules={[{ required: true, message: t('itsm.rule.name') }]}>
             <Input maxLength={128} />
           </Form.Item>
-          <Form.Item name="contact" label="联系人">
+          <Form.Item name="contact" label={t('itsm.f.contact')}>
             <Input maxLength={64} />
           </Form.Item>
-          <Form.Item name="phone" label="电话">
+          <Form.Item name="phone" label={t('itsm.f.phone')}>
             <Input maxLength={32} />
           </Form.Item>
-          <Form.Item name="email" label="邮箱" rules={[{ type: 'email', message: '邮箱格式不正确' }]}>
+          <Form.Item name="email" label={t('itsm.f.email')} rules={[{ type: 'email', message: t('itsm.vendor.emailInvalid') }]}>
             <Input maxLength={128} />
           </Form.Item>
-          <Form.Item name="service_scope" label="服务范围">
+          <Form.Item name="service_scope" label={t('itsm.f.serviceScope')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
-          <Form.Item name="rating" label="评级">
+          <Form.Item name="rating" label={t('itsm.f.rating')}>
             <Select
               allowClear
               options={(['A', 'B', 'C', 'D'] as VendorRating[]).map((r) => ({ value: r, label: r }))}
             />
           </Form.Item>
           {editing && (
-            <Form.Item name="status" label="状态">
-              <Select options={['合作中', '已终止'].map((s) => ({ value: s, label: s }))} />
+            <Form.Item name="status" label={t('common.status')}>
+              <Select options={['合作中', '已终止'].map((s) => ({ value: s, label: et.vendorStatus(s) }))} />
             </Form.Item>
           )}
-          <Form.Item name="remarks" label="备注">
+          <Form.Item name="remarks" label={t('common.remark')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
         </Form>
