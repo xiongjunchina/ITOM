@@ -45,6 +45,7 @@ MODULES = [
     ("admin_business_domains", "业务域", "系统管理"),
     ("admin_master_data", "数据字典", "系统管理"),
     ("admin_workflow", "状态机配置", "系统管理"),
+    ("admin_req_scoring", "需求评分规则", "系统管理"),
     ("admin_audit", "审计日志", "系统管理"),
 ]
 MODULE_CODES = {m[0] for m in MODULES}

@@ -137,7 +137,7 @@ def _score_project_delivery(db: Session, member_ids: list[str], start, end) -> d
     )
     per: dict[str, dict] = {}
     for t in rows:
-        done = t.status == "已完成"
+        done = (t.progress or 0) >= 100  # M9：WbsTask 以完成度替代 status
         if not done and t.end_date >= today:
             continue  # 未到期且未完成：不参与
         d = per.setdefault(t.assignee, {"ok": 0, "n": 0})

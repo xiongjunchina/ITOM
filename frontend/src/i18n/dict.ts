@@ -128,6 +128,7 @@ const zh: Dict = {
   'module.admin_business_domains': '业务域',
   'module.admin_master_data': '数据字典',
   'module.admin_workflow': '状态机配置',
+  'module.admin_req_scoring': '需求评分规则',
   'module.admin_audit': '审计日志',
 
   // 权限模块分组（与后端一致）
@@ -294,6 +295,7 @@ const en: Dict = {
   'module.admin_business_domains': 'Business Domains',
   'module.admin_master_data': 'Data Dictionary',
   'module.admin_workflow': 'State Machine',
+  'module.admin_req_scoring': 'Requirement Scoring',
   'module.admin_audit': 'Audit Log',
 
   'group.总览': 'Dashboard',
