@@ -274,6 +274,36 @@ function EvaluationPanel({
   );
 }
 
+/** 实际工天行内编辑：本地态输入、失焦提交（未变更不提交），只读时纯展示 */
+function ActualEffortCell({
+  task,
+  editable,
+  onSave,
+}: {
+  task: RequirementTask;
+  editable: boolean;
+  onSave: (v: number | null) => void;
+}) {
+  const [val, setVal] = useState<number | null>(task.actual_effort ?? null);
+  useEffect(() => {
+    setVal(task.actual_effort ?? null);
+  }, [task.actual_effort]);
+  if (!editable) return <>{task.actual_effort ?? '-'}</>;
+  return (
+    <InputNumber
+      size="small"
+      min={0}
+      precision={1}
+      style={{ width: 72 }}
+      value={val ?? undefined}
+      onChange={(v) => setVal((v as number | null) ?? null)}
+      onBlur={() => {
+        if (val !== (task.actual_effort ?? null)) onSave(val);
+      }}
+    />
+  );
+}
+
 export default function RequirementDetail() {
   const t = useT();
   const et = useEnums();
@@ -484,8 +514,10 @@ export default function RequirementDetail() {
     try {
       await api.post(`/requirements/${id}/tasks`, {
         name: v.name,
+        description: v.description || null,
         assignee: v.assignee,
         plan_date: v.plan_date ? (v.plan_date as Dayjs).format('YYYY-MM-DD') : null,
+        plan_effort: v.plan_effort ?? null,
       });
       message.success(t('req.taskAdded'));
       setTaskOpen(false);
@@ -511,6 +543,16 @@ export default function RequirementDetail() {
     try {
       await api.delete(`/requirements/tasks/${task.id}`);
       message.success(t('req.taskDeleted'));
+      void load();
+    } catch {
+      // 已统一提示
+    }
+  };
+
+  const updateTaskActual = async (task: RequirementTask, actual_effort: number | null) => {
+    try {
+      await api.patch(`/requirements/tasks/${task.id}`, { actual_effort });
+      message.success(t('req.saved'));
       void load();
     } catch {
       // 已统一提示
@@ -621,9 +663,45 @@ export default function RequirementDetail() {
 
   // ----- 任务表 -----
   const taskColumns: ColumnsType<RequirementTask> = [
-    { title: t('req.task.col.name'), dataIndex: 'name', ellipsis: true },
+    { title: t('req.task.col.name'), dataIndex: 'name', width: 180, ellipsis: true },
+    {
+      title: t('req.task.desc'),
+      dataIndex: 'description',
+      width: 200,
+      ellipsis: true,
+      render: (v: string | null | undefined) =>
+        v ? (
+          <Tooltip title={v}>
+            <span>{v}</span>
+          </Tooltip>
+        ) : (
+          '-'
+        ),
+    },
     { title: t('req.task.col.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
     { title: t('req.task.col.planDate'), dataIndex: 'plan_date', width: 110, render: (v) => v || '-' },
+    {
+      title: t('req.task.effort'),
+      key: 'effort',
+      width: 170,
+      render: (_: unknown, r: RequirementTask) => (
+        <Space direction="vertical" size={0}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t('req.task.planEffort')}: {r.plan_effort ?? '-'}
+          </Typography.Text>
+          <Space size={4}>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('req.task.actualEffort')}:
+            </Typography.Text>
+            <ActualEffortCell
+              task={r}
+              editable={canChangeTaskStatus(r)}
+              onSave={(v) => void updateTaskActual(r, v)}
+            />
+          </Space>
+        </Space>
+      ),
+    },
     {
       title: t('common.status'),
       dataIndex: 'status',
@@ -1006,6 +1084,7 @@ export default function RequirementDetail() {
             columns={taskColumns}
             dataSource={detail.tasks}
             pagination={false}
+            scroll={{ x: 900 }}
             locale={{ emptyText: t('req.emptyTasks') }}
           />
         </Card>
@@ -1181,12 +1260,20 @@ export default function RequirementDetail() {
           <Form.Item name="name" label={t('req.task.col.name')} rules={[{ required: true, message: t('req.taskNameRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>
+          <Form.Item name="description" label={t('req.task.desc')}>
+            <Input.TextArea rows={3} maxLength={1000} placeholder={t('req.task.descPlaceholder')} />
+          </Form.Item>
           <Form.Item name="assignee" label={t('req.assignee')} rules={[{ required: true, message: t('req.assigneeRequired') }]}>
             <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
           </Form.Item>
-          <Form.Item name="plan_date" label={t('req.task.col.planDate')}>
-            <DatePicker style={{ width: '100%' }} />
-          </Form.Item>
+          <Space size={16} wrap style={{ width: '100%' }} align="start">
+            <Form.Item name="plan_date" label={t('req.task.col.planDate')}>
+              <DatePicker style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="plan_effort" label={t('req.task.planEffort')} style={{ width: 140 }}>
+              <InputNumber min={0} precision={1} style={{ width: '100%' }} />
+            </Form.Item>
+          </Space>
         </Form>
       </Modal>
 

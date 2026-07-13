@@ -110,14 +110,19 @@ class TransitionIn(BaseModel):
 
 class TaskIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    description: str | None = None
     assignee: str
     plan_date: str | None = None
+    plan_effort: float | None = None
 
 
 class TaskUpdate(BaseModel):
     name: str | None = None
+    description: str | None = None
     assignee: str | None = None
     plan_date: str | None = None
+    plan_effort: float | None = None
+    actual_effort: float | None = None
     status: str | None = None
 
 
@@ -419,8 +424,10 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             for s in scores
         ],
         "tasks": [
-            {"id": t.id, "name": t.name, "assignee": t.assignee, "assignee_name": names.get(t.assignee),
-             "plan_date": t.plan_date, "status": t.status, "done_at": t.done_at}
+            {"id": t.id, "name": t.name, "description": t.description,
+             "assignee": t.assignee, "assignee_name": names.get(t.assignee),
+             "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
+             "status": t.status, "done_at": t.done_at}
             for t in tasks
         ],
         "handover": {
@@ -554,6 +561,49 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     })
 
 
+# ---------- 实现中任务清单（跨需求聚合，排期/实现阶段） ----------
+
+@router.get("/tasks/active")
+def active_tasks(
+    scope: str = "", status: str = "",
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    """展示排期/实现中的需求任务：任务名/描述/处理人/关联需求/进度。"""
+    q = (
+        db.query(RequirementTask, Requirement)
+        .join(Requirement, RequirementTask.requirement_id == Requirement.id)
+        .filter(
+            RequirementTask.is_deleted.is_(False), Requirement.is_deleted.is_(False),
+            Requirement.status.in_(("analyzing", "implementing")),
+        )
+    )
+    if _is_requester_only(db, user):
+        q = q.filter(Requirement.requester == user.id)
+    elif scope == "mine" and user.person_id:
+        q = q.filter(RequirementTask.assignee == user.person_id)
+    if status:
+        q = q.filter(RequirementTask.status == status)
+    rows = q.order_by(RequirementTask.status, RequirementTask.plan_date.is_(None), RequirementTask.plan_date).all()
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
+    status_map = status_names(db, "requirement")
+    return ok([
+        {
+            "id": t.id, "name": t.name, "description": t.description,
+            "assignee": t.assignee, "assignee_name": names.get(t.assignee),
+            "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
+            "status": t.status, "done_at": t.done_at,
+            "requirement_id": r.id, "requirement_code": r.requirement_code,
+            "requirement_title": r.title, "requirement_status": r.status,
+            "requirement_status_name": status_map.get(r.status, r.status),
+            "requirement_owner_name": names.get(r.owner),
+            "business_domain_name": domains.get(r.business_domain_id),
+            "moscow": r.moscow, "quadrant": requirement_scoring.compute_quadrant(requirement_scoring.requirement_scores(r)),
+        }
+        for t, r in rows
+    ])
+
+
 # ---------- 实现阶段：任务分解 ----------
 
 @router.post("/{requirement_id}/tasks")
@@ -563,8 +613,9 @@ def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db)
     from datetime import date as _date
 
     task = RequirementTask(
-        requirement_id=r.id, name=body.name, assignee=body.assignee,
+        requirement_id=r.id, name=body.name, description=body.description, assignee=body.assignee,
         plan_date=_date.fromisoformat(body.plan_date) if body.plan_date else None,
+        plan_effort=body.plan_effort,
     )
     db.add(task)
     db.flush()

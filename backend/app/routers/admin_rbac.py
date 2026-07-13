@@ -309,11 +309,15 @@ class PermPut(BaseModel):
 @router.get("/permission-modules")
 def permission_modules(_=Depends(get_current_user)):
     """模块注册表（矩阵网格用）。"""
-    from app.services.permissions import ACTIONS, MODULES
+    from app.services.permissions import ACTIONS, MODULE_PAGES, MODULES, PAGE_NAMES
 
     return ok({
         "actions": list(ACTIONS),
-        "modules": [{"code": c, "name": n, "group": g} for c, n, g in MODULES],
+        "modules": [
+            {"code": c, "name": n, "group": g,
+             "page": MODULE_PAGES.get(c), "page_name": PAGE_NAMES.get(MODULE_PAGES.get(c))}
+            for c, n, g in MODULES
+        ],
     })
 
 

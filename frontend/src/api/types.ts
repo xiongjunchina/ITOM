@@ -393,6 +393,10 @@ export interface PermissionModule {
   name: string;
   /** 分组名：总览/ITSM/项目/需求/流程/团队/系统管理 */
   group: string;
+  /** 菜单页 code（合并页才有，如 admin_org）；null 表示模块=页 1:1 */
+  page?: string | null;
+  /** 菜单页中文名（回退用） */
+  page_name?: string | null;
 }
 
 /** 某角色在某模块上的权限条目（GET/PUT /admin/permissions） */
@@ -487,11 +491,14 @@ export interface ProvisionRule {
 
 // ============ M2.5 自配置：状态机 ============
 
-export type WorkflowEntityType = 'ticket' | 'ticket_change';
+export type WorkflowEntityType = 'ticket' | 'ticket_change' | 'requirement' | 'project' | 'problem';
 
 export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   ticket: '工单（事件/服务请求）',
   ticket_change: '工单（变更）',
+  requirement: '需求',
+  project: '项目',
+  problem: '问题',
 };
 
 /** 状态定义 */
@@ -1178,12 +1185,45 @@ export const REQ_TASK_STATUS_COLORS: Record<RequirementTaskStatus, string> = {
 export interface RequirementTask {
   id: string;
   name: string;
+  /** 任务描述 */
+  description?: string | null;
   /** 负责人（人员主数据 id） */
   assignee: string;
   assignee_name: string | null;
   plan_date: string | null;
+  /** 计划工天 */
+  plan_effort?: number | null;
+  /** 实际工天 */
+  actual_effort?: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
+}
+
+/** 排期/实现中的需求任务行（GET /requirements/tasks/active）：跨需求聚合的任务清单 */
+export interface ActiveTaskRow {
+  id: string;
+  name: string;
+  description: string | null;
+  /** 处理人（人员主数据 id） */
+  assignee: string | null;
+  assignee_name: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: RequirementTaskStatus;
+  done_at: string | null;
+  requirement_id: string;
+  requirement_code: string;
+  requirement_title: string;
+  /** 所属需求状态 code（analyzing/implementing） */
+  requirement_status: RequirementStatus | string;
+  requirement_status_name: string;
+  requirement_owner_name: string | null;
+  business_domain_name: string | null;
+  /** MoSCoW 优先级 */
+  moscow: Moscow | string | null;
+  /** 四象限（中文权威值） */
+  quadrant: string | null;
 }
 
 /** 需求列表行 */

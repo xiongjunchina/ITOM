@@ -39,11 +39,13 @@ function normalize(matrix: Matrix, actionOrder: string[]): string {
   return JSON.stringify(entries);
 }
 
-/** 表格行：分组标题行 或 模块行 */
+/** 表格行：分组标题行 / 菜单页小标题行 / 模块行 */
 interface GridRow {
   key: string;
   groupHeader?: string;
+  pageHeader?: string; // 菜单页中文名
   module?: PermissionModule;
+  indented?: boolean; // 该模块归属某菜单页，缩进展示
 }
 
 export default function Permissions() {
@@ -65,6 +67,13 @@ export default function Permissions() {
     const key = 'group.' + g;
     const v = translate(lang, key);
     return v === key ? g : v;
+  };
+  // 菜单页小标题：优先 i18n（permPage.<code>），回退后端 page_name
+  const pageLabel = (m: PermissionModule) => {
+    if (!m.page) return '';
+    const key = 'permPage.' + m.page;
+    const v = translate(lang, key);
+    return v === key ? m.page_name || m.page : v;
   };
 
   const [selected, setSelected] = useState<string>(''); // 角色 code
@@ -174,19 +183,30 @@ export default function Permissions() {
     }
   };
 
-  /** 分组标题行 + 模块行（保持后端注册顺序） */
+  /** 分组标题行 + 菜单页小标题 + 模块行（保持后端注册顺序，按菜单页分层） */
   const rows = useMemo<GridRow[]>(() => {
     const out: GridRow[] = [];
     let lastGroup = '';
+    let lastPage = '';
     modules.forEach((m) => {
       if (m.group !== lastGroup) {
         lastGroup = m.group;
+        lastPage = '';
         out.push({ key: `__group_${m.group}`, groupHeader: m.group });
       }
-      out.push({ key: m.code, module: m });
+      if (m.page) {
+        if (m.page !== lastPage) {
+          lastPage = m.page;
+          out.push({ key: `__page_${m.page}`, pageHeader: pageLabel(m) });
+        }
+      } else {
+        lastPage = '';
+      }
+      out.push({ key: m.code, module: m, indented: !!m.page });
     });
     return out;
-  }, [modules]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modules, lang]);
 
   const columnCount = actions.length + 2;
 
@@ -195,13 +215,17 @@ export default function Permissions() {
       {
         title: t('admin.permissions.colModule'),
         key: 'name',
-        width: 220,
-        onCell: (row) => (row.groupHeader ? { colSpan: columnCount } : {}),
+        width: 240,
+        onCell: (row) => (row.groupHeader || row.pageHeader ? { colSpan: columnCount } : {}),
         render: (_, row) =>
           row.groupHeader ? (
             <Typography.Text strong>{groupLabel(row.groupHeader)}</Typography.Text>
+          ) : row.pageHeader ? (
+            <Typography.Text type="secondary" style={{ paddingLeft: 16, fontWeight: 500 }}>
+              {row.pageHeader}
+            </Typography.Text>
           ) : row.module ? (
-            moduleLabel(row.module)
+            <span style={{ paddingLeft: row.indented ? 32 : 0 }}>{moduleLabel(row.module)}</span>
           ) : null,
       },
       {
@@ -209,7 +233,7 @@ export default function Permissions() {
         key: 'all',
         width: 80,
         align: 'center',
-        onCell: (row) => (row.groupHeader ? { colSpan: 0 } : {}),
+        onCell: (row) => (row.groupHeader || row.pageHeader ? { colSpan: 0 } : {}),
         render: (_, row) => {
           if (!row.module) return null;
           const acts = isAdmin ? actions : matrix[row.module.code] ?? [];
@@ -229,7 +253,7 @@ export default function Permissions() {
         key: action,
         width: 80,
         align: 'center',
-        onCell: (row) => (row.groupHeader ? { colSpan: 0 } : {}),
+        onCell: (row) => (row.groupHeader || row.pageHeader ? { colSpan: 0 } : {}),
         render: (_, row) => {
           if (!row.module) return null;
           const checked = isAdmin || (matrix[row.module.code] ?? []).includes(action);

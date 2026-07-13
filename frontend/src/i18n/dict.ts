@@ -130,6 +130,10 @@ const zh: Dict = {
   'module.admin_workflow': '状态机配置',
   'module.admin_req_scoring': '需求评分规则',
   'module.admin_audit': '审计日志',
+  // 权限配置：菜单页小标题（合并页）
+  'permPage.admin_org': '组织管理',
+  'permPage.admin_identity': '用户与组管理',
+  'permPage.admin_access': '角色与权限',
 
   // 权限模块分组（与后端一致）
   'group.总览': '总览',
@@ -297,6 +301,9 @@ const en: Dict = {
   'module.admin_workflow': 'State Machine',
   'module.admin_req_scoring': 'Requirement Scoring',
   'module.admin_audit': 'Audit Log',
+  'permPage.admin_org': 'Organization',
+  'permPage.admin_identity': 'Users & Groups',
+  'permPage.admin_access': 'Roles & Permissions',
 
   'group.总览': 'Dashboard',
   'group.ITSM': 'ITSM',

@@ -61,6 +61,7 @@ ENSURE_COLUMNS = {
         ("evaluating_at", "TIMESTAMP"),
     ],
     "requirement_task": [
+        ("description", "TEXT"),
         ("plan_effort", "DOUBLE PRECISION"),
         ("actual_effort", "DOUBLE PRECISION"),
     ],

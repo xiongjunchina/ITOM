@@ -102,6 +102,7 @@ class RequirementTask(GlidBase):
 
     requirement_id: Mapped[str] = mapped_column(ForeignKey("requirement.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, comment="任务描述")
     assignee: Mapped[str] = mapped_column(ForeignKey("org_member.id"))
     plan_date: Mapped[date | None] = mapped_column(Date)
     plan_effort: Mapped[float | None] = mapped_column(Float, comment="计划工天")

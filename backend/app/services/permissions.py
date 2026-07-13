@@ -35,20 +35,34 @@ MODULES = [
     ("activities", "培训发展", "团队管理"),
     ("ideas", "活动积分", "团队管理"),
     ("charter", "团队文化", "团队管理"),
-    ("admin_users", "用户管理", "系统管理"),
-    ("admin_roles", "角色管理", "系统管理"),
-    ("admin_groups", "用户组", "系统管理"),
-    ("admin_permissions", "权限配置", "系统管理"),
-    ("admin_provision", "开通规则", "系统管理"),
+    # 顺序按左侧导航「系统管理」二级页：组织管理 / 用户与组管理 / 角色与权限 / 数据字典 / 状态机 / 需求评分 / 审计
     ("admin_departments", "部门管理", "系统管理"),
     ("admin_members", "人员主数据", "系统管理"),
     ("admin_business_domains", "业务域", "系统管理"),
+    ("admin_users", "用户管理", "系统管理"),
+    ("admin_groups", "用户组", "系统管理"),
+    ("admin_roles", "角色管理", "系统管理"),
+    ("admin_provision", "开通规则", "系统管理"),
+    ("admin_permissions", "权限配置", "系统管理"),
     ("admin_master_data", "数据字典", "系统管理"),
     ("admin_workflow", "状态机配置", "系统管理"),
     ("admin_req_scoring", "需求评分规则", "系统管理"),
     ("admin_audit", "审计日志", "系统管理"),
 ]
 MODULE_CODES = {m[0] for m in MODULES}
+
+# 菜单页分层（权限配置页按左侧导航的二级页组织；仅对"一页含多权限项"的合并页设置，
+# 其余模块=页 1:1 的不设，直接挂在分组下）。code 对应左侧导航的合并页。
+PAGE_NAMES = {
+    "admin_org": "组织管理",
+    "admin_identity": "用户与组管理",
+    "admin_access": "角色与权限",
+}
+MODULE_PAGES = {
+    "admin_departments": "admin_org", "admin_members": "admin_org", "admin_business_domains": "admin_org",
+    "admin_users": "admin_identity", "admin_groups": "admin_identity",
+    "admin_roles": "admin_access", "admin_provision": "admin_access", "admin_permissions": "admin_access",
+}
 
 # 动作缩写：v=view c=create e=edit d=delete
 _BUSINESS_VIEW = [

@@ -15,11 +15,11 @@ def ctx(client, admin_headers):
         token = client.post("/api/auth/login", json={"username": username, "password": "pass123"}).json()["data"]["token"]
         return m["id"], {"Authorization": f"Bearer {token}"}
 
-    _, pdm = member_and_user("产品M10", "pdm_m10", ["it_pdm"])
+    pdm_p, pdm = member_and_user("产品M10", "pdm_m10", ["it_pdm"])
     domain = client.post("/api/admin/business-domains",
                          json={"code": "dig10", "name": "数字化业务线", "owner_id": None},
                          headers=admin_headers).json()["data"]
-    return {"pdm": pdm, "admin": admin_headers, "domain": domain["id"]}
+    return {"pdm": pdm, "pdm_p": pdm_p, "admin": admin_headers, "domain": domain["id"]}
 
 
 def _register(client, headers, domain, **kw):
@@ -123,3 +123,27 @@ def test_template_download_and_import(client, ctx):
     assert wms["status"] == "evaluating" and wms["decision"] == "立项"
     # 5,5,4,3,2,4 → 0.2*5+0.2*5+0.2*4+0.1*3+0.1*(6-2)+0.2*4 = 1+1+0.8+0.3+0.4+0.8 = 4.3
     assert wms["weighted_total"] == 4.3 and wms["quadrant"] == "战略下注"
+
+
+def test_active_tasks_board(client, ctx):
+    """需求走到实现阶段，任务(含描述/工天)出现在实现任务清单。"""
+    r = _register(client, ctx["pdm"], ctx["domain"], title="任务看板需求")
+    rid = r["id"]
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
+    client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 5, "d2_value": 5, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 5, "decision": "立项",
+    }, headers=ctx["pdm"])
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
+    client.patch(f"/api/requirements/{rid}", json={"owner": ctx["pdm_p"], "solution": "MVP"}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["pdm"])
+    assert resp.json()["data"]["status"] == "implementing", resp.text
+
+    client.post(f"/api/requirements/{rid}/tasks", json={
+        "name": "接口开发", "description": "对接海外仓API", "assignee": ctx["pdm_p"], "plan_effort": 5,
+    }, headers=ctx["pdm"])
+
+    rows = client.get("/api/requirements/tasks/active", headers=ctx["pdm"]).json()["data"]
+    mine = next(x for x in rows if x["requirement_id"] == rid)
+    assert mine["description"] == "对接海外仓API" and mine["plan_effort"] == 5
+    assert mine["requirement_code"] == r["requirement_code"] and mine["requirement_status"] == "implementing"
+    assert mine["name"] == "接口开发"

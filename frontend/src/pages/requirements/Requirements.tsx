@@ -17,6 +17,7 @@ import {
   Spin,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
   message,
@@ -46,6 +47,7 @@ import type {
 import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/types';
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge } from './shared';
 import RequirementImportModal from './RequirementImportModal';
+import ActiveTaskList from './ActiveTaskList';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
@@ -349,8 +351,9 @@ export default function Requirements() {
     </div>
   );
 
-  return (
-    <Card title={t('req.title')}>
+  // ----- 需求总览标签内容（原有全部逻辑原样保留） -----
+  const overviewTab = (
+    <>
       <Space wrap style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Space wrap>
           <Segmented
@@ -560,6 +563,18 @@ export default function Requirements() {
       </Modal>
 
       <RequirementImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={() => void load()} />
+    </>
+  );
+
+  return (
+    <Card title={t('req.title')}>
+      <Tabs
+        defaultActiveKey="overview"
+        items={[
+          { key: 'overview', label: t('req.tab.overview'), children: overviewTab },
+          { key: 'tasks', label: t('req.tab.tasks'), children: <ActiveTaskList /> },
+        ]}
+      />
     </Card>
   );
 }
