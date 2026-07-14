@@ -38,6 +38,7 @@ import { PROJECT_STATUS } from '../../api/types';
 import { useEnums } from '../../i18n/enums';
 import { HealthDot, StatusBadge } from './shared';
 import CharterImportModal from './CharterImportModal';
+import ReasonModal from './ReasonModal';
 import ProjectEditModal, { type ProjectEditModalProject } from './ProjectEditModal';
 
 const STATUS_KEYS = Object.keys(PROJECT_STATUS) as ProjectStatus[];
@@ -121,11 +122,17 @@ function ProjectList() {
     }
   };
 
-  // 列表快捷操作（M14）：暂停/关闭/重启走状态流转，删除限 已暂停/已关闭
+  // 列表快捷操作（M14；M14.1 暂停/关闭必填理由，删除不限状态）
+  const [reasonOp, setReasonOp] = useState<{ project: ProjectRow; to: string; label: string } | null>(null);
+
   const runTransition = (r: ProjectRow, to: string, label: string) => {
+    if (to === 'paused' || to === 'closed') {
+      setReasonOp({ project: r, to, label });
+      return;
+    }
     Modal.confirm({
       title: t('proj.op.confirmTitle', { op: label, name: r.name }),
-      content: to === 'active' ? t('proj.op.restartHint') : to === 'closed' ? t('proj.op.closeHint') : undefined,
+      content: to === 'active' ? t('proj.op.restartHint') : undefined,
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: async () => {
@@ -338,8 +345,7 @@ function ProjectList() {
                   {linkBtn(t('proj.op.pause'), st === 'active', () => runTransition(r, 'paused', t('proj.op.pause')), t('proj.op.onlyActive'))}
                   {linkBtn(t('proj.op.close'), ['active', 'paused', 'completed'].includes(st), () => runTransition(r, 'closed', t('proj.op.close')), t('proj.op.closeDisabled'))}
                   {linkBtn(t('proj.op.restart'), ['paused', 'closed', 'completed'].includes(st), () => runTransition(r, 'active', t('proj.op.restart')), t('proj.op.restartDisabled'))}
-                  {canDelete &&
-                    linkBtn(t('common.delete'), ['paused', 'closed'].includes(st), () => runDelete(r), t('proj.op.onlyPausedClosed'), true)}
+                  {canDelete && linkBtn(t('common.delete'), true, () => runDelete(r), '', true)}
                 </span>
               );
             },
@@ -521,6 +527,22 @@ function ProjectList() {
 
       <CharterImportModal open={charterOpen} onClose={() => setCharterOpen(false)} />
 
+      <ReasonModal
+        open={!!reasonOp}
+        opLabel={reasonOp?.label ?? ''}
+        projectName={reasonOp?.project.name ?? ''}
+        onClose={() => setReasonOp(null)}
+        onSubmit={async (reason) => {
+          if (!reasonOp) return;
+          await api.post(`/projects/${reasonOp.project.id}/transition`, {
+            to: reasonOp.to,
+            fields: { reason },
+          });
+          message.success(t('proj.actionOk'));
+          setReasonOp(null);
+          void load();
+        }}
+      />
       {/* 行内编辑（共享编辑弹窗） */}
       <ProjectEditModal
         project={editing}

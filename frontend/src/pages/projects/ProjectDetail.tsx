@@ -47,6 +47,7 @@ import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import CompleteStepModal from '../../components/CompleteStepModal';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
+import ReasonModal from './ReasonModal';
 import ProjectEditModal from './ProjectEditModal';
 import type {
   AllowedTransition,
@@ -259,10 +260,17 @@ export default function ProjectDetail() {
   const [restartSeq, setRestartSeq] = useState<number | undefined>(undefined);
   const [restartSaving, setRestartSaving] = useState(false);
 
+  // 暂停/关闭必填理由（M14.1）
+  const [reasonTr, setReasonTr] = useState<AllowedTransition | null>(null);
+
   const runTransition = (tr: AllowedTransition) => {
     if (tr.to === 'active' && (detail?.status === 'closed' || detail?.status === 'completed')) {
       setRestartSeq(undefined);
       setRestartTr(tr);
+      return;
+    }
+    if (tr.to === 'paused' || tr.to === 'closed') {
+      setReasonTr(tr);
       return;
     }
     Modal.confirm({
@@ -1242,6 +1250,19 @@ export default function ProjectDetail() {
         step={completingStep}
         onClose={() => setCompletingStep(null)}
         onDone={() => void loadDetail()}
+      />
+      <ReasonModal
+        open={!!reasonTr}
+        opLabel={reasonTr?.to_name ?? ''}
+        projectName={detail.name}
+        onClose={() => setReasonTr(null)}
+        onSubmit={async (reason) => {
+          if (!reasonTr) return;
+          await api.post(`/projects/${id}/transition`, { to: reasonTr.to, fields: { reason } });
+          message.success(t('proj.actionOk'));
+          setReasonTr(null);
+          void loadDetail();
+        }}
       />
 
       <Card>

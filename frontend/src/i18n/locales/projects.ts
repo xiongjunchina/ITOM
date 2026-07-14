@@ -69,6 +69,11 @@ export const zh: Dict = {
   'proj.op.restartDisabled': '仅 已暂停/已关闭/已完成 的项目可重启',
   'proj.op.onlyPausedClosed': '仅「已暂停」或「已关闭」状态的项目可删除',
 
+  'proj.op.reasonTitle': '{op}「{name}」——请填写理由',
+  'proj.op.reasonHint': '理由将记录到项目「最新动态」与审计日志。',
+  'proj.op.reasonPlaceholder': '请填写{op}理由（必填）',
+  'proj.op.reasonRequired': '请填写理由（至少 2 个字）',
+
   // 项目组合
   'proj.col.owner': '负责人',
   'proj.col.year': '年度',
@@ -375,6 +380,11 @@ export const en: Dict = {
   'proj.op.closeDisabled': 'Only Active / Paused / Completed projects can be closed',
   'proj.op.restartDisabled': 'Only Paused / Closed / Completed projects can be restarted',
   'proj.op.onlyPausedClosed': 'Only Paused or Closed projects can be deleted',
+
+  'proj.op.reasonTitle': '{op} "{name}" — reason required',
+  'proj.op.reasonHint': 'The reason is recorded to the project "Latest Update" and the audit log.',
+  'proj.op.reasonPlaceholder': 'Reason for {op} (required)',
+  'proj.op.reasonRequired': 'Please enter a reason (at least 2 characters)',
 
   // Portfolios
   'proj.col.owner': 'Owner',

@@ -93,6 +93,7 @@ MESSAGE_EN: dict[str, str] = {
     "岗位不存在": "Position not found",
     "工单不存在": "Ticket not found",
     "工单关闭后才能评价": "You can rate only after the ticket is closed",
+    "暂停/关闭项目必须填写理由": "A reason is required to pause or close a project",
     "工单类型无效": "Invalid ticket type",
     "已经点过了": "Already voted",
     "已经点过赞了": "Already liked",

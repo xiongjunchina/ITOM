@@ -70,8 +70,9 @@ def test_restart_with_process_rewind(client, admin_headers, ctx):
     d = _detail(client, admin_headers, pid)
     assert d["process"]["current_step_seq"] == 3  # 收尾复盘
 
-    # 关闭 → 重启并回退到「执行监控」(seq=2)
-    _transition(client, admin_headers, pid, "closed")
+    # 关闭（M14.1 起必填理由）→ 重启并回退到「执行监控」(seq=2)
+    r = _transition(client, admin_headers, pid, "closed", fields={"reason": "项目验收完成，正式关闭"})
+    assert r.json()["success"], r.text
     r = _transition(client, admin_headers, pid, "active", fields={"process_step_seq": 2})
     assert r.json()["data"]["status"] == "active", r.text
 
@@ -88,8 +89,8 @@ def test_restart_with_process_rewind(client, admin_headers, ctx):
     assert d["actual_end"] is None
 
 
-def test_delete_requires_paused_or_closed(client, admin_headers, ctx):
-    """M14：删除限暂停/关闭态；级联软删 WBS/风险/流程并解除需求挂接、回收积分。"""
+def test_delete_any_state_and_reason_required(client, admin_headers, ctx):
+    """M14.1：删除不限状态；暂停/关闭必填理由（落最新动态+审计）；级联软删并解除需求挂接。"""
     m = client.post("/api/members", json={"name": "删项目PM"}, headers=admin_headers).json()["data"]
     p = client.post("/api/projects", json={
         "name": "M14待删项目", "pm": m["id"],
@@ -107,13 +108,17 @@ def test_delete_requires_paused_or_closed(client, admin_headers, ctx):
     }, headers=admin_headers).json()["data"]
     client.patch(f"/api/requirements/{req['id']}", json={"project_id": pid}, headers=admin_headers)
 
-    # 进行中不可删
+    # 暂停/关闭必填理由
     _transition(client, admin_headers, pid, "active")
-    r = client.delete(f"/api/projects/{pid}", headers=admin_headers)
-    assert r.json()["error"]["code"] == "PROJECT_DELETE_STATE"
+    r = _transition(client, admin_headers, pid, "paused")
+    assert r.json()["error"]["code"] == "REASON_REQUIRED"
+    r = _transition(client, admin_headers, pid, "paused", fields={"reason": "预算冻结，等待 Q4 复批"})
+    assert r.json()["success"], r.text
+    d = _detail(client, admin_headers, pid)
+    assert d["latest_update"] == "[暂停] 预算冻结，等待 Q4 复批"  # 理由落最新动态
 
-    # 暂停后可删，返回级联统计
-    _transition(client, admin_headers, pid, "paused")
+    # 进行中也可直接删除（M14.1 放开状态限制）——先重启回进行中验证
+    _transition(client, admin_headers, pid, "active")
     r = client.delete(f"/api/projects/{pid}", headers=admin_headers)
     assert r.json()["success"], r.text
     cascade = r.json()["data"]["cascade"]

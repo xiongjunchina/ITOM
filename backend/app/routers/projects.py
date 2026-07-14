@@ -318,7 +318,7 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
 
 @router.delete("/api/projects/{project_id}")
 def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "delete"))):
-    """删除项目（软删，M14）：仅 已暂停/已关闭 状态可删。
+    """删除项目（软删，M14；M14.1 起不限状态）。
 
     级联：WBS/里程碑/成本/风险/附件/流程实例与任务 软删；关联需求解除挂接；
     该项目 WBS 产生的积分台账软删（绩效/排行自动回算）。总览与负载为实时聚合，自动排除。
@@ -327,9 +327,6 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_not_example(p)
-    if p.status not in ("paused", "closed"):
-        raise AppError("PROJECT_DELETE_STATE", "仅「已暂停」或「已关闭」状态的项目可删除，请先暂停或关闭")
-
     from app.models import Attachment, PointEntry, ProcessInstance, ProcessTask, Requirement
 
     stats = {"wbs": 0, "milestones": 0, "costs": 0, "risks": 0, "attachments": 0,
@@ -380,7 +377,14 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_not_example(p)
     rewind_seq = (body.fields or {}).pop("process_step_seq", None)  # 重启回退目标节点（可选）
+    reason = str((body.fields or {}).pop("reason", "") or "").strip()
+    if body.to in ("paused", "closed") and len(reason) < 2:
+        raise AppError("REASON_REQUIRED", "暂停/关闭项目必须填写理由")
     from_code, to = wf_transition(db, p, "project", body.to, body.fields, actor)
+    if reason and to in ("paused", "closed"):
+        label = "暂停" if to == "paused" else "关闭"
+        p.latest_update = f"[{label}] {reason}"  # 理由落最新动态，概述页可见
+        audit(db, "project", p.id, "transition_reason", actor, {"to": to, "reason": reason})
     today = date.today()
     if to == "active" and not p.actual_start:
         p.actual_start = today
