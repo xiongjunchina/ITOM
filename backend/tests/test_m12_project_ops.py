@@ -130,3 +130,53 @@ def test_delete_any_state_and_reason_required(client, admin_headers, ctx):
     detail = client.get(f"/api/requirements/{req['id']}", headers=admin_headers).json()["data"]
     assert detail["project_id"] is None and detail["project_name"] is None
 
+
+def test_edit_process_steps_after_project_delete(client, admin_headers, ctx):
+    """M14.2 回归：删除项目(软删实例/任务)后编辑流程步骤改名——不再撞外键 500；
+    活实例存在时步骤仍锁定；软删步骤不参与新实例。"""
+    # 清场：删除本模块 ctx 项目（其活实例会触发步骤锁定，与本用例无关）
+    client.delete(f"/api/projects/{ctx['pid']}", headers=admin_headers)
+
+    defs = client.get("/api/admin/process-definitions", headers=admin_headers).json()["data"]
+    flow = next(d for d in defs if d["entity_type"] == "project" and d["active"])
+
+    # 建项目→起实例→删项目（软删实例，process_task 行仍引用步骤）
+    m = client.post("/api/members", json={"name": "流程编辑PM"}, headers=admin_headers).json()["data"]
+    p = client.post("/api/projects", json={
+        "name": "M14.2流程编辑项目", "pm": m["id"],
+        "planned_start": "2026-07-01", "planned_end": "2026-08-31",
+    }, headers=admin_headers).json()["data"]
+    assert client.delete(f"/api/projects/{p['id']}", headers=admin_headers).json()["success"]
+
+    # 活实例=0 → 允许编辑步骤：仅改第 2 步名称（用户场景）
+    steps = [{k: st[k] for k in ("seq", "name", "default_role", "cc_roles", "autonomy_level", "sla_hours", "description")}
+             for st in flow["steps"]]
+    steps[1]["name"] = "过程监控"
+    r = client.patch(f"/api/admin/process-definitions/{flow['id']}", json={"steps": steps}, headers=admin_headers)
+    assert r.json()["success"], r.text
+    updated = r.json()["data"]
+    assert updated["steps"][1]["name"] == "过程监控" and len(updated["steps"]) == len(steps)
+
+    # 新项目实例使用改名后的步骤
+    p2 = client.post("/api/projects", json={
+        "name": "M14.2改名后项目", "pm": m["id"],
+        "planned_start": "2026-07-01", "planned_end": "2026-08-31",
+    }, headers=admin_headers).json()["data"]
+    d2 = client.get(f"/api/projects/{p2['id']}", headers=admin_headers).json()["data"]
+    assert [st["name"] for st in d2["process"]["steps"]][1] == "过程监控"
+
+    # 活实例存在 → 等长编辑（改名）放行；增删步骤锁定
+    steps[1]["name"] = "过程监控v2"
+    r = client.patch(f"/api/admin/process-definitions/{flow['id']}", json={"steps": steps}, headers=admin_headers)
+    assert r.json()["success"], r.text
+    added = steps + [{"seq": 4, "name": "追加步骤", "default_role": None, "cc_roles": [],
+                      "autonomy_level": "L4", "sla_hours": None, "description": None}]
+    r = client.patch(f"/api/admin/process-definitions/{flow['id']}", json={"steps": added}, headers=admin_headers)
+    assert r.json()["error"]["code"] == "STEPS_LOCKED"
+
+    # 收尾：删掉验证项目，改回原名，保持环境干净
+    client.delete(f"/api/projects/{p2['id']}", headers=admin_headers)
+    steps[1]["name"] = "执行监控"
+    r = client.patch(f"/api/admin/process-definitions/{flow['id']}", json={"steps": steps}, headers=admin_headers)
+    assert r.json()["success"], r.text
+

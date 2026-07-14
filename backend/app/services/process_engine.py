@@ -166,20 +166,25 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
     _notify_cc(db, instance, step, assignee)
 
 
+def _live_steps(definition: ProcessDefinition) -> list[ProcessStep]:
+    """定义的有效步骤（编辑收缩产生的软删步骤不参与执行/展示）。"""
+    return [s for s in definition.steps if not s.is_deleted]
+
+
 def start_instance(db: Session, entity_type: str, entity_id: str, entity_attrs: dict, preferred_assignee: str | None = None) -> ProcessInstance | None:
     definition = _match_definition(db, entity_type, entity_attrs)
-    if not definition or not definition.steps:
+    if not definition or not _live_steps(definition):
         return None
     instance = ProcessInstance(
         definition_id=definition.id,
         entity_type=entity_type,
         entity_id=entity_id,
-        current_step_seq=definition.steps[0].seq,
+        current_step_seq=_live_steps(definition)[0].seq,
         started_at=datetime.now(),
     )
     db.add(instance)
     db.flush()
-    _spawn_task(db, instance, definition.steps[0], preferred_assignee)
+    _spawn_task(db, instance, _live_steps(definition)[0], preferred_assignee)
     return instance
 
 
@@ -194,7 +199,7 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     task.comment = comment or task.comment
 
     instance = db.get(ProcessInstance, task.instance_id)
-    steps = instance.definition.steps
+    steps = _live_steps(instance.definition)
     current_idx = next(i for i, s in enumerate(steps) if s.id == task.step_id)
     if current_idx + 1 < len(steps):
         next_step = steps[current_idx + 1]
@@ -225,7 +230,7 @@ def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: in
     )
     if not instance:
         return None
-    steps = instance.definition.steps
+    steps = _live_steps(instance.definition)
     target = next((st for st in steps if st.seq == target_seq), None)
     if not target:
         return None
@@ -284,6 +289,6 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
                 "due_at": tasks_by_step[s.id].due_at if s.id in tasks_by_step else None,
                 "completed_at": tasks_by_step[s.id].completed_at if s.id in tasks_by_step else None,
             }
-            for s in instance.definition.steps
+            for s in _live_steps(instance.definition)
         ],
     }

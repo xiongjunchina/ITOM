@@ -164,16 +164,37 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
             .filter(ProcessInstance.definition_id == definition.id, ProcessInstance.is_deleted.is_(False))
             .count()
         )
-        if instance_count > 0:
-            raise AppError(
-                "STEPS_LOCKED",
-                f"该流程已有 {instance_count} 个实例，步骤不可直接修改；请使用「另存新版本」",
-            )
         step_models = [StepIn(**s) for s in steps]
         _validate_steps(db, step_models)
-        db.query(ProcessStep).filter(ProcessStep.definition_id == definition.id).delete()
-        for s in step_models:
-            db.add(ProcessStep(definition_id=definition.id, **s.model_dump()))
+        live = (
+            db.query(ProcessStep)
+            .filter(ProcessStep.definition_id == definition.id, ProcessStep.is_deleted.is_(False))
+            .count()
+        )
+        # 有运行实例时仅锁「结构」：增删步骤会使实例 current_step_seq 错乱 → 另存新版本；
+        # 等长编辑（改名/SLA/角色/知会）对运行实例安全，放行（M14.2，用户场景=改节点名）
+        if instance_count > 0 and len(step_models) != live:
+            raise AppError(
+                "STEPS_LOCKED",
+                f"该流程已有 {instance_count} 个实例，不可增删步骤（当前 {live} 步）；改名/SLA 等可直接保存，结构调整请「另存新版本」",
+            )
+        # 就地 upsert（M14.2）：保留步骤行 id 不物理删——历史任务(含已删项目的软删任务)
+        # 外键引用步骤行，物理删除会撞 ForeignKeyViolation；改名/调参直接更新，
+        # 步骤数减少时多余行软删（_def_row/new_version/引擎均过滤软删）。
+        existing = (
+            db.query(ProcessStep)
+            .filter(ProcessStep.definition_id == definition.id, ProcessStep.is_deleted.is_(False))
+            .order_by(ProcessStep.seq)
+            .all()
+        )
+        for i, sm in enumerate(step_models):
+            if i < len(existing):
+                for k, v in sm.model_dump().items():
+                    setattr(existing[i], k, v)
+            else:
+                db.add(ProcessStep(definition_id=definition.id, **sm.model_dump()))
+        for row in existing[len(step_models):]:
+            row.is_deleted = True
     if data.get("active") is True or ("trigger_condition" in data and definition.active):
         _check_trigger_conflict(
             db, definition.entity_type, data.get("trigger_condition", definition.trigger_condition), exclude_id=definition.id
