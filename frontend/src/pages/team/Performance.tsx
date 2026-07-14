@@ -361,6 +361,7 @@ function PerfOverview() {
         loading={loading}
         columns={columns}
         dataSource={data?.rows ?? []}
+        sticky
         scroll={{ x: 810 + dimensions.length * 110 + (canEdit ? 90 : 0) }}
         pagination={{ pageSize: 20, showTotal: (n) => t('team.totalPeople', { n }) }}
       />
@@ -686,6 +687,7 @@ function PerfSchemes() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 900 }}
         pagination={false}
       />

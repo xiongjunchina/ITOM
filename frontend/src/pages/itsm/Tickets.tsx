@@ -283,6 +283,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 1300 }}
         pagination={{
           current: page,

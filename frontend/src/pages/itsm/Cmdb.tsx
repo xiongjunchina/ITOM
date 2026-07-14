@@ -469,6 +469,7 @@ export default function Cmdb() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 1100 }}
         pagination={{
           current: page,

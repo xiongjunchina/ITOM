@@ -124,11 +124,23 @@ def drop_columns(db: Session):
     db.commit()
 
 
+def fix_project_flow_pmo(db: Session):
+    """M12：项目流程「收尾复盘」处理人改 it_pmo（种子幂等不更新存量定义，这里补）。"""
+    n = db.execute(text(
+        "UPDATE process_step SET default_role='it_pmo' "
+        "WHERE name='收尾复盘' AND default_role='it_pm' AND is_deleted=false"
+    )).rowcount
+    if n:
+        logger.info("project_flow 收尾复盘 default_role -> it_pmo (%d rows)", n)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
     ensure_columns(db)
     drop_columns(db)
+    fix_project_flow_pmo(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

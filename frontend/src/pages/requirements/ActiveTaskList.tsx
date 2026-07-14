@@ -155,6 +155,7 @@ export default function ActiveTaskList() {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        sticky
         scroll={{ x: 1350 }}
         pagination={false}
         locale={{

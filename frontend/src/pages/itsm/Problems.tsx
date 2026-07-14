@@ -205,6 +205,7 @@ export default function Problems() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 1100 }}
         pagination={{
           current: page,

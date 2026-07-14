@@ -187,6 +187,7 @@ export default function Knowledge() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 1150 }}
         pagination={{
           current: page,

@@ -186,6 +186,7 @@ export default function Activities() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 1200 }}
         pagination={{ pageSize: 20, showTotal: (n) => t('team.total', { n }) }}
       />

@@ -15,6 +15,7 @@ export type Role =
   | 'it_tm'
   | 'it_pdm'
   | 'it_pm'
+  | 'it_pmo'
   | 'it_dev'
   | 'it_ops'
   | 'is_mgr'
@@ -29,6 +30,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   it_tm: 'IT专业线负责人',
   it_pdm: 'IT产品经理',
   it_pm: 'IT项目经理',
+  it_pmo: 'IT PMO(项目管理办公室)',
   it_dev: 'IT开发',
   it_ops: 'IT运维',
   is_mgr: '信息安全管理员',

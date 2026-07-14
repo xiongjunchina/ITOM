@@ -51,6 +51,8 @@ export const zh: Dict = {
   'proj.projectCreated': '项目 {code} 已创建',
   'proj.editProjectTitle': '编辑项目信息',
   'proj.projectUpdated': '项目信息已更新',
+  'proj.actualEndBeforeStart': '实际结束不能早于实际开始',
+  'proj.editFinalTooltip': '终态项目需先重启',
 
   // 项目组合
   'proj.col.owner': '负责人',
@@ -74,6 +76,10 @@ export const zh: Dict = {
   'proj.actionOk': '操作成功',
   'proj.notFound': '项目不存在或无权查看',
   'proj.flowTitle': '流程：{name}',
+  'proj.restartTitle': '重启项目',
+  'proj.restartRewindLabel': '流程回退到节点',
+  'proj.restartRewindPlaceholder': '不回退（保持当前流程状态）',
+  'proj.restartHint': '重启后项目回到「进行中」，实际结束时间将被清空',
 
   // 详情 Tabs
   'proj.tab.overview': '概述',
@@ -314,6 +320,8 @@ export const en: Dict = {
   'proj.projectCreated': 'Project {code} created',
   'proj.editProjectTitle': 'Edit Project',
   'proj.projectUpdated': 'Project updated',
+  'proj.actualEndBeforeStart': 'Actual end cannot be earlier than actual start',
+  'proj.editFinalTooltip': 'Final-state projects must be restarted first',
 
   // Portfolios
   'proj.col.owner': 'Owner',
@@ -337,6 +345,10 @@ export const en: Dict = {
   'proj.actionOk': 'Done',
   'proj.notFound': 'Project not found or no access',
   'proj.flowTitle': 'Process: {name}',
+  'proj.restartTitle': 'Restart Project',
+  'proj.restartRewindLabel': 'Rewind process to step',
+  'proj.restartRewindPlaceholder': 'No rewind (keep current process state)',
+  'proj.restartHint': 'After restart the project returns to Active and the actual end date is cleared',
 
   // Detail tabs
   'proj.tab.overview': 'Overview',

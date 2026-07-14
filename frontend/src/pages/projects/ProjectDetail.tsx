@@ -47,6 +47,7 @@ import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import CompleteStepModal from '../../components/CompleteStepModal';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
+import ProjectEditModal from './ProjectEditModal';
 import type {
   AllowedTransition,
   AttachmentItem,
@@ -54,11 +55,9 @@ import type {
   Member,
   Milestone,
   MilestoneTrackingRow,
-  Portfolio,
   ProjectDetail as ProjectDetailData,
   Risk,
   RiskGrade,
-  ServiceItem,
   WbsStatus,
   WbsTask,
 } from '../../api/types';
@@ -235,7 +234,17 @@ export default function ProjectDetail() {
   );
 
   // ---------- 状态流转 ----------
+  // 重启弹窗（closed/completed → active）：可选流程回退节点
+  const [restartTr, setRestartTr] = useState<AllowedTransition | null>(null);
+  const [restartSeq, setRestartSeq] = useState<number | undefined>(undefined);
+  const [restartSaving, setRestartSaving] = useState(false);
+
   const runTransition = (tr: AllowedTransition) => {
+    if (tr.to === 'active' && (detail?.status === 'closed' || detail?.status === 'completed')) {
+      setRestartSeq(undefined);
+      setRestartTr(tr);
+      return;
+    }
     Modal.confirm({
       title: t('proj.confirmTransitionTitle', { name: tr.to_name }),
       content: t('proj.confirmTransitionContent', { name: tr.to_name }),
@@ -247,62 +256,27 @@ export default function ProjectDetail() {
     });
   };
 
-  // ---------- 编辑基本信息 ----------
-  const [editOpen, setEditOpen] = useState(false);
-  const [editSaving, setEditSaving] = useState(false);
-  const [editForm] = Form.useForm();
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
-  const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
-
-  const openEdit = () => {
-    if (!detail) return;
-    editForm.setFieldsValue({
-      name: detail.name,
-      pm: detail.pm,
-      planned: [dayjs(detail.planned_start), dayjs(detail.planned_end)],
-      portfolio_id: detail.portfolio_id ?? undefined,
-      service_item_id: detail.service_item_id ?? undefined,
-      budget_10k: detail.budget_10k ?? undefined,
-      description: detail.description ?? undefined,
-    });
-    setEditOpen(true);
-    if (portfolios.length === 0) {
-      api
-        .getList<Portfolio>('/portfolios')
-        .then((res) => setPortfolios(res.items))
-        .catch(() => undefined);
-    }
-    if (serviceItems.length === 0) {
-      api
-        .getList<ServiceItem>('/service-items')
-        .then((res) => setServiceItems(res.items))
-        .catch(() => undefined);
-    }
-  };
-
-  const submitEdit = async () => {
-    const v = await editForm.validateFields();
-    setEditSaving(true);
+  const submitRestart = async () => {
+    if (!restartTr) return;
+    setRestartSaving(true);
     try {
-      await api.patch(`/projects/${id}`, {
-        name: v.name,
-        pm: v.pm,
-        planned_start: (v.planned[0] as Dayjs).format('YYYY-MM-DD'),
-        planned_end: (v.planned[1] as Dayjs).format('YYYY-MM-DD'),
-        portfolio_id: v.portfolio_id ?? null,
-        service_item_id: v.service_item_id ?? null,
-        budget_10k: v.budget_10k ?? null,
-        description: v.description || null,
+      await api.post(`/projects/${id}/transition`, {
+        to: restartTr.to,
+        // 选了节点才带 process_step_seq（流程实例回退到该步骤）；不带则流程不动
+        fields: restartSeq != null ? { process_step_seq: restartSeq } : {},
       });
-      message.success(t('proj.projectUpdated'));
-      setEditOpen(false);
+      message.success(t('proj.actionOk'));
+      setRestartTr(null);
       void loadDetail();
     } catch {
       // 已统一提示
     } finally {
-      setEditSaving(false);
+      setRestartSaving(false);
     }
   };
+
+  // ---------- 编辑基本信息（共享 ProjectEditModal） ----------
+  const [editOpen, setEditOpen] = useState(false);
 
   // ---------- 最新动态 ----------
   const saveLatestUpdate = async (text: string) => {
@@ -792,6 +766,7 @@ export default function ProjectDetail() {
             columns={mtColumns}
             dataSource={milestoneTracking}
             pagination={false}
+            sticky
             scroll={{ x: 'max-content' }}
             locale={{ emptyText: t('proj.emptyMt') }}
           />
@@ -815,6 +790,7 @@ export default function ProjectDetail() {
           columns={wbsColumns}
           dataSource={wbsTree}
           pagination={false}
+          sticky
           scroll={{ x: 'max-content' }}
           expandable={{
             expandedRowKeys: expandedKeys,
@@ -1122,7 +1098,7 @@ export default function ProjectDetail() {
           {canEdit && (
             <Space wrap>
               {!isFinal && (
-                <Button icon={<EditOutlined />} onClick={openEdit}>
+                <Button icon={<EditOutlined />} onClick={() => setEditOpen(true)}>
                   {t('common.edit')}
                 </Button>
               )}
@@ -1170,59 +1146,60 @@ export default function ProjectDetail() {
         />
       </Card>
 
-      {/* 编辑基本信息 Modal */}
+      {/* 编辑基本信息（共享编辑弹窗，含实际起止） */}
+      <ProjectEditModal
+        project={
+          editOpen
+            ? {
+                id: detail.id,
+                name: detail.name,
+                pm: detail.pm,
+                planned_start: detail.planned_start,
+                planned_end: detail.planned_end,
+                portfolio_id: detail.portfolio_id,
+                service_item_id: detail.service_item_id,
+                budget_10k: detail.budget_10k,
+                description: detail.description,
+                actual_start: detail.actual_start,
+                actual_end: detail.actual_end,
+              }
+            : null
+        }
+        onClose={() => setEditOpen(false)}
+        onSaved={() => {
+          setEditOpen(false);
+          void loadDetail();
+        }}
+      />
+
+      {/* 重启项目 Modal（closed/completed → active，可选流程回退节点） */}
       <Modal
-        title={t('proj.editProjectTitle')}
-        open={editOpen}
-        width={560}
-        onOk={() => void submitEdit()}
-        confirmLoading={editSaving}
-        onCancel={() => setEditOpen(false)}
+        title={t('proj.restartTitle')}
+        open={!!restartTr}
+        onOk={() => void submitRestart()}
+        confirmLoading={restartSaving}
+        onCancel={() => setRestartTr(null)}
         destroyOnClose
       >
-        <Form form={editForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label={t('proj.projectName')}
-            rules={[
-              { required: true, message: t('proj.projectNameRequired') },
-              { min: 2, message: t('proj.min2') },
-            ]}
-          >
-            <Input maxLength={200} />
-          </Form.Item>
-          <Form.Item name="pm" label={t('proj.pm')} rules={[{ required: true, message: t('proj.pmRequired') }]}>
-            <Select showSearch optionFilterProp="label" options={memberOptions} />
-          </Form.Item>
-          <Form.Item name="planned" label={t('proj.planned')} rules={[{ required: true, message: t('proj.plannedRequired') }]}>
-            <DatePicker.RangePicker style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="portfolio_id" label={t('proj.belongPortfolio')}>
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              options={portfolios.map((p) => ({ value: p.id, label: p.name }))}
-            />
-          </Form.Item>
-          <Form.Item name="service_item_id" label={t('proj.linkedService')}>
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              options={serviceItems.map((i) => ({
-                value: i.id,
-                label: `${i.name}（${i.catalog_name ?? i.item_code}）`,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item name="budget_10k" label={t('proj.budgetWan')}>
-            <InputNumber min={0} precision={2} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="description" label={t('proj.desc')}>
-            <Input.TextArea rows={3} maxLength={2000} />
-          </Form.Item>
-        </Form>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Typography.Text type="secondary">{t('proj.restartHint')}</Typography.Text>
+          {(detail.process?.steps?.length ?? 0) > 0 && (
+            <div>
+              <div style={{ marginBottom: 4 }}>{t('proj.restartRewindLabel')}</div>
+              <Select
+                allowClear
+                style={{ width: '100%' }}
+                placeholder={t('proj.restartRewindPlaceholder')}
+                value={restartSeq}
+                onChange={(v?: number) => setRestartSeq(v)}
+                options={(detail.process?.steps ?? []).map((s) => ({
+                  value: s.seq,
+                  label: `${s.seq}. ${s.name}`,
+                }))}
+              />
+            </div>
+          )}
+        </Space>
       </Modal>
 
       {/* 新建/编辑任务 Modal */}

@@ -16,6 +16,7 @@ import {
   Switch,
   Table,
   Tabs,
+  Tooltip,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -25,11 +26,19 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { ExampleTag } from '../../components/ExampleTag';
 import { useAuthStore, hasPermission } from '../../stores/auth';
-import type { Member, Portfolio, ProjectRow, ProjectStatus, ServiceItem } from '../../api/types';
+import type {
+  Member,
+  Portfolio,
+  ProjectDetail,
+  ProjectRow,
+  ProjectStatus,
+  ServiceItem,
+} from '../../api/types';
 import { PROJECT_STATUS } from '../../api/types';
 import { useEnums } from '../../i18n/enums';
 import { HealthDot, StatusBadge } from './shared';
 import CharterImportModal from './CharterImportModal';
+import ProjectEditModal, { type ProjectEditModalProject } from './ProjectEditModal';
 
 const STATUS_KEYS = Object.keys(PROJECT_STATUS) as ProjectStatus[];
 
@@ -57,6 +66,7 @@ function ProjectList() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const canCreate = useProjectPerm('create');
+  const canEdit = useProjectPerm('edit');
 
   const [items, setItems] = useState<ProjectRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -78,6 +88,30 @@ function ProjectList() {
   const [members, setMembers] = useState<Member[]>([]);
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [charterOpen, setCharterOpen] = useState(false);
+
+  // 行内编辑（共享编辑弹窗）：列表行缺 service_item_id/description，先取详情再打开
+  const [editing, setEditing] = useState<ProjectEditModalProject | null>(null);
+
+  const openRowEdit = async (r: ProjectRow) => {
+    try {
+      const d = await api.get<ProjectDetail>(`/projects/${r.id}`);
+      setEditing({
+        id: d.id,
+        name: d.name,
+        pm: d.pm,
+        planned_start: d.planned_start,
+        planned_end: d.planned_end,
+        portfolio_id: d.portfolio_id,
+        service_item_id: d.service_item_id,
+        budget_10k: d.budget_10k,
+        description: d.description,
+        actual_start: d.actual_start,
+        actual_end: d.actual_end,
+      });
+    } catch {
+      // 已统一提示
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -229,6 +263,27 @@ function ProjectList() {
         </Badge>
       ),
     },
+    ...(canEdit
+      ? [
+          {
+            title: t('common.actions'),
+            key: 'action',
+            width: 90,
+            fixed: 'right' as const,
+            render: (_: unknown, r: ProjectRow) => {
+              if (r.is_example) return null;
+              // 终态项目后端拒绝编辑（PROJECT_FINAL）：禁用并提示需先重启
+              const isFinal = r.status === 'closed' || r.status === 'cancelled';
+              const btn = (
+                <Button type="link" size="small" disabled={isFinal} onClick={() => void openRowEdit(r)}>
+                  {t('common.edit')}
+                </Button>
+              );
+              return isFinal ? <Tooltip title={t('proj.editFinalTooltip')}>{btn}</Tooltip> : btn;
+            },
+          } as ColumnsType<ProjectRow>[number],
+        ]
+      : []),
   ];
 
   return (
@@ -305,6 +360,7 @@ function ProjectList() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
@@ -402,6 +458,16 @@ function ProjectList() {
       </Modal>
 
       <CharterImportModal open={charterOpen} onClose={() => setCharterOpen(false)} />
+
+      {/* 行内编辑（共享编辑弹窗） */}
+      <ProjectEditModal
+        project={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          void load();
+        }}
+      />
     </>
   );
 }

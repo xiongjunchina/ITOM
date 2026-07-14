@@ -357,6 +357,7 @@ export default function CatalogPage() {
             loading={itemLoading}
             columns={columns}
             dataSource={items}
+            sticky
             scroll={{ x: 'max-content' }}
             pagination={{ pageSize: 20, showTotal: (n) => t('itsm.total', { n }) }}
           />

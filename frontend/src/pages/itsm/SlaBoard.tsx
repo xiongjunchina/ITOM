@@ -224,6 +224,7 @@ export default function SlaBoard() {
           columns={warningColumns}
           dataSource={board?.warning_tickets ?? []}
           pagination={false}
+          sticky
           scroll={{ x: 800 }}
           onRow={(record) => ({
             onClick: () => navigate(`/itsm/tickets/${record.id}`),

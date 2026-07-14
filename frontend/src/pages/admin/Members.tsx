@@ -242,6 +242,7 @@ export default function Members() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 'max-content' }}
         pagination={{
           current: page,

@@ -127,6 +127,7 @@ export default function Monitor() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 1200 }}
         pagination={{
           current: page,

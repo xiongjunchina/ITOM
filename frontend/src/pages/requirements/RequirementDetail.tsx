@@ -1093,6 +1093,7 @@ export default function RequirementDetail() {
             columns={taskColumns}
             dataSource={detail.tasks}
             pagination={false}
+            sticky
             scroll={{ x: 'max-content' }}
             locale={{ emptyText: t('req.emptyTasks') }}
           />

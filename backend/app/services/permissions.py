@@ -96,6 +96,7 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
     "it_pdm": _merge(_staff_base(), {"requirements": "e"}),
     "it_pm": _merge(_staff_base(), {"projects": "ce"}),
+    "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
     "is_mgr": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "admin_audit": "v"}),
     # 矩阵式组织三角色（docs/06 §七）——默认值是起点，全部可在权限配置页调整
@@ -124,10 +125,12 @@ def flags_to_actions(flags: str) -> list[str]:
 
 
 def seed_permissions(db: Session):
-    """首次启动写入默认矩阵（表非空则跳过，尊重用户已有配置）。"""
-    if db.query(RolePermission).first():
-        return
+    """按角色写入默认矩阵：仅当该角色一行都没有时补种（幂等；新内置角色自动获得默认
+    矩阵，已被管理员调整过的角色不受影响）。"""
+    seeded = {r.role_code for r in db.query(RolePermission.role_code).distinct()}
     for role_code, modules in DEFAULT_MATRIX.items():
+        if role_code in seeded:
+            continue
         for module, flags in modules.items():
             db.add(RolePermission(role_code=role_code, module=module, actions=flags_to_actions(flags)))
     db.commit()

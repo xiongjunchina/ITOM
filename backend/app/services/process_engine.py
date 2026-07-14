@@ -1,4 +1,5 @@
 """流程引擎最小版（PRD §8）：单据触发实例，任务按步骤推进，默认角色指派。"""
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -16,6 +17,8 @@ from app.models import (
     UserGroupMember,
 )
 from app.services.rbac import GROUP_PREFIX
+
+logger = logging.getLogger("aom.process")
 
 
 def _match_definition(db: Session, entity_type: str, entity: dict) -> ProcessDefinition | None:
@@ -203,6 +206,42 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     return instance
 
 
+def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: int,
+                   preferred_assignee: str | None = None) -> ProcessInstance | None:
+    """流程回退（M12，项目重启用）：回到指定步骤重新开始。
+
+    目标步骤及其后的任务作废（软删，审计留痕），实例恢复 running 并在目标步骤生成新任务；
+    目标步骤之前已完成的任务保留。找不到实例/步骤时静默返回（不阻塞项目重启）。
+    """
+    instance = (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type == entity_type,
+            ProcessInstance.entity_id == entity_id,
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .order_by(ProcessInstance.created_at.desc())
+        .first()
+    )
+    if not instance:
+        return None
+    steps = instance.definition.steps
+    target = next((st for st in steps if st.seq == target_seq), None)
+    if not target:
+        return None
+    rewind_step_ids = {st.id for st in steps if st.seq >= target_seq}
+    for task in instance.tasks:
+        if task.step_id in rewind_step_ids and not task.is_deleted:
+            task.is_deleted = True
+    instance.status = "running"
+    instance.completed_at = None
+    instance.current_step_seq = target.seq
+    db.flush()
+    _spawn_task(db, instance, target, preferred_assignee)
+    logger.info("process %s/%s rewound to step %s", entity_type, entity_id, target_seq)
+    return instance
+
+
 def reassign_task(db: Session, task_id: str, assignee: str) -> ProcessTask:
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
@@ -225,7 +264,7 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
     if not instance:
         return None
     member_names = {m.id: m.name for m in db.query(OrgMember).all()}
-    tasks_by_step = {t.step_id: t for t in instance.tasks}
+    tasks_by_step = {t.step_id: t for t in instance.tasks if not t.is_deleted}  # 回退作废的任务不算现状
     return {
         "id": instance.id,
         "definition_name": instance.definition.name,

@@ -66,6 +66,8 @@ class ProjectUpdate(BaseModel):
     budget_10k: float | None = None
     description: str | None = None
     latest_update: str | None = None
+    actual_start: date | None = None
+    actual_end: date | None = None
 
 
 class TransitionIn(BaseModel):
@@ -309,14 +311,19 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_not_example(p)
+    rewind_seq = (body.fields or {}).pop("process_step_seq", None)  # 重启回退目标节点（可选）
     from_code, to = wf_transition(db, p, "project", body.to, body.fields, actor)
     today = date.today()
     if to == "active" and not p.actual_start:
         p.actual_start = today
     if to == "active" and from_code in ("completed", "closed"):
         p.actual_end = None  # 重启：清实际结束（重新完成时再打点）
+        if rewind_seq is not None:
+            process_engine.rewind_to_step(db, "project", p.id, int(rewind_seq), preferred_assignee=p.pm)
+            audit(db, "project", p.id, "process_rewind", actor, {"to_seq": int(rewind_seq)})
     if to == "completed":
-        p.actual_end = today
+        if not p.actual_end:
+            p.actual_end = today  # 手动填过则尊重
         publish(db, "project.completed", "project", p.id, {})
     db.commit()
     return ok({"id": p.id, "status": p.status})

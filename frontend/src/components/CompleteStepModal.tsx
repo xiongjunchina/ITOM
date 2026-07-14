@@ -6,7 +6,7 @@ import type { FlowDiagramStep } from './FlowDiagram';
 
 /**
  * 完成流程步骤弹窗（项目/需求详情流程卡共用）：
- * 可选备注 → POST /process-tasks/{id}/complete → 推进到下一步骤 → onDone 刷新详情。
+ * 必填阶段结束说明（去空格后 ≥5 字）→ POST /process-tasks/{id}/complete → 推进到下一步骤 → onDone 刷新详情。
  */
 export default function CompleteStepModal({
   step,
@@ -23,6 +23,10 @@ export default function CompleteStepModal({
 
   const submit = async () => {
     if (!step?.task_id) return;
+    if (comment.trim().length < 5) {
+      message.warning(t('comp.flow.commentRequired'));
+      return;
+    }
     setSaving(true);
     try {
       await api.post(`/process-tasks/${step.task_id}/complete`, { comment });

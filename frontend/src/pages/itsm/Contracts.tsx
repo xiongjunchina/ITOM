@@ -269,6 +269,7 @@ export default function Contracts() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        sticky
         scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
