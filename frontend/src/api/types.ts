@@ -1202,10 +1202,10 @@ export const QUADRANT_META: Record<string, { color: string; icon: string }> = {
 };
 
 /** 评估决议（后端权威值为中文） */
-export const REQ_DECISIONS = ['立项', '搁置', '驳回'] as const;
+export const REQ_DECISIONS = ['通过', '搁置', '驳回'] as const;
 
 export const DECISION_COLORS: Record<string, string> = {
-  立项: 'green',
+  通过: 'green',
   搁置: 'orange',
   驳回: 'red',
 };
@@ -1339,7 +1339,7 @@ export interface RequirementRow {
   weighted_total?: number | null;
   /** 四象限（中文权威值：战略下注/速赢项目/低优先级/重新评估） */
   quadrant?: string | null;
-  /** 评估决议（中文权威值：立项/搁置/驳回） */
+  /** 评估决议（中文权威值：通过/搁置/驳回） */
   decision?: string | null;
   /** PRD 人天 */
   prd_effort?: number | null;
@@ -1382,7 +1382,7 @@ export interface ScoringRubricEntry {
 /** 六维权重键（后端 rubric/weights 用短键 d1..d6） */
 export type ScoringDimKey = 'd1' | 'd2' | 'd3' | 'd4' | 'd5' | 'd6';
 
-/** 方案评估指派（M16）：立项后 产品 leader 主责 / 开发 leader 知会（人员主数据 id） */
+/** 方案评估指派（M16）：通过后 产品 leader 主责 / 开发 leader 知会（人员主数据 id） */
 export interface ReviewAssignees {
   pdm_leader?: string | null;
   dev_leader?: string | null;

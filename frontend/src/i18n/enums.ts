@@ -72,7 +72,7 @@ const REQUIREMENT_STATUS_ZH: M = { registered: '已登记', evaluating: '评估�
 const REQUIREMENT_STATUS_EN: M = { registered: 'Registered', evaluating: 'Evaluating', analyzing: 'Analyzing', implementing: 'Implementing', closed: 'Closed', on_hold: 'On hold', cancelled: 'Cancelled' };
 // 四象限 / 评估决议（value 键：中文规范值，en 查表回退原值）
 const QUADRANT_EN: M = { 战略下注: 'Strategic Bet', 速赢项目: 'Quick Win', 低优先级: 'Low Priority', 重新评估: 'Re-evaluate' };
-const REQ_DECISION_EN: M = { 立项: 'Approved', 搁置: 'On hold', 驳回: 'Rejected' };
+const REQ_DECISION_EN: M = { 通过: 'Approved', 搁置: 'On hold', 驳回: 'Rejected' };
 // M16 需求评审分流：实现路径 / 方案类型（value 键：中文规范值）
 const ROUTE_EN: M = { 需求开发实现: 'In-house Dev', 转项目管理: 'To Project' };
 const SOLUTION_TYPE_EN: M = { 二次开发: 'Secondary Dev', 新购系统: 'New System' };

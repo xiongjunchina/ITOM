@@ -65,7 +65,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx):
     # M16：登记即 evaluating；评分立项自动流转 analyzing
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
-        "decision": "立项",
+        "decision": "通过",
     }, headers=ctx["pdm"])
     assert resp.json()["data"]["status"] == "analyzing", resp.text
 

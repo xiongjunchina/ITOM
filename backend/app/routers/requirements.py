@@ -38,7 +38,7 @@ router = APIRouter(prefix="/api/requirements", tags=["requirements"])
 
 REQ_TYPES = ("业务", "功能", "数据", "集成", "合规")
 MOSCOW = ("M", "S", "C", "W")
-DECISIONS = ("立项", "搁置", "驳回")
+DECISIONS = ("通过", "搁置", "驳回")
 
 
 def _validate_scores(data: dict):
@@ -562,8 +562,8 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
         # 评估门：从评估进入分析，必须已完成六维评分且决议为「立项」
         if requirement_scoring.compute_weighted_total(requirement_scoring.requirement_scores(r)) is None:
             raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
-        if r.decision != "立项":
-            raise AppError("EVAL_NOT_APPROVED", "评估决议须为「立项」才能进入分析（搁置/驳回请转搁置或取消）")
+        if r.decision != "通过":
+            raise AppError("EVAL_NOT_APPROVED", "评估决议须为「通过」才能进入分析（搁置/驳回请转搁置或取消）")
     if body.to == "implementing":
         owner = body.fields.get("owner") or r.owner
         if not owner:
@@ -623,7 +623,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     cfg = requirement_scoring.get_config(db)
     scores_now = requirement_scoring.requirement_scores(r)
     quadrant = requirement_scoring.compute_quadrant(scores_now, cfg.thresholds, cfg.weights)
-    if r.decision == "立项":
+    if r.decision == "通过":
         if quadrant is None:
             raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
         if quadrant == requirement_scoring.QUADRANT_REEVALUATE:
@@ -653,7 +653,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     flowed_to = None
     if r.status == "evaluating" and r.decision:
         now = datetime.now()
-        if r.decision == "立项":
+        if r.decision == "通过":
             wf_transition(db, r, "requirement", "analyzing", {}, user)
             if not r.analyzing_at:
                 r.analyzing_at = now

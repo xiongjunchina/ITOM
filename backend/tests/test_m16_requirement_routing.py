@@ -32,7 +32,7 @@ def _register(client, headers, domain, title):
 def _approve(client, headers, rid):
     return client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 5, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
-        "decision": "立项",
+        "decision": "通过",
     }, headers=headers)
 
 

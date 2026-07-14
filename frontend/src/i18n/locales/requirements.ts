@@ -237,7 +237,7 @@ export const zh: Dict = {
   'req.previewHint': '完成六维打分后显示加权总分与象限预览',
   'req.dimReverse': '反向',
   'req.dimReverseHint': '反向：分越高风险越大',
-  'req.evalGateHint': '需求登记后即进入评审。评审决议保存后自动流转：立项→方案评估；搁置→通知提出人；驳回→关闭。评分落入「重新评估」象限时仅可选择 搁置/驳回。',
+  'req.evalGateHint': '需求登记后即进入评审。评审决议保存后自动流转：通过→方案评估；搁置→通知提出人；驳回→关闭。评分落入「重新评估」象限时仅可选择 搁置/驳回。',
   'req.scoreHistory': '评分记录',
   'req.reviewer': '评审人',
   'req.consensus': '共识',
@@ -255,12 +255,16 @@ export const zh: Dict = {
   // ===== M16 需求评审分流 =====
   // 评估面板：决议约束 + 自动流转
   'req.eval.saveFlow': '保存评分并流转',
-  'req.eval.quadrantBlocked': '当前评分落入「重新评估」象限，不可立项，仅可选择 搁置（补充后重评）或 驳回（关闭）',
-  'req.eval.needFullScores': '完成六维评分后方可立项',
+
+  'req.eval.dest.approve': '——转专业线方案评估（二开或转项目在下一步判定）',
+  'req.eval.dest.hold': '——补充论证后可重新评审',
+  'req.eval.dest.reject': '——关闭需求（必填理由）',
+  'req.eval.quadrantBlocked': '当前评分落入「重新评估」象限，不可通过，仅可选择 搁置（补充后重评）或 驳回（关闭）',
+  'req.eval.needFullScores': '完成六维评分后方可通过',
   'req.eval.rejectOnlyReeval': '仅「重新评估」象限可驳回',
   'req.eval.rejectReasonRequired': '驳回将关闭需求，必须填写理由（至少 5 个字）',
   'req.eval.holdCommentHint': '评审意见（将通知提出人）',
-  'req.eval.flowedAnalyzing': '已立项，转入方案评估',
+  'req.eval.flowedAnalyzing': '已通过评审，转入方案评估',
   'req.eval.flowedOnHold': '已搁置并通知提出人',
   'req.eval.flowedCancelled': '已驳回关闭',
 
@@ -288,7 +292,7 @@ export const zh: Dict = {
   'req.cfg.effortThreshold': '转项目人天阈值',
   'req.cfg.effortThresholdHint': '二开人天 ≥ 阈值 或 新购系统 → 转项目管理；否则走需求开发实现',
   'req.cfg.reviewAssignees': '方案评估指派',
-  'req.cfg.reviewAssigneesHint': '立项进入方案评估时自动指派：产品 leader 主责评估任务、开发 leader 知会',
+  'req.cfg.reviewAssigneesHint': '通过进入方案评估时自动指派：产品 leader 主责评估任务、开发 leader 知会',
   'req.cfg.pdmLeader': '产品 leader（主责）',
   'req.cfg.devLeader': '开发 leader（知会）',
 
@@ -565,6 +569,10 @@ export const en: Dict = {
   // ===== M16 requirement review routing =====
   // Evaluation panel: decision constraints + auto flow
   'req.eval.saveFlow': 'Save Scoring & Flow',
+
+  'req.eval.dest.approve': ' — to discipline-lead solution assessment (dev vs. project decided next)',
+  'req.eval.dest.hold': ' — may be re-reviewed after enrichment',
+  'req.eval.dest.reject': ' — closes the requirement (reason required)',
   'req.eval.quadrantBlocked': 'The score falls into the "Re-evaluate" quadrant; approval is unavailable — choose Hold (re-review after enrichment) or Reject (close)',
   'req.eval.needFullScores': 'Approve is available after all six dimensions are scored',
   'req.eval.rejectOnlyReeval': 'Reject is only available in the "Re-evaluate" quadrant',

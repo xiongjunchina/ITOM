@@ -129,12 +129,12 @@ function EvaluationPanel({
     [scores, config],
   );
 
-  // M16 决议按本地实时象限约束：重新评估象限仅可 搁置/驳回；其余象限（评满）可 立项/搁置；驳回仅重评象限可选
+  // M16 决议按本地实时象限约束：重新评估象限仅可 搁置/驳回；其余象限（评满）可 通过/搁置；驳回仅重评象限可选
   const isReeval = preview?.quadrant === '重新评估';
   const decisionDisabled = (d: string): boolean =>
-    d === '立项' ? !preview || isReeval : d === '驳回' ? !isReeval : false;
+    d === '通过' ? !preview || isReeval : d === '驳回' ? !isReeval : false;
   const decisionDisabledTip = (d: string): string =>
-    d === '立项'
+    d === '通过'
       ? isReeval
         ? t('req.eval.quadrantBlocked')
         : t('req.eval.needFullScores')
@@ -264,15 +264,17 @@ function EvaluationPanel({
               onChange={(v) => setDecision(v)}
               options={REQ_DECISIONS.map((dv) => {
                 const disabled = decisionDisabled(dv);
+                const destKey = dv === '通过' ? 'req.eval.dest.approve' : dv === '搁置' ? 'req.eval.dest.hold' : 'req.eval.dest.reject';
+                const text = `${et.reqDecision(dv)}${t(destKey)}`;
                 return {
                   value: dv,
                   disabled,
                   label: disabled ? (
                     <Tooltip title={decisionDisabledTip(dv)}>
-                      <span>{et.reqDecision(dv)}</span>
+                      <span>{text}</span>
                     </Tooltip>
                   ) : (
-                    et.reqDecision(dv)
+                    text
                   ),
                 };
               })}

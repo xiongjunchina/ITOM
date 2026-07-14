@@ -36,12 +36,12 @@ def test_score_weighted_total_and_quadrant(client, ctx):
     # 六维评分 → 加权总分 3.8，象限=战略下注
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 5, "d2_value": 5, "d3_tech": 3, "d4_org": 3, "d5_risk": 3, "d6_speed": 3,
-        "decision": "立项", "comment": "战略基建",
+        "decision": "通过", "comment": "战略基建",
     }, headers=ctx["pdm"])
     data = resp.json()["data"]
     assert data["weighted_total"] == 3.8, resp.text
     assert data["quadrant"] == "战略下注"
-    assert data["decision"] == "立项"
+    assert data["decision"] == "通过"
 
     # 列表/详情回填
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
@@ -56,13 +56,13 @@ def test_eval_gate_quadrant_and_auto_flow(client, ctx):
     assert r["status"] == "evaluating"  # M16：登记即进评审
 
     # 未评分就立项 → 拦截
-    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "立项"}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "通过"}, headers=ctx["pdm"])
     assert resp.json()["error"]["code"] == "EVAL_INCOMPLETE"
 
     # 低分落「重新评估」象限 → 立项被象限约束拦截
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 2, "d2_value": 2, "d3_tech": 3, "d4_org": 3, "d5_risk": 3, "d6_speed": 2,
-        "decision": "立项",
+        "decision": "通过",
     }, headers=ctx["pdm"])
     assert resp.json()["error"]["code"] == "QUADRANT_REJECTED"
 
@@ -78,7 +78,7 @@ def test_eval_gate_quadrant_and_auto_flow(client, ctx):
     client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 3, "d5_risk": 2, "d6_speed": 4,
-        "decision": "立项",
+        "decision": "通过",
     }, headers=ctx["pdm"])
     data = resp.json()["data"]
     assert data["status"] == "analyzing" and data["flowed_to"] == "analyzing"
@@ -126,7 +126,7 @@ def test_template_download_and_import(client, ctx):
     wb = load_workbook(io.BytesIO(tpl.content))
     ws = wb["需求登记"]
     ws.append(["海外仓WMS", "功能", "数字化业务线", "库存效率中台", None, "供应链", "李强",
-               None, "补货精度提升", "库存周转", 5, 5, 4, 3, 2, 4, "立项", 20, 60])
+               None, "补货精度提升", "库存周转", 5, 5, 4, 3, 2, 4, "通过", 20, 60])
     ws.append(["达人库", "业务", "数字化业务线", "达人资源库", None, "DTC", "王磊",
                None, None, None, None, None, None, None, None, None, None, None, None])
     ws.append(["坏行", "功能", "不存在的业务线", "描述", None, None, None,
@@ -145,7 +145,7 @@ def test_template_download_and_import(client, ctx):
     # 已评分行落到评估中，且总分/象限计算正确
     listing = client.get("/api/requirements?q=海外仓", headers=ctx["pdm"]).json()["data"]
     wms = next(x for x in listing if x["title"] == "海外仓WMS")
-    assert wms["status"] == "evaluating" and wms["decision"] == "立项"
+    assert wms["status"] == "evaluating" and wms["decision"] == "通过"
     # 5,5,4,3,2,4 → 0.2*5+0.2*5+0.2*4+0.1*3+0.1*(6-2)+0.2*4 = 1+1+0.8+0.3+0.4+0.8 = 4.3
     assert wms["weighted_total"] == 4.3 and wms["quadrant"] == "战略下注"
 
@@ -156,7 +156,7 @@ def test_active_tasks_board(client, ctx):
     rid = r["id"]
     client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
     client.post(f"/api/requirements/{rid}/score", json={
-        "d1_strategy": 5, "d2_value": 5, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 5, "decision": "立项",
+        "d1_strategy": 5, "d2_value": 5, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 5, "decision": "通过",
     }, headers=ctx["pdm"])
     client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
     client.patch(f"/api/requirements/{rid}", json={"owner": ctx["pdm_p"], "solution": "MVP"}, headers=ctx["pdm"])

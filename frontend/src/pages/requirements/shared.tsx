@@ -39,7 +39,7 @@ export function QuadrantTag({ value, empty = '-' }: { value?: string | null; emp
   );
 }
 
-/** 评估决议 Tag：立项绿 / 搁置橙 / 驳回红；空值占位 */
+/** 评估决议 Tag：通过绿 / 搁置橙 / 驳回红；空值占位 */
 export function DecisionTag({ value, empty = '-' }: { value?: string | null; empty?: string | null }) {
   const et = useEnums();
   if (!value) return empty == null ? null : <span style={{ color: 'rgba(0,0,0,0.25)' }}>{empty}</span>;
