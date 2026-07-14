@@ -1,4 +1,4 @@
-# New_AOM Product Requirements Document (PRD)
+# ITOM Product Requirements Document (PRD)
 
 > English translation of [../03-PRD.md](../03-PRD.md). For the authoritative version, the Chinese source prevails.
 
@@ -12,7 +12,7 @@
 
 ### 1.1 Product Positioning
 
-This system, the "IT Operations Platform" (project code New_AOM), is a **lightweight operations management platform** for IT teams, covering six domains: Overview, ITSM Service Management, Project Management, Requirement Management, Process Engine, and Team Management.
+This system, the "IT Operations Platform" (project code ITOM), is a **lightweight operations management platform** for IT teams, covering six domains: Overview, ITSM Service Management, Project Management, Requirement Management, Process Engine, and Team Management.
 
 ### 1.2 Design Principles (mandatory constraints across the whole system)
 

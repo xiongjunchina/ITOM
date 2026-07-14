@@ -1,4 +1,4 @@
-# New_AOM API Contract & Architecture Design
+# ITOM API Contract & Architecture Design
 
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
@@ -30,7 +30,7 @@
 ## 2. Repository Structure
 
 ```text
-New_AOM/
+ITOM/
 ├── backend/
 │   ├── app/
 │   │   ├── core/          # config, GLID, security (JWT/bcrypt), dependency injection

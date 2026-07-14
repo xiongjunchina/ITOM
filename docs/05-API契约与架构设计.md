@@ -1,4 +1,4 @@
-# New_AOM API 契约与架构设计
+# ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
 
@@ -28,7 +28,7 @@
 ## 2. 仓库结构
 
 ```text
-New_AOM/
+ITOM/
 ├── backend/
 │   ├── app/
 │   │   ├── core/          # 配置、GLID、安全(JWT/bcrypt)、依赖注入

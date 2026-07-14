@@ -1,4 +1,4 @@
-# New_AOM Data Model Design
+# ITOM Data Model Design
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 

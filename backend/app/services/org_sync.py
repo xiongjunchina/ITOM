@@ -4,7 +4,7 @@
 - 幂等 upsert（按 source+external_id 匹配）；同步字段"外部赢"覆盖本地值
 - 外部消失的人员 → 标记离职（保留历史）；消失的部门 → 停用
 - 本地手工记录（external_source 为空）不受同步影响
-- 本地扩展字段（岗位/技能/备注/部门类型）不被同步触碰——飞书管 HR 基础信息，New_AOM 管 IT 扩展
+- 本地扩展字段（岗位/技能/备注/部门类型）不被同步触碰——飞书管 HR 基础信息，ITOM 管 IT 扩展
 """
 import logging
 from dataclasses import dataclass, field

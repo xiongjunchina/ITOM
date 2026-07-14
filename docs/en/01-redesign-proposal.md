@@ -1,4 +1,4 @@
-# New_AOM System Redesign Proposal
+# ITOM System Redesign Proposal
 
 > English translation of [../01-系统改造建议.md](../01-系统改造建议.md). For the authoritative version, the Chinese source prevails.
 
@@ -110,7 +110,7 @@ The original `requirement` (41 fields) + 10 peripheral tables are refactored int
 
 ## 3. Data Model Scale Comparison
 
-| | SN-AOM | New_AOM target |
+| | SN-AOM | ITOM target |
 | --- | --- | --- |
 | Data tables | 106 | **~42** (ITSM 10, Project 7, Requirement 4, Process 4, Team 11, auth/master-data/state-machine/audit 6) |
 | Derived statistics tables | ~15 (monthly_stats / sla_stats / kpi_snapshot / cell_performance / snapshot family) | **0** (all computed live) |
@@ -128,7 +128,7 @@ Reuse the SN-AOM tech stack (FastAPI + SQLAlchemy + React, to ease code porting)
 4. The unified response `{success, data, total, page}` convention.
 5. The three-layer process-engine model (simplified seeding).
 
-**Data migration: not performed.** All old data is discarded; New_AOM starts on an empty database, and business data is re-entered by users (2026-07 product decision).
+**Data migration: not performed.** All old data is discarded; ITOM starts on an empty database, and business data is re-entered by users (2026-07 product decision).
 
 **Not done initially**: n8n workflows, Feishu integration, MCP servers, GitHub integration (to be wired up later on demand via the shared sn_feishu / sn_maestro spine, aligned with SN-AOM epic #51).
 

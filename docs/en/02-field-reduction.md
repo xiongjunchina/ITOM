@@ -1,4 +1,4 @@
-# New_AOM Field Reduction List
+# ITOM Field Reduction List
 
 > English translation of [../02-字段裁剪清单.md](../02-字段裁剪清单.md). For the authoritative version, the Chinese source prevails.
 
@@ -231,7 +231,7 @@ person / event_type / points / source_ref (the triggering entity's GLID) / earne
 
 ## 9. Entry-Reduction Ledger
 
-| Form | SN-AOM entry items | New_AOM required on creation | Notes |
+| Form | SN-AOM entry items | ITOM required on creation | Notes |
 | --- | --- | --- | --- |
 | Ticket | 26 Form.Items | **5** | +3 optional; +6 conditional for changes |
 | Requirement | 24 Form.Items | **4** (registration) | +5 more at analysis stage |
