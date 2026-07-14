@@ -20,6 +20,7 @@ export type Role =
   | 'it_dev'
   | 'it_dev_leader'
   | 'it_ops'
+  | 'it_op_leader'
   | 'is_mgr'
   | 'it_bp'
   | 'auditor'
@@ -37,6 +38,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   it_dev: 'IT开发',
   it_dev_leader: 'IT开发负责人',
   it_ops: 'IT运维',
+  it_op_leader: 'IT运维负责人',
   is_mgr: '信息安全管理员',
   it_bp: 'IT业务合作伙伴',
   auditor: '审计员',

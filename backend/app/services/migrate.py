@@ -212,6 +212,24 @@ def fix_acceptance_step_role_m165(db: Session):
     db.commit()
 
 
+def fix_ops_leader_m166(db: Session):
+    """M16.6：IT运维负责人接管 事件关闭复盘 / 变更复盘(PIR)；变更审批角色补 it_op_leader。"""
+    n1 = db.execute(text(
+        "UPDATE process_step ps SET default_role='it_op_leader' "
+        "FROM process_definition d WHERE ps.definition_id=d.id AND ps.is_deleted=false "
+        "AND ((d.code LIKE 'incident_flow%' AND ps.name='关闭复盘' AND ps.default_role='it_tm') "
+        "  OR (d.code LIKE 'change_flow%' AND ps.name='变更复盘(PIR)' AND ps.default_role='it_tm'))"
+    )).rowcount
+    n2 = db.execute(text(
+        "UPDATE workflow_transition SET allowed_roles = allowed_roles || '[\"it_op_leader\"]'::jsonb "
+        "WHERE entity_type='ticket_change' AND from_code='pending_approval' "
+        "AND NOT (allowed_roles @> '[\"it_op_leader\"]'::jsonb) AND is_deleted=false"
+    )).rowcount
+    if n1 or n2:
+        logger.info("it_op_leader 接线：复盘步骤 %d 处，变更审批流转 %d 条", n1, n2)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -221,6 +239,7 @@ def migrate_m35_org(db: Session):
     rebuild_requirement_flow_m16(db)
     fix_solution_review_roles_m163(db)
     fix_acceptance_step_role_m165(db)
+    fix_ops_leader_m166(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

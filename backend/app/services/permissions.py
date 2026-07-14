@@ -100,6 +100,8 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_pm": _merge(_staff_base(), {"projects": "ce"}),
     "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
+    "it_op_leader": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce",
+                                           "contracts": "ce", "sla": "e", "process_monitor": "v"}),
     "is_mgr": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "admin_audit": "v"}),
     # 矩阵式组织三角色（docs/06 §七）——默认值是起点，全部可在权限配置页调整
     "cio": _merge(_staff_base(), {

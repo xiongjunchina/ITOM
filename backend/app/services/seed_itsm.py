@@ -1,7 +1,7 @@
 """M2 种子：工单两套状态机、SLA 策略、流程定义、示例目录/服务项。幂等。"""
 from sqlalchemy.orm import Session
 
-from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_PM, IT_TM, IT_PMO, IT_PDM_LEADER, IT_DEV_LEADER
+from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_PM, IT_TM, IT_PMO, IT_PDM_LEADER, IT_DEV_LEADER, IT_OP_LEADER
 from app.models import (
     ProcessDefinition,
     ProcessStep,
@@ -125,8 +125,8 @@ TICKET_TRANSITIONS = [
     ("ticket", "resolved", "processing", []),   # 重开
     ("ticket", "resolved", "closed", []),
     ("ticket_change", "new", "pending_approval", []),
-    ("ticket_change", "pending_approval", "approved", [CIO, IT_TM]),
-    ("ticket_change", "pending_approval", "rejected", [CIO, IT_TM]),
+    ("ticket_change", "pending_approval", "approved", [CIO, IT_TM, IT_OP_LEADER]),
+    ("ticket_change", "pending_approval", "rejected", [CIO, IT_TM, IT_OP_LEADER]),
     ("ticket_change", "approved", "implementing", []),
     ("ticket_change", "implementing", "resolved", []),
     ("ticket_change", "implementing", "rolled_back", []),
@@ -150,7 +150,7 @@ PROCESS_DEFS = [
             ("受理定级", IT_OPS, "L3", 0.5),
             ("诊断与处理", IT_OPS, "L3", None),
             ("解决与用户确认", IT_OPS, "L3", None),
-            ("关闭复盘", IT_TM, "L2", 24),
+            ("关闭复盘", IT_OP_LEADER, "L2", 24),
         ],
     },
     {
@@ -169,7 +169,7 @@ PROCESS_DEFS = [
             ("变更登记与风险评估", IS_MGR, "L3", 8, [IT_TM]),
             ("变更审批", CIO, "L3", 24, [IT_BM]),
             ("实施与验证", IT_OPS, "L3", None, [IS_MGR, IT_BM]),
-            ("变更复盘(PIR)", IT_TM, "L2", 48, [CIO]),
+            ("变更复盘(PIR)", IT_OP_LEADER, "L2", 48, [CIO]),
         ],
     },
     {
