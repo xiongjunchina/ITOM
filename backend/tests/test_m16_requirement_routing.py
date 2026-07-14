@@ -60,9 +60,12 @@ def test_route_dev_under_threshold(client, ctx):
     # 转项目动作被拒（不满足条件）
     resp = client.post(f"/api/requirements/{r['id']}/to-project", json={"pm_id": ctx["pm"]}, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "ROUTE_NOT_PROJECT"
-    # 转开发实现：指派开发负责人 → implementing
+    # 转开发实现：指派开发负责人 → implementing；流程「实现交付」任务指派该负责人
     resp = client.post(f"/api/requirements/{r['id']}/to-dev", json={"owner_id": ctx["dev"]}, headers=ctx["admin"])
     assert resp.json()["data"]["status"] == "implementing", resp.text
+    proc = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    step3 = next(st for st in proc["steps"] if "实现交付" in st["name"])
+    assert proc["current_step_seq"] == step3["seq"] and step3["assignee_name"] == "开发小王M16"
     # 登记任务 → 任务跟踪呈现（按总分排序）
     client.post(f"/api/requirements/{r['id']}/tasks", json={
         "name": "接口改造", "description": "评价数据接入", "assignee": ctx["dev"], "plan_effort": 3,
@@ -90,9 +93,12 @@ def test_route_project_and_auto_close_loop(client, ctx):
     client.patch(f"/api/requirements/{r['id']}", json={"solution_type": "新购系统", "dev_effort": 5}, headers=ctx["admin"])
     assert client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["route"] == "转项目管理"
 
-    # 转项目：指派 PM → 需求进实现中；PM 收到通知
+    # 转项目：指派 PM → 需求进实现中；流程「实现交付」任务指派 PM（而非按开发角色解析）
     resp = client.post(f"/api/requirements/{r['id']}/to-project", json={"pm_id": ctx["pm"]}, headers=ctx["admin"])
     assert resp.json()["data"]["status"] == "implementing", resp.text
+    proc = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    step3 = next(st for st in proc["steps"] if "实现交付" in st["name"])
+    assert step3["assignee_name"] == "项目经理M16"
 
     # PM 创建项目并关联需求
     p = client.post("/api/projects", json={

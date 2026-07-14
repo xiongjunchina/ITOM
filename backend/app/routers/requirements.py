@@ -718,6 +718,11 @@ def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depen
     wf_transition(db, r, "requirement", "implementing", {}, user)
     if not r.implementing_at:
         r.implementing_at = datetime.now()
+    # 推进流程：完成「方案评估」步骤 → 「实现交付」任务指派给项目经理（跟踪项目交付）
+    _complete_review_step(db, r, user, f"转项目管理，项目经理：{pm.name}")
+    task = _current_process_task(db, r.id)
+    if task:
+        task.assignee = pm.id
     notifier.notify(db, "requirement.to_project", "requirement", r.id, [pm.id],
                     f"需求转项目：{r.requirement_code} {r.title}",
                     "您被指派为项目经理。请准备项目章程，在「项目管理」创建项目并关联本需求；项目验收关闭后需求将自动闭环。",
@@ -751,6 +756,11 @@ def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_d
     wf_transition(db, r, "requirement", "implementing", {}, user)
     if not r.implementing_at:
         r.implementing_at = datetime.now()
+    # 推进流程：完成「方案评估」步骤 → 「实现交付」任务指派给开发负责人
+    _complete_review_step(db, r, user, f"转开发实现，开发负责人：{owner.name}")
+    task = _current_process_task(db, r.id)
+    if task:
+        task.assignee = owner.id
     notifier.notify(db, "requirement.to_dev", "requirement", r.id, [owner.id],
                     f"需求转开发实现：{r.requirement_code} {r.title}",
                     "您被指派为开发负责人。请在「需求管理 → 任务跟踪」登记开发任务清单并排期（优先级按六维评分排序）。",
