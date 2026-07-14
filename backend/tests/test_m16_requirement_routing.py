@@ -49,20 +49,34 @@ def test_review_assignment_and_solution_review(client, ctx):
 
 
 def test_route_dev_under_threshold(client, ctx):
-    """二次开发 + 人天<20 → route=需求开发实现，正常任务分解排期。"""
+    """二次开发 + 人天<20 → 转开发实现(指派开发负责人+通知) → 任务登记并在任务跟踪呈现。"""
     r = _register(client, ctx["admin"], ctx["domain"], "小改造需求")
     _approve(client, ctx["admin"], r["id"])
     client.patch(f"/api/requirements/{r['id']}",
-                 json={"solution_type": "二次开发", "dev_effort": 8, "owner": ctx["dev"]},
+                 json={"solution_type": "二次开发", "dev_effort": 8},
                  headers=ctx["admin"])
     row = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]
     assert row["route"] == "需求开发实现"
     # 转项目动作被拒（不满足条件）
     resp = client.post(f"/api/requirements/{r['id']}/to-project", json={"pm_id": ctx["pm"]}, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "ROUTE_NOT_PROJECT"
-    # 正常进实现
-    resp = client.post(f"/api/requirements/{r['id']}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["admin"])
-    assert resp.json()["data"]["status"] == "implementing"
+    # 转开发实现：指派开发负责人 → implementing
+    resp = client.post(f"/api/requirements/{r['id']}/to-dev", json={"owner_id": ctx["dev"]}, headers=ctx["admin"])
+    assert resp.json()["data"]["status"] == "implementing", resp.text
+    # 登记任务 → 任务跟踪呈现（按总分排序）
+    client.post(f"/api/requirements/{r['id']}/tasks", json={
+        "name": "接口改造", "description": "评价数据接入", "assignee": ctx["dev"], "plan_effort": 3,
+    }, headers=ctx["admin"])
+    tasks = client.get("/api/requirements/tasks/active", headers=ctx["admin"]).json()["data"]
+    mine = next(x for x in tasks if x["requirement_id"] == r["id"])
+    assert mine["name"] == "接口改造" and mine["weighted_total"] is not None
+
+    # 反向守卫：开发路径不可走转项目、转开发亦拒新购
+    r2 = _register(client, ctx["admin"], ctx["domain"], "新购需求守卫")
+    _approve(client, ctx["admin"], r2["id"])
+    client.patch(f"/api/requirements/{r2['id']}", json={"solution_type": "新购系统"}, headers=ctx["admin"])
+    resp = client.post(f"/api/requirements/{r2['id']}/to-dev", json={"owner_id": ctx["dev"]}, headers=ctx["admin"])
+    assert resp.json()["error"]["code"] == "ROUTE_NOT_DEV"
 
 
 def test_route_project_and_auto_close_loop(client, ctx):

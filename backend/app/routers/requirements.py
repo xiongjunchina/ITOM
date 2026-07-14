@@ -728,6 +728,39 @@ def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depen
     return ok({"id": r.id, "status": r.status, "owner": r.owner})
 
 
+class ToDevIn(BaseModel):
+    owner_id: str
+
+
+@router.post("/{requirement_id}/to-dev")
+def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
+    """转开发实现（M16.2，与转项目对称）：指派开发负责人→进入实现→通知其登记任务清单排期。"""
+    r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
+    if r.status != "analyzing":
+        raise AppError("ROUTE_STAGE", "仅「方案评估（分析中）」阶段可执行转开发实现")
+    cfg = requirement_scoring.get_config(db)
+    route = requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
+    if route != requirement_scoring.ROUTE_DEV:
+        raise AppError("ROUTE_NOT_DEV",
+                       "当前方案不满足转开发条件（需 二次开发 且 人天<阈值）；新购或超阈值请走「转项目管理」")
+    owner = db.get(OrgMember, body.owner_id)
+    if not owner or owner.is_deleted:
+        raise AppError("NOT_FOUND", "开发负责人不存在", 404)
+    r.owner = owner.id
+    wf_transition(db, r, "requirement", "implementing", {}, user)
+    if not r.implementing_at:
+        r.implementing_at = datetime.now()
+    notifier.notify(db, "requirement.to_dev", "requirement", r.id, [owner.id],
+                    f"需求转开发实现：{r.requirement_code} {r.title}",
+                    "您被指派为开发负责人。请在「需求管理 → 任务跟踪」登记开发任务清单并排期（优先级按六维评分排序）。",
+                    link="/requirements?tab=tasks")
+    audit(db, "requirement", r.id, "to_dev", user, {"owner": owner.name})
+    publish(db, "requirement.to_dev", "requirement", r.id, {"owner_id": owner.id})
+    db.commit()
+    return ok({"id": r.id, "status": r.status, "owner": r.owner})
+
+
 # ---------- 实现中任务清单（跨需求聚合，排期/实现阶段） ----------
 
 @router.get("/tasks/active")

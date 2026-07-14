@@ -287,6 +287,18 @@ export const zh: Dict = {
   'req.col.route': '实现路径',
   'req.activeTask.sortHint': '清单按所属需求加权总分从高到低排序',
 
+  'req.activeTask.add': '登记任务',
+  'req.activeTask.added': '任务已登记',
+  'req.activeTask.pickReq': '所属需求',
+  'req.activeTask.pickReqRequired': '请选择所属需求',
+  'req.activeTask.pickReqHint': '仅列出「实现中·开发路径」的需求；转项目的需求由项目侧交付',
+  'req.activeTask.nameRequired': '请输入任务名称',
+  'req.solution.toDev': '转开发实现',
+  'req.solution.toDevHint': '指派开发负责人后需求进入「实现中」，其将收到通知，请在「任务跟踪」登记开发任务清单并排期（优先级按六维评分排序）。',
+  'req.solution.toDevDone': '已指派开发负责人并通知登记任务清单',
+  'req.solution.devOwner': '开发负责人',
+  'req.solution.devOwnerRequired': '请选择开发负责人',
+
   // 评分规则配置：分流规则
   'req.cfg.routing': '分流规则',
   'req.cfg.effortThreshold': '转项目人天阈值',
@@ -600,6 +612,18 @@ export const en: Dict = {
   // List / task list
   'req.col.route': 'Route',
   'req.activeTask.sortHint': 'Sorted by the requirement weighted score, high to low',
+
+  'req.activeTask.add': 'Add Task',
+  'req.activeTask.added': 'Task added',
+  'req.activeTask.pickReq': 'Requirement',
+  'req.activeTask.pickReqRequired': 'Please pick a requirement',
+  'req.activeTask.pickReqHint': 'Only "Implementing · in-house dev" requirements are listed; project-routed ones are delivered via the project',
+  'req.activeTask.nameRequired': 'Please enter the task name',
+  'req.solution.toDev': 'Route to In-house Dev',
+  'req.solution.toDevHint': 'Assign a dev owner; the requirement moves to Implementing and the owner is notified to register the task list under "Task Tracking" (priority ordered by weighted score).',
+  'req.solution.toDevDone': 'Dev owner assigned and notified to register the task list',
+  'req.solution.devOwner': 'Dev Owner',
+  'req.solution.devOwnerRequired': 'Please select the dev owner',
 
   // Scoring config: routing rules
   'req.cfg.routing': 'Routing Rules',

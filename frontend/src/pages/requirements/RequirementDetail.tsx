@@ -421,6 +421,26 @@ function SolutionEvalSection({
     }
   };
 
+  // 转开发实现（M16.2，对称转项目）：选开发负责人 → POST to-dev → 通知其去任务跟踪登记清单
+  const [devOpen, setDevOpen] = useState(false);
+  const [devSaving, setDevSaving] = useState(false);
+  const [devForm] = Form.useForm();
+
+  const submitToDev = async () => {
+    const v = await devForm.validateFields();
+    setDevSaving(true);
+    try {
+      await api.post(`/requirements/${id}/to-dev`, { owner_id: v.owner_id });
+      message.success(t('req.solution.toDevDone'));
+      setDevOpen(false);
+      onSaved();
+    } catch {
+      // 已统一提示
+    } finally {
+      setDevSaving(false);
+    }
+  };
+
   return (
     <>
       <Typography.Text strong>{t('req.solution.section')}</Typography.Text>
@@ -473,8 +493,21 @@ function SolutionEvalSection({
                 {t('req.solution.toProject')}
               </Button>
             )}
-            {route === ROUTE_DEV && isAnalyzing && (
-              <Typography.Text type="secondary">{t('req.solution.devHint')}</Typography.Text>
+            {route === ROUTE_DEV && isAnalyzing && canOperate && (
+              <Space size={8} wrap>
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    devForm.resetFields();
+                    setDevOpen(true);
+                  }}
+                >
+                  {t('req.solution.toDev')}
+                </Button>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('req.solution.devHint')}
+                </Typography.Text>
+              </Space>
             )}
           </Space>
         </Descriptions.Item>
@@ -495,6 +528,27 @@ function SolutionEvalSection({
             name="pm_id"
             label={t('req.solution.pm')}
             rules={[{ required: true, message: t('req.solution.pmRequired') }]}
+          >
+            <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 转开发实现：选开发负责人 */}
+      <Modal
+        title={t('req.solution.toDev')}
+        open={devOpen}
+        onOk={() => void submitToDev()}
+        confirmLoading={devSaving}
+        onCancel={() => setDevOpen(false)}
+        destroyOnClose
+      >
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.solution.toDevHint')} />
+        <Form form={devForm} layout="vertical" preserve={false}>
+          <Form.Item
+            name="owner_id"
+            label={t('req.solution.devOwner')}
+            rules={[{ required: true, message: t('req.solution.devOwnerRequired') }]}
           >
             <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
           </Form.Item>
