@@ -288,6 +288,11 @@ export const zh: Dict = {
   'req.activeTask.sortHint': '清单按所属需求加权总分从高到低排序',
 
   'req.activeTask.add': '登记任务',
+
+  'req.activeTask.edit': '编辑任务',
+  'req.activeTask.updated': '任务已更新',
+  'req.activeTask.deleteConfirm': '删除任务「{name}」？',
+  'req.activeTask.deleted': '任务已删除',
   'req.activeTask.added': '任务已登记',
   'req.activeTask.pickReq': '所属需求',
   'req.activeTask.pickReqRequired': '请选择所属需求',
@@ -614,6 +619,11 @@ export const en: Dict = {
   'req.activeTask.sortHint': 'Sorted by the requirement weighted score, high to low',
 
   'req.activeTask.add': 'Add Task',
+
+  'req.activeTask.edit': 'Edit Task',
+  'req.activeTask.updated': 'Task updated',
+  'req.activeTask.deleteConfirm': 'Delete task "{name}"?',
+  'req.activeTask.deleted': 'Task deleted',
   'req.activeTask.added': 'Task added',
   'req.activeTask.pickReq': 'Requirement',
   'req.activeTask.pickReqRequired': 'Please pick a requirement',

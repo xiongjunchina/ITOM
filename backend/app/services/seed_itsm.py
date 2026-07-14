@@ -1,7 +1,7 @@
 """M2 种子：工单两套状态机、SLA 策略、流程定义、示例目录/服务项。幂等。"""
 from sqlalchemy.orm import Session
 
-from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_PM, IT_TM, IT_PMO
+from app.core.rbac import CIO, IS_MGR, IT_BM, IT_BP, IT_DEV, IT_OPS, IT_PDM, IT_PM, IT_TM, IT_PMO, IT_PDM_LEADER, IT_DEV_LEADER
 from app.models import (
     ProcessDefinition,
     ProcessStep,
@@ -198,7 +198,7 @@ PROCESS_DEFS = [
         "trigger": None,
         "steps": [
             ("需求评审（业务域负责人）", IT_BM, "L3", 48, [IT_PDM]),
-            ("方案评估与路径判定", IT_TM, "L3", 72, [IT_DEV]),
+            ("方案评估与路径判定", IT_PDM_LEADER, "L3", 72, [IT_DEV_LEADER]),
             ("实现交付（开发/项目跟踪）", IT_DEV, "L3", None),
             ("验收与闭环", IT_PDM, "L3", 48),
         ],

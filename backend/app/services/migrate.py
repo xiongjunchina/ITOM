@@ -190,6 +190,17 @@ def rebuild_requirement_flow_m16(db: Session):
     db.commit()
 
 
+def fix_solution_review_roles_m163(db: Session):
+    """M16.3：方案评估步骤主责/知会换 it_pdm_leader/it_dev_leader（等长更新，实例安全）。"""
+    n = db.execute(text(
+        "UPDATE process_step SET default_role='it_pdm_leader', cc_roles='[\"it_dev_leader\"]'::jsonb "
+        "WHERE name='方案评估与路径判定' AND default_role='it_tm' AND is_deleted=false"
+    )).rowcount
+    if n:
+        logger.info("方案评估步骤角色 -> it_pdm_leader/it_dev_leader (%d rows)", n)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -197,6 +208,7 @@ def migrate_m35_org(db: Session):
     drop_columns(db)
     fix_project_flow_pmo(db)
     rebuild_requirement_flow_m16(db)
+    fix_solution_review_roles_m163(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

@@ -95,6 +95,8 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_dev": _staff_base(),
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
     "it_pdm": _merge(_staff_base(), {"requirements": "e"}),
+    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "process_monitor": "v"}),
+    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "process_monitor": "v"}),
     "it_pm": _merge(_staff_base(), {"projects": "ce"}),
     "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),

@@ -22,6 +22,7 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
+import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import type { ActiveTaskRow, Member, RequirementRow, RequirementTaskStatus } from '../../api/types';
 import { useAuthStore, hasPermission } from '../../stores/auth';
@@ -120,6 +121,70 @@ export default function ActiveTaskList() {
     void load();
   }, [load]);
 
+  // 编辑/删除（M16.3：开发 leader 与管理员维护任务清单；权限=requirements.edit）
+  const [editing, setEditing] = useState<ActiveTaskRow | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editForm] = Form.useForm();
+
+  const openEdit = async (row: ActiveTaskRow) => {
+    setEditing(row);
+    if (memberOptions.length === 0) {
+      try {
+        const members = await api.getList<Member>('/members', { page: 1, page_size: 999 });
+        setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+      } catch {
+        // 已统一提示
+      }
+    }
+    editForm.setFieldsValue({
+      name: row.name,
+      description: row.description ?? undefined,
+      assignee: row.assignee,
+      plan_date: row.plan_date ? dayjs(row.plan_date) : undefined,
+      plan_effort: row.plan_effort ?? undefined,
+      actual_effort: row.actual_effort ?? undefined,
+      status: row.status,
+    });
+  };
+
+  const submitEdit = async () => {
+    if (!editing) return;
+    const v = await editForm.validateFields();
+    setEditSaving(true);
+    try {
+      await api.patch(`/requirements/tasks/${editing.id}`, {
+        name: v.name,
+        description: v.description || null,
+        assignee: v.assignee,
+        plan_date: v.plan_date ? (v.plan_date as Dayjs).format('YYYY-MM-DD') : null,
+        plan_effort: v.plan_effort ?? null,
+        actual_effort: v.actual_effort ?? null,
+        status: v.status,
+      });
+      message.success(t('req.activeTask.updated'));
+      setEditing(null);
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const removeTask = (row: ActiveTaskRow) => {
+    Modal.confirm({
+      title: t('req.activeTask.deleteConfirm', { name: row.name }),
+      okText: t('common.delete'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        await api.delete(`/requirements/tasks/${row.id}`);
+        message.success(t('req.activeTask.deleted'));
+        void load();
+      },
+    });
+  };
+
   const columns: ColumnsType<ActiveTaskRow> = [
     {
       title: t('req.activeTask.col.name'),
@@ -209,6 +274,26 @@ export default function ActiveTaskList() {
       width: 100,
       render: (v: RequirementTaskStatus) => <Tag color={REQ_TASK_STATUS_COLORS[v]}>{et.reqTaskStatus(v)}</Tag>,
     },
+    ...(canEdit
+      ? [
+          {
+            title: t('common.actions'),
+            key: 'ops',
+            width: 110,
+            fixed: 'right' as const,
+            render: (_: unknown, row: ActiveTaskRow) => (
+              <span style={{ whiteSpace: 'nowrap' }}>
+                <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => void openEdit(row)}>
+                  {t('common.edit')}
+                </Button>
+                <Button type="link" size="small" danger style={{ paddingInline: 4 }} onClick={() => removeTask(row)}>
+                  {t('common.delete')}
+                </Button>
+              </span>
+            ),
+          } as ColumnsType<ActiveTaskRow>[number],
+        ]
+      : []),
   ];
 
   return (
@@ -268,6 +353,47 @@ export default function ActiveTaskList() {
             </Form.Item>
             <Form.Item name="plan_effort" label={t('req.task.planEffort')}>
               <InputNumber min={0} precision={1} style={{ width: 110 }} />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('req.activeTask.edit')}
+        open={!!editing}
+        onOk={() => void submitEdit()}
+        confirmLoading={editSaving}
+        onCancel={() => setEditing(null)}
+        destroyOnClose
+        width={560}
+      >
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          {editing ? `${editing.requirement_code} ${editing.requirement_title}` : ''}
+        </Typography.Paragraph>
+        <Form form={editForm} layout="vertical" preserve={false}>
+          <Form.Item name="name" label={t('req.activeTask.col.name')} rules={[{ required: true, message: t('req.activeTask.nameRequired') }]}>
+            <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item name="description" label={t('req.task.desc')}>
+            <Input.TextArea rows={2} maxLength={500} />
+          </Form.Item>
+          <Space size={16} wrap>
+            <Form.Item name="assignee" label={t('req.activeTask.col.owner')} rules={[{ required: true, message: t('req.selectMember') }]}>
+              <Select showSearch optionFilterProp="label" style={{ width: 170 }} options={memberOptions} />
+            </Form.Item>
+            <Form.Item name="plan_date" label={t('req.activeTask.col.planDate')}>
+              <DatePicker />
+            </Form.Item>
+            <Form.Item name="status" label={t('req.activeTask.col.progress')}>
+              <Select style={{ width: 120 }} options={REQ_TASK_STATUSES.map((v) => ({ value: v, label: et.reqTaskStatus(v) }))} />
+            </Form.Item>
+          </Space>
+          <Space size={16} wrap>
+            <Form.Item name="plan_effort" label={t('req.task.planEffort')}>
+              <InputNumber min={0} precision={1} style={{ width: 120 }} />
+            </Form.Item>
+            <Form.Item name="actual_effort" label={t('req.task.actualEffort')}>
+              <InputNumber min={0} precision={1} style={{ width: 120 }} />
             </Form.Item>
           </Space>
         </Form>
