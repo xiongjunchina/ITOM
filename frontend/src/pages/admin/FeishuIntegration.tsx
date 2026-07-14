@@ -142,6 +142,7 @@ export default function FeishuIntegration() {
 
       {/* 应用配置 */}
       <Typography.Title level={5}>{t('feishu.appConfig')}</Typography.Title>
+      <Alert type="info" showIcon style={{ marginBottom: 12, maxWidth: 720 }} message={t('feishu.sharedHint')} />
       <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 480 }}>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <Typography.Text>{t('feishu.apiBase')}</Typography.Text>
