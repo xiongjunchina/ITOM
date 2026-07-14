@@ -12,6 +12,8 @@ export interface FlowDiagramStep {
   cc_roles?: string[] | null;
   autonomy_level?: string | null;
   sla_hours?: number | null;
+  /** 步骤说明（如实现交付节点的两条路径说明），有则在节点内灰字展示 */
+  description?: string | null;
   /** 实例视图字段（定义预览无）：有待处理任务时可渲染「完成此步骤」入口 */
   task_id?: string | null;
   task_status?: string | null;
@@ -116,6 +118,14 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq, onCompleteSt
                   <div style={{ marginTop: 4 }}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       {notes.join(' · ')}
+                    </Typography.Text>
+                  </div>
+                )}
+                {/* 步骤说明（路径分支等），灰字小号 */}
+                {s.description && (
+                  <div style={{ marginTop: 4, maxWidth: 260 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {s.description}
                     </Typography.Text>
                   </div>
                 )}

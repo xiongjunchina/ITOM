@@ -279,6 +279,7 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
             {
                 "seq": s.seq,
                 "name": s.name,
+                "description": s.description,
                 "default_role": s.default_role,
                 "cc_roles": s.cc_roles or [],
                 "autonomy_level": s.autonomy_level,

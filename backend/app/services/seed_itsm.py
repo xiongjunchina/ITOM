@@ -199,7 +199,8 @@ PROCESS_DEFS = [
         "steps": [
             ("需求评审（业务域负责人）", IT_BM, "L3", 48, [IT_PDM]),
             ("方案评估与路径判定", IT_PDM_LEADER, "L3", 72, [IT_DEV_LEADER]),
-            ("实现交付（开发/项目跟踪）", IT_DEV, "L3", None),
+            ("实现交付（转开发实现 / 转项目管理）", IT_DEV_LEADER, "L3", None, [],
+             "两种路径由方案评估判定并自动指派：转开发实现→开发负责人（任务清单排期交付）；转项目管理→项目经理（项目立项交付，验收关闭后回传）"),
             ("验收与闭环", IT_BM, "L3", 48),
         ],
     },
@@ -231,8 +232,9 @@ def run_seed_itsm(db: Session):
             for seq, step in enumerate(d["steps"], start=1):
                 name, role, level, sla_hours = step[:4]
                 cc = list(step[4]) if len(step) > 4 else []
+                desc = step[5] if len(step) > 5 else None
                 db.add(ProcessStep(definition_id=definition.id, seq=seq, name=name, default_role=role,
-                                   cc_roles=cc, autonomy_level=level, sla_hours=sla_hours))
+                                   cc_roles=cc, autonomy_level=level, sla_hours=sla_hours, description=desc))
     # 示例目录/服务项：让系统开箱可报单，用户可改名或补充
     if not db.query(ServiceCatalog).first():
         catalog = ServiceCatalog(code="SC-INIT-0001", name="通用 IT 服务", tier="silver", description="初始目录，可编辑", sort=1)

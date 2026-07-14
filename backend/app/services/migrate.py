@@ -175,9 +175,9 @@ def rebuild_requirement_flow_m16(db: Session):
     from app.core.glid import new_glid
     steps = [
         (1, "需求评审（业务域负责人）", "it_bm", ["it_pdm"], "L3", 48),
-        (2, "方案评估与路径判定", "it_tm", ["it_dev"], "L3", 72),
-        (3, "实现交付（开发/项目跟踪）", "it_dev", [], "L3", None),
-        (4, "验收与闭环", "it_pdm", [], "L3", 48),
+        (2, "方案评估与路径判定", "it_pdm_leader", ["it_dev_leader"], "L3", 72),
+        (3, "实现交付（转开发实现 / 转项目管理）", "it_dev_leader", [], "L3", None),
+        (4, "验收与闭环", "it_bm", [], "L3", 48),
     ]
     import json as _json
     for seq, name, role, cc, level, sla in steps:
@@ -230,6 +230,20 @@ def fix_ops_leader_m166(db: Session):
     db.commit()
 
 
+def fix_delivery_step_branches_m167(db: Session):
+    """M16.7：需求流程「实现交付」节点展示两条路径（转开发/转项目），fallback 升开发负责人。"""
+    n = db.execute(text(
+        "UPDATE process_step ps SET "
+        "name='实现交付（转开发实现 / 转项目管理）', default_role='it_dev_leader', "
+        "description='两种路径由方案评估判定并自动指派：转开发实现→开发负责人（任务清单排期交付）；转项目管理→项目经理（项目立项交付，验收关闭后回传）' "
+        "FROM process_definition d WHERE ps.definition_id=d.id AND d.code LIKE 'requirement_flow%' "
+        "AND ps.name LIKE '实现交付%' AND ps.is_deleted=false AND ps.default_role IN ('it_dev','it_dev_leader')"
+    )).rowcount
+    if n:
+        logger.info("实现交付节点路径化展示 (%d rows)", n)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -240,6 +254,7 @@ def migrate_m35_org(db: Session):
     fix_solution_review_roles_m163(db)
     fix_acceptance_step_role_m165(db)
     fix_ops_leader_m166(db)
+    fix_delivery_step_branches_m167(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 
