@@ -357,10 +357,31 @@ export default function Definitions() {
     </Col>
   );
 
-  const grouped = (Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[]).map((ent) => ({
-    et: ent,
-    label: et.workflowEntity(ent),
-    defs: items.filter((d) => d.entity_type === ent),
+  // 分组：工单类按触发条件 ticket_type 拆为 ITSM(服务请求/变更/事件)（2026-07-14 用户要求，
+  // 顺序同 ITSM 子菜单）；无触发条件的工单流程归「工单(其他)」；其余实体沿用实体标签。
+  const groupKeyOf = (d: ProcessDefinition): string => {
+    if (d.entity_type === 'ticket') {
+      const tt = d.trigger_condition?.ticket_type;
+      if (tt === 'service_request') return 'itsm_sr';
+      if (tt === 'incident') return 'itsm_incident';
+      return 'itsm_other';
+    }
+    if (d.entity_type === 'ticket_change') return 'itsm_change';
+    return d.entity_type;
+  };
+  const groupMeta: { key: string; label: string }[] = [
+    { key: 'itsm_sr', label: t('proc.group.itsmSr') },
+    { key: 'itsm_change', label: t('proc.group.itsmChange') },
+    { key: 'itsm_incident', label: t('proc.group.itsmIncident') },
+    { key: 'itsm_other', label: t('proc.group.itsmOther') },
+    ...(Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[])
+      .filter((e) => e !== 'ticket' && e !== 'ticket_change')
+      .map((e) => ({ key: e as string, label: et.workflowEntity(e) })),
+  ];
+  const grouped = groupMeta.map((g) => ({
+    et: g.key,
+    label: g.label,
+    defs: items.filter((d) => groupKeyOf(d) === g.key),
   }));
 
   return (

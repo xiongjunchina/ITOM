@@ -20,6 +20,10 @@ export const zh: Dict = {
 
   // 流程定义：卡片 / 列表
   'proc.title': '流程定义',
+  'proc.group.itsmSr': 'ITSM（服务请求）',
+  'proc.group.itsmChange': 'ITSM（变更）',
+  'proc.group.itsmIncident': 'ITSM（事件）',
+  'proc.group.itsmOther': '工单（其他）',
   'proc.emptyDefs': '暂无流程定义',
   'proc.instanceCount': '实例数：{n}',
   'proc.stepsLocked': '步骤已锁定',
@@ -103,6 +107,10 @@ export const en: Dict = {
 
   // Process definitions: card / list
   'proc.title': 'Process Definitions',
+  'proc.group.itsmSr': 'ITSM (Service Request)',
+  'proc.group.itsmChange': 'ITSM (Change)',
+  'proc.group.itsmIncident': 'ITSM (Incident)',
+  'proc.group.itsmOther': 'Ticket (Other)',
   'proc.emptyDefs': 'No process definitions',
   'proc.instanceCount': 'Instances: {n}',
   'proc.stepsLocked': 'Steps locked',
