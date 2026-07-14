@@ -16,7 +16,15 @@ W_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
 def _paragraph_text(p) -> str:
-    return "".join(t.text or "" for t in p.iter(f"{{{W_NS['w']}}}t")).strip()
+    """段落文本：<w:t> 拼接；<w:br/>（Shift+Enter 软换行）转 \n，避免两行粘连。"""
+    parts: list[str] = []
+    for node in p.iter():
+        tag = node.tag.rsplit("}", 1)[-1]
+        if tag == "t":
+            parts.append(node.text or "")
+        elif tag == "br":
+            parts.append("\n")
+    return "".join(parts).strip()
 
 
 def extract_docx_text(raw: bytes) -> str:
@@ -88,12 +96,18 @@ def parse_charter(raw: bytes) -> dict:
         r"项目范围", r"(项目)?包含范围", r"(项目)?不包含范围",
         r"WBS", r"预算与资源", r"风险与应对", r"关键风险", r"应对与监控", r"审批",
     ]
-    _title_re = re.compile(
-        r"^[\d一二三四五六七八九十]{0,3}(\.\d+)*[\.、\s]*(" + "|".join(SECTION_TITLES) + ")"
-    )
+    _titles = "|".join(SECTION_TITLES)
+    # 带编号前缀（3./4.1/六、）+ 标题词 → 直接认标题（编号开头+标题词的行几乎不会是正文）；
+    # 无编号裸标题 → 限短行（≤40），防止正文里含标题词的长句被误判为边界
+    _numbered_re = re.compile(r"^[\d一二三四五六七八九十]{1,3}(\.\d+)*[\.、\s]+(" + _titles + ")")
+    _bare_re = re.compile(r"^(" + _titles + ")")
 
     def is_heading(ln: str) -> bool:
-        return len(ln) <= 80 and "\t" not in ln and bool(_title_re.match(ln))
+        if "\t" in ln:
+            return False
+        if _numbered_re.match(ln):
+            return True
+        return len(ln) <= 40 and bool(_bare_re.match(ln))
 
     def section(heading_pattern: str) -> str | None:
         """收集某节标题后的正文，直到下一个已知节标题或表格行。
@@ -110,6 +124,8 @@ def parse_charter(raw: bytes) -> dict:
             if active:
                 if "\t" in ln or is_heading(ln):
                     break
+                if ln.startswith(("（", "(")):
+                    continue  # 模板的括号说明行不入正文
                 collected.append(ln)
         return "\n".join(collected)[:2000] or None
 

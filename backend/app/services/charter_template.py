@@ -102,7 +102,10 @@ def build_charter_template_docx() -> bytes:
         ["干系人", "某供应商", "外部 UI 设计", "设计交付质量与进度"],
     ]))
     body.append(_para("3. 项目目标 / Project Goals", bold=True))
-    body.append(_para("示例：门户改版按期上线，核心功能可用率 99.9%，用户满意度 ≥ 90%。"))
+    body.append(_para("（支持多行/编号列表，逐条列出可度量的目标 / one measurable goal per line）"))
+    body.append(_para("1. 门户改版按期上线，核心功能可用率 99.9%；"))
+    body.append(_para("2. 3 个核心业务模块完成迁移并通过验收；"))
+    body.append(_para("3. 用户满意度 ≥ 90%。"))
     body.append(_para("4. 项目范围 / Scope", bold=True))
     body.append(_para("4.1 项目包含范围 / In-scope", bold=True))
     body.append(_para("示例：门户前端重构、SSO 集成、3 个核心业务模块迁移。"))
@@ -135,7 +138,10 @@ def build_charter_template_docx() -> bytes:
 
     # 6. 预算与资源（预算金额在顶部信息表填写；此处描述资源投入）
     body.append(_para("6. 预算与资源 / Budget & Resources", bold=True))
-    body.append(_para("示例：总预算见文首信息表。人力：1 名 PM、3 名开发、1 名测试；采购：外部供应商配合 UI 设计；环境：新增 2 台应用服务器。"))
+    body.append(_para("（金额在文首信息表；此处写资源构成，支持多行 / amount in the header table; resources here）"))
+    body.append(_para("1. 人力：1 名 PM、3 名开发、1 名测试；"))
+    body.append(_para("2. 采购：外部供应商配合 UI 设计；"))
+    body.append(_para("3. 环境：新增 2 台应用服务器。"))
     body.append(_para(""))
 
     # 7. 风险与应对（7.1 关键风险表：概率/影响列填 高/中/低）

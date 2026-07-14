@@ -32,6 +32,8 @@ def test_generated_template_parses(client, admin_headers):
     assert not any("未解析" in w for w in data["warnings"])
     # M13 结构化章节：背景/目标/范围(做与不做)/资源说明 + §2 组织表分流
     assert f["background"] and f["goals"] and f["scope_in"] and f["scope_out"]
+    assert "WBS" not in f["scope_out"] and "99.9%" in f["goals"] and "\n" in f["goals"]  # 多行目标、边界纯净
+    assert "（" not in f["goals"]  # 模板括号说明行不入正文
     assert "服务器" in f["resource_note"]
     assert [m["name"] for m in f["org_members"]] == ["李四", "王五"]
     assert [m["name"] for m in f["stakeholders"]] == ["赵总", "某供应商"]
