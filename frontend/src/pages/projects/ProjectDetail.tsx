@@ -43,6 +43,8 @@ import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
+import type { FlowDiagramStep } from '../../components/FlowDiagram';
+import CompleteStepModal from '../../components/CompleteStepModal';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
 import type {
@@ -221,6 +223,7 @@ export default function ProjectDetail() {
   const canEdit = detail?.can_edit ?? false;
   /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/最新动态/附件上传） */
   const isExample = detail?.is_example === true;
+  const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   const isFinal = detail?.status === 'closed' || detail?.status === 'cancelled';
   const memberOptions = useMemo(
     () =>
@@ -1145,9 +1148,15 @@ export default function ProjectDetail() {
             steps={detail.process.steps}
             roleLabel={roleLabel}
             currentSeq={detail.process.current_step_seq}
+            onCompleteStep={canEdit && !isExample ? setCompletingStep : undefined}
           />
         </Card>
       )}
+      <CompleteStepModal
+        step={completingStep}
+        onClose={() => setCompletingStep(null)}
+        onDone={() => void loadDetail()}
+      />
 
       <Card>
         <Tabs

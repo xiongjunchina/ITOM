@@ -45,6 +45,10 @@ export const zh: Dict = {
 
   // 流程示意图
   'comp.flow.noStep': '暂无步骤',
+  'comp.flow.completeStep': '完成此步骤',
+  'comp.flow.completeStepTitle': '完成步骤：{name}',
+  'comp.flow.stepDone': '已完成，流程推进到下一步骤',
+  'comp.flow.commentPlaceholder': '处理说明（可选）',
   'comp.flow.unassigned': '未指派',
   'comp.flow.cc': '知会 {name}',
   'comp.flow.unnamed': '（未命名）',
@@ -99,6 +103,10 @@ export const en: Dict = {
 
   // Flow diagram
   'comp.flow.noStep': 'No steps',
+  'comp.flow.completeStep': 'Complete Step',
+  'comp.flow.completeStepTitle': 'Complete step: {name}',
+  'comp.flow.stepDone': 'Done — process advanced to the next step',
+  'comp.flow.commentPlaceholder': 'Notes (optional)',
   'comp.flow.unassigned': 'Unassigned',
   'comp.flow.cc': 'CC {name}',
   'comp.flow.unnamed': '(unnamed)',

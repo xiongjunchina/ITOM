@@ -60,6 +60,10 @@ PROJECT_TRANSITIONS = [
     ("project", "completed", "closed", []),
     ("project", "planning", "cancelled", []),
     ("project", "active", "cancelled", []),
+    # 恢复类流转（2026-07-14）：终态/已完成可重启，误关闭可纠正
+    ("project", "closed", "active", []),      # 已关闭 → 重新启动
+    ("project", "completed", "active", []),   # 已完成 → 重新打开（返工）
+    ("project", "cancelled", "planning", []), # 已取消 → 重新规划
 ]
 
 REQUIREMENT_STATUSES = [

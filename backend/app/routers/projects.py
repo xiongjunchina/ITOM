@@ -313,6 +313,8 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
     today = date.today()
     if to == "active" and not p.actual_start:
         p.actual_start = today
+    if to == "active" and from_code in ("completed", "closed"):
+        p.actual_end = None  # 重启：清实际结束（重新完成时再打点）
     if to == "completed":
         p.actual_end = today
         publish(db, "project.completed", "project", p.id, {})

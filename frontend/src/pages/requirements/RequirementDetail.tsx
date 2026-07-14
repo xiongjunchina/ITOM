@@ -42,6 +42,8 @@ import { ExampleAlert } from '../../components/ExampleTag';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
+import type { FlowDiagramStep } from '../../components/FlowDiagram';
+import CompleteStepModal from '../../components/CompleteStepModal';
 import type {
   AcceptanceCriterion,
   AllowedTransition,
@@ -335,6 +337,7 @@ export default function RequirementDetail() {
 
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
+  const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/转出按钮） */
   const isExample = detail?.is_example === true;
   useEffect(() => {
@@ -814,9 +817,15 @@ export default function RequirementDetail() {
             steps={detail.process.steps}
             roleLabel={roleLabel}
             currentSeq={detail.process.current_step_seq}
+            onCompleteStep={canEdit && !detail.is_example ? setCompletingStep : undefined}
           />
         </Card>
       )}
+      <CompleteStepModal
+        step={completingStep}
+        onClose={() => setCompletingStep(null)}
+        onDone={() => void load()}
+      />
 
       {/* 登记信息 */}
       <Card

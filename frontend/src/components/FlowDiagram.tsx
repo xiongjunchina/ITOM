@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
-import { Tag, Typography } from 'antd';
-import { SoundOutlined, UserOutlined } from '@ant-design/icons';
+import { Button, Tag, Typography } from 'antd';
+import { CheckOutlined, SoundOutlined, UserOutlined } from '@ant-design/icons';
 import { useT } from '../i18n';
 import { useEnums } from '../i18n/enums';
 
@@ -12,6 +12,10 @@ export interface FlowDiagramStep {
   cc_roles?: string[] | null;
   autonomy_level?: string | null;
   sla_hours?: number | null;
+  /** 实例视图字段（定义预览无）：有待处理任务时可渲染「完成此步骤」入口 */
+  task_id?: string | null;
+  task_status?: string | null;
+  assignee_name?: string | null;
 }
 
 interface FlowDiagramProps {
@@ -20,6 +24,8 @@ interface FlowDiagramProps {
   roleLabel: (key: string) => string;
   /** 当前步骤 seq：匹配节点高亮（蓝色边框） */
   currentSeq?: number | null;
+  /** 完成步骤回调（实例视图传入）：待处理步骤显示「完成此步骤」按钮，推进流程到下一节点 */
+  onCompleteStep?: (step: FlowDiagramStep) => void;
 }
 
 const CARD_BASE: CSSProperties = {
@@ -42,7 +48,7 @@ const CARD_CURRENT: CSSProperties = {
  * 每个节点展示：序号 + 步骤名 / 处理人（蓝 Tag）/ 知会人（灰 Tag 列表）/ 自治级别·SLA 附注。
  * 纯 CSS/antd 实现，不依赖第三方图库。
  */
-export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagramProps) {
+export default function FlowDiagram({ steps, roleLabel, currentSeq, onCompleteStep }: FlowDiagramProps) {
   const t = useT();
   const et = useEnums();
   if (!steps || steps.length === 0) {
@@ -88,7 +94,7 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagra
                 {/* 处理人 */}
                 <div style={{ marginTop: 6 }}>
                   <Tag icon={<UserOutlined />} color="blue" style={{ marginInlineEnd: 0 }}>
-                    {s.default_role ? roleLabel(s.default_role) : t('comp.flow.unassigned')}
+                    {s.assignee_name ?? (s.default_role ? roleLabel(s.default_role) : t('comp.flow.unassigned'))}
                   </Tag>
                 </div>
                 {/* 知会人（有才显示） */}
@@ -111,6 +117,14 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq }: FlowDiagra
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                       {notes.join(' · ')}
                     </Typography.Text>
+                  </div>
+                )}
+                {/* 待处理步骤的推进入口（仅实例视图且调用方允许时） */}
+                {onCompleteStep && s.task_id && s.task_status === '待处理' && (
+                  <div style={{ marginTop: 6 }}>
+                    <Button size="small" type="primary" ghost icon={<CheckOutlined />} onClick={() => onCompleteStep(s)}>
+                      {t('comp.flow.completeStep')}
+                    </Button>
                   </div>
                 )}
               </div>
