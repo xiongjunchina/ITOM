@@ -18,7 +18,7 @@ import {
   Tag,
   Typography,
   message,
-} from 'antd';
+  Popconfirm} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   ArrowDownOutlined,
@@ -245,6 +245,16 @@ export default function Definitions() {
     }
   };
 
+  const deleteDefinition = async (def: ProcessDefinition) => {
+    try {
+      await api.delete(`/admin/process-definitions/${def.id}`);
+      message.success(t('proc.deleted'));
+      void load();
+    } catch {
+      // 已统一提示（PROCESS_ACTIVE / PROCESS_IN_USE）
+    }
+  };
+
   const toggleActive = async (record: ProcessDefinition, checked: boolean) => {
     try {
       await api.patch(`/admin/process-definitions/${record.id}`, { active: checked });
@@ -321,6 +331,20 @@ export default function Definitions() {
               >
                 {t('proc.drawer.new-version')}
               </Button>
+            )}
+            {isAdmin && !def.active && def.instance_count === 0 && (
+              <Popconfirm
+                title={t('proc.deleteConfirm', { name: def.name })}
+                description={t('proc.deleteDesc')}
+                okText={t('common.delete')}
+                okButtonProps={{ danger: true }}
+                cancelText={t('common.cancel')}
+                onConfirm={() => void deleteDefinition(def)}
+              >
+                <Button type="link" size="small" danger>
+                  {t('common.delete')}
+                </Button>
+              </Popconfirm>
             )}
           </Space>
         }

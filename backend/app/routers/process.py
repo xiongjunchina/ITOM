@@ -207,6 +207,28 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
     return ok(_def_row(definition, db))
 
 
+@router.delete("/api/admin/process-definitions/{def_id}")
+def delete_definition(def_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("process_definitions", "delete"))):
+    """删除流程定义（M15）：仅 已停用 且 从未产生实例 的版本可删（物理删，无引用）。
+
+    有历史实例（含已删单据的软删实例）的版本保留可追溯；激活中的先停用再删，防误删。
+    """
+    definition = db.get(ProcessDefinition, def_id)
+    if not definition or definition.is_deleted:
+        raise AppError("NOT_FOUND", "流程定义不存在", 404)
+    if definition.active:
+        raise AppError("PROCESS_ACTIVE", "流程处于激活状态，请先停用再删除")
+    used = db.query(ProcessInstance).filter(ProcessInstance.definition_id == definition.id).count()  # 含软删：用过即留痕
+    if used > 0:
+        raise AppError("PROCESS_IN_USE", f"该流程版本已产生 {used} 个实例（含历史单据），不可删除；如不再使用请保持停用")
+    code, name = definition.code, definition.name
+    db.query(ProcessStep).filter(ProcessStep.definition_id == definition.id).delete()
+    db.delete(definition)
+    audit(db, "process_definition", def_id, "delete", actor, {"code": code, "name": name})
+    db.commit()
+    return ok({"id": def_id})
+
+
 @router.post("/api/admin/process-definitions/{def_id}/new-version")
 def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("process_definitions", "edit"))):
     """复制为新版本并停用旧版：老单据沿用旧版步骤，新单据走新版。"""

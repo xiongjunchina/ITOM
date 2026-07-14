@@ -288,3 +288,40 @@ def test_group_as_process_default_role(client, admin_headers, ctx):
     step = detail["process"]["steps"][0]
     assert detail["process"]["definition_name"] == "网络请求流程"
     assert step["assignee_name"] == "郑一"  # 组内在岗成员自动指派
+
+
+def test_delete_process_definition_guards(client, admin_headers):
+    """M15：流程版本删除——零实例+停用可删；激活/有实例拒绝。"""
+    r = client.post("/api/admin/process-definitions", json={
+        "code": "tmp_del_flow", "name": "临时待删流程", "entity_type": "problem",
+        "trigger_condition": {"test_only": "tmp_del"}, "description": None,
+        "steps": [{"seq": 1, "name": "唯一步骤", "default_role": "it_ops", "cc_roles": [],
+                   "autonomy_level": "L4", "sla_hours": None, "description": None}],
+    }, headers=admin_headers)
+    d = r.json()["data"]
+
+    # 新建默认激活 → 激活中拒绝删除
+    if d["active"]:
+        resp = client.delete(f"/api/admin/process-definitions/{d['id']}", headers=admin_headers)
+        assert resp.json()["error"]["code"] == "PROCESS_ACTIVE"
+        client.patch(f"/api/admin/process-definitions/{d['id']}", json={"active": False}, headers=admin_headers)
+
+    # 停用 + 零实例 → 删除成功且列表消失
+    resp = client.delete(f"/api/admin/process-definitions/{d['id']}", headers=admin_headers)
+    assert resp.json()["success"], resp.text
+    codes = [x["code"] for x in client.get("/api/admin/process-definitions", headers=admin_headers).json()["data"]]
+    assert "tmp_del_flow" not in codes
+
+    # 产生过实例的流程 → 拒绝删除（建一个项目触发 project_flow 实例）
+    m = client.post("/api/members", json={"name": "流程删除验证PM"}, headers=admin_headers).json()["data"]
+    client.post("/api/projects", json={
+        "name": "M15流程删除验证项目", "pm": m["id"],
+        "planned_start": "2026-07-01", "planned_end": "2026-08-31",
+    }, headers=admin_headers)
+    flows = client.get("/api/admin/process-definitions", headers=admin_headers).json()["data"]
+    used = next(f for f in flows if f["entity_type"] == "project" and f["instance_count"] > 0)
+    client.patch(f"/api/admin/process-definitions/{used['id']}", json={"active": False}, headers=admin_headers)
+    resp = client.delete(f"/api/admin/process-definitions/{used['id']}", headers=admin_headers)
+    assert resp.json()["error"]["code"] == "PROCESS_IN_USE"
+    client.patch(f"/api/admin/process-definitions/{used['id']}", json={"active": True}, headers=admin_headers)
+
