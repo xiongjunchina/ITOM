@@ -144,3 +144,37 @@ def test_threshold_configurable(client, ctx):
     client.patch(f"/api/requirements/{r['id']}", json={"solution_type": "二次开发", "dev_effort": 8}, headers=ctx["admin"])
     assert client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["route"] == "转项目管理"
     client.put("/api/requirements/scoring-config", json={"effort_threshold": 20}, headers=ctx["admin"])
+
+
+def test_sr_flow_requester_step_assigns_submitter(client, admin_headers, ctx):
+    """M16.8：流程步骤 default_role=requester → 指派单据提交人本人（用户改配置后的引擎语义）。"""
+    # 把 sr_flow 第 3 步主责改为 requester（模拟用户配置）
+    defs = client.get("/api/admin/process-definitions", headers=admin_headers).json()["data"]
+    sr = next(d for d in defs if d["code"].startswith("sr_flow") and d["active"])
+    steps = [{k: st[k] for k in ("seq", "name", "default_role", "cc_roles", "autonomy_level", "sla_hours", "description")}
+             for st in sr["steps"]]
+    steps[-1]["default_role"] = "requester"
+    r = client.patch(f"/api/admin/process-definitions/{sr['id']}", json={"steps": steps}, headers=admin_headers)
+    assert r.json()["success"], r.text
+
+    # 业务用户提交服务请求 → 推进到最后一步 → 任务指派提交人本人
+    m = client.post("/api/members", json={"name": "业务申请人M168"}, headers=admin_headers).json()["data"]
+    client.post("/api/admin/users", json={"username": "req_m168", "password": "pass123",
+                                          "roles": ["requester"], "person_id": m["id"]}, headers=admin_headers)
+    tk = client.post("/api/auth/login", json={"username": "req_m168", "password": "pass123"}).json()["data"]["token"]
+    item = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
+    t = client.post("/api/tickets", json={
+        "title": "M168确认指派验证", "ticket_type": "service_request", "priority": "P3",
+        "description": "d", "service_item_id": item,
+    }, headers={"Authorization": f"Bearer {tk}"}).json()["data"]
+
+    detail = client.get(f"/api/tickets/{t['id']}", headers=admin_headers).json()["data"]
+    proc = detail["process"]
+    # 完成前两步
+    for _ in range(2):
+        cur = next(st for st in proc["steps"] if st["seq"] == proc["current_step_seq"])
+        client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "完成"}, headers=admin_headers)
+        proc = client.get(f"/api/tickets/{t['id']}", headers=admin_headers).json()["data"]["process"]
+    last = next(st for st in proc["steps"] if st["seq"] == proc["current_step_seq"])
+    assert last["assignee_name"] == "业务申请人M168"  # 指派提交人本人而非任意业务用户
+

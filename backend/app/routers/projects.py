@@ -273,8 +273,8 @@ def _close_linked_requirements(db: Session, project: Project, actor: AuthUser):
 
             notifier.notify(db, "requirement.project_delivered", "requirement", r.id, [r.owner],
                             f"项目已关闭，请回需求闭环：{r.requirement_code} {r.title}",
-                            f"关联项目 {project.project_code} 已验收关闭。请在需求详情完成「实现交付」步骤，"
-                            f"流程将进入「验收与闭环」（业务域负责人组织业务验收）。",
+                            f"关联项目 {project.project_code} 已验收关闭。请在需求详情完成当前流程步骤，"
+                            f"进入业务验收环节（业务域负责人组织）后需求将闭环。",
                             link=f"/requirements/{r.id}")
 
 

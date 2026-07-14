@@ -15,6 +15,7 @@ from app.models import (
     Role,
     UserGroup,
     UserGroupMember,
+    Ticket,
 )
 from app.services.rbac import GROUP_PREFIX
 
@@ -150,9 +151,30 @@ def _notify_cc(db: Session, instance: ProcessInstance, step: ProcessStep, assign
     )
 
 
+def _requester_person(db: Session, entity_type: str, entity_id: str) -> str | None:
+    """单据提交人对应的人员 id（default_role=requester 的动态指派，M16.8）。"""
+    uid = None
+    if entity_type in ("ticket", "ticket_change"):
+        t = db.get(Ticket, entity_id)
+        uid = t.submitter if t else None
+    elif entity_type == "requirement":
+        from app.models import Requirement
+
+        r = db.get(Requirement, entity_id)
+        uid = r.requester if r else None
+    if not uid:
+        return None
+    u = db.get(AuthUser, uid)
+    return u.person_id if u else None
+
+
 def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):
     now = datetime.now()
-    assignee = _resolve_assignee(db, step, preferred)
+    if step.default_role == "requester":
+        # 「用户确认」类步骤：指派该单据的提交人本人，而非任意业务用户
+        assignee = _requester_person(db, instance.entity_type, instance.entity_id) or _resolve_assignee(db, step, preferred)
+    else:
+        assignee = _resolve_assignee(db, step, preferred)
     db.add(
         ProcessTask(
             instance_id=instance.id,
