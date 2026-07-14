@@ -82,18 +82,36 @@ def parse_charter(raw: bytes) -> dict:
             row_map[cells[0]] = cells[1]
             row_map[cells[2]] = cells[3]
 
+    # 已知节标题（编号无关：兼容 3./三、/无编号 等写法；短行才算标题，防止正文误判）
+    SECTION_TITLES = [
+        r"项目背景", r"(项目)?组织与相关方", r"相关方", r"项目目标",
+        r"项目范围", r"(项目)?包含范围", r"(项目)?不包含范围",
+        r"WBS", r"预算与资源", r"风险与应对", r"关键风险", r"应对与监控", r"审批",
+    ]
+    _title_re = re.compile(
+        r"^[\d一二三四五六七八九十]{0,3}(\.\d+)*[\.、\s]*(" + "|".join(SECTION_TITLES) + ")"
+    )
+
+    def is_heading(ln: str) -> bool:
+        return len(ln) <= 80 and "\t" not in ln and bool(_title_re.match(ln))
+
     def section(heading_pattern: str) -> str | None:
+        """收集某节标题后的正文，直到下一个已知节标题或表格行。
+
+        边界只认「已知标题/表格」——正文里的编号列表（1. xxx）或数字开头行不再误判为
+        下一节而提前截断（M13.1 修复：目标/资源说明常写成编号列表导致解析为空）。
+        """
         collected = []
         active = False
         for ln in lines:
-            if re.match(heading_pattern, ln):
+            if not active and re.match(heading_pattern, ln):
                 active = True
                 continue
             if active:
-                if re.match(r"^\d+(\.\d+)*[\.、\s]", ln) or "\t" in ln:
+                if "\t" in ln or is_heading(ln):
                     break
                 collected.append(ln)
-        return " ".join(collected)[:1000] or None
+        return "\n".join(collected)[:2000] or None
 
     def find(*anchors: str) -> str | None:
         """按锚点 contains 匹配 label（容忍双语/带注释标签，如「项目名称 / Project Name」）。"""
@@ -110,11 +128,12 @@ def parse_charter(raw: bytes) -> dict:
         "budget_10k": _parse_budget(find("项目预算")),
     }
     # 结构化章节（M13）：与概述页分段/章程模板章节一一对应；不再拼接进 description
-    fields["background"] = section(r"^1[\.、]\s*项目背景")
-    fields["goals"] = section(r"^3[\.、]\s*项目目标")
-    fields["scope_in"] = section(r"^4\.1\s*项目包含范围")
-    fields["scope_out"] = section(r"^4\.2\s*项目不包含范围")
-    fields["resource_note"] = section(r"^6[\.、]\s*预算与资源")
+    _n = r"^[\d一二三四五六七八九十]{0,3}(\.\d+)*[\.、\s]*"  # 可选编号前缀（3./三、/4.1/无编号）
+    fields["background"] = section(_n + r"项目背景")
+    fields["goals"] = section(_n + r"项目目标")
+    fields["scope_in"] = section(_n + r"(项目)?包含范围")
+    fields["scope_out"] = section(_n + r"(项目)?不包含范围")
+    fields["resource_note"] = section(_n + r"预算与资源")
 
     # §2 组织与相关方表（4 列：类别|姓名|角色/单位|职责或关注点），按类别分流
     org_members, stakeholders = [], []
@@ -155,5 +174,10 @@ def parse_charter(raw: bytes) -> dict:
         warnings.append("未解析到风险表（7.1 关键风险，5 列）")
     if not fields.get("org_members") and not fields.get("stakeholders"):
         warnings.append("未解析到组织与相关方表（第 2 节，4 列：类别|姓名|角色|职责）")
+    for key, label in (("background", "项目背景"), ("goals", "项目目标"),
+                       ("scope_in", "包含范围"), ("scope_out", "不包含范围"),
+                       ("resource_note", "预算与资源")):
+        if not fields.get(key):
+            warnings.append(f"未解析到「{label}」章节，可在导入后到项目编辑中补充")
 
     return {"fields": fields, "drafts": {"wbs": wbs[:100], "risks": risks[:10]}, "warnings": warnings}

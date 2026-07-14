@@ -83,3 +83,44 @@ def test_template_requires_create_perm(client, admin_headers):
     tok = client.post("/api/auth/login", json={"username": "charter_dev", "password": "pass123"}).json()["data"]["token"]
     r = client.get("/api/projects/charter/template", headers={"Authorization": f"Bearer {tok}"})
     assert r.status_code == 403
+
+
+def test_numbered_list_sections_parse(client, admin_headers):
+    """M13.1 回归：目标/资源写成编号列表（数字开头行）不再被误判为下一节而丢失。"""
+    from io import BytesIO
+    from zipfile import ZIP_DEFLATED, ZipFile
+
+    from app.services.charter import parse_charter
+    from app.services.charter_template import _CONTENT_TYPES, _RELS, _para, W
+
+    body = []
+    body.append(_para("项目名称 / Project Name\t目标解析回归项目"))  # 非表格行，仅占位
+    body.append(_para("1. 项目背景", bold=True))
+    body.append(_para("多平台运营数据分散，缺乏全局视图。"))
+    body.append(_para("3. 项目目标 / Project Goals", bold=True))
+    body.append(_para("1. 平台底座按期上线，可用率 99.9%；"))
+    body.append(_para("2. 44 个数据产品加工上线；"))
+    body.append(_para("3. 15 个内部运营 Agent 投产。"))
+    body.append(_para("4. 项目范围", bold=True))
+    body.append(_para("4.1 项目包含范围", bold=True))
+    body.append(_para("195 个数据源接入与湖仓建设。"))
+    body.append(_para("4.2 项目不包含范围", bold=True))
+    body.append(_para("智能硬件数据接入。"))
+    body.append(_para("六、预算与资源", bold=True))
+    body.append(_para("1 名 PM、3 名开发；2 台应用服务器。"))
+    body.append(_para("7. 风险与应对", bold=True))
+    sect = '<w:sectPr/>'
+    document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                f'<w:document xmlns:w="{W}"><w:body>{"".join(body)}{sect}</w:body></w:document>')
+    buf = BytesIO()
+    with ZipFile(buf, "w", ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        z.writestr("_rels/.rels", _RELS)
+        z.writestr("word/document.xml", document)
+
+    f = parse_charter(buf.getvalue())["fields"]
+    assert "99.9%" in f["goals"] and "44 个数据产品" in f["goals"] and "15 个内部" in f["goals"]
+    assert f["background"] and "范围" not in f["background"].replace("全局视图", "")
+    assert "195 个数据源" in f["scope_in"] and f["scope_out"].startswith("智能硬件")
+    assert "1 名 PM" in f["resource_note"]  # 中文序号「六、」+ 数字开头内容
+
