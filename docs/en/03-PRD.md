@@ -300,7 +300,7 @@ Registration → Evaluation → Analysis → Implementation → Closure (any act
 
 ### 7.2 Six-Dimension Weighted Scoring & Four Quadrants
 
-Based on the "Requirement Scoring & Prioritization Standard" (McKinsey strategic-value × feasibility axes). Weights / thresholds / rubric are configured under **System Admin → Requirement Scoring Rules**, adjustable annually by admin (defaults below).
+Based on the "Requirement Scoring & Prioritization Standard" (McKinsey strategic-value × feasibility axes). Weights / thresholds / rubric are configured on the **Requirements → "Scoring Rules" tab** (admin-editable; other roles see it read-only as a scoring reference), adjustable annually (defaults below).
 
 | Dimension | Default weight | Note |
 | --- | --- | --- |

@@ -17,7 +17,6 @@ import Access from './pages/admin/Access';
 import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
-import RequirementScoring from './pages/admin/RequirementScoring';
 import FeishuIntegration from './pages/admin/FeishuIntegration';
 import Definitions from './pages/process/Definitions';
 import Tickets from './pages/itsm/Tickets';
@@ -93,7 +92,8 @@ export const router = createBrowserRouter([
       { path: 'admin/access', element: <Access /> },
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
-      { path: 'admin/requirement-scoring', element: <RequirementScoring /> },
+      // 需求评分规则已并入需求管理标签页（2026-07-14），保留旧地址重定向
+      { path: 'admin/requirement-scoring', element: <Navigate to="/requirements?tab=scoring" replace /> },
       { path: 'admin/feishu', element: <FeishuIntegration /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
 

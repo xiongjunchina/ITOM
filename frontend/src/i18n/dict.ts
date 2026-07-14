@@ -131,7 +131,6 @@ const zh: Dict = {
   'module.admin_business_domains': '业务域',
   'module.admin_master_data': '数据字典',
   'module.admin_workflow': '状态机配置',
-  'module.admin_req_scoring': '需求评分规则',
   'module.admin_feishu': '飞书集成',
   'module.admin_audit': '审计日志',
   // 权限配置：菜单页小标题（合并页）
@@ -179,7 +178,6 @@ const zh: Dict = {
   'menu./admin/access': '角色与权限',
   'menu./admin/master-data': '数据字典',
   'menu./admin/workflow-config': '状态机配置',
-  'menu./admin/requirement-scoring': '需求评分规则',
   'menu./admin/feishu': '飞书集成',
   'menu./admin/audit-logs': '审计日志',
 };
@@ -307,7 +305,6 @@ const en: Dict = {
   'module.admin_business_domains': 'Business Domains',
   'module.admin_master_data': 'Data Dictionary',
   'module.admin_workflow': 'State Machine',
-  'module.admin_req_scoring': 'Requirement Scoring',
   'module.admin_feishu': 'Feishu Integration',
   'module.admin_audit': 'Audit Log',
   'permPage.admin_org': 'Organization',
@@ -352,7 +349,6 @@ const en: Dict = {
   'menu./admin/access': 'Roles & Permissions',
   'menu./admin/master-data': 'Data Dictionary',
   'menu./admin/workflow-config': 'State Machine',
-  'menu./admin/requirement-scoring': 'Req. Scoring Rules',
   'menu./admin/feishu': 'Feishu Integration',
   'menu./admin/audit-logs': 'Audit Log',
 };

@@ -27,7 +27,7 @@ type Rubric = Record<string, { name: string; '5': string; '4': string; '3': stri
 
 const LEVELS: ('5' | '4' | '3' | '2' | '1')[] = ['5', '4', '3', '2', '1'];
 
-export default function RequirementScoring() {
+export default function RequirementScoring({ embedded }: { embedded?: boolean }) {
   const t = useT();
   const { roleLabel } = useRoleOptions();
   const user = useAuthStore((s) => s.user);
@@ -96,40 +96,35 @@ export default function RequirementScoring() {
   };
 
   if (loading) {
-    return (
-      <Card title={t('req.cfg.title')}>
-        <div style={{ textAlign: 'center', padding: 60 }}>
-          <Spin size="large" />
-        </div>
-      </Card>
+    const spin = (
+      <div style={{ textAlign: 'center', padding: 60 }}>
+        <Spin size="large" />
+      </div>
     );
+    return embedded ? spin : <Card title={t('req.cfg.title')}>{spin}</Card>;
   }
 
   const disabled = !isAdmin;
   const roleWeightKeys = Object.keys(roleWeights);
 
-  return (
-    <Card
-      title={t('req.cfg.title')}
-      extra={
-        isAdmin && (
-          <Space>
-            <Button icon={<ReloadOutlined />} disabled={!defaults} onClick={restoreDefault}>
-              {t('req.cfg.restoreDefault')}
-            </Button>
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={saving}
-              disabled={!weightsValid}
-              onClick={() => void handleSave()}
-            >
-              {t('common.save')}
-            </Button>
-          </Space>
-        )
-      }
-    >
+  const toolbar = isAdmin ? (
+    <Space>
+      <Button icon={<ReloadOutlined />} disabled={!defaults} onClick={restoreDefault}>
+        {t('req.cfg.restoreDefault')}
+      </Button>
+      <Button
+        type="primary"
+        icon={<SaveOutlined />}
+        loading={saving}
+        disabled={!weightsValid}
+        onClick={() => void handleSave()}
+      >
+        {t('common.save')}
+      </Button>
+    </Space>
+  ) : null;
+  const body = (
+    <>
       {!isAdmin && <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.cfg.readonly')} />}
 
       {/* 六维权重 */}
@@ -276,6 +271,16 @@ export default function RequirementScoring() {
           </Space>
         </>
       )}
+    </>
+  );
+  return embedded ? (
+    <div>
+      {toolbar && <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>{toolbar}</div>}
+      {body}
+    </div>
+  ) : (
+    <Card title={t('req.cfg.title')} extra={toolbar}>
+      {body}
     </Card>
   );
 }

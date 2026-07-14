@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -48,6 +48,7 @@ import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/typ
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge } from './shared';
 import RequirementImportModal from './RequirementImportModal';
 import ActiveTaskList from './ActiveTaskList';
+import RequirementScoring from '../admin/RequirementScoring';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
@@ -135,6 +136,7 @@ export default function Requirements() {
   const canCreate = useReqPerm('create');
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
+  const [searchParams] = useSearchParams();
   const [view, setView] = useState<'board' | 'table'>('board');
   const [items, setItems] = useState<RequirementRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -569,10 +571,11 @@ export default function Requirements() {
   return (
     <Card title={t('req.title')}>
       <Tabs
-        defaultActiveKey="overview"
+        defaultActiveKey={searchParams.get('tab') ?? 'overview'}
         items={[
           { key: 'overview', label: t('req.tab.overview'), children: overviewTab },
           { key: 'tasks', label: t('req.tab.tasks'), children: <ActiveTaskList /> },
+          { key: 'scoring', label: t('req.tab.scoring'), children: <RequirementScoring embedded /> },
         ]}
       />
     </Card>

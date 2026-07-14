@@ -1,0 +1,36 @@
+/**
+ * 全局样式补充。
+ *
+ * Tabs 强化（2026-07-14 用户要求）：默认线型标签不显眼，用户可能察觉不到可点击。
+ * 改为胶囊卡片式——灰底描边、悬停变蓝、选中蓝底加粗，所有页面的水平 Tabs 统一生效。
+ */
+.ant-tabs-top > .ant-tabs-nav .ant-tabs-tab {
+  background: #f0f2f5;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  padding: 5px 16px;
+  margin: 0 8px 0 0 !important;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+.ant-tabs-top > .ant-tabs-nav .ant-tabs-tab:hover {
+  color: #1677ff;
+  background: #f0f7ff;
+  border-color: #91caff;
+}
+
+.ant-tabs-top > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active {
+  background: #e6f4ff;
+  border-color: #1677ff;
+  box-shadow: 0 1px 3px rgba(22, 119, 255, 0.2);
+}
+
+.ant-tabs-top > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #1677ff;
+  font-weight: 600;
+}
+
+/* 胶囊模式下隐藏底部墨条（与描边高亮重复） */
+.ant-tabs-top > .ant-tabs-nav .ant-tabs-ink-bar {
+  display: none;
+}

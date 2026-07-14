@@ -96,7 +96,6 @@ export const MENU_TREE: MenuNode[] = [
       },
       { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典', module: 'admin_master_data', roles: ['admin'] },
       { key: '/admin/workflow-config', path: '/admin/workflow-config', label: '状态机配置', module: 'admin_workflow', roles: ['admin'] },
-      { key: '/admin/requirement-scoring', path: '/admin/requirement-scoring', label: '需求评分规则', module: 'admin_req_scoring', roles: ['admin'] },
       { key: '/admin/feishu', path: '/admin/feishu', label: '飞书集成', module: 'admin_feishu', roles: ['admin'] },
       { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', module: 'admin_audit', roles: ['admin', 'is_mgr'] },
     ],

@@ -135,6 +135,7 @@ export const zh: Dict = {
   // 任务跟踪标签页（跨需求聚合排期/实现中的任务）
   'req.tab.overview': '需求总览',
   'req.tab.tasks': '任务跟踪',
+  'req.tab.scoring': '评分规则',
   'req.activeTask.title': '排期/实现中的任务清单',
   'req.activeTask.empty': '暂无排期或实现中的任务',
   'req.activeTask.planN': '计划{n}',
@@ -404,6 +405,7 @@ export const en: Dict = {
   // Delivery tasks tab (scheduled / in-progress tasks across requirements)
   'req.tab.overview': 'Overview',
   'req.tab.tasks': 'Task Tracking',
+  'req.tab.scoring': 'Scoring Rules',
   'req.activeTask.title': 'Scheduled / In-progress Task List',
   'req.activeTask.empty': 'No scheduled or in-progress tasks',
   'req.activeTask.planN': 'Plan {n}',
