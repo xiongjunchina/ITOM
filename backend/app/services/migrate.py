@@ -201,6 +201,17 @@ def fix_solution_review_roles_m163(db: Session):
     db.commit()
 
 
+def fix_acceptance_step_role_m165(db: Session):
+    """M16.5：需求流程「验收与闭环」处理角色 it_pdm→it_bm（业务域负责人组织业务验收）。"""
+    n = db.execute(text(
+        "UPDATE process_step SET default_role='it_bm' "
+        "WHERE name='验收与闭环' AND default_role='it_pdm' AND is_deleted=false"
+    )).rowcount
+    if n:
+        logger.info("验收与闭环步骤角色 -> it_bm (%d rows)", n)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -209,6 +220,7 @@ def migrate_m35_org(db: Session):
     fix_project_flow_pmo(db)
     rebuild_requirement_flow_m16(db)
     fix_solution_review_roles_m163(db)
+    fix_acceptance_step_role_m165(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

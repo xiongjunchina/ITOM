@@ -251,12 +251,14 @@ def _link_requirement(db: Session, project: Project, requirement_id: str, actor:
 
 
 def _close_linked_requirements(db: Session, project: Project, actor: AuthUser):
-    """M16 闭环：项目验收关闭 → 转项目路径的关联需求自动关闭并通知。"""
+    """M16.5：项目验收关闭 → 提醒项目经理回需求模块完成「实现交付」步骤，进入业务验收。
+
+    不再直接自动关闭需求——闭环须走完流程：实现交付（PM 确认）→ 验收与闭环
+    （业务域负责人组织业务部门验收）→ 流程完成时需求自动关闭。"""
     from app.models import Requirement
     from app.services import requirement_scoring
 
     cfg = requirement_scoring.get_config(db)
-    now = datetime.now()
     rows = db.query(Requirement).filter(
         Requirement.project_id == project.id, Requirement.is_deleted.is_(False),
         Requirement.status.notin_(("closed", "cancelled")),
@@ -264,22 +266,15 @@ def _close_linked_requirements(db: Session, project: Project, actor: AuthUser):
     for r in rows:
         route = requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
         if route != requirement_scoring.ROUTE_PROJECT:
-            continue  # 手动挂接的非转项目需求不自动关闭
-        r.status = "closed"
-        r.closed_at = now
-        r.closure_note = f"[自动闭环] 关联项目 {project.project_code} 已验收关闭"
-        audit(db, "requirement", r.id, "auto_close", actor, {"project": project.project_code})
-        requester_person = None
-        if r.requester:
-            ru = db.get(AuthUser, r.requester)
-            requester_person = ru.person_id if ru else None
-        recipients = [p for p in {r.owner, requester_person} if p]
-        if recipients:
+            continue  # 手动挂接的非转项目需求不提醒
+        audit(db, "requirement", r.id, "project_delivered", actor, {"project": project.project_code})
+        if r.owner:
             from app.events import notifier
 
-            notifier.notify(db, "requirement.closed", "requirement", r.id, recipients,
-                            f"需求已闭环：{r.requirement_code} {r.title}",
-                            f"关联项目 {project.project_code} 验收关闭，需求自动闭环。",
+            notifier.notify(db, "requirement.project_delivered", "requirement", r.id, [r.owner],
+                            f"项目已关闭，请回需求闭环：{r.requirement_code} {r.title}",
+                            f"关联项目 {project.project_code} 已验收关闭。请在需求详情完成「实现交付」步骤，"
+                            f"流程将进入「验收与闭环」（业务域负责人组织业务验收）。",
                             link=f"/requirements/{r.id}")
 
 

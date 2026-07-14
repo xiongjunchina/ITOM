@@ -55,6 +55,11 @@ class DefinitionUpdate(BaseModel):
 def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     instance = process_engine.complete_task(db, task_id, user, body.comment)
     audit(db, "process_task", task_id, "complete", user, {"comment": body.comment})
+    if instance.entity_type == "requirement":
+        # M16.5：需求流程编排——验收步骤指派业务域负责人 / 流程完成自动闭环需求
+        from app.routers.requirements import on_process_advanced
+
+        on_process_advanced(db, instance.entity_id, user)
     db.commit()
     return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
 

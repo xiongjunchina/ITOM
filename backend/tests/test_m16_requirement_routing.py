@@ -109,13 +109,31 @@ def test_route_project_and_auto_close_loop(client, ctx):
     detail = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]
     assert detail["project_id"] == p["id"]
 
-    # 项目 关闭 → 需求自动闭环
+    # 项目关闭 → 不直接关需求，提醒 PM 回需求完成「实现交付」（M16.5）
     for to in ("active", "completed", "closed"):
         fields = {"reason": "验收通过，正式关闭"} if to == "closed" else {}
         resp = client.post(f"/api/projects/{p['id']}/transition", json={"to": to, "fields": fields}, headers=ctx["admin"])
         assert resp.json()["success"], resp.text
     detail = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]
-    assert detail["status"] == "closed" and "自动闭环" in detail["closure_note"]
+    assert detail["status"] == "implementing"  # 未自动关闭，等待业务验收
+
+    # PM 完成「实现交付」步骤 → 「验收与闭环」任务指派业务域负责人
+    proc = detail["process"]
+    cur = next(st for st in proc["steps"] if st["seq"] == proc["current_step_seq"])
+    assert "实现交付" in cur["name"]
+    resp = client.post(f"/api/process-tasks/{cur['task_id']}/complete",
+                       json={"comment": "项目交付完成，系统已上线"}, headers=ctx["admin"])
+    assert resp.json()["success"], resp.text
+    proc = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    acc = next(st for st in proc["steps"] if "验收" in st["name"])
+    assert proc["current_step_seq"] == acc["seq"] and acc["assignee_name"] == "服务线负责人M16"
+
+    # 业务域负责人完成「验收与闭环」→ 需求自动关闭并通知
+    resp = client.post(f"/api/process-tasks/{acc['task_id']}/complete",
+                       json={"comment": "业务部门验收通过"}, headers=ctx["admin"])
+    assert resp.json()["success"], resp.text
+    detail = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]
+    assert detail["status"] == "closed" and "闭环" in detail["closure_note"]
 
 
 def test_threshold_configurable(client, ctx):

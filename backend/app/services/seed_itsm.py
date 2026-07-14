@@ -200,7 +200,7 @@ PROCESS_DEFS = [
             ("需求评审（业务域负责人）", IT_BM, "L3", 48, [IT_PDM]),
             ("方案评估与路径判定", IT_PDM_LEADER, "L3", 72, [IT_DEV_LEADER]),
             ("实现交付（开发/项目跟踪）", IT_DEV, "L3", None),
-            ("验收与闭环", IT_PDM, "L3", 48),
+            ("验收与闭环", IT_BM, "L3", 48),
         ],
     },
 ]
