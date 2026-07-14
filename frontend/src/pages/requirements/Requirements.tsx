@@ -137,7 +137,7 @@ export default function Requirements() {
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [searchParams] = useSearchParams();
-  const [view, setView] = useState<'board' | 'table'>('board');
+  const [view, setView] = useState<'board' | 'table'>('table');
   const [items, setItems] = useState<RequirementRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -366,8 +366,8 @@ export default function Requirements() {
               setView(v as 'board' | 'table');
             }}
             options={[
-              { value: 'board', label: t('req.board'), icon: <AppstoreOutlined /> },
               { value: 'table', label: t('req.table'), icon: <TableOutlined /> },
+              { value: 'board', label: t('req.board'), icon: <AppstoreOutlined /> },
             ]}
           />
           <Input.Search
