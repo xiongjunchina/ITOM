@@ -54,6 +54,21 @@ export const zh: Dict = {
   'proj.actualEndBeforeStart': '实际结束不能早于实际开始',
   'proj.editFinalTooltip': '终态项目需先重启',
 
+  // 列表快捷操作（M14）
+  'proj.op.pause': '暂停',
+  'proj.op.close': '关闭',
+  'proj.op.restart': '重启',
+  'proj.op.confirmTitle': '确认{op}「{name}」？',
+  'proj.op.closeHint': '关闭后项目转入终态；实际结束时间将自动记录，可随时重启恢复。',
+  'proj.op.restartHint': '重启后项目回到「进行中」，实际结束时间将被清空；如需回退流程节点请进入详情页操作。',
+  'proj.op.deleteTitle': '确认删除「{name}」？',
+  'proj.op.deleteCascade': '将同时删除其 WBS 任务、成本、风险与流程记录，解除关联需求的挂接，总览统计与人员绩效自动回算。此操作不可自行恢复。',
+  'proj.op.deleted': '项目已删除，关联数据已同步处理',
+  'proj.op.onlyActive': '仅「进行中」的项目可暂停',
+  'proj.op.closeDisabled': '仅 进行中/已暂停/已完成 的项目可关闭',
+  'proj.op.restartDisabled': '仅 已暂停/已关闭/已完成 的项目可重启',
+  'proj.op.onlyPausedClosed': '仅「已暂停」或「已关闭」状态的项目可删除',
+
   // 项目组合
   'proj.col.owner': '负责人',
   'proj.col.year': '年度',
@@ -346,6 +361,20 @@ export const en: Dict = {
   'proj.projectUpdated': 'Project updated',
   'proj.actualEndBeforeStart': 'Actual end cannot be earlier than actual start',
   'proj.editFinalTooltip': 'Final-state projects must be restarted first',
+
+  'proj.op.pause': 'Pause',
+  'proj.op.close': 'Close',
+  'proj.op.restart': 'Restart',
+  'proj.op.confirmTitle': '{op} "{name}"?',
+  'proj.op.closeHint': 'Closing moves the project to a terminal state; the actual end date is stamped automatically and it can be restarted at any time.',
+  'proj.op.restartHint': 'Restart returns the project to Active and clears the actual end date; to rewind the process step, use the detail page.',
+  'proj.op.deleteTitle': 'Delete "{name}"?',
+  'proj.op.deleteCascade': 'Its WBS tasks, costs, risks and process records will be removed, linked requirements unlinked, and dashboard stats & performance recalculated automatically. This cannot be undone by yourself.',
+  'proj.op.deleted': 'Project deleted; related data updated',
+  'proj.op.onlyActive': 'Only Active projects can be paused',
+  'proj.op.closeDisabled': 'Only Active / Paused / Completed projects can be closed',
+  'proj.op.restartDisabled': 'Only Paused / Closed / Completed projects can be restarted',
+  'proj.op.onlyPausedClosed': 'Only Paused or Closed projects can be deleted',
 
   // Portfolios
   'proj.col.owner': 'Owner',

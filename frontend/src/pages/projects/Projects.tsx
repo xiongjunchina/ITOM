@@ -43,7 +43,7 @@ import ProjectEditModal, { type ProjectEditModalProject } from './ProjectEditMod
 const STATUS_KEYS = Object.keys(PROJECT_STATUS) as ProjectStatus[];
 
 /** 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示） */
-function useProjectPerm(action: 'create' | 'edit'): boolean {
+function useProjectPerm(action: 'create' | 'edit' | 'delete'): boolean {
   const user = useAuthStore((s) => s.user);
   return user?.permissions ? hasPermission(user, 'projects', action) : true;
 }
@@ -67,6 +67,7 @@ function ProjectList() {
   const [searchParams] = useSearchParams();
   const canCreate = useProjectPerm('create');
   const canEdit = useProjectPerm('edit');
+  const canDelete = useProjectPerm('delete');
 
   const [items, setItems] = useState<ProjectRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -118,6 +119,35 @@ function ProjectList() {
     } catch {
       // 已统一提示
     }
+  };
+
+  // 列表快捷操作（M14）：暂停/关闭/重启走状态流转，删除限 已暂停/已关闭
+  const runTransition = (r: ProjectRow, to: string, label: string) => {
+    Modal.confirm({
+      title: t('proj.op.confirmTitle', { op: label, name: r.name }),
+      content: to === 'active' ? t('proj.op.restartHint') : to === 'closed' ? t('proj.op.closeHint') : undefined,
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        await api.post(`/projects/${r.id}/transition`, { to, fields: {} });
+        message.success(t('proj.actionOk'));
+        void load();
+      },
+    });
+  };
+  const runDelete = (r: ProjectRow) => {
+    Modal.confirm({
+      title: t('proj.op.deleteTitle', { name: r.name }),
+      content: t('proj.op.deleteCascade'),
+      okText: t('common.delete'),
+      okButtonProps: { danger: true },
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        await api.delete(`/projects/${r.id}`);
+        message.success(t('proj.op.deleted'));
+        void load();
+      },
+    });
   };
 
   const load = useCallback(async () => {
@@ -275,18 +305,43 @@ function ProjectList() {
           {
             title: t('common.actions'),
             key: 'action',
-            width: 90,
+            width: 236,
             fixed: 'right' as const,
             render: (_: unknown, r: ProjectRow) => {
               if (r.is_example) return null;
-              // 终态项目后端拒绝编辑（PROJECT_FINAL）：禁用并提示需先重启
-              const isFinal = r.status === 'closed' || r.status === 'cancelled';
-              const btn = (
-                <Button type="link" size="small" disabled={isFinal} onClick={() => void openRowEdit(r)}>
-                  {t('common.edit')}
-                </Button>
+              const st = r.status;
+              const isFinal = st === 'closed' || st === 'cancelled';
+              const linkBtn = (
+                label: string,
+                enabled: boolean,
+                onClick: () => void,
+                tip: string,
+                danger = false,
+              ) => {
+                const b = (
+                  <Button
+                    type="link"
+                    size="small"
+                    danger={danger}
+                    disabled={!enabled}
+                    style={{ paddingInline: 4 }}
+                    onClick={onClick}
+                  >
+                    {label}
+                  </Button>
+                );
+                return enabled ? b : <Tooltip title={tip}>{b}</Tooltip>;
+              };
+              return (
+                <span style={{ whiteSpace: 'nowrap' }}>
+                  {linkBtn(t('common.edit'), !isFinal, () => void openRowEdit(r), t('proj.editFinalTooltip'))}
+                  {linkBtn(t('proj.op.pause'), st === 'active', () => runTransition(r, 'paused', t('proj.op.pause')), t('proj.op.onlyActive'))}
+                  {linkBtn(t('proj.op.close'), ['active', 'paused', 'completed'].includes(st), () => runTransition(r, 'closed', t('proj.op.close')), t('proj.op.closeDisabled'))}
+                  {linkBtn(t('proj.op.restart'), ['paused', 'closed', 'completed'].includes(st), () => runTransition(r, 'active', t('proj.op.restart')), t('proj.op.restartDisabled'))}
+                  {canDelete &&
+                    linkBtn(t('common.delete'), ['paused', 'closed'].includes(st), () => runDelete(r), t('proj.op.onlyPausedClosed'), true)}
+                </span>
               );
-              return isFinal ? <Tooltip title={t('proj.editFinalTooltip')}>{btn}</Tooltip> : btn;
             },
           } as ColumnsType<ProjectRow>[number],
         ]

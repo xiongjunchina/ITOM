@@ -58,6 +58,8 @@ PROJECT_TRANSITIONS = [
     ("project", "paused", "active", []),
     ("project", "active", "completed", []),
     ("project", "completed", "closed", []),
+    ("project", "active", "closed", []),      # 提前关闭（M14 列表快捷操作）
+    ("project", "paused", "closed", []),
     ("project", "planning", "cancelled", []),
     ("project", "active", "cancelled", []),
     # 恢复类流转（2026-07-14）：终态/已完成可重启，误关闭可纠正

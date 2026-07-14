@@ -86,3 +86,42 @@ def test_restart_with_process_rewind(client, admin_headers, ctx):
     assert step1["task_status"] == "已完成"  # 之前的立项启动保留
     # 实际结束被清空（重启语义）
     assert d["actual_end"] is None
+
+
+def test_delete_requires_paused_or_closed(client, admin_headers, ctx):
+    """M14：删除限暂停/关闭态；级联软删 WBS/风险/流程并解除需求挂接、回收积分。"""
+    m = client.post("/api/members", json={"name": "删项目PM"}, headers=admin_headers).json()["data"]
+    p = client.post("/api/projects", json={
+        "name": "M14待删项目", "pm": m["id"],
+        "planned_start": "2026-07-01", "planned_end": "2026-08-31",
+    }, headers=admin_headers).json()["data"]
+    pid = p["id"]
+    # 加一个 WBS 任务 + 挂一条需求
+    client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "任务A", "assignee": m["id"], "start_date": "2026-07-01", "end_date": "2026-07-10",
+    }, headers=admin_headers)
+    dom = client.post("/api/admin/business-domains", json={"code": "m14d", "name": "M14域"},
+                      headers=admin_headers).json()["data"]
+    req = client.post("/api/requirements", json={
+        "title": "挂接需求M14", "req_type": "功能", "business_domain_id": dom["id"], "description": "d",
+    }, headers=admin_headers).json()["data"]
+    client.patch(f"/api/requirements/{req['id']}", json={"project_id": pid}, headers=admin_headers)
+
+    # 进行中不可删
+    _transition(client, admin_headers, pid, "active")
+    r = client.delete(f"/api/projects/{pid}", headers=admin_headers)
+    assert r.json()["error"]["code"] == "PROJECT_DELETE_STATE"
+
+    # 暂停后可删，返回级联统计
+    _transition(client, admin_headers, pid, "paused")
+    r = client.delete(f"/api/projects/{pid}", headers=admin_headers)
+    assert r.json()["success"], r.text
+    cascade = r.json()["data"]["cascade"]
+    assert cascade["wbs"] == 1 and cascade["requirements_unlinked"] == 1 and cascade["process_instances"] == 1
+
+    # 项目从列表消失；需求解除挂接；总览实时聚合不再计入
+    listing = client.get("/api/projects?page_size=200", headers=admin_headers).json()["data"]
+    assert all(x["id"] != pid for x in listing)
+    detail = client.get(f"/api/requirements/{req['id']}", headers=admin_headers).json()["data"]
+    assert detail["project_id"] is None and detail["project_name"] is None
+

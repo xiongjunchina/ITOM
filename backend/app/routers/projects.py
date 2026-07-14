@@ -316,6 +316,63 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     return ok({"id": p.id})
 
 
+@router.delete("/api/projects/{project_id}")
+def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "delete"))):
+    """删除项目（软删，M14）：仅 已暂停/已关闭 状态可删。
+
+    级联：WBS/里程碑/成本/风险/附件/流程实例与任务 软删；关联需求解除挂接；
+    该项目 WBS 产生的积分台账软删（绩效/排行自动回算）。总览与负载为实时聚合，自动排除。
+    """
+    p = db.get(Project, project_id)
+    if not p or p.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(p)
+    if p.status not in ("paused", "closed"):
+        raise AppError("PROJECT_DELETE_STATE", "仅「已暂停」或「已关闭」状态的项目可删除，请先暂停或关闭")
+
+    from app.models import Attachment, PointEntry, ProcessInstance, ProcessTask, Requirement
+
+    stats = {"wbs": 0, "milestones": 0, "costs": 0, "risks": 0, "attachments": 0,
+             "process_instances": 0, "requirements_unlinked": 0, "point_entries": 0}
+    wbs_ids: list[str] = []
+    for t in db.query(WbsTask).filter(WbsTask.project_id == p.id, WbsTask.is_deleted.is_(False)):
+        t.is_deleted = True
+        wbs_ids.append(t.id)
+        stats["wbs"] += 1
+    for m in db.query(Milestone).filter(Milestone.project_id == p.id, Milestone.is_deleted.is_(False)):
+        m.is_deleted = True
+        wbs_ids.append(m.id)  # 旧里程碑积分 source_ref 兼容
+        stats["milestones"] += 1
+    for c in db.query(CostEntry).filter(CostEntry.project_id == p.id, CostEntry.is_deleted.is_(False)):
+        c.is_deleted = True
+        stats["costs"] += 1
+    for r in db.query(Risk).filter(Risk.project_id == p.id, Risk.is_deleted.is_(False)):
+        r.is_deleted = True
+        stats["risks"] += 1
+    for a in db.query(Attachment).filter(Attachment.entity_type == "project", Attachment.entity_id == p.id,
+                                         Attachment.is_deleted.is_(False)):
+        a.is_deleted = True
+        stats["attachments"] += 1
+    for inst in db.query(ProcessInstance).filter(ProcessInstance.entity_type == "project",
+                                                 ProcessInstance.entity_id == p.id,
+                                                 ProcessInstance.is_deleted.is_(False)):
+        inst.is_deleted = True
+        stats["process_instances"] += 1
+        for task in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
+            task.is_deleted = True
+    for req in db.query(Requirement).filter(Requirement.project_id == p.id, Requirement.is_deleted.is_(False)):
+        req.project_id = None
+        stats["requirements_unlinked"] += 1
+    if wbs_ids:
+        for pe in db.query(PointEntry).filter(PointEntry.source_ref.in_(wbs_ids), PointEntry.is_deleted.is_(False)):
+            pe.is_deleted = True
+            stats["point_entries"] += 1
+    p.is_deleted = True
+    audit(db, "project", p.id, "delete", actor, {"code": p.project_code, **stats})
+    db.commit()
+    return ok({"id": p.id, "cascade": stats})
+
+
 @router.post("/api/projects/{project_id}/transition")
 def transition_project(project_id: str, body: TransitionIn, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
     p = db.get(Project, project_id)
@@ -336,6 +393,8 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
         if not p.actual_end:
             p.actual_end = today  # 手动填过则尊重
         publish(db, "project.completed", "project", p.id, {})
+    if to == "closed" and not p.actual_end:
+        p.actual_end = today  # 提前关闭同样落实际结束
     db.commit()
     return ok({"id": p.id, "status": p.status})
 
