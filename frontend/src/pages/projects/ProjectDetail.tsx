@@ -875,6 +875,14 @@ export default function ProjectDetail() {
           </Space>
         </Card>
       )}
+      <Card title={t('proj.gantt')} size="small">
+        <GanttChart
+          tasks={wbs}
+          rangeStart={detail.planned_start}
+          rangeEnd={detail.planned_end}
+        />
+      </Card>
+
       <Card title={t('proj.mtTitle')} size="small">
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Alert type="info" showIcon message={t('proj.mtAlert')} />
@@ -915,14 +923,6 @@ export default function ProjectDetail() {
             onExpandedRowsChange: setExpandedKeys,
           }}
           locale={{ emptyText: t('proj.emptyWbs') }}
-        />
-      </Card>
-
-      <Card title={t('proj.gantt')} size="small">
-        <GanttChart
-          tasks={wbs}
-          rangeStart={detail.planned_start}
-          rangeEnd={detail.planned_end}
         />
       </Card>
     </Space>
