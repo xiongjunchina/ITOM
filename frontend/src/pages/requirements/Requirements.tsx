@@ -45,7 +45,7 @@ import type {
   RequirementStatus,
 } from '../../api/types';
 import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/types';
-import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge } from './shared';
+import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag } from './shared';
 import RequirementImportModal from './RequirementImportModal';
 import ActiveTaskList from './ActiveTaskList';
 import RequirementScoring from '../admin/RequirementScoring';
@@ -99,6 +99,7 @@ function BoardCard({ row, onClick }: { row: RequirementRow; onClick: () => void 
       <Space size={4} wrap>
         <MoscowTag value={row.moscow} empty={null} />
         <QuadrantTag value={row.quadrant} empty={null} />
+        <RouteTag value={row.route} empty={null} />
         {row.weighted_total != null && (
           <Tag color="blue" style={{ marginInlineEnd: 0 }}>
             {t('req.weightedTotal')} {fmtScore(row.weighted_total)}
@@ -295,6 +296,12 @@ export default function Requirements() {
       dataIndex: 'decision',
       width: 90,
       render: (v: string | null) => <DecisionTag value={v} />,
+    },
+    {
+      title: t('req.col.route'),
+      dataIndex: 'route',
+      width: 110,
+      render: (v: string | null) => <RouteTag value={v} />,
     },
     { title: t('req.col.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
     {

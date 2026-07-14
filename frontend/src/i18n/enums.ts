@@ -73,6 +73,9 @@ const REQUIREMENT_STATUS_EN: M = { registered: 'Registered', evaluating: 'Evalua
 // 四象限 / 评估决议（value 键：中文规范值，en 查表回退原值）
 const QUADRANT_EN: M = { 战略下注: 'Strategic Bet', 速赢项目: 'Quick Win', 低优先级: 'Low Priority', 重新评估: 'Re-evaluate' };
 const REQ_DECISION_EN: M = { 立项: 'Approved', 搁置: 'On hold', 驳回: 'Rejected' };
+// M16 需求评审分流：实现路径 / 方案类型（value 键：中文规范值）
+const ROUTE_EN: M = { 需求开发实现: 'In-house Dev', 转项目管理: 'To Project' };
+const SOLUTION_TYPE_EN: M = { 二次开发: 'Secondary Dev', 新购系统: 'New System' };
 
 /** 组件内使用：随语言 store 响应式返回双语枚举标签函数。 */
 export function useEnums() {
@@ -118,6 +121,8 @@ export function useEnums() {
     requirementStatus: code(REQUIREMENT_STATUS_ZH, REQUIREMENT_STATUS_EN),
     quadrant: val(QUADRANT_EN),
     reqDecision: val(REQ_DECISION_EN),
+    route: val(ROUTE_EN),
+    solutionType: val(SOLUTION_TYPE_EN),
   };
 }
 

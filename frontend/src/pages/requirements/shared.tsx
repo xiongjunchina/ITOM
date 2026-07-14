@@ -1,7 +1,7 @@
 import { Badge, Tag } from 'antd';
 import dayjs from 'dayjs';
 import type { Moscow, RequirementStatus } from '../../api/types';
-import { DECISION_COLORS, MOSCOW_META, QUADRANT_META, REQ_STATUS } from '../../api/types';
+import { DECISION_COLORS, MOSCOW_META, QUADRANT_META, REQ_STATUS, ROUTE_META } from '../../api/types';
 import { useEnums } from '../../i18n/enums';
 
 /** 需求状态 Badge（未知状态回退灰点 + 后端中文名） */
@@ -44,6 +44,13 @@ export function DecisionTag({ value, empty = '-' }: { value?: string | null; emp
   const et = useEnums();
   if (!value) return empty == null ? null : <span style={{ color: 'rgba(0,0,0,0.25)' }}>{empty}</span>;
   return <Tag color={DECISION_COLORS[value]}>{et.reqDecision(value)}</Tag>;
+}
+
+/** 实现路径 Tag（M16）：需求开发实现蓝 / 转项目管理紫；空值占位 */
+export function RouteTag({ value, empty = '-' }: { value?: string | null; empty?: string | null }) {
+  const et = useEnums();
+  if (!value) return empty == null ? null : <span style={{ color: 'rgba(0,0,0,0.25)' }}>{empty}</span>;
+  return <Tag color={ROUTE_META[value]}>{et.route(value)}</Tag>;
 }
 
 /** 日期时间展示：ISO → YYYY-MM-DD HH:mm；空 → undefined（配合 Steps description） */

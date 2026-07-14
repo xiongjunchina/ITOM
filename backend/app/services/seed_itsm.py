@@ -192,15 +192,15 @@ PROCESS_DEFS = [
         ],
     },
     {
+        # M16 重构：登记即进评审（评审任务动态指派业务域 owner）→ 方案评估（产品 leader
+        # 主责/开发 leader 知会，评分规则页可配）→ 实现交付（二开任务清单 或 转项目跟踪）→ 验收闭环
         "code": "requirement_flow", "name": "需求交付流程", "entity_type": "requirement",
         "trigger": None,
         "steps": [
-            ("需求登记与业务对齐", IT_BP, "L3", 24),
-            ("需求评估与优先级评审", IT_PDM, "L2", 48, [CIO, IT_BM]),
-            ("需求分析与方案", IT_PDM, "L3", None),
-            ("排期与资源协调", IT_BM, "L3", 48),
-            ("开发实现", IT_DEV, "L3", None),
-            ("验收与关闭", IT_PDM, "L3", None),
+            ("需求评审（业务域负责人）", IT_BM, "L3", 48, [IT_PDM]),
+            ("方案评估与路径判定", IT_TM, "L3", 72, [IT_DEV]),
+            ("实现交付（开发/项目跟踪）", IT_DEV, "L3", None),
+            ("验收与闭环", IT_PDM, "L3", 48),
         ],
     },
 ]

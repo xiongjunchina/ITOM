@@ -14,6 +14,12 @@ DIMENSIONS = ["d1_strategy", "d2_value", "d3_tech", "d4_org", "d5_risk", "d6_spe
 DEFAULT_WEIGHTS = {"d1": 0.2, "d2": 0.2, "d3": 0.2, "d4": 0.1, "d5": 0.1, "d6": 0.2}
 DEFAULT_THRESHOLDS = {"total": 3.5, "strategic": 4.0, "viable": 3.0}
 DEFAULT_ROLE_WEIGHTS = {"业务": 0.4, "技术": 0.3, "PMO": 0.2, "财务": 0.1}
+DEFAULT_EFFORT_THRESHOLD = 20.0  # 二开人天≥阈值 或 新购系统 → 转项目管理
+
+SOLUTION_SECONDARY = "二次开发"
+SOLUTION_NEW_SYSTEM = "新购系统"
+ROUTE_DEV = "需求开发实现"
+ROUTE_PROJECT = "转项目管理"
 
 # 四象限规范值（中文为后端权威值，前端 enums 映射英文）
 QUADRANT_STRATEGIC = "战略下注"
@@ -46,6 +52,7 @@ def get_config(db) -> RequirementScoringConfig:
         cfg = RequirementScoringConfig(
             weights=dict(DEFAULT_WEIGHTS), thresholds=dict(DEFAULT_THRESHOLDS),
             rubric=dict(DEFAULT_RUBRIC), role_weights=dict(DEFAULT_ROLE_WEIGHTS),
+            effort_threshold=DEFAULT_EFFORT_THRESHOLD,
         )
         db.add(cfg)
         db.flush()
@@ -84,6 +91,19 @@ def compute_quadrant(scores: dict, thresholds: dict | None = None,
     if total >= th["total"]:
         return QUADRANT_STRATEGIC if strategic_value >= th["strategic"] else QUADRANT_QUICK_WIN
     return QUADRANT_LOW if strategic_value >= th["viable"] else QUADRANT_REEVALUATE
+
+
+def compute_route(solution_type: str | None, dev_effort: float | None,
+                  threshold: float | None = None) -> str | None:
+    """实现路径判定（M16，派生不落库）：新购系统 或 二开人天≥阈值 → 转项目管理。"""
+    if not solution_type:
+        return None
+    if solution_type == SOLUTION_NEW_SYSTEM:
+        return ROUTE_PROJECT
+    th = threshold if threshold is not None else DEFAULT_EFFORT_THRESHOLD
+    if dev_effort is not None and dev_effort >= th:
+        return ROUTE_PROJECT
+    return ROUTE_DEV
 
 
 def requirement_scores(r) -> dict:

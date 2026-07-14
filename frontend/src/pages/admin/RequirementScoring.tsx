@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Button,
@@ -7,6 +7,7 @@ import {
   Divider,
   Input,
   InputNumber,
+  Select,
   Space,
   Spin,
   Tag,
@@ -18,7 +19,7 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
-import type { ScoringConfig, ScoringDimKey } from '../../api/types';
+import type { Member, ReviewAssignees, ScoringConfig, ScoringDimKey } from '../../api/types';
 import { DIMENSIONS } from '../requirements/dimensions';
 
 type Weights = Record<ScoringDimKey, number>;
@@ -41,13 +42,28 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
   const [thresholds, setThresholds] = useState<Thresholds>({ total: 0, strategic: 0, viable: 0 });
   const [rubric, setRubric] = useState<Rubric>({});
   const [roleWeights, setRoleWeights] = useState<Record<string, number>>({});
+  // M16 分流规则：转项目人天阈值 + 方案评估指派
+  const [effortThreshold, setEffortThreshold] = useState<number>(20);
+  const [reviewAssignees, setReviewAssignees] = useState<ReviewAssignees>({});
+  const [members, setMembers] = useState<Member[]>([]);
 
-  const apply = useCallback((c: Pick<ScoringConfig, 'weights' | 'thresholds' | 'rubric' | 'role_weights'>) => {
-    setWeights({ ...c.weights });
-    setThresholds({ ...c.thresholds });
-    setRubric(JSON.parse(JSON.stringify(c.rubric)) as Rubric);
-    setRoleWeights({ ...(c.role_weights ?? {}) });
-  }, []);
+  const apply = useCallback(
+    (
+      c: Pick<ScoringConfig, 'weights' | 'thresholds' | 'rubric' | 'role_weights'> & {
+        effort_threshold?: number;
+        review_assignees?: ReviewAssignees;
+      },
+    ) => {
+      setWeights({ ...c.weights });
+      setThresholds({ ...c.thresholds });
+      setRubric(JSON.parse(JSON.stringify(c.rubric)) as Rubric);
+      setRoleWeights({ ...(c.role_weights ?? {}) });
+      // 恢复默认仅回填阈值（defaults 不含指派人，保持现值）
+      if (c.effort_threshold != null) setEffortThreshold(c.effort_threshold);
+      if (c.review_assignees) setReviewAssignees({ ...c.review_assignees });
+    },
+    [],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,6 +82,23 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
     void load();
   }, [load]);
 
+  // 方案评估指派人员下拉（只读用户也需名字回显）
+  useEffect(() => {
+    api
+      .getList<Member>('/members', { page: 1, page_size: 999 })
+      .then((res) => setMembers(res.items))
+      .catch(() => undefined);
+  }, []);
+
+  const memberOptions = useMemo(
+    () =>
+      members.map((m) => ({
+        value: m.id,
+        label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+      })),
+    [members],
+  );
+
   const weightsSum = Math.round(DIMENSIONS.reduce((acc, d) => acc + (weights[d.short] ?? 0), 0) * 100) / 100;
   const weightsValid = Math.abs(weightsSum - 1) < 1e-9;
 
@@ -81,11 +114,13 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
         thresholds,
         rubric,
         role_weights: roleWeights,
+        effort_threshold: effortThreshold,
+        review_assignees: reviewAssignees,
       });
       message.success(t('req.cfg.saved'));
       void load();
     } catch {
-      // 后端 INVALID_WEIGHTS 等中文错误已由拦截器统一提示
+      // 后端 INVALID_WEIGHTS / INVALID_THRESHOLD 等中文错误已由拦截器统一提示
     } finally {
       setSaving(false);
     }
@@ -197,6 +232,65 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
             value={thresholds.viable}
             onChange={(v) => setThresholds((s) => ({ ...s, viable: v ?? 0 }))}
           />
+        </div>
+      </Space>
+
+      <Divider />
+
+      {/* M16 分流规则：转项目人天阈值 + 方案评估指派 */}
+      <Typography.Title level={5}>{t('req.cfg.routing')}</Typography.Title>
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <Typography.Text>{t('req.cfg.effortThreshold')}</Typography.Text>
+          <InputNumber
+            min={1}
+            step={1}
+            disabled={disabled}
+            style={{ width: 160 }}
+            value={effortThreshold}
+            onChange={(v) => setEffortThreshold(v ?? 1)}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
+            {t('req.cfg.effortThresholdHint')}
+          </Typography.Text>
+        </div>
+        <div>
+          <Typography.Text strong>{t('req.cfg.reviewAssignees')}</Typography.Text>
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('req.cfg.reviewAssigneesHint')}
+            </Typography.Text>
+          </div>
+          <Space wrap size={16} style={{ marginTop: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <Typography.Text>{t('req.cfg.pdmLeader')}</Typography.Text>
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                disabled={disabled}
+                style={{ width: 220 }}
+                placeholder={t('req.selectMember')}
+                value={reviewAssignees.pdm_leader ?? undefined}
+                onChange={(v) => setReviewAssignees((a) => ({ ...a, pdm_leader: v ?? null }))}
+                options={memberOptions}
+              />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <Typography.Text>{t('req.cfg.devLeader')}</Typography.Text>
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                disabled={disabled}
+                style={{ width: 220 }}
+                placeholder={t('req.selectMember')}
+                value={reviewAssignees.dev_leader ?? undefined}
+                onChange={(v) => setReviewAssignees((a) => ({ ...a, dev_leader: v ?? null }))}
+                options={memberOptions}
+              />
+            </div>
+          </Space>
         </div>
       </Space>
 

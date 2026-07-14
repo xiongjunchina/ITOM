@@ -49,27 +49,52 @@ def test_score_weighted_total_and_quadrant(client, ctx):
     assert len(detail["scores"]) == 1 and detail["scores"][0]["is_consensus"] is True
 
 
-def test_eval_gate_blocks_without_approval(client, ctx):
+def test_eval_gate_quadrant_and_auto_flow(client, ctx):
+    """M16 评估门：未评分不可立项；重评象限仅 搁置/驳回（驳回必填理由）；决议即自动流转。"""
     r = _register(client, ctx["pdm"], ctx["domain"], title="低优先需求")
     rid = r["id"]
-    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
+    assert r["status"] == "evaluating"  # M16：登记即进评审
 
-    # 未评分 → 评估门拦截
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
+    # 未评分就立项 → 拦截
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "立项"}, headers=ctx["pdm"])
     assert resp.json()["error"]["code"] == "EVAL_INCOMPLETE"
 
-    # 评分但决议非立项 → 拦截
-    client.post(f"/api/requirements/{rid}/score", json={
+    # 低分落「重新评估」象限 → 立项被象限约束拦截
+    resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 2, "d2_value": 2, "d3_tech": 3, "d4_org": 3, "d5_risk": 3, "d6_speed": 2,
-        "decision": "搁置",
+        "decision": "立项",
     }, headers=ctx["pdm"])
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
-    assert resp.json()["error"]["code"] == "EVAL_NOT_APPROVED"
+    assert resp.json()["error"]["code"] == "QUADRANT_REJECTED"
 
-    # 改判立项 → 放行
-    client.post(f"/api/requirements/{rid}/score", json={"decision": "立项"}, headers=ctx["pdm"])
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
-    assert resp.json()["data"]["status"] == "analyzing"
+    # 驳回必填理由
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "驳回"}, headers=ctx["pdm"])
+    assert resp.json()["error"]["code"] == "REASON_REQUIRED"
+
+    # 搁置 → 自动流转 on_hold（补充后可重新评审）
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "搁置", "comment": "价值论证不足，请补充预期收益"}, headers=ctx["pdm"])
+    assert resp.json()["data"]["status"] == "on_hold"
+
+    # 重新进入评审 → 提分至非重评象限 → 立项自动流转 analyzing
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 3, "d5_risk": 2, "d6_speed": 4,
+        "decision": "立项",
+    }, headers=ctx["pdm"])
+    data = resp.json()["data"]
+    assert data["status"] == "analyzing" and data["flowed_to"] == "analyzing"
+
+
+def test_reject_closes_with_reason(client, ctx):
+    """M16：重评象限驳回（带理由）→ 需求关闭并记录理由。"""
+    r = _register(client, ctx["pdm"], ctx["domain"], title="被驳回需求")
+    rid = r["id"]
+    resp = client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 1, "d2_value": 2, "d3_tech": 3, "d4_org": 3, "d5_risk": 4, "d6_speed": 2,
+        "decision": "驳回", "comment": "与年度战略无关且价值不可量化",
+    }, headers=ctx["pdm"])
+    assert resp.json()["data"]["status"] == "cancelled", resp.text
+    detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
+    assert "评审驳回" in detail["closure_note"] and "价值不可量化" in detail["closure_note"]
 
 
 def test_scoring_config_admin_only(client, ctx):

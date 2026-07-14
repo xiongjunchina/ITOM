@@ -36,16 +36,19 @@ def _register(client, headers, domain, **kw):
     return r.json()["data"]
 
 
-def test_register_and_notify_pdm(client, ctx):
+def test_register_enters_review_and_assigns_domain_owner(client, ctx):
+    """M16：登记即进入评审（evaluating），评审任务自动指派业务域负责人并通知。"""
     r = _register(client, ctx["req"], ctx["domain"])
-    assert r["requirement_code"].startswith("RQ-") and r["status"] == "registered"
+    assert r["requirement_code"].startswith("RQ-") and r["status"] == "evaluating"
     assert r["business_domain_name"] == "零售业务线"
 
     detail = client.get(f"/api/requirements/{r['id']}", headers=ctx["pdm"]).json()["data"]
     assert detail["process"]["definition_name"] == "需求交付流程"
+    step1 = detail["process"]["steps"][0]
+    assert "需求评审" in step1["name"] and step1["assignee_name"] == "BP小美"
 
-    notif = client.get("/api/notifications", headers=ctx["pdm"]).json()["data"]
-    assert any("新需求登记" in n["title"] for n in notif)
+    notif = client.get("/api/notifications", headers=ctx["bp"]).json()["data"]
+    assert any("需求评审指派" in n["title"] for n in notif)
 
 
 def test_requester_scope(client, ctx):
@@ -59,9 +62,14 @@ def test_requester_scope(client, ctx):
 def test_stage_gate_and_full_lifecycle(client, ctx):
     r = _register(client, ctx["bp"], ctx["domain"], title="全流程需求")
     rid = r["id"]
-    client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
+    # M16：登记即 evaluating；评分立项自动流转 analyzing
+    resp = client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
+        "decision": "立项",
+    }, headers=ctx["pdm"])
+    assert resp.json()["data"]["status"] == "analyzing", resp.text
 
-    # 未完成分析（缺 moscow/owner）不能进实现
+    # 未完成分析（缺 owner）不能进实现
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["pdm"])
     assert resp.json()["error"]["code"] == "STAGE_FIELD_REQUIRED"
 

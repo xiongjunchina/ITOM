@@ -1210,6 +1210,21 @@ export const DECISION_COLORS: Record<string, string> = {
   驳回: 'red',
 };
 
+// ---- M16 需求评审分流 ----
+
+/** 方案类型（后端权威值为中文；PATCH solution_type 白名单） */
+export const SOLUTION_TYPES = ['二次开发', '新购系统'] as const;
+
+/** 实现路径（后端派生值，中文权威）：新购系统 或 二开人天≥阈值 → 转项目管理 */
+export const ROUTE_DEV = '需求开发实现';
+export const ROUTE_PROJECT = '转项目管理';
+
+/** 实现路径 Tag 配色（语言无关；标签文案见 i18n/enums.ts route()） */
+export const ROUTE_META: Record<string, string> = {
+  [ROUTE_DEV]: 'blue',
+  [ROUTE_PROJECT]: 'purple',
+};
+
 /** 需求类型（后端白名单） */
 export const REQ_TYPES = ['业务', '功能', '数据', '集成', '合规'] as const;
 
@@ -1286,6 +1301,8 @@ export interface ActiveTaskRow {
   moscow: Moscow | string | null;
   /** 四象限（中文权威值） */
   quadrant: string | null;
+  /** 所属需求加权总分（列表已按其降序返回） */
+  weighted_total: number | null;
 }
 
 /** 需求列表行 */
@@ -1328,6 +1345,11 @@ export interface RequirementRow {
   prd_effort?: number | null;
   /** 开发人天 */
   dev_effort?: number | null;
+  // ---- M16 需求评审分流 ----
+  /** 方案类型（中文权威值：二次开发/新购系统；方案评估阶段填写） */
+  solution_type: string | null;
+  /** 实现路径（后端按方案类型+开发人天+阈值派生：需求开发实现/转项目管理；未填方案类型为 null） */
+  route: string | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
 }
@@ -1360,17 +1382,28 @@ export interface ScoringRubricEntry {
 /** 六维权重键（后端 rubric/weights 用短键 d1..d6） */
 export type ScoringDimKey = 'd1' | 'd2' | 'd3' | 'd4' | 'd5' | 'd6';
 
+/** 方案评估指派（M16）：立项后 产品 leader 主责 / 开发 leader 知会（人员主数据 id） */
+export interface ReviewAssignees {
+  pdm_leader?: string | null;
+  dev_leader?: string | null;
+}
+
 /** 评分规则配置（GET/PUT /requirements/scoring-config） */
 export interface ScoringConfig {
   weights: Record<ScoringDimKey, number>;
   thresholds: { total: number; strategic: number; viable: number };
   rubric: Record<string, ScoringRubricEntry>;
   role_weights?: Record<string, number>;
+  /** M16 转项目人天阈值：二开 dev_effort≥阈值 或 新购系统 → 转项目管理 */
+  effort_threshold: number;
+  /** M16 方案评估指派 */
+  review_assignees: ReviewAssignees;
   defaults?: {
     weights: Record<ScoringDimKey, number>;
     thresholds: { total: number; strategic: number; viable: number };
     rubric: Record<string, ScoringRubricEntry>;
     role_weights?: Record<string, number>;
+    effort_threshold: number;
   };
 }
 

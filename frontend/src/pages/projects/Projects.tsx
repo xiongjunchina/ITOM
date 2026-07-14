@@ -32,11 +32,12 @@ import type {
   ProjectDetail,
   ProjectRow,
   ProjectStatus,
+  RequirementRow,
   ServiceItem,
 } from '../../api/types';
 import { PROJECT_STATUS } from '../../api/types';
 import { useEnums } from '../../i18n/enums';
-import { HealthDot, StatusBadge } from './shared';
+import { HealthDot, StatusBadge, fetchLinkableRequirements } from './shared';
 import CharterImportModal from './CharterImportModal';
 import ReasonModal from './ReasonModal';
 import ProjectEditModal, { type ProjectEditModalProject } from './ProjectEditModal';
@@ -55,6 +56,8 @@ interface ProjectFormValues {
   name: string;
   pm: string;
   planned: [Dayjs, Dayjs];
+  /** M16：关联来源需求（转项目管理且未挂接项目），项目验收关闭自动闭环该需求 */
+  requirement_id?: string;
   portfolio_id?: string;
   service_item_id?: string;
   budget_10k?: number;
@@ -89,6 +92,7 @@ function ProjectList() {
   const [form] = Form.useForm<ProjectFormValues>();
   const [members, setMembers] = useState<Member[]>([]);
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
+  const [linkableReqs, setLinkableReqs] = useState<RequirementRow[]>([]);
   const [charterOpen, setCharterOpen] = useState(false);
 
   // 行内编辑（共享编辑弹窗）：列表行缺 service_item_id/description，先取详情再打开
@@ -212,6 +216,10 @@ function ProjectList() {
         .then((res) => setServiceItems(res.items.filter((i) => i.status === '上架')))
         .catch(() => undefined);
     }
+    // 关联需求候选每次打开都刷新（挂接状态随建项目实时变化）
+    fetchLinkableRequirements()
+      .then(setLinkableReqs)
+      .catch(() => undefined);
   };
 
   const submitCreate = async () => {
@@ -223,6 +231,7 @@ function ProjectList() {
         pm: values.pm,
         planned_start: values.planned[0].format('YYYY-MM-DD'),
         planned_end: values.planned[1].format('YYYY-MM-DD'),
+        requirement_id: values.requirement_id ?? null,
         portfolio_id: values.portfolio_id ?? null,
         service_item_id: values.service_item_id ?? null,
         budget_10k: values.budget_10k ?? null,
@@ -481,6 +490,19 @@ function ProjectList() {
             rules={[{ required: true, message: t('proj.plannedRequired') }]}
           >
             <DatePicker.RangePicker style={{ width: '100%' }} />
+          </Form.Item>
+          {/* M16 关联来源需求：仅列 转项目管理 且未挂接项目的实现中需求 */}
+          <Form.Item name="requirement_id" label={t('proj.linkReq')} extra={t('proj.linkReqHint')}>
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder={t('proj.linkReqPlaceholder')}
+              options={linkableReqs.map((r) => ({
+                value: r.id,
+                label: `${r.requirement_code} ${r.title}`,
+              }))}
+            />
           </Form.Item>
           <Collapse
             ghost

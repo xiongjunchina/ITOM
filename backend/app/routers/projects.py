@@ -54,6 +54,7 @@ class ProjectCreate(BaseModel):
     service_item_id: str | None = None
     budget_10k: float | None = None
     description: str | None = None
+    requirement_id: str | None = None  # M16：由需求转入时关联，项目关闭自动闭环需求
 
 
 class ProjectUpdate(BaseModel):
@@ -229,6 +230,59 @@ def list_projects(
     return ok([_project_row(p, db, names, status_map) for p in items], total=total, page=page)
 
 
+def _link_requirement(db: Session, project: Project, requirement_id: str, actor: AuthUser):
+    """M16：项目创建时挂接来源需求（转项目路径），项目验收关闭后自动闭环该需求。"""
+    from app.models import Requirement
+
+    r = db.get(Requirement, requirement_id)
+    if not r or r.is_deleted:
+        raise AppError("NOT_FOUND", "关联需求不存在", 404)
+    r.project_id = project.id
+    audit(db, "requirement", r.id, "link_project", actor, {"project": project.project_code})
+    if r.requester:
+        ru = db.get(AuthUser, r.requester)
+        if ru and ru.person_id:
+            from app.events import notifier
+
+            notifier.notify(db, "requirement.project_created", "requirement", r.id, [ru.person_id],
+                            f"需求已立项：{r.requirement_code} {r.title}",
+                            f"项目 {project.project_code}「{project.name}」已创建，可在需求详情跟踪交付。",
+                            link=f"/requirements/{r.id}")
+
+
+def _close_linked_requirements(db: Session, project: Project, actor: AuthUser):
+    """M16 闭环：项目验收关闭 → 转项目路径的关联需求自动关闭并通知。"""
+    from app.models import Requirement
+    from app.services import requirement_scoring
+
+    cfg = requirement_scoring.get_config(db)
+    now = datetime.now()
+    rows = db.query(Requirement).filter(
+        Requirement.project_id == project.id, Requirement.is_deleted.is_(False),
+        Requirement.status.notin_(("closed", "cancelled")),
+    ).all()
+    for r in rows:
+        route = requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
+        if route != requirement_scoring.ROUTE_PROJECT:
+            continue  # 手动挂接的非转项目需求不自动关闭
+        r.status = "closed"
+        r.closed_at = now
+        r.closure_note = f"[自动闭环] 关联项目 {project.project_code} 已验收关闭"
+        audit(db, "requirement", r.id, "auto_close", actor, {"project": project.project_code})
+        requester_person = None
+        if r.requester:
+            ru = db.get(AuthUser, r.requester)
+            requester_person = ru.person_id if ru else None
+        recipients = [p for p in {r.owner, requester_person} if p]
+        if recipients:
+            from app.events import notifier
+
+            notifier.notify(db, "requirement.closed", "requirement", r.id, recipients,
+                            f"需求已闭环：{r.requirement_code} {r.title}",
+                            f"关联项目 {project.project_code} 验收关闭，需求自动闭环。",
+                            link=f"/requirements/{r.id}")
+
+
 def _create_project(db: Session, data: dict, actor: AuthUser) -> Project:
     if data["planned_end"] < data["planned_start"]:
         raise AppError("INVALID_DATES", "计划结束不能早于计划开始")
@@ -251,7 +305,11 @@ def _create_project(db: Session, data: dict, actor: AuthUser) -> Project:
 
 @router.post("/api/projects")
 def create_project(body: ProjectCreate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "create"))):
-    project = _create_project(db, body.model_dump(), actor)
+    data = body.model_dump()
+    requirement_id = data.pop("requirement_id", None)
+    project = _create_project(db, data, actor)
+    if requirement_id:
+        _link_requirement(db, project, requirement_id, actor)
     db.commit()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     return ok(_project_row(project, db, names, status_names(db, "project")))
@@ -397,8 +455,10 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
         if not p.actual_end:
             p.actual_end = today  # 手动填过则尊重
         publish(db, "project.completed", "project", p.id, {})
-    if to == "closed" and not p.actual_end:
-        p.actual_end = today  # 提前关闭同样落实际结束
+    if to == "closed":
+        if not p.actual_end:
+            p.actual_end = today  # 提前关闭同样落实际结束
+        _close_linked_requirements(db, p, actor)  # M16：转项目需求自动闭环
     db.commit()
     return ok({"id": p.id, "status": p.status})
 
@@ -461,6 +521,8 @@ def charter_create(body: CharterCreateIn, db: Session = Depends(get_db), actor=D
         "resource_note": f.get("resource_note"),
         "org_members": f.get("org_members"), "stakeholders": f.get("stakeholders"),
     }, actor)
+    if f.get("requirement_id"):
+        _link_requirement(db, project, f["requirement_id"], actor)
 
     from app.services.projects import create_wbs_by_code
 

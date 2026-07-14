@@ -74,6 +74,7 @@ class RequirementUpdate(BaseModel):
     business_value_note: str | None = None
     prd_effort: float | None = None
     dev_effort: float | None = None
+    solution_type: str | None = None
     moscow: str | None = None
     owner: str | None = None
     target_date: str | None = None
@@ -101,6 +102,8 @@ class ScoringConfigIn(BaseModel):
     thresholds: dict | None = None
     rubric: dict | None = None
     role_weights: dict | None = None
+    effort_threshold: float | None = None
+    review_assignees: dict | None = None
 
 
 class TransitionIn(BaseModel):
@@ -168,6 +171,10 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
         "weighted_total": requirement_scoring.compute_weighted_total(scores, weights),
         "quadrant": requirement_scoring.compute_quadrant(scores, thresholds, weights),
         "decision": r.decision, "prd_effort": r.prd_effort, "dev_effort": r.dev_effort,
+        "solution_type": r.solution_type,
+        "route": requirement_scoring.compute_route(
+            r.solution_type, r.dev_effort, cfg.effort_threshold if cfg else None
+        ),
         **_task_progress(db, r.id),
     }
 
@@ -202,6 +209,76 @@ def list_requirements(
     return ok([_row(r, db, names, domains, status_map, cfg) for r in items], total=total, page=page)
 
 
+def _current_process_task(db: Session, requirement_id: str):
+    """需求流程实例的当前待处理任务。"""
+    from app.models import ProcessInstance, ProcessTask
+
+    db.flush()  # Session autoflush=False：先落刚生成的实例/任务再查
+
+    inst = (
+        db.query(ProcessInstance)
+        .filter(ProcessInstance.entity_type == "requirement", ProcessInstance.entity_id == requirement_id,
+                ProcessInstance.is_deleted.is_(False))
+        .order_by(ProcessInstance.created_at.desc())
+        .first()
+    )
+    if not inst:
+        return None
+    return (
+        db.query(ProcessTask)
+        .filter(ProcessTask.instance_id == inst.id, ProcessTask.status == "待处理",
+                ProcessTask.is_deleted.is_(False))
+        .first()
+    )
+
+
+def _assign_review_to_domain_owner(db: Session, r: Requirement):
+    """M16：按业务域把评审任务指派给服务线负责人（域 owner）并通知；无 owner 则保持角色默认。"""
+    domain = db.get(BusinessDomain, r.business_domain_id)
+    owner = domain.owner_id if domain else None
+    if not owner:
+        return
+    task = _current_process_task(db, r.id)
+    if task:
+        task.assignee = owner
+    notifier.notify(db, "requirement.review_assigned", "requirement", r.id, [owner],
+                    f"需求评审指派：{r.requirement_code} {r.title}",
+                    f"业务域「{domain.name}」新需求待评审（六维评分）。",
+                    link=f"/requirements/{r.id}")
+
+
+def _enter_evaluating(db: Session, r: Requirement):
+    """登记即进入评审（M16 流程：登记→按业务域指派服务线负责人评审）。"""
+    r.status = "evaluating"
+    if not r.evaluating_at:
+        r.evaluating_at = datetime.now()
+    _assign_review_to_domain_owner(db, r)
+
+
+def _complete_review_step(db: Session, r: Requirement, user: AuthUser, comment: str):
+    """决议落定时同步推进流程：完成「需求评审」步骤任务（引擎自动生成下一步骤任务）。"""
+    task = _current_process_task(db, r.id)
+    if task:
+        process_engine.complete_task(db, task.id, user, comment[:500])
+
+
+def _assign_solution_review(db: Session, r: Requirement):
+    """立项后进入方案评估：产品 leader 主责、开发 leader 知会（评分规则配置页可配）。"""
+    cfg = requirement_scoring.get_config(db)
+    assignees = cfg.review_assignees or {}
+    pdm_leader = assignees.get("pdm_leader")
+    dev_leader = assignees.get("dev_leader")
+    task = _current_process_task(db, r.id)
+    if task and pdm_leader:
+        task.assignee = pdm_leader
+    recipients = [p for p in (pdm_leader, dev_leader) if p]
+    if recipients:
+        notifier.notify(db, "requirement.solution_review", "requirement", r.id, recipients,
+                        f"方案评估：{r.requirement_code} {r.title}",
+                        "请评估解决方案类型与开发人天（二开<阈值→需求实现；新购或≥阈值→转项目）。",
+                        link=f"/requirements/{r.id}")
+
+
 def _notify_pdm(db: Session, requirement: Requirement):
     users = db.query(AuthUser).filter(AuthUser.is_active.is_(True)).all()
     recipients = [u.person_id for u in users if u.person_id and IT_PDM in effective_roles(db, u)]
@@ -232,9 +309,9 @@ def create_requirement(body: RequirementCreate, db: Session = Depends(get_db), u
     db.add(r)
     db.flush()
     process_engine.start_instance(db, "requirement", r.id, {})
+    _enter_evaluating(db, r)  # M16：登记即进入评审，按业务域指派服务线负责人
     audit(db, "requirement", r.id, "create", user, {"code": r.requirement_code})
     publish(db, "requirement.registered", "requirement", r.id, {})
-    _notify_pdm(db, r)
     db.commit()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
@@ -250,11 +327,15 @@ def get_scoring_config(db: Session = Depends(get_db), _: AuthUser = Depends(get_
     return ok({
         "id": cfg.id, "weights": cfg.weights, "thresholds": cfg.thresholds,
         "rubric": cfg.rubric, "role_weights": cfg.role_weights,
+        "effort_threshold": cfg.effort_threshold if cfg.effort_threshold is not None
+        else requirement_scoring.DEFAULT_EFFORT_THRESHOLD,
+        "review_assignees": cfg.review_assignees or {},
         "defaults": {
             "weights": requirement_scoring.DEFAULT_WEIGHTS,
             "thresholds": requirement_scoring.DEFAULT_THRESHOLDS,
             "rubric": requirement_scoring.DEFAULT_RUBRIC,
             "role_weights": requirement_scoring.DEFAULT_ROLE_WEIGHTS,
+            "effort_threshold": requirement_scoring.DEFAULT_EFFORT_THRESHOLD,
         },
     })
 
@@ -270,7 +351,9 @@ def update_scoring_config(body: ScoringConfigIn, db: Session = Depends(get_db), 
         if abs(sum(w.get(k, 0) for k in ("d1", "d2", "d3", "d4", "d5", "d6")) - 1.0) > 0.001:
             raise AppError("INVALID_WEIGHTS", "六维权重之和须为 1.0")
         cfg.weights = w
-    for f in ("thresholds", "rubric", "role_weights"):
+    if data.get("effort_threshold") is not None and data["effort_threshold"] <= 0:
+        raise AppError("INVALID_THRESHOLD", "转项目人天阈值必须大于 0")
+    for f in ("thresholds", "rubric", "role_weights", "effort_threshold", "review_assignees"):
         if f in data and data[f] is not None:
             setattr(cfg, f, data[f])
     audit(db, "requirement_scoring_config", cfg.id, "update", user, {"fields": list(data.keys())})
@@ -347,7 +430,6 @@ async def import_requirements(file: UploadFile, db: Session = Depends(get_db), u
         if row.get("decision") and row["decision"] not in DECISIONS:
             errors.append({"row": rownum, "error": f"决议须为 {'/'.join(DECISIONS)}"})
             continue
-        fully_scored = len(scores) == 6
         r = Requirement(
             requirement_code=gen_code(db, Requirement, "requirement_code", "RQ"),
             title=row["title"], req_type=row["req_type"], business_domain_id=domain.id,
@@ -362,13 +444,13 @@ async def import_requirements(file: UploadFile, db: Session = Depends(get_db), u
             score_d1_strategy=scores.get("d1_strategy"), score_d2_value=scores.get("d2_value"),
             score_d3_tech=scores.get("d3_tech"), score_d4_org=scores.get("d4_org"),
             score_d5_risk=scores.get("d5_risk"), score_d6_speed=scores.get("d6_speed"),
-            status="evaluating" if fully_scored else "registered",
+            status="registered",
             registered_at=datetime.now(),
-            evaluating_at=datetime.now() if fully_scored else None,
         )
         db.add(r)
         db.flush()
         process_engine.start_instance(db, "requirement", r.id, {})
+        _enter_evaluating(db, r)  # M16：导入需求同样进入评审（已带分的由评审人确认决议）
         imported += 1
     db.commit()
     return ok({"imported": imported, "errors": errors})
@@ -455,6 +537,10 @@ def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session
         raise AppError("INVALID_MOSCOW", "优先级必须为 M/S/C/W")
     if data.get("req_type") and data["req_type"] not in REQ_TYPES:
         raise AppError("INVALID_TYPE", f"需求类型必须为 {'/'.join(REQ_TYPES)}")
+    if data.get("solution_type") and data["solution_type"] not in (
+        requirement_scoring.SOLUTION_SECONDARY, requirement_scoring.SOLUTION_NEW_SYSTEM,
+    ):
+        raise AppError("INVALID_SOLUTION_TYPE", "方案类型必须为 二次开发/新购系统")
     if data.get("project_id") and not db.get(Project, data["project_id"]):
         raise AppError("NOT_FOUND", "关联项目不存在", 404)
     for df in ("target_date", "expected_date"):
@@ -532,6 +618,18 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
         setattr(r, field_map[k], v)
     if "decision" in data:
         r.decision = data["decision"]
+    # M16 评估门：决议按象限约束——「重新评估」象限仅可 搁置/驳回；其余象限方可立项；
+    # 驳回=关闭需求，必填理由（≥5 字）
+    cfg = requirement_scoring.get_config(db)
+    scores_now = requirement_scoring.requirement_scores(r)
+    quadrant = requirement_scoring.compute_quadrant(scores_now, cfg.thresholds, cfg.weights)
+    if r.decision == "立项":
+        if quadrant is None:
+            raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
+        if quadrant == requirement_scoring.QUADRANT_REEVALUATE:
+            raise AppError("QUADRANT_REJECTED", "评分落入「重新评估」象限，仅可选择 搁置（补充后重评）或 驳回（关闭）")
+    if r.decision == "驳回" and len((data.get("comment") or "").strip()) < 5:
+        raise AppError("REASON_REQUIRED", "驳回将关闭需求，必须填写理由（至少 5 个字）")
     # upsert 共识评分行
     person = db.get(OrgMember, user.person_id) if user.person_id else None
     row = (
@@ -550,15 +648,84 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     if "comment" in data:
         row.comment = data["comment"]
     audit(db, "requirement", r.id, "score", user, {"decision": r.decision})
+
+    # M16：保存决议即自动流转（评审动作一步到位）
+    flowed_to = None
+    if r.status == "evaluating" and r.decision:
+        now = datetime.now()
+        if r.decision == "立项":
+            wf_transition(db, r, "requirement", "analyzing", {}, user)
+            if not r.analyzing_at:
+                r.analyzing_at = now
+            _complete_review_step(db, r, user, f"评审通过（象限：{quadrant}）")
+            _assign_solution_review(db, r)  # 产品 leader 主责、开发 leader 知会
+            flowed_to = "analyzing"
+        elif r.decision == "搁置":
+            wf_transition(db, r, "requirement", "on_hold", {}, user)
+            if r.requester:
+                ru = db.get(AuthUser, r.requester)
+                if ru and ru.person_id:
+                    notifier.notify(db, "requirement.on_hold", "requirement", r.id, [ru.person_id],
+                                    f"需求已搁置：{r.requirement_code} {r.title}",
+                                    f"评审意见：{(data.get('comment') or '').strip() or '待补充价值论证后重新评审'}",
+                                    link=f"/requirements/{r.id}")
+            flowed_to = "on_hold"
+        elif r.decision == "驳回":
+            wf_transition(db, r, "requirement", "cancelled", {}, user)
+            _complete_review_step(db, r, user, f"评审驳回：{(data.get('comment') or '').strip()}")
+            r.closure_note = f"[评审驳回] {(data.get('comment') or '').strip()}"
+            r.closed_at = now
+            if r.requester:
+                ru = db.get(AuthUser, r.requester)
+                if ru and ru.person_id:
+                    notifier.notify(db, "requirement.rejected", "requirement", r.id, [ru.person_id],
+                                    f"需求评审未通过：{r.requirement_code} {r.title}",
+                                    f"驳回理由：{(data.get('comment') or '').strip()}",
+                                    link=f"/requirements/{r.id}")
+            flowed_to = "cancelled"
+        if flowed_to:
+            publish(db, f"requirement.{flowed_to}", "requirement", r.id, {})
     db.commit()
-    cfg = requirement_scoring.get_config(db)
     scores = requirement_scoring.requirement_scores(r)
     return ok({
-        "id": r.id, "decision": r.decision,
+        "id": r.id, "decision": r.decision, "status": r.status, "flowed_to": flowed_to,
         "weighted_total": requirement_scoring.compute_weighted_total(scores, cfg.weights),
         "quadrant": requirement_scoring.compute_quadrant(scores, cfg.thresholds, cfg.weights),
         **scores,
     })
+
+
+class ToProjectIn(BaseModel):
+    pm_id: str
+
+
+@router.post("/{requirement_id}/to-project")
+def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
+    """转项目管理（M16）：仅 route=转项目管理 的需求可转；指派 PM→通知其备章程建项目并关联本需求。"""
+    r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
+    if r.status != "analyzing":
+        raise AppError("ROUTE_STAGE", "仅「方案评估（分析中）」阶段可执行转项目")
+    cfg = requirement_scoring.get_config(db)
+    route = requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
+    if route != requirement_scoring.ROUTE_PROJECT:
+        raise AppError("ROUTE_NOT_PROJECT",
+                       "当前方案不满足转项目条件（需 新购系统 或 二开人天≥阈值），请先完善方案类型与开发人天")
+    pm = db.get(OrgMember, body.pm_id)
+    if not pm or pm.is_deleted:
+        raise AppError("NOT_FOUND", "项目经理不存在", 404)
+    r.owner = pm.id
+    wf_transition(db, r, "requirement", "implementing", {}, user)
+    if not r.implementing_at:
+        r.implementing_at = datetime.now()
+    notifier.notify(db, "requirement.to_project", "requirement", r.id, [pm.id],
+                    f"需求转项目：{r.requirement_code} {r.title}",
+                    "您被指派为项目经理。请准备项目章程，在「项目管理」创建项目并关联本需求；项目验收关闭后需求将自动闭环。",
+                    link=f"/requirements/{r.id}")
+    audit(db, "requirement", r.id, "to_project", user, {"pm": pm.name})
+    publish(db, "requirement.to_project", "requirement", r.id, {"pm_id": pm.id})
+    db.commit()
+    return ok({"id": r.id, "status": r.status, "owner": r.owner})
 
 
 # ---------- 实现中任务清单（跨需求聚合，排期/实现阶段） ----------
@@ -583,10 +750,20 @@ def active_tasks(
         q = q.filter(RequirementTask.assignee == user.person_id)
     if status:
         q = q.filter(RequirementTask.status == status)
-    rows = q.order_by(RequirementTask.status, RequirementTask.plan_date.is_(None), RequirementTask.plan_date).all()
+    rows = q.all()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
+    cfg = requirement_scoring.get_config(db)
+
+    # M16：排期优先级 = 六维加权总分（高分需求的任务在前），同分按计划日期
+    def _prio(pair):
+        t, r = pair
+        total = requirement_scoring.compute_weighted_total(
+            requirement_scoring.requirement_scores(r), cfg.weights)
+        return (-(total if total is not None else -1), t.plan_date is None, t.plan_date or _date.max, t.status)
+
+    rows = sorted(rows, key=_prio)
     return ok([
         {
             "id": t.id, "name": t.name, "description": t.description,
@@ -598,7 +775,11 @@ def active_tasks(
             "requirement_status_name": status_map.get(r.status, r.status),
             "requirement_owner_name": names.get(r.owner),
             "business_domain_name": domains.get(r.business_domain_id),
-            "moscow": r.moscow, "quadrant": requirement_scoring.compute_quadrant(requirement_scoring.requirement_scores(r)),
+            "moscow": r.moscow,
+            "weighted_total": requirement_scoring.compute_weighted_total(
+                requirement_scoring.requirement_scores(r), cfg.weights),
+            "quadrant": requirement_scoring.compute_quadrant(
+                requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights),
         }
         for t, r in rows
     ])

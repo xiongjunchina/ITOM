@@ -1,3 +1,5 @@
+import { ROUTE_DEV, ROUTE_PROJECT } from '../../api/types';
+
 /**
  * 六维评分维度元数据（M10）。
  * key 与后端评分字段一致（d1_strategy..d6_speed）；short 与 scoring-config 的 weights/rubric 短键一致（d1..d6）。
@@ -54,4 +56,20 @@ export function computeScore(
   else if (strat >= thresholds.viable) quadrant = '低优先级';
   else quadrant = '重新评估';
   return { total, quadrant };
+}
+
+/**
+ * 实现路径本地实时判定（M16，与后端 compute_route 一致，派生不落库）：
+ * 新购系统 或 二开人天≥阈值 → 转项目管理；二开且人天未填视作 < 阈值 → 需求开发实现；
+ * 未选方案类型 → null。
+ */
+export function computeRoute(
+  solutionType: string | null | undefined,
+  devEffort: number | null | undefined,
+  threshold: number,
+): string | null {
+  if (!solutionType) return null;
+  if (solutionType === '新购系统') return ROUTE_PROJECT;
+  if (devEffort != null && devEffort >= threshold) return ROUTE_PROJECT;
+  return ROUTE_DEV;
 }

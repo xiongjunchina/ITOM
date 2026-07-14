@@ -37,6 +37,7 @@ class Requirement(GlidBase):
     score_d5_risk: Mapped[int | None] = mapped_column(Integer, comment="D5 风险等级 1-5(反向)")
     score_d6_speed: Mapped[int | None] = mapped_column(Integer, comment="D6 价值速度 1-5")
     decision: Mapped[str | None] = mapped_column(String(16), comment="最终决议：立项/搁置/驳回")
+    solution_type: Mapped[str | None] = mapped_column(String(16), comment="方案类型（M16）：二次开发/新购系统")
     prd_effort: Mapped[float | None] = mapped_column(Float, comment="PRD 人天")
     dev_effort: Mapped[float | None] = mapped_column(Float, comment="开发人天")
     # 分析阶段
@@ -94,6 +95,12 @@ class RequirementScoringConfig(GlidBase):
     )
     role_weights: Mapped[dict | None] = mapped_column(
         JsonCol, comment="评审角色权重 {业务:0.4, 技术:0.3, PMO:0.2, 财务:0.1}"
+    )
+    effort_threshold: Mapped[float | None] = mapped_column(
+        Float, comment="转项目人天阈值（M16）：二开人天≥阈值 或 新购系统 → 转项目管理；默认 20"
+    )
+    review_assignees: Mapped[dict | None] = mapped_column(
+        JsonCol, comment="方案评估指派（M16）{pdm_leader: 人员id主责, dev_leader: 人员id知会}"
     )
 
 

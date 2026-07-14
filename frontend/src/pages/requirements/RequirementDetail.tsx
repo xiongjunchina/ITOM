@@ -14,6 +14,7 @@ import {
   Modal,
   Popconfirm,
   Progress,
+  Radio,
   Segmented,
   Select,
   Space,
@@ -62,9 +63,12 @@ import {
   REQ_TASK_STATUSES,
   REQ_TASK_STATUS_COLORS,
   REQ_TYPES,
+  ROUTE_DEV,
+  ROUTE_PROJECT,
+  SOLUTION_TYPES,
 } from '../../api/types';
-import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, fmtDt } from './shared';
-import { DIMENSIONS, computeScore, type DimScores } from './dimensions';
+import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag, fmtDt } from './shared';
+import { DIMENSIONS, computeRoute, computeScore, type DimScores } from './dimensions';
 
 // ---------- 评估评分面板 ----------
 
@@ -125,7 +129,31 @@ function EvaluationPanel({
     [scores, config],
   );
 
+  // M16 决议按本地实时象限约束：重新评估象限仅可 搁置/驳回；其余象限（评满）可 立项/搁置；驳回仅重评象限可选
+  const isReeval = preview?.quadrant === '重新评估';
+  const decisionDisabled = (d: string): boolean =>
+    d === '立项' ? !preview || isReeval : d === '驳回' ? !isReeval : false;
+  const decisionDisabledTip = (d: string): string =>
+    d === '立项'
+      ? isReeval
+        ? t('req.eval.quadrantBlocked')
+        : t('req.eval.needFullScores')
+      : t('req.eval.rejectOnlyReeval');
+
+  // 打分变化导致象限变化时，已选决议若被禁用则自动清空，避免提交无效决议
+  useEffect(() => {
+    if (editable && decision && decisionDisabled(decision)) setDecision(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editable, decision, preview?.quadrant]);
+
+  /** 驳回必填理由（≥5 字，前端校验 + 后端 REASON_REQUIRED 兜底） */
+  const rejectCommentInvalid = decision === '驳回' && comment.trim().length < 5;
+
   const submit = async () => {
+    if (rejectCommentInvalid) {
+      message.error(t('req.eval.rejectReasonRequired'));
+      return;
+    }
     setSaving(true);
     try {
       const body: Record<string, unknown> = { comment: comment || null };
@@ -133,8 +161,20 @@ function EvaluationPanel({
         if (scores[d.key] != null) body[d.key] = scores[d.key];
       });
       if (decision) body.decision = decision;
-      await api.post(`/requirements/${id}/score`, body);
-      message.success(t('req.scoreSaved'));
+      // 决议保存即自动流转（M16）：按返回 flowed_to 提示去向
+      const res = await api.post<{ status: string; flowed_to: string | null }>(
+        `/requirements/${id}/score`,
+        body,
+      );
+      message.success(
+        res.flowed_to === 'analyzing'
+          ? t('req.eval.flowedAnalyzing')
+          : res.flowed_to === 'on_hold'
+            ? t('req.eval.flowedOnHold')
+            : res.flowed_to === 'cancelled'
+              ? t('req.eval.flowedCancelled')
+              : t('req.scoreSaved'),
+      );
       onSaved();
     } catch {
       // 已统一提示
@@ -211,7 +251,7 @@ function EvaluationPanel({
         )}
       </div>
 
-      {/* 决议 + 备注 + 保存 */}
+      {/* 决议 + 备注 + 保存（决议保存即自动流转） */}
       <Space direction="vertical" size={12} style={{ width: '100%' }}>
         <Space wrap align="center">
           <Typography.Text strong>{t('req.evalDecision')}</Typography.Text>
@@ -222,20 +262,52 @@ function EvaluationPanel({
               style={{ width: 160 }}
               value={decision}
               onChange={(v) => setDecision(v)}
-              options={REQ_DECISIONS.map((dv) => ({ value: dv, label: et.reqDecision(dv) }))}
+              options={REQ_DECISIONS.map((dv) => {
+                const disabled = decisionDisabled(dv);
+                return {
+                  value: dv,
+                  disabled,
+                  label: disabled ? (
+                    <Tooltip title={decisionDisabledTip(dv)}>
+                      <span>{et.reqDecision(dv)}</span>
+                    </Tooltip>
+                  ) : (
+                    et.reqDecision(dv)
+                  ),
+                };
+              })}
             />
           ) : (
             <DecisionTag value={detail.decision} />
           )}
         </Space>
+        {editable && isReeval && (
+          <Typography.Text type="warning" style={{ fontSize: 12 }}>
+            {t('req.eval.quadrantBlocked')}
+          </Typography.Text>
+        )}
         {editable ? (
-          <Input.TextArea
-            rows={2}
-            maxLength={1000}
-            value={comment}
-            placeholder={t('req.scoreCommentPlaceholder')}
-            onChange={(e) => setComment(e.target.value)}
-          />
+          <>
+            <Input.TextArea
+              rows={2}
+              maxLength={1000}
+              value={comment}
+              status={rejectCommentInvalid ? 'error' : undefined}
+              placeholder={
+                decision === '驳回'
+                  ? t('req.eval.rejectReasonRequired')
+                  : decision === '搁置'
+                    ? t('req.eval.holdCommentHint')
+                    : t('req.scoreCommentPlaceholder')
+              }
+              onChange={(e) => setComment(e.target.value)}
+            />
+            {rejectCommentInvalid && (
+              <Typography.Text type="danger" style={{ fontSize: 12 }}>
+                {t('req.eval.rejectReasonRequired')}
+              </Typography.Text>
+            )}
+          </>
         ) : (
           seed?.comment && (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
@@ -245,7 +317,7 @@ function EvaluationPanel({
         )}
         {editable && (
           <Button type="primary" loading={saving} onClick={() => void submit()}>
-            {t('req.saveScore')}
+            {t('req.eval.saveFlow')}
           </Button>
         )}
       </Space>
@@ -273,6 +345,160 @@ function EvaluationPanel({
         </>
       )}
     </Card>
+  );
+}
+
+// ---------- 方案评估区（M16）：方案类型 + 开发人天 → 实现路径分流 ----------
+
+function SolutionEvalSection({
+  id,
+  detail,
+  editable,
+  isAnalyzing,
+  canOperate,
+  memberOptions,
+  onPatch,
+  onSaved,
+}: {
+  id: string;
+  detail: RequirementDetailData;
+  /** 字段可编辑（有编辑权且非终态） */
+  editable: boolean;
+  /** 当前处于方案评估阶段（analyzing）：显示转项目按钮/排期提示 */
+  isAnalyzing: boolean;
+  /** 可执行转项目操作（编辑权且非示例数据） */
+  canOperate: boolean;
+  memberOptions: { value: string; label: string }[];
+  onPatch: (patch: Record<string, unknown>, okMsg?: string) => Promise<void>;
+  onSaved: () => void;
+}) {
+  const t = useT();
+  const et = useEnums();
+  const [config, setConfig] = useState<ScoringConfig | null>(null);
+  const [devEffort, setDevEffort] = useState<number | null>(detail.dev_effort ?? null);
+  useEffect(() => {
+    setDevEffort(detail.dev_effort ?? null);
+  }, [detail.dev_effort]);
+  useEffect(() => {
+    api
+      .get<ScoringConfig>('/requirements/scoring-config')
+      .then(setConfig)
+      .catch(() => undefined);
+  }, []);
+
+  const threshold = config?.effort_threshold ?? 20;
+  // 实时路径徽标：按本地输入即时判定（与后端 compute_route 一致，保存后以详情返回为准）
+  const route = computeRoute(detail.solution_type, devEffort, threshold);
+  const basis = !detail.solution_type
+    ? t('req.solution.noType')
+    : detail.solution_type === '新购系统'
+      ? t('req.solution.basisNewSystem')
+      : devEffort == null
+        ? t('req.solution.basisDevEmpty', { th: threshold })
+        : devEffort >= threshold
+          ? t('req.solution.basisDevGte', { n: devEffort, th: threshold })
+          : t('req.solution.basisDevLt', { n: devEffort, th: threshold });
+
+  // 转项目管理：Modal 选 PM → POST to-project
+  const [pmOpen, setPmOpen] = useState(false);
+  const [pmSaving, setPmSaving] = useState(false);
+  const [pmForm] = Form.useForm();
+
+  const submitToProject = async () => {
+    const v = await pmForm.validateFields();
+    setPmSaving(true);
+    try {
+      await api.post(`/requirements/${id}/to-project`, { pm_id: v.pm_id });
+      message.success(t('req.solution.toProjectDone'));
+      setPmOpen(false);
+      onSaved();
+    } catch {
+      // ROUTE_STAGE / ROUTE_NOT_PROJECT 等已统一提示
+    } finally {
+      setPmSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <Typography.Text strong>{t('req.solution.section')}</Typography.Text>
+      <Descriptions column={2} size="small" bordered style={{ margin: '8px 0 16px' }}>
+        <Descriptions.Item label={t('req.solution.type')}>
+          {editable ? (
+            <Radio.Group
+              value={detail.solution_type ?? undefined}
+              options={SOLUTION_TYPES.map((v) => ({ value: v, label: et.solutionType(v) }))}
+              onChange={(e) => void onPatch({ solution_type: e.target.value })}
+            />
+          ) : (
+            et.solutionType(detail.solution_type) || '-'
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('req.devEffort')}>
+          {editable ? (
+            <InputNumber
+              min={0}
+              precision={1}
+              style={{ width: 120 }}
+              value={devEffort ?? undefined}
+              onChange={(v) => setDevEffort((v as number | null) ?? null)}
+              onBlur={() => {
+                if (devEffort !== (detail.dev_effort ?? null)) void onPatch({ dev_effort: devEffort });
+              }}
+            />
+          ) : detail.dev_effort != null ? (
+            t('req.effortDays', { n: detail.dev_effort })
+          ) : (
+            '-'
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label={t('req.col.route')} span={2}>
+          <Space direction="vertical" size={8}>
+            <Space size={8} wrap>
+              <RouteTag value={route} />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {basis}
+              </Typography.Text>
+            </Space>
+            {route === ROUTE_PROJECT && isAnalyzing && canOperate && (
+              <Button
+                type="primary"
+                onClick={() => {
+                  pmForm.resetFields();
+                  setPmOpen(true);
+                }}
+              >
+                {t('req.solution.toProject')}
+              </Button>
+            )}
+            {route === ROUTE_DEV && isAnalyzing && (
+              <Typography.Text type="secondary">{t('req.solution.devHint')}</Typography.Text>
+            )}
+          </Space>
+        </Descriptions.Item>
+      </Descriptions>
+
+      {/* 转项目管理：选项目经理 */}
+      <Modal
+        title={t('req.solution.toProject')}
+        open={pmOpen}
+        onOk={() => void submitToProject()}
+        confirmLoading={pmSaving}
+        onCancel={() => setPmOpen(false)}
+        destroyOnClose
+      >
+        <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.solution.toProjectHint')} />
+        <Form form={pmForm} layout="vertical" preserve={false}>
+          <Form.Item
+            name="pm_id"
+            label={t('req.solution.pm')}
+            rules={[{ required: true, message: t('req.solution.pmRequired') }]}
+          >
+            <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
   );
 }
 
@@ -895,9 +1121,21 @@ export default function RequirementDetail() {
         />
       )}
 
-      {/* 分析（进入分析阶段后显示） */}
+      {/* 分析（进入分析阶段后显示；M16 顶部融入方案评估小节） */}
       {reachedAnalyzing && (
         <Card title={t('req.analysis')} size="small">
+          {id && (
+            <SolutionEvalSection
+              id={id}
+              detail={detail}
+              editable={canEditNow}
+              isAnalyzing={st === 'analyzing'}
+              canOperate={canEdit && !isExample}
+              memberOptions={memberOptions}
+              onPatch={patchField}
+              onSaved={() => void load()}
+            />
+          )}
           <Descriptions column={2} size="small" bordered>
             <Descriptions.Item label={t('req.moscowPriority')}>
               {canEditNow ? (

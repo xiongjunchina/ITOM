@@ -25,8 +25,9 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
-import type { CharterCreateResult, CharterParseResult, Member, RiskGrade } from '../../api/types';
+import type { CharterCreateResult, CharterParseResult, Member, RequirementRow, RiskGrade } from '../../api/types';
 import { RISK_GRADES } from '../../api/types';
+import { fetchLinkableRequirements } from './shared';
 
 interface CharterFormValues {
   name: string;
@@ -91,6 +92,10 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
   const [confirmed, setConfirmed] = useState<CharterFormValues | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // M16 确认页可选关联需求（转项目管理且未挂接项目），提交随 fields.requirement_id 落库
+  const [linkableReqs, setLinkableReqs] = useState<RequirementRow[]>([]);
+  const [reqId, setReqId] = useState<string | undefined>();
+
   useEffect(() => {
     if (!open) {
       setStep(0);
@@ -99,6 +104,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       setConfirmed(null);
       setWbsRows([]);
       setRiskRows([]);
+      setReqId(undefined);
       form.resetFields();
       return;
     }
@@ -108,6 +114,9 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
+    fetchLinkableRequirements()
+      .then(setLinkableReqs)
+      .catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -177,6 +186,8 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
           planned_end: confirmed.planned[1].format('YYYY-MM-DD'),
           budget_10k: confirmed.budget_10k ?? null,
           description: confirmed.description || null,
+          // M16 关联来源需求：项目验收关闭自动闭环该需求
+          requirement_id: reqId ?? null,
           // M13 章程信息分段字段：解析结果原样透传落库（本表单不编辑）
           background: parsed?.fields.background ?? null,
           goals: parsed?.fields.goals ?? null,
@@ -494,6 +505,28 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               </Typography.Paragraph>
             </Descriptions.Item>
           </Descriptions>
+          {/* M16 关联来源需求（可选） */}
+          <div>
+            <Typography.Text strong>{t('proj.linkReq')}</Typography.Text>
+            <div style={{ margin: '4px 0' }}>
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                placeholder={t('proj.linkReqPlaceholder')}
+                style={{ width: 480, maxWidth: '100%' }}
+                value={reqId}
+                onChange={(v) => setReqId(v)}
+                options={linkableReqs.map((r) => ({
+                  value: r.id,
+                  label: `${r.requirement_code} ${r.title}`,
+                }))}
+              />
+            </div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t('proj.linkReqHint')}
+            </Typography.Text>
+          </div>
           <Alert
             type="info"
             showIcon

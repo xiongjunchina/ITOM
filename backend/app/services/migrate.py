@@ -44,7 +44,12 @@ ENSURE_COLUMNS = {
         ("level", "VARCHAR(8) NOT NULL DEFAULT '中级'"),
         ("qualification", "TEXT"),
     ],
+    "requirement_scoring_config": [
+        ("effort_threshold", "DOUBLE PRECISION"),
+        ("review_assignees", "JSONB"),
+    ],
     "requirement": [
+        ("solution_type", "VARCHAR(16)"),
         ("department", "VARCHAR(64)"),
         ("expected_date", "DATE"),
         ("expected_effect", "TEXT"),
@@ -144,12 +149,54 @@ def fix_project_flow_pmo(db: Session):
     db.commit()
 
 
+def rebuild_requirement_flow_m16(db: Session):
+    """M16：需求交付流程按新语义重构（评审→方案评估→实现→验收）。
+
+    仅当该流程无任何实例（含软删）时执行——需求域 M16 前已清库；有实例的环境跳过，
+    由管理员在流程定义页「另存新版本」迁移。幂等：首步骤名已是新版则跳过。
+    """
+    row = db.execute(text(
+        "SELECT d.id FROM process_definition d WHERE d.code='requirement_flow' AND d.is_deleted=false"
+    )).first()
+    if not row:
+        return
+    def_id = row[0]
+    first = db.execute(text(
+        "SELECT name FROM process_step WHERE definition_id=:d AND is_deleted=false ORDER BY seq LIMIT 1"
+    ), {"d": def_id}).scalar()
+    if first and "需求评审" in first:
+        return  # 已是新版
+    used = db.execute(text(
+        "SELECT count(*) FROM process_instance WHERE definition_id=:d"), {"d": def_id}).scalar()
+    if used:
+        logger.warning("requirement_flow 有 %s 个历史实例，跳过自动重构（请另存新版本）", used)
+        return
+    db.execute(text("DELETE FROM process_step WHERE definition_id=:d"), {"d": def_id})
+    from app.core.glid import new_glid
+    steps = [
+        (1, "需求评审（业务域负责人）", "it_bm", ["it_pdm"], "L3", 48),
+        (2, "方案评估与路径判定", "it_tm", ["it_dev"], "L3", 72),
+        (3, "实现交付（开发/项目跟踪）", "it_dev", [], "L3", None),
+        (4, "验收与闭环", "it_pdm", [], "L3", 48),
+    ]
+    import json as _json
+    for seq, name, role, cc, level, sla in steps:
+        db.execute(text(
+            "INSERT INTO process_step (id, definition_id, seq, name, default_role, cc_roles, autonomy_level, sla_hours, is_deleted, is_example, created_at, updated_at) "
+            "VALUES (:id, :d, :seq, :name, :role, CAST(:cc AS jsonb), :level, :sla, false, false, now(), now())"
+        ), {"id": new_glid(), "d": def_id, "seq": seq, "name": name, "role": role,
+            "cc": _json.dumps(cc), "level": level, "sla": sla})
+    logger.info("requirement_flow 已重构为 M16 四步流程")
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
     ensure_columns(db)
     drop_columns(db)
     fix_project_flow_pmo(db)
+    rebuild_requirement_flow_m16(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

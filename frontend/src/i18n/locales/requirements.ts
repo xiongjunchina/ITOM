@@ -237,7 +237,7 @@ export const zh: Dict = {
   'req.previewHint': '完成六维打分后显示加权总分与象限预览',
   'req.dimReverse': '反向',
   'req.dimReverseHint': '反向：分越高风险越大',
-  'req.evalGateHint': '六维评满且决议为「立项」后，方可通过右上角流转进入分析阶段。',
+  'req.evalGateHint': '需求登记后即进入评审。评审决议保存后自动流转：立项→方案评估；搁置→通知提出人；驳回→关闭。评分落入「重新评估」象限时仅可选择 搁置/驳回。',
   'req.scoreHistory': '评分记录',
   'req.reviewer': '评审人',
   'req.consensus': '共识',
@@ -251,6 +251,46 @@ export const zh: Dict = {
   'req.dim.d4_org': '组织就绪',
   'req.dim.d5_risk': '风险等级',
   'req.dim.d6_speed': '价值速度',
+
+  // ===== M16 需求评审分流 =====
+  // 评估面板：决议约束 + 自动流转
+  'req.eval.saveFlow': '保存评分并流转',
+  'req.eval.quadrantBlocked': '当前评分落入「重新评估」象限，不可立项，仅可选择 搁置（补充后重评）或 驳回（关闭）',
+  'req.eval.needFullScores': '完成六维评分后方可立项',
+  'req.eval.rejectOnlyReeval': '仅「重新评估」象限可驳回',
+  'req.eval.rejectReasonRequired': '驳回将关闭需求，必须填写理由（至少 5 个字）',
+  'req.eval.holdCommentHint': '评审意见（将通知提出人）',
+  'req.eval.flowedAnalyzing': '已立项，转入方案评估',
+  'req.eval.flowedOnHold': '已搁置并通知提出人',
+  'req.eval.flowedCancelled': '已驳回关闭',
+
+  // 方案评估区（analyzing）
+  'req.solution.section': '方案评估',
+  'req.solution.type': '方案类型',
+  'req.solution.noType': '选择方案类型后显示实现路径判定',
+  'req.solution.basisNewSystem': '新购系统 → 转项目管理',
+  'req.solution.basisDevGte': '二开 {n} 人天 ≥ 阈值 {th} → 转项目管理',
+  'req.solution.basisDevLt': '二开 {n} 人天 < 阈值 {th} → 需求开发实现',
+  'req.solution.basisDevEmpty': '开发人天未填（视作 < 阈值 {th}）→ 需求开发实现',
+  'req.solution.devHint': '实现路径为「需求开发实现」：完善方案后通过右上角流转进入实现阶段，在任务区分解排期。',
+  'req.solution.toProject': '转项目管理',
+  'req.solution.toProjectHint': '指派项目经理后，需求进入实现阶段并通知 PM 准备章程创建项目；项目验收关闭后需求自动闭环。',
+  'req.solution.pm': '项目经理',
+  'req.solution.pmRequired': '请选择项目经理',
+  'req.solution.toProjectDone': '已指派 PM 并通知其创建项目',
+
+  // 列表 / 任务清单
+  'req.col.route': '实现路径',
+  'req.activeTask.sortHint': '清单按所属需求加权总分从高到低排序',
+
+  // 评分规则配置：分流规则
+  'req.cfg.routing': '分流规则',
+  'req.cfg.effortThreshold': '转项目人天阈值',
+  'req.cfg.effortThresholdHint': '二开人天 ≥ 阈值 或 新购系统 → 转项目管理；否则走需求开发实现',
+  'req.cfg.reviewAssignees': '方案评估指派',
+  'req.cfg.reviewAssigneesHint': '立项进入方案评估时自动指派：产品 leader 主责评估任务、开发 leader 知会',
+  'req.cfg.pdmLeader': '产品 leader（主责）',
+  'req.cfg.devLeader': '开发 leader（知会）',
 
   // 评分规则配置页（系统管理）
   'req.cfg.title': '需求评分规则',
@@ -507,7 +547,7 @@ export const en: Dict = {
   'req.previewHint': 'Weighted score and quadrant preview appear once all six dimensions are scored',
   'req.dimReverse': 'Reverse',
   'req.dimReverseHint': 'Reverse: higher score means higher risk',
-  'req.evalGateHint': 'Score all six dimensions and set the decision to "Approved" before moving to the Analysis stage via the top-right actions.',
+  'req.evalGateHint': 'Requirements enter review right after registration. Saving a decision flows automatically: Approve → solution evaluation; Hold → requester notified; Reject → closed. In the "Re-evaluate" quadrant only Hold / Reject are allowed.',
   'req.scoreHistory': 'Scoring History',
   'req.reviewer': 'Reviewer',
   'req.consensus': 'Consensus',
@@ -521,6 +561,46 @@ export const en: Dict = {
   'req.dim.d4_org': 'Org Readiness',
   'req.dim.d5_risk': 'Risk Level',
   'req.dim.d6_speed': 'Time-to-Value',
+
+  // ===== M16 requirement review routing =====
+  // Evaluation panel: decision constraints + auto flow
+  'req.eval.saveFlow': 'Save Scoring & Flow',
+  'req.eval.quadrantBlocked': 'The score falls into the "Re-evaluate" quadrant; approval is unavailable — choose Hold (re-review after enrichment) or Reject (close)',
+  'req.eval.needFullScores': 'Approve is available after all six dimensions are scored',
+  'req.eval.rejectOnlyReeval': 'Reject is only available in the "Re-evaluate" quadrant',
+  'req.eval.rejectReasonRequired': 'Rejecting closes the requirement; a reason of at least 5 characters is required',
+  'req.eval.holdCommentHint': 'Review comment (the requester will be notified)',
+  'req.eval.flowedAnalyzing': 'Approved; moved to solution evaluation',
+  'req.eval.flowedOnHold': 'Put on hold; the requester has been notified',
+  'req.eval.flowedCancelled': 'Rejected and closed',
+
+  // Solution evaluation section (analyzing)
+  'req.solution.section': 'Solution Evaluation',
+  'req.solution.type': 'Solution Type',
+  'req.solution.noType': 'Select a solution type to see the route decision',
+  'req.solution.basisNewSystem': 'New system → To Project',
+  'req.solution.basisDevGte': 'Secondary dev {n} pd ≥ threshold {th} → To Project',
+  'req.solution.basisDevLt': 'Secondary dev {n} pd < threshold {th} → In-house Dev',
+  'req.solution.basisDevEmpty': 'Dev effort not set (treated as < threshold {th}) → In-house Dev',
+  'req.solution.devHint': 'Route is "In-house Dev": finish the solution, move to Implementation via the top-right actions, then break down and schedule tasks below.',
+  'req.solution.toProject': 'To Project Management',
+  'req.solution.toProjectHint': 'After assigning a PM, the requirement enters Implementation and the PM is notified to prepare a charter and create the project; closing the accepted project auto-closes this requirement.',
+  'req.solution.pm': 'Project Manager',
+  'req.solution.pmRequired': 'Please select a project manager',
+  'req.solution.toProjectDone': 'PM assigned and notified to create the project',
+
+  // List / task list
+  'req.col.route': 'Route',
+  'req.activeTask.sortHint': 'Sorted by the requirement weighted score, high to low',
+
+  // Scoring config: routing rules
+  'req.cfg.routing': 'Routing Rules',
+  'req.cfg.effortThreshold': 'To-Project Effort Threshold (pd)',
+  'req.cfg.effortThresholdHint': 'Secondary-dev effort ≥ threshold, or a new system → To Project; otherwise In-house Dev',
+  'req.cfg.reviewAssignees': 'Solution Review Assignees',
+  'req.cfg.reviewAssigneesHint': 'Auto-assigned when a requirement is approved into solution evaluation: product leader owns the review task, dev leader is cc-ed',
+  'req.cfg.pdmLeader': 'Product Leader (owner)',
+  'req.cfg.devLeader': 'Dev Leader (cc)',
 
   // Scoring rules config page (System)
   'req.cfg.title': 'Requirement Scoring Rules',

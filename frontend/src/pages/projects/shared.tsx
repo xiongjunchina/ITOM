@@ -1,8 +1,19 @@
 import { Badge, Tag } from 'antd';
-import type { ProjectHealth, ProjectStatus, RiskGrade } from '../../api/types';
-import { HEALTH_META, PROJECT_STATUS } from '../../api/types';
+import { api } from '../../api/client';
+import type { ProjectHealth, ProjectStatus, RequirementRow, RiskGrade } from '../../api/types';
+import { HEALTH_META, PROJECT_STATUS, ROUTE_PROJECT } from '../../api/types';
 import { currentLang, useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
+
+/** M16 可关联需求候选：实现中 + 实现路径=转项目管理 + 尚未挂接项目（前端过滤，供新建项目/章程导入下拉） */
+export async function fetchLinkableRequirements(): Promise<RequirementRow[]> {
+  const res = await api.getList<RequirementRow>('/requirements', {
+    status: 'implementing',
+    page: 1,
+    page_size: 200,
+  });
+  return res.items.filter((r) => r.route === ROUTE_PROJECT && !r.project_id && !r.is_example);
+}
 
 /** 项目状态 Badge（未知状态回退灰点 + 后端中文名） */
 export function StatusBadge({ status, name }: { status: string; name?: string | null }) {

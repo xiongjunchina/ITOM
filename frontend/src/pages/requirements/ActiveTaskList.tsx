@@ -99,6 +99,18 @@ export default function ActiveTaskList() {
       ),
     },
     {
+      // M16：清单已按所属需求加权总分降序返回，列标题 Tooltip 说明排序依据
+      title: (
+        <Tooltip title={t('req.activeTask.sortHint')}>
+          <span>{t('req.col.weightedTotal')} ↓</span>
+        </Tooltip>
+      ),
+      dataIndex: 'weighted_total',
+      width: 110,
+      align: 'right',
+      render: (v: number | null) => (v == null ? '-' : v.toFixed(1)),
+    },
+    {
       title: t('req.activeTask.col.reqStage'),
       key: 'reqStage',
       width: 110,
@@ -156,7 +168,7 @@ export default function ActiveTaskList() {
         columns={columns}
         dataSource={rows}
         sticky
-        scroll={{ x: 1350 }}
+        scroll={{ x: 1460 }}
         pagination={false}
         locale={{
           emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('req.activeTask.empty')} />,
