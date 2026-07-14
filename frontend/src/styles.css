@@ -34,3 +34,16 @@
 .ant-tabs-top > .ant-tabs-nav .ant-tabs-ink-bar {
   display: none;
 }
+
+/**
+ * 表格/描述列表自适应（2026-07-14 用户反馈）：
+ * ① Descriptions 标签列被宽内容挤压后逐字竖排 → 标签永不换行，宽度不足时压内容列；
+ * ② 编号/日期等短字段在连字符处折行拉高整行 → 提供 .cell-nowrap 工具类，各表格短列统一使用。
+ */
+.ant-descriptions-item-label {
+  white-space: nowrap;
+}
+
+.cell-nowrap {
+  white-space: nowrap;
+}

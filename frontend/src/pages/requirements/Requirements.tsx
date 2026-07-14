@@ -258,8 +258,9 @@ export default function Requirements() {
     {
       title: t('req.col.code'),
       dataIndex: 'requirement_code',
-      width: 110,
+      width: 150,
       fixed: 'left',
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => (
         <Space size={4}>
           <Link to={`/requirements/${r.id}`}>{v}</Link>
@@ -302,7 +303,7 @@ export default function Requirements() {
       width: 100,
       render: (_, r) => <ReqStatusBadge status={r.status} name={r.status_name} />,
     },
-    { title: t('req.col.targetDate'), dataIndex: 'target_date', width: 110, render: (v) => v || '-' },
+    { title: t('req.col.targetDate'), dataIndex: 'target_date', width: 110, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => v || '-' },
     {
       title: t('req.col.progress'),
       dataIndex: 'progress',
@@ -475,7 +476,7 @@ export default function Requirements() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          scroll={{ x: 1520 }}
+          scroll={{ x: 'max-content' }}
           pagination={{
             current: page,
             pageSize,

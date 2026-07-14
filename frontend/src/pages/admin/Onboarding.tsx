@@ -148,6 +148,7 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
       title: t('onboarding.requestedAt'),
       dataIndex: 'requested_at',
       width: 170,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     {

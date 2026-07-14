@@ -287,8 +287,9 @@ export default function Cmdb() {
     {
       title: t('itsm.f.code'),
       dataIndex: 'ci_code',
-      width: 130,
+      width: 140,
       fixed: 'left',
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => <a onClick={() => openImpact(r)}>{v}</a>,
     },
     {
@@ -376,6 +377,7 @@ export default function Cmdb() {
       title: t('itsm.f.code'),
       dataIndex: 'ticket_code',
       width: 140,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>,
     },
     { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
@@ -390,6 +392,7 @@ export default function Cmdb() {
       title: t('itsm.f.submittedAt'),
       dataIndex: 'submitted_at',
       width: 140,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
   ];

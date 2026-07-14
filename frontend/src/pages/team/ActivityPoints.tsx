@@ -84,7 +84,7 @@ function MyPointsCard() {
   }, []);
 
   const entryColumns: ColumnsType<MyPoints['entries'][number]> = [
-    { title: t('team.col.time'), dataIndex: 'created_at', width: 150, render: (v: string) => fmtTime(v) },
+    { title: t('team.col.time'), dataIndex: 'created_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v: string) => fmtTime(v) },
     {
       title: t('team.points.source'),
       dataIndex: 'source_type',
@@ -371,7 +371,7 @@ function CampaignsTab() {
     { title: t('team.campaign.col.task'), dataIndex: 'task_name', width: 160, ellipsis: true, render: (v) => v || '-' },
     { title: t('team.col.points'), dataIndex: 'points', width: 70 },
     { title: t('common.remark'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
-    { title: t('team.col.time'), dataIndex: 'created_at', width: 150, render: (v: string) => fmtTime(v) },
+    { title: t('team.col.time'), dataIndex: 'created_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v: string) => fmtTime(v) },
   ];
 
   const boardColumns: ColumnsType<CampaignDetail['leaderboard'][number]> = [
@@ -917,6 +917,7 @@ function IdeasTab() {
       title: t('team.col.time'),
       dataIndex: 'created_at',
       width: 110,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => fmtDay(v),
     },
     {

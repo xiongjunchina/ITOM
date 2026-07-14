@@ -148,7 +148,7 @@ export default function Contracts() {
   };
 
   const columns: ColumnsType<Contract> = [
-    { title: t('itsm.f.code'), dataIndex: 'code', width: 120, fixed: 'left' },
+    { title: t('itsm.f.code'), dataIndex: 'code', width: 140, fixed: 'left', onCell: () => ({ className: 'cell-nowrap' }) },
     {
       title: t('itsm.f.name'),
       dataIndex: 'name',
@@ -169,11 +169,12 @@ export default function Contracts() {
       align: 'right',
       render: (v: number | null) => (v != null ? v.toLocaleString() : '-'),
     },
-    { title: t('itsm.f.startDate'), dataIndex: 'start_date', width: 110 },
+    { title: t('itsm.f.startDate'), dataIndex: 'start_date', width: 110, onCell: () => ({ className: 'cell-nowrap' }) },
     {
       title: t('itsm.f.endDate'),
       dataIndex: 'end_date',
       width: 150,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => (
         <Space size={4}>
           {v}
@@ -188,7 +189,7 @@ export default function Contracts() {
     {
       title: t('itsm.contract.daysLeft'),
       dataIndex: 'days_to_expiry',
-      width: 90,
+      width: 130,
       align: 'right',
       render: (v: number | null) =>
         v == null ? '-' : v < 0 ? t('itsm.contract.expiredDays', { n: -v }) : t('itsm.unit.days', { n: v }),
@@ -268,7 +269,7 @@ export default function Contracts() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        scroll={{ x: 1250 }}
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           pageSize,

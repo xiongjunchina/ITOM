@@ -168,7 +168,7 @@ export default function Members() {
       render: (v: Member['status']) =>
         v ? <Tag color={v === '在岗' ? 'green' : 'default'}>{et.memberStatus(v)}</Tag> : '-',
     },
-    { title: t('admin.member.hireDate'), dataIndex: 'hire_date', width: 110 },
+    { title: t('admin.member.hireDate'), dataIndex: 'hire_date', width: 110, onCell: () => ({ className: 'cell-nowrap' }) },
     {
       title: t('admin.member.email'),
       dataIndex: 'email',
@@ -180,6 +180,7 @@ export default function Members() {
       title: t('admin.member.mobile'),
       dataIndex: 'mobile',
       width: 130,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string | null | undefined) => v || '-',
     },
     {
@@ -241,7 +242,7 @@ export default function Members() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        scroll={{ x: 1300 }}
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           pageSize,

@@ -531,10 +531,10 @@ export default function ProjectDetail() {
       <Descriptions column={2} size="small" bordered>
         <Descriptions.Item label={t('proj.pm')}>{detail.pm_name ?? '-'}</Descriptions.Item>
         <Descriptions.Item label={t('proj.belongPortfolio')}>{detail.portfolio_name ?? '-'}</Descriptions.Item>
-        <Descriptions.Item label={t('proj.planned')}>
+        <Descriptions.Item label={t('proj.planned')} contentStyle={{ whiteSpace: 'nowrap' }}>
           {detail.planned_start} ~ {detail.planned_end}
         </Descriptions.Item>
-        <Descriptions.Item label={t('proj.d.actual')}>
+        <Descriptions.Item label={t('proj.d.actual')} contentStyle={{ whiteSpace: 'nowrap' }}>
           {detail.actual_start ?? '-'} ~ {detail.actual_end ?? '-'}
         </Descriptions.Item>
         <Descriptions.Item label={t('proj.d.budget')}>{fmt10k(detail.budget_10k)}</Descriptions.Item>
@@ -633,8 +633,8 @@ export default function ProjectDetail() {
     { title: t('proj.mt.col.name'), dataIndex: 'name', ellipsis: true },
     { title: t('proj.mt.col.stage'), dataIndex: 'stage', width: 120, render: (v) => v || '-' },
     { title: t('proj.mt.col.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
-    { title: t('proj.mt.col.plannedEnd'), dataIndex: 'end_date', width: 120 },
-    { title: t('proj.mt.col.actualEnd'), dataIndex: 'actual_end', width: 120, render: (v) => v || '-' },
+    { title: t('proj.mt.col.plannedEnd'), dataIndex: 'end_date', width: 120, onCell: () => ({ className: 'cell-nowrap' }) },
+    { title: t('proj.mt.col.actualEnd'), dataIndex: 'actual_end', width: 120, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => v || '-' },
     {
       title: t('proj.mt.col.deviation'),
       dataIndex: 'schedule_deviation',
@@ -690,10 +690,10 @@ export default function ProjectDetail() {
       ellipsis: true,
       render: (v: string[] | null) => (v?.length ? v.join('、') : '-'),
     },
-    { title: t('proj.wbs.col.plannedStart'), dataIndex: 'start_date', width: 120 },
-    { title: t('proj.wbs.col.plannedEnd'), dataIndex: 'end_date', width: 120 },
-    { title: t('proj.wbs.col.actualStart'), dataIndex: 'actual_start', width: 120, render: (v) => v || '-' },
-    { title: t('proj.wbs.col.actualEnd'), dataIndex: 'actual_end', width: 120, render: (v) => v || '-' },
+    { title: t('proj.wbs.col.plannedStart'), dataIndex: 'start_date', width: 120, onCell: () => ({ className: 'cell-nowrap' }) },
+    { title: t('proj.wbs.col.plannedEnd'), dataIndex: 'end_date', width: 120, onCell: () => ({ className: 'cell-nowrap' }) },
+    { title: t('proj.wbs.col.actualStart'), dataIndex: 'actual_start', width: 120, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => v || '-' },
+    { title: t('proj.wbs.col.actualEnd'), dataIndex: 'actual_end', width: 120, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => v || '-' },
     {
       title: t('proj.wbs.col.deviation'),
       dataIndex: 'schedule_deviation',
@@ -833,7 +833,7 @@ export default function ProjectDetail() {
 
   // ----- 成本 -----
   const costColumns: ColumnsType<CostEntry> = [
-    { title: t('proj.cost.col.date'), dataIndex: 'entry_date', width: 130 },
+    { title: t('proj.cost.col.date'), dataIndex: 'entry_date', width: 130, onCell: () => ({ className: 'cell-nowrap' }) },
     { title: t('proj.cost.col.amountWan'), dataIndex: 'amount_10k', width: 130 },
     { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit
@@ -1044,6 +1044,7 @@ export default function ProjectDetail() {
       title: t('proj.att.col.uploadedAt'),
       dataIndex: 'created_at',
       width: 160,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
   ];

@@ -68,7 +68,8 @@ export default function Monitor() {
     {
       title: t('proc.col.dueAt'),
       dataIndex: 'current_due_at',
-      width: 180,
+      width: 200,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string | null, r) =>
         v ? (
           <Space size={4}>
@@ -81,8 +82,8 @@ export default function Monitor() {
           '-'
         ),
     },
-    { title: t('proc.col.startedAt'), dataIndex: 'started_at', width: 150, render: (v: string) => fmtTime(v) },
-    { title: t('proc.col.completedAt'), dataIndex: 'completed_at', width: 150, render: (v: string | null) => fmtTime(v) },
+    { title: t('proc.col.startedAt'), dataIndex: 'started_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v: string) => fmtTime(v) },
+    { title: t('proc.col.completedAt'), dataIndex: 'completed_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v: string | null) => fmtTime(v) },
   ];
 
   return (

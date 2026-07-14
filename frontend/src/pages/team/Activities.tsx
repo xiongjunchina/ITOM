@@ -123,6 +123,7 @@ export default function Activities() {
       title: t('team.col.date'),
       dataIndex: 'activity_date',
       width: 110,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD') : '-'),
     },
     { title: t('team.activities.col.host'), dataIndex: 'host_name', width: 110, render: (v) => v || '-' },

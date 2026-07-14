@@ -115,7 +115,7 @@ export default function Vendors() {
   };
 
   const columns: ColumnsType<Vendor> = [
-    { title: t('itsm.f.code'), dataIndex: 'code', width: 120, fixed: 'left' },
+    { title: t('itsm.f.code'), dataIndex: 'code', width: 140, fixed: 'left', onCell: () => ({ className: 'cell-nowrap' }) },
     {
       title: t('itsm.f.name'),
       dataIndex: 'name',
@@ -129,7 +129,7 @@ export default function Vendors() {
       ),
     },
     { title: t('itsm.f.contact'), dataIndex: 'contact', width: 100, render: (v) => v || '-' },
-    { title: t('itsm.f.phone'), dataIndex: 'phone', width: 130, render: (v) => v || '-' },
+    { title: t('itsm.f.phone'), dataIndex: 'phone', width: 130, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => v || '-' },
     { title: t('itsm.f.email'), dataIndex: 'email', width: 180, ellipsis: true, render: (v) => v || '-' },
     { title: t('itsm.f.serviceScope'), dataIndex: 'service_scope', width: 180, ellipsis: true, render: (v) => v || '-' },
     {
@@ -201,7 +201,7 @@ export default function Vendors() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        scroll={{ x: 1300 }}
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           pageSize,

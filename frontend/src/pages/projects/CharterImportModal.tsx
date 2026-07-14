@@ -240,8 +240,8 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
       render: (v) => (v ? <Tag color="blue">{t('proj.yes')}</Tag> : <Tag>{t('proj.no')}</Tag>),
     },
     { title: t('proj.wbs.col.predecessors'), dataIndex: 'predecessor_codes', width: 90, ellipsis: true, render: (v) => v || '-' },
-    { title: t('proj.wbs.col.plannedStart'), dataIndex: 'start_date', width: 110, render: (_, r) => fmtDate(r.start_date) },
-    { title: t('proj.wbs.col.plannedEnd'), dataIndex: 'end_date', width: 110, render: (_, r) => fmtDate(r.end_date) },
+    { title: t('proj.wbs.col.plannedStart'), dataIndex: 'start_date', width: 110, onCell: () => ({ className: 'cell-nowrap' }), render: (_, r) => fmtDate(r.start_date) },
+    { title: t('proj.wbs.col.plannedEnd'), dataIndex: 'end_date', width: 110, onCell: () => ({ className: 'cell-nowrap' }), render: (_, r) => fmtDate(r.end_date) },
     { title: t('proj.deliverable'), dataIndex: 'deliverable', width: 130, ellipsis: true, render: (v) => v || '-' },
   ];
 
@@ -423,6 +423,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               columns={wbsColumns}
               dataSource={wbsRows}
               pagination={false}
+              scroll={{ x: 'max-content' }}
               rowSelection={{ selectedRowKeys: wbsKeys, onChange: setWbsKeys }}
               locale={{ emptyText: t('proj.charter.emptyWbs') }}
             />
@@ -446,7 +447,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
           <Descriptions column={2} size="small" bordered>
             <Descriptions.Item label={t('proj.projectName')}>{confirmed.name}</Descriptions.Item>
             <Descriptions.Item label={t('proj.pm')}>{pmLabel(confirmed.pm)}</Descriptions.Item>
-            <Descriptions.Item label={t('proj.planned')}>
+            <Descriptions.Item label={t('proj.planned')} contentStyle={{ whiteSpace: 'nowrap' }}>
               {confirmed.planned[0].format('YYYY-MM-DD')} ~ {confirmed.planned[1].format('YYYY-MM-DD')}
             </Descriptions.Item>
             <Descriptions.Item label={t('proj.budgetWan')}>{confirmed.budget_10k ?? '-'}</Descriptions.Item>

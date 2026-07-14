@@ -212,7 +212,7 @@ export default function CatalogPage() {
   };
 
   const columns: ColumnsType<ServiceItem> = [
-    { title: t('itsm.f.code'), dataIndex: 'item_code', width: 120 },
+    { title: t('itsm.f.code'), dataIndex: 'item_code', width: 140, onCell: () => ({ className: 'cell-nowrap' }) },
     {
       title: t('itsm.f.name'),
       dataIndex: 'name',
@@ -357,7 +357,7 @@ export default function CatalogPage() {
             loading={itemLoading}
             columns={columns}
             dataSource={items}
-            scroll={{ x: 900 }}
+            scroll={{ x: 'max-content' }}
             pagination={{ pageSize: 20, showTotal: (n) => t('itsm.total', { n }) }}
           />
         </Card>

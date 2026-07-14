@@ -121,6 +121,7 @@ export default function Problems() {
       dataIndex: 'problem_code',
       width: 140,
       fixed: 'left',
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => (
         <Space size={4}>
           <Link to={`/itsm/problems/${r.id}`}>{v}</Link>
@@ -148,6 +149,7 @@ export default function Problems() {
       title: t('itsm.f.createdAt'),
       dataIndex: 'created_at',
       width: 150,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
   ];

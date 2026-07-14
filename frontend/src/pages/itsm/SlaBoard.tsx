@@ -99,7 +99,7 @@ export default function SlaBoard() {
   };
 
   const warningColumns: ColumnsType<WarningTicket> = [
-    { title: t('itsm.f.code'), dataIndex: 'ticket_code', width: 140 },
+    { title: t('itsm.f.code'), dataIndex: 'ticket_code', width: 140, onCell: () => ({ className: 'cell-nowrap' }) },
     { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
     {
       title: t('itsm.f.priority'),
@@ -112,6 +112,7 @@ export default function SlaBoard() {
       title: t('itsm.f.submittedAt'),
       dataIndex: 'submitted_at',
       width: 150,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     {

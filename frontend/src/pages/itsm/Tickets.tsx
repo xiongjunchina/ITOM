@@ -183,6 +183,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       dataIndex: 'ticket_code',
       width: 140,
       fixed: 'left',
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => (
         <Space size={4}>
           <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>
@@ -215,6 +216,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       title: t('itsm.f.submittedAt'),
       dataIndex: 'submitted_at',
       width: 150,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     { title: 'SLA', key: 'sla', width: 90, render: (_, r) => renderSla(r, t) },

@@ -47,10 +47,11 @@ export default function AuditLogs() {
       title: t('admin.audit.time'),
       dataIndex: 'created_at',
       width: 170,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '-'),
     },
     { title: t('admin.audit.entityType'), dataIndex: 'entity_type', width: 130 },
-    { title: t('admin.audit.entityId'), dataIndex: 'entity_id', width: 100 },
+    { title: t('admin.audit.entityId'), dataIndex: 'entity_id', width: 100, ellipsis: true },
     {
       title: t('admin.audit.action'),
       dataIndex: 'action',

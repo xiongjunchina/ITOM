@@ -65,8 +65,9 @@ export default function Knowledge() {
     {
       title: t('itsm.f.code'),
       dataIndex: 'article_code',
-      width: 120,
+      width: 140,
       fixed: 'left',
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => <Link to={`/itsm/knowledge/${r.id}`}>{v}</Link>,
     },
     {
@@ -128,6 +129,7 @@ export default function Knowledge() {
       title: t('itsm.f.updatedAt'),
       dataIndex: 'updated_at',
       width: 150,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
   ];

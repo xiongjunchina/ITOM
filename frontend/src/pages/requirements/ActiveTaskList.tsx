@@ -114,6 +114,7 @@ export default function ActiveTaskList() {
       title: t('req.activeTask.col.planDate'),
       dataIndex: 'plan_date',
       width: 110,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string | null) => v || '-',
     },
     {

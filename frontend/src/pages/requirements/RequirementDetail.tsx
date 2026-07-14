@@ -679,7 +679,7 @@ export default function RequirementDetail() {
         ),
     },
     { title: t('req.task.col.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
-    { title: t('req.task.col.planDate'), dataIndex: 'plan_date', width: 110, render: (v) => v || '-' },
+    { title: t('req.task.col.planDate'), dataIndex: 'plan_date', width: 110, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => v || '-' },
     {
       title: t('req.task.effort'),
       key: 'effort',
@@ -719,7 +719,7 @@ export default function RequirementDetail() {
           <Tag color={REQ_TASK_STATUS_COLORS[v]}>{et.reqTaskStatus(v)}</Tag>
         ),
     },
-    { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, render: (v) => fmtDt(v) ?? '-' },
+    { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => fmtDt(v) ?? '-' },
     ...(canEditNow
       ? [
           {
@@ -831,16 +831,16 @@ export default function RequirementDetail() {
         }
       >
         <Descriptions column={2} size="small" bordered>
-          <Descriptions.Item label={t('req.col.code')}>{detail.requirement_code}</Descriptions.Item>
+          <Descriptions.Item label={t('req.col.code')} contentStyle={{ whiteSpace: 'nowrap' }}>{detail.requirement_code}</Descriptions.Item>
           <Descriptions.Item label={t('req.col.type')}>
             <Tag>{et.reqType(detail.req_type)}</Tag>
           </Descriptions.Item>
           <Descriptions.Item label={t('req.col.domain')}>{detail.business_domain_name ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('req.source')}>{detail.source || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('req.requester')}>{detail.requester_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('req.registeredAt')}>{fmtDt(detail.registered_at) ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.registeredAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmtDt(detail.registered_at) ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('req.department')}>{detail.department || '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('req.expectedDate')}>{detail.expected_date || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('req.expectedDate')} contentStyle={{ whiteSpace: 'nowrap' }}>{detail.expected_date || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('req.prdEffort')}>
             {detail.prd_effort != null ? t('req.effortDays', { n: detail.prd_effort }) : '-'}
           </Descriptions.Item>
@@ -1084,7 +1084,7 @@ export default function RequirementDetail() {
             columns={taskColumns}
             dataSource={detail.tasks}
             pagination={false}
-            scroll={{ x: 900 }}
+            scroll={{ x: 'max-content' }}
             locale={{ emptyText: t('req.emptyTasks') }}
           />
         </Card>

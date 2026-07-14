@@ -648,14 +648,14 @@ export default function OrgArchitecture() {
         >
           <Descriptions.Item label={t('admin.member.name')}>{m.name}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.nameEn')}>{m.name_en || '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('admin.member.employeeNo')}>{m.employee_no || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.employeeNo')} contentStyle={{ whiteSpace: 'nowrap' }}>{m.employee_no || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.gender')}>{m.gender || '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('admin.member.birthDate')}>{m.birth_date || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.birthDate')} contentStyle={{ whiteSpace: 'nowrap' }}>{m.birth_date || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.employmentType')}>{m.employment_type || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.supervisor')}>{m.supervisor_name || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.workLocation')}>{m.work_location || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.dept')}>{deptNameOf(m.department_id) ?? t('admin.org.unassigned')}</Descriptions.Item>
-          <Descriptions.Item label={t('admin.member.hireDate')}>{m.hire_date || '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('admin.member.hireDate')} contentStyle={{ whiteSpace: 'nowrap' }}>{m.hire_date || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.email')}>{m.email || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('admin.member.mobile')}>{m.mobile || '-'}</Descriptions.Item>
           <Descriptions.Item label={t('common.status')}>

@@ -201,6 +201,7 @@ export default function ProblemDetail() {
       title: t('itsm.problem.ticketCode'),
       dataIndex: 'ticket_code',
       width: 160,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => <Link to={`/itsm/tickets/${r.id}`}>{v}</Link>,
     },
     { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
@@ -279,7 +280,7 @@ export default function ProblemDetail() {
         <Descriptions column={2} size="small" bordered>
           <Descriptions.Item label={t('itsm.f.serviceItem')}>{detail.service_item_name ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.f.owner')}>{detail.owner_name ?? '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('itsm.f.createdAt')}>{fmt(detail.created_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.f.createdAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.created_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.problem.sourceTicket')}>
             {detail.source_ticket_id ? (
               <Link to={`/itsm/tickets/${detail.source_ticket_id}`}>

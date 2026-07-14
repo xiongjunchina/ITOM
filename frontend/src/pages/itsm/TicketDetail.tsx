@@ -387,10 +387,10 @@ export default function TicketDetail() {
               )}
             </Space>
           </Descriptions.Item>
-          <Descriptions.Item label={t('itsm.f.submittedAt')}>{fmt(detail.submitted_at)}</Descriptions.Item>
-          <Descriptions.Item label={t('itsm.ticket.firstResponse')}>{fmt(detail.first_response_at)}</Descriptions.Item>
-          <Descriptions.Item label={t('itsm.ticket.resolvedAt')}>{fmt(detail.resolved_at)}</Descriptions.Item>
-          <Descriptions.Item label={t('itsm.ticket.closedAt')}>{fmt(detail.closed_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.f.submittedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.submitted_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.firstResponse')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.first_response_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.resolvedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.resolved_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.closedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.closed_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.slaResponseTarget')}>
             {detail.sla_response_min != null ? t('itsm.unit.minutes', { n: detail.sla_response_min }) : '-'}
           </Descriptions.Item>
@@ -455,8 +455,8 @@ export default function TicketDetail() {
           <Descriptions column={2} size="small" bordered>
             <Descriptions.Item label={t('itsm.ticket.changeType')}>{detail.change_type ? et.changeType(detail.change_type) : '-'}</Descriptions.Item>
             <Descriptions.Item label={t('itsm.ticket.riskLevel')}>{detail.risk_level ? et.riskGrade(detail.risk_level) : '-'}</Descriptions.Item>
-            <Descriptions.Item label={t('itsm.ticket.plannedStart')}>{fmt(detail.planned_start_at)}</Descriptions.Item>
-            <Descriptions.Item label={t('itsm.ticket.plannedEnd')}>{fmt(detail.planned_end_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.plannedStart')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.planned_start_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.plannedEnd')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.planned_end_at)}</Descriptions.Item>
             <Descriptions.Item label={t('itsm.ticket.changeReason')} span={2}>
               {detail.change_reason ?? '-'}
             </Descriptions.Item>
@@ -466,7 +466,7 @@ export default function TicketDetail() {
             <Descriptions.Item label={t('itsm.ticket.implementationPlan')} span={2}>
               {detail.implementation_plan ?? '-'}
             </Descriptions.Item>
-            <Descriptions.Item label={t('itsm.ticket.approvedAt')}>{fmt(detail.approved_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('itsm.ticket.approvedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.approved_at)}</Descriptions.Item>
             <Descriptions.Item label={t('itsm.ticket.approvalComment')}>{detail.approval_comment ?? '-'}</Descriptions.Item>
           </Descriptions>
         </Card>

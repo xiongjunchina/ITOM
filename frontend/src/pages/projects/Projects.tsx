@@ -168,8 +168,9 @@ function ProjectList() {
     {
       title: t('proj.col.code'),
       dataIndex: 'project_code',
-      width: 110,
+      width: 150,
       fixed: 'left',
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string, r) => (
         <Space size={4}>
           <Link to={`/projects/${r.id}`}>{v}</Link>
@@ -202,7 +203,8 @@ function ProjectList() {
     {
       title: t('proj.col.planned'),
       key: 'planned',
-      width: 190,
+      width: 200,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (_, r) => `${r.planned_start} ~ ${r.planned_end}`,
     },
     {
@@ -303,7 +305,7 @@ function ProjectList() {
         loading={loading}
         columns={columns}
         dataSource={items}
-        scroll={{ x: 1280 }}
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           pageSize,

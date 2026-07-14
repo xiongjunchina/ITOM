@@ -265,6 +265,7 @@ export default function Users() {
       title: t('admin.users.lastLogin'),
       dataIndex: 'last_login_at',
       width: 170,
+      onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string | null | undefined) =>
         v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-',
     },
@@ -317,6 +318,7 @@ export default function Users() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        scroll={{ x: 'max-content' }}
         pagination={{
           current: page,
           pageSize,
