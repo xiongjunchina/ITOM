@@ -126,3 +126,56 @@ def test_numbered_list_sections_parse(client, admin_headers):
     assert "195 个数据源" in f["scope_in"] and f["scope_out"].startswith("智能硬件")
     assert "1 名 PM" in f["resource_note"]  # 中文序号「六、」+ 数字开头内容
 
+
+def test_table_shaped_sections_parse(client, admin_headers):
+    """M13.3 回归：目标/资源内容为普通表格时转文本并入正文；结构表（WBS/风险/组织）仍作边界。"""
+    from io import BytesIO
+    from zipfile import ZIP_DEFLATED, ZipFile
+
+    from app.services.charter import parse_charter
+    from app.services.charter_template import _CONTENT_TYPES, _RELS, _para, _table, W
+
+    body = []
+    body.append(_para("1. 项目背景", bold=True))
+    body.append(_para("多平台经营数据分散。"))
+    body.append(_para("2. 项目组织与相关方", bold=True))
+    body.append(_table([
+        ["类别", "姓名", "角色/单位", "职责"],
+        ["主要成员", "李四", "前端", "开发"],
+        ["干系人", "赵总", "业务", "验收"],
+    ]))
+    body.append(_para("3. 项目目标 / Project Goals", bold=True))
+    body.append(_table([
+        ["目标类型", "具体目标", "衡量标准"],
+        ["业务目标", "交付 23 个应用", "UAT 通过率 > 95%"],
+        ["技术目标", "全栈稳定运行", "可用性 > 99.9%"],
+    ]))
+    body.append(_para("4. 项目范围", bold=True))
+    body.append(_para("4.1 项目包含范围", bold=True))
+    body.append(_para("平台底座与数据层建设。"))
+    body.append(_para("4.2 项目不包含范围", bold=True))
+    body.append(_para("智能硬件数据接入。"))
+    body.append(_para("6. 预算与资源 / Budget & Resources", bold=True))
+    body.append(_table([
+        ["费用类型", "金额（万元）", "说明"],
+        ["人力实施", "572.5", "模块一至五"],
+    ]))
+    body.append(_para("7. 风险与应对", bold=True))
+    sect = '<w:sectPr/>'
+    document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                f'<w:document xmlns:w="{W}"><w:body>{"".join(body)}{sect}</w:body></w:document>')
+    buf = BytesIO()
+    with ZipFile(buf, "w", ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        z.writestr("_rels/.rels", _RELS)
+        z.writestr("word/document.xml", document)
+
+    f = parse_charter(buf.getvalue())["fields"]
+    # 表格目标转文本并入，含表头与数据行
+    assert "业务目标 | 交付 23 个应用" in f["goals"] and "99.9%" in f["goals"]
+    assert "人力实施 | 572.5" in f["resource_note"]
+    # 结构表不被吸入正文：背景止于 §2 组织表，goals 不含组织行
+    assert "李四" not in (f["background"] or "") and "李四" not in f["goals"]
+    assert [m["name"] for m in f["org_members"]] == ["李四"]
+    assert f["scope_out"].startswith("智能硬件")
+

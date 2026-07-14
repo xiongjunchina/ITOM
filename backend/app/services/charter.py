@@ -109,11 +109,22 @@ def parse_charter(raw: bytes) -> dict:
             return True
         return len(ln) <= 40 and bool(_bare_re.match(ln))
 
-    def section(heading_pattern: str) -> str | None:
-        """收集某节标题后的正文，直到下一个已知节标题或表格行。
+    def _is_structured_table_row(cells: list[str]) -> bool:
+        """已被专门解析的结构表行（WBS/风险/组织表）：作节边界，不并入正文。"""
+        if len(cells) == 10 and _normalize_date(cells[8]):
+            return True  # WBS 数据行
+        if len(cells) == 5 and cells[2] in ("高", "中", "低"):
+            return True  # 风险数据行
+        if len(cells) == 4 and ("成员" in cells[0] or "干系人" in cells[0]):
+            return True  # 组织与相关方行
+        return False
 
-        边界只认「已知标题/表格」——正文里的编号列表（1. xxx）或数字开头行不再误判为
-        下一节而提前截断（M13.1 修复：目标/资源说明常写成编号列表导致解析为空）。
+    def section(heading_pattern: str) -> str | None:
+        """收集某节标题后的正文，直到下一个已知节标题或结构表。
+
+        - 正文里的编号列表/数字开头行不误判为下一节（M13.1）；
+        - 节内的普通表格（如目标写成 目标|衡量标准 表、预算明细表）转文本并入正文，
+          仅结构表（WBS/风险/组织）作边界（M13.3 修复：目标/资源为表格时解析为空）。
         """
         collected = []
         active = False
@@ -122,8 +133,14 @@ def parse_charter(raw: bytes) -> dict:
                 active = True
                 continue
             if active:
-                if "\t" in ln or is_heading(ln):
+                if is_heading(ln):
                     break
+                if "\t" in ln:
+                    cells = [c.strip() for c in ln.split("\t")]
+                    if _is_structured_table_row(cells):
+                        break
+                    collected.append(" | ".join(c for c in cells if c))  # 普通表格行转文本
+                    continue
                 if ln.startswith(("（", "(")):
                     continue  # 模板的括号说明行不入正文
                 collected.append(ln)
