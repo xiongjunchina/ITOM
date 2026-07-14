@@ -89,8 +89,18 @@ def build_charter_template_docx() -> bytes:
     # 描述节（解析器按 1.项目背景 / 3.项目目标 / 4.1 项目包含范围 抓取；编号连贯完整）
     body.append(_para("1. 项目背景 / Project Background", bold=True))
     body.append(_para("示例：现有客户门户上线 5 年，技术栈老旧、体验差，需整体升级以支撑业务增长。"))
-    body.append(_para("2. 相关方 / Stakeholders", bold=True))
-    body.append(_para("示例：业务部门（需求方）、IT 开发与运维团队、外部供应商。"))
+    body.append(_para(
+        "2. 项目组织与相关方 / Organization & Stakeholders"
+        "（类别填 主要成员 或 干系人；项目经理在文首信息表 / category: 主要成员 (member) or 干系人 (stakeholder)）",
+        bold=True,
+    ))
+    body.append(_table([
+        ["类别 Category", "姓名 Name", "角色/单位 Role or Org", "职责或关注点 Duty / Concern"],
+        ["主要成员", "李四", "前端负责人", "门户前端重构与联调"],
+        ["主要成员", "王五", "测试负责人", "测试计划与上线验收"],
+        ["干系人", "赵总", "业务部门负责人（发起人）", "上线时间与业务连续性"],
+        ["干系人", "某供应商", "外部 UI 设计", "设计交付质量与进度"],
+    ]))
     body.append(_para("3. 项目目标 / Project Goals", bold=True))
     body.append(_para("示例：门户改版按期上线，核心功能可用率 99.9%，用户满意度 ≥ 90%。"))
     body.append(_para("4. 项目范围 / Scope", bold=True))
@@ -125,7 +135,7 @@ def build_charter_template_docx() -> bytes:
 
     # 6. 预算与资源（预算金额在顶部信息表填写；此处描述资源投入）
     body.append(_para("6. 预算与资源 / Budget & Resources", bold=True))
-    body.append(_para("示例：总预算见文首信息表；投入 1 名 PM、3 名开发、1 名测试，外部供应商配合 UI 设计。"))
+    body.append(_para("示例：总预算见文首信息表。人力：1 名 PM、3 名开发、1 名测试；采购：外部供应商配合 UI 设计；环境：新增 2 台应用服务器。"))
     body.append(_para(""))
 
     # 7. 风险与应对（7.1 关键风险表：概率/影响列填 高/中/低）

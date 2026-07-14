@@ -60,6 +60,15 @@ ENSURE_COLUMNS = {
         ("dev_effort", "DOUBLE PRECISION"),
         ("evaluating_at", "TIMESTAMP"),
     ],
+    "project": [
+        ("background", "TEXT"),
+        ("goals", "TEXT"),
+        ("scope_in", "TEXT"),
+        ("scope_out", "TEXT"),
+        ("resource_note", "TEXT"),
+        ("org_members", "JSONB"),
+        ("stakeholders", "JSONB"),
+    ],
     "requirement_task": [
         ("description", "TEXT"),
         ("plan_effort", "DOUBLE PRECISION"),

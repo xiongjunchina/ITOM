@@ -107,6 +107,13 @@ function ProjectList() {
         description: d.description,
         actual_start: d.actual_start,
         actual_end: d.actual_end,
+        background: d.background,
+        goals: d.goals,
+        scope_in: d.scope_in,
+        scope_out: d.scope_out,
+        resource_note: d.resource_note,
+        org_members: d.org_members ?? [],
+        stakeholders: d.stakeholders ?? [],
       });
     } catch {
       // 已统一提示

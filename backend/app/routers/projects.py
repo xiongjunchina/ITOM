@@ -65,6 +65,13 @@ class ProjectUpdate(BaseModel):
     service_item_id: str | None = None
     budget_10k: float | None = None
     description: str | None = None
+    background: str | None = None
+    goals: str | None = None
+    scope_in: str | None = None
+    scope_out: str | None = None
+    resource_note: str | None = None
+    org_members: list[dict] | None = None
+    stakeholders: list[dict] | None = None
     latest_update: str | None = None
     actual_start: date | None = None
     actual_end: date | None = None
@@ -260,6 +267,10 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
     detail = _project_row(p, db, names, status_map)
     detail.update({
         "description": p.description,
+        "background": p.background, "goals": p.goals,
+        "scope_in": p.scope_in, "scope_out": p.scope_out,
+        "resource_note": p.resource_note,
+        "org_members": p.org_members or [], "stakeholders": p.stakeholders or [],
         "service_item_id": p.service_item_id,
         "allowed_transitions": [] if p.is_example else [
             {"to": code, "to_name": status_map.get(code, code)}
@@ -382,6 +393,10 @@ def charter_create(body: CharterCreateIn, db: Session = Depends(get_db), actor=D
         "planned_end": date.fromisoformat(str(f["planned_end"])),
         "portfolio_id": f.get("portfolio_id"), "service_item_id": f.get("service_item_id"),
         "budget_10k": f.get("budget_10k"), "description": f.get("description"),
+        "background": f.get("background"), "goals": f.get("goals"),
+        "scope_in": f.get("scope_in"), "scope_out": f.get("scope_out"),
+        "resource_note": f.get("resource_note"),
+        "org_members": f.get("org_members"), "stakeholders": f.get("stakeholders"),
     }, actor)
 
     from app.services.projects import create_wbs_by_code

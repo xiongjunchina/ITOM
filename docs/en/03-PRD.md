@@ -247,7 +247,7 @@ State machine: `Planning → In Progress → Completed → Closed`; can move fro
 
 | Tab | Content |
 | --- | --- |
-| Overview | Basic info + health + latest update (one line, updated anytime) + linked requirements |
+| Overview | Basic info + health + latest update (one line, updated anytime) + linked requirements + **structured charter sections** (M13: background / goals / in-scope & out-of-scope / budget & resource notes / organization — key members & stakeholders / other notes; editable, mapped 1:1 to the charter template, auto-filled on import) |
 | Schedule | **Gantt chart** (rendered from WBS start-end, including dependency lines and milestone markers) + WBS tree + milestone list |
 | Cost | Budget, cost-detail entry (date / amount / description, a minimal 3 items), auto roll-up of the execution rate, simplified SPI/CPI display (by schedule weight) |
 | Risk | Risk registration (title / probability / impact / response measure, 4 items), probability × impact matrix chart |

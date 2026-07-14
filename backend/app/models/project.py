@@ -33,7 +33,15 @@ class Project(GlidBase):
     portfolio_id: Mapped[str | None] = mapped_column(ForeignKey("portfolio.id"), index=True)
     service_item_id: Mapped[str | None] = mapped_column(ForeignKey("service_item.id"))
     budget_10k: Mapped[float | None] = mapped_column(Float, comment="预算(万元)")
-    description: Mapped[str | None] = mapped_column(Text)
+    # 章程结构化字段（M13）：概述页分段展示，与章程模板章节一一对应
+    background: Mapped[str | None] = mapped_column(Text, comment="项目背景（章程§1）")
+    goals: Mapped[str | None] = mapped_column(Text, comment="项目目标（章程§3）")
+    scope_in: Mapped[str | None] = mapped_column(Text, comment="范围-做什么（章程§4.1）")
+    scope_out: Mapped[str | None] = mapped_column(Text, comment="范围-不做什么（章程§4.2）")
+    resource_note: Mapped[str | None] = mapped_column(Text, comment="预算与资源说明（章程§6，金额在 budget_10k）")
+    org_members: Mapped[list | None] = mapped_column(JsonCol, comment="主要成员 [{name,role,duty}]（章程§2）")
+    stakeholders: Mapped[list | None] = mapped_column(JsonCol, comment="关键干系人 [{name,role,duty}]（章程§2）")
+    description: Mapped[str | None] = mapped_column(Text, comment="[兼容] 其他说明/历史描述")
     latest_update: Mapped[str | None] = mapped_column(Text, comment="最新动态一句话")
 
     portfolio: Mapped[Portfolio | None] = relationship()

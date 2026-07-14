@@ -109,12 +109,23 @@ def parse_charter(raw: bytes) -> dict:
         "planned_end": _normalize_date(find("计划完成", "计划结束")),
         "budget_10k": _parse_budget(find("项目预算")),
     }
-    description_parts = []
-    for label, pattern in (("项目背景", r"^1[\.、]\s*项目背景"), ("项目目标", r"^3[\.、]\s*项目目标"), ("项目范围", r"^4\.1\s*项目包含范围")):
-        content = section(pattern)
-        if content:
-            description_parts.append(f"{label}：{content}")
-    fields["description"] = "\n".join(description_parts) or None
+    # 结构化章节（M13）：与概述页分段/章程模板章节一一对应；不再拼接进 description
+    fields["background"] = section(r"^1[\.、]\s*项目背景")
+    fields["goals"] = section(r"^3[\.、]\s*项目目标")
+    fields["scope_in"] = section(r"^4\.1\s*项目包含范围")
+    fields["scope_out"] = section(r"^4\.2\s*项目不包含范围")
+    fields["resource_note"] = section(r"^6[\.、]\s*预算与资源")
+
+    # §2 组织与相关方表（4 列：类别|姓名|角色/单位|职责或关注点），按类别分流
+    org_members, stakeholders = [], []
+    for ln in lines:
+        cells = [c.strip() for c in ln.split("\t")]
+        if len(cells) == 4 and cells[1] and ("成员" in cells[0] or "干系人" in cells[0]):
+            entry = {"name": cells[1], "role": cells[2] or None, "duty": cells[3] or None}
+            (org_members if "成员" in cells[0] else stakeholders).append(entry)
+    fields["org_members"] = org_members[:50] or None
+    fields["stakeholders"] = stakeholders[:50] or None
+    fields["description"] = None  # 旧「拼接描述」废弃，结构化字段替代
 
     # 两张表按结构区分（位置化单元格）：WBS 10 列（含里程碑标志，里程碑=WBS 派生）/ 风险 5 列
     wbs, risks = [], []
@@ -142,5 +153,7 @@ def parse_charter(raw: bytes) -> dict:
         warnings.append("未解析到 WBS 任务表（第 5 节，10 列）")
     if not risks:
         warnings.append("未解析到风险表（7.1 关键风险，5 列）")
+    if not fields.get("org_members") and not fields.get("stakeholders"):
+        warnings.append("未解析到组织与相关方表（第 2 节，4 列：类别|姓名|角色|职责）")
 
     return {"fields": fields, "drafts": {"wbs": wbs[:100], "risks": risks[:10]}, "warnings": warnings}

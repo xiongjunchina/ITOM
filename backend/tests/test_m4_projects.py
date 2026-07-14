@@ -221,7 +221,7 @@ def test_charter_parse_and_create(client, ctx):
     assert f["name"] == "数据中台一期" and f["budget_10k"] == 120
     assert f["pm"] == ctx["pm_person"]  # 姓名解析到人员
     assert len(r["drafts"]["wbs"]) == 2 and len(r["drafts"]["risks"]) == 2  # 里程碑=WBS 派生，无独立 milestones
-    assert "项目背景" in f["description"]
+    assert f["background"] and f["description"] is None  # M13：结构化章节替代拼接描述
     assert sum(1 for w in r["drafts"]["wbs"] if w["is_milestone"]) == 1  # 平台搭建 里程碑=是
 
     r2 = client.post("/api/projects/charter/create", json={

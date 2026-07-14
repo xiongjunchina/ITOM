@@ -30,6 +30,13 @@ def test_generated_template_parses(client, admin_headers):
     assert by_code["1"]["is_milestone"] is False
     assert len(d["risks"]) == 2 and "milestones" not in d
     assert not any("未解析" in w for w in data["warnings"])
+    # M13 结构化章节：背景/目标/范围(做与不做)/资源说明 + §2 组织表分流
+    assert f["background"] and f["goals"] and f["scope_in"] and f["scope_out"]
+    assert "服务器" in f["resource_note"]
+    assert [m["name"] for m in f["org_members"]] == ["李四", "王五"]
+    assert [m["name"] for m in f["stakeholders"]] == ["赵总", "某供应商"]
+    assert f["stakeholders"][0]["duty"] and f["org_members"][0]["role"]
+    assert f["description"] is None  # 拼接式描述已废弃
 
 
 def test_charter_create_builds_hierarchy_deps_milestones(client, admin_headers):
@@ -48,6 +55,12 @@ def test_charter_create_builds_hierarchy_deps_milestones(client, admin_headers):
     assert r.json()["success"], r.text
     pid = r.json()["data"]["project_id"]
     assert r.json()["data"]["created"]["wbs"] == 5 and r.json()["data"]["created"]["milestones"] == 2
+
+    # M13：结构化章程字段落库并在详情返回
+    detail = client.get(f"/api/projects/{pid}", headers=admin_headers).json()["data"]
+    assert detail["background"] and detail["scope_out"] and detail["resource_note"]
+    assert len(detail["org_members"]) == 2 and len(detail["stakeholders"]) == 2
+    assert detail["stakeholders"][0]["name"] == "赵总"
 
     wbs = client.get(f"/api/projects/{pid}/wbs", headers=admin_headers).json()["data"]
     by_name = {w["name"]: w for w in wbs}

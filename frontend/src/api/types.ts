@@ -968,11 +968,34 @@ export interface LinkedRequirementBrief {
   moscow?: string | null;
 }
 
+/** 章程组织条目（主要成员：role=角色 duty=职责；关键干系人：role=角色/单位 duty=关注点） */
+export interface ProjectOrgEntry {
+  name: string;
+  role?: string | null;
+  duty?: string | null;
+}
+
 export interface ProjectDetail extends ProjectRow {
   /** 关联需求（需求实现阶段挂接本项目） */
   linked_requirements?: LinkedRequirementBrief[];
+  /** 其他说明（章程分字段后仅存放补充说明，兼容存量描述） */
   description: string | null;
   service_item_id: string | null;
+  // ---- M13 章程信息分段 ----
+  /** 项目背景 */
+  background: string | null;
+  /** 项目目标 */
+  goals: string | null;
+  /** 项目范围：做什么（范围内） */
+  scope_in: string | null;
+  /** 项目范围：不做什么（范围外） */
+  scope_out: string | null;
+  /** 预算与资源文字说明（预算金额见 budget_10k） */
+  resource_note: string | null;
+  /** 主要成员（详情返回空数组兜底） */
+  org_members: ProjectOrgEntry[];
+  /** 关键干系人（详情返回空数组兜底） */
+  stakeholders: ProjectOrgEntry[];
   allowed_transitions: AllowedTransition[];
   /** 项目流程实例视图（结构同工单流程） */
   process: TicketProcess | null;
@@ -1109,7 +1132,16 @@ export interface CharterParseResult {
     planned_start: string | null;
     planned_end: string | null;
     budget_10k: number | null;
+    /** 已废弃拼接，恒为 null（章程内容改为下方分字段返回） */
     description: string | null;
+    // ---- M13 章程信息分段字段（charter/create 透传落库） ----
+    background: string | null;
+    goals: string | null;
+    scope_in: string | null;
+    scope_out: string | null;
+    resource_note: string | null;
+    org_members: ProjectOrgEntry[];
+    stakeholders: ProjectOrgEntry[];
   };
   drafts: {
     wbs: CharterWbsDraft[];

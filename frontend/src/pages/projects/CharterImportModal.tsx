@@ -177,6 +177,14 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
           planned_end: confirmed.planned[1].format('YYYY-MM-DD'),
           budget_10k: confirmed.budget_10k ?? null,
           description: confirmed.description || null,
+          // M13 章程信息分段字段：解析结果原样透传落库（本表单不编辑）
+          background: parsed?.fields.background ?? null,
+          goals: parsed?.fields.goals ?? null,
+          scope_in: parsed?.fields.scope_in ?? null,
+          scope_out: parsed?.fields.scope_out ?? null,
+          resource_note: parsed?.fields.resource_note ?? null,
+          org_members: parsed?.fields.org_members ?? [],
+          stakeholders: parsed?.fields.stakeholders ?? [],
         },
         wbs: wbsRows
           .filter((r) => wbsKeys.includes(r.key))
@@ -212,6 +220,13 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
   };
 
   const fmtDate = (d: Dayjs | null) => (d ? d.format('YYYY-MM-DD') : '-');
+
+  /** M13 章程字段只读预览：截断 2 行，空显示 - */
+  const charterPreview = (v?: string | null) => (
+    <Typography.Paragraph style={{ marginBottom: 0 }} ellipsis={{ rows: 2 }}>
+      {v || '-'}
+    </Typography.Paragraph>
+  );
 
   const wbsColumns: ColumnsType<WbsRowState> = [
     { title: t('proj.wbs.col.stage'), dataIndex: 'stage', width: 90, ellipsis: true, render: (v) => v || '-' },
@@ -451,6 +466,28 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
               {confirmed.planned[0].format('YYYY-MM-DD')} ~ {confirmed.planned[1].format('YYYY-MM-DD')}
             </Descriptions.Item>
             <Descriptions.Item label={t('proj.budgetWan')}>{confirmed.budget_10k ?? '-'}</Descriptions.Item>
+            {/* M13 章程信息只读预览（解析结果透传创建，此处不编辑） */}
+            <Descriptions.Item label={t('proj.charter.background')} span={2}>
+              {charterPreview(parsed?.fields.background)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('proj.charter.goals')} span={2}>
+              {charterPreview(parsed?.fields.goals)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('proj.charter.scopeIn')}>
+              {charterPreview(parsed?.fields.scope_in)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('proj.charter.scopeOut')}>
+              {charterPreview(parsed?.fields.scope_out)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('proj.charter.resourceNote')}>
+              {charterPreview(parsed?.fields.resource_note)}
+            </Descriptions.Item>
+            <Descriptions.Item label={t('proj.charter.org')}>
+              {t('proj.charter.orgCount', {
+                members: parsed?.fields.org_members?.length ?? 0,
+                stakeholders: parsed?.fields.stakeholders?.length ?? 0,
+              })}
+            </Descriptions.Item>
             <Descriptions.Item label={t('proj.desc')} span={2}>
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {confirmed.description || '-'}

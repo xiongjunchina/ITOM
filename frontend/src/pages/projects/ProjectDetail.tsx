@@ -56,6 +56,7 @@ import type {
   Milestone,
   MilestoneTrackingRow,
   ProjectDetail as ProjectDetailData,
+  ProjectOrgEntry,
   Risk,
   RiskGrade,
   WbsStatus,
@@ -91,6 +92,25 @@ function formatSize(size: number): string {
   if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
   if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${size} B`;
+}
+
+/** 章程信息小节：加粗标题 + 内容（概述 tab 分段展示用） */
+function CharterSection({ title, children }: { title: React.ReactNode; children: React.ReactNode }): JSX.Element {
+  return (
+    <div>
+      <Typography.Text strong>{title}</Typography.Text>
+      <div style={{ marginTop: 4 }}>{children}</div>
+    </div>
+  );
+}
+
+/** 章程多行文本：pre-wrap 保留换行，空显示 - */
+function CharterText({ value }: { value: string | null | undefined }): JSX.Element {
+  return value ? (
+    <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{value}</Typography.Paragraph>
+  ) : (
+    <Typography.Text type="secondary">-</Typography.Text>
+  );
 }
 
 interface WbsNode extends WbsTask {
@@ -502,6 +522,99 @@ export default function ProjectDetail() {
     );
   }
 
+  // ----- 概述：章程信息分段 -----
+  const orgMemberColumns: ColumnsType<ProjectOrgEntry> = [
+    { title: t('proj.charter.col.name'), dataIndex: 'name', width: 140 },
+    { title: t('proj.charter.col.role'), dataIndex: 'role', width: 180, render: (v) => v || '-' },
+    { title: t('proj.charter.col.duty'), dataIndex: 'duty', render: (v) => v || '-' },
+  ];
+  const stakeholderColumns: ColumnsType<ProjectOrgEntry> = [
+    { title: t('proj.charter.col.name'), dataIndex: 'name', width: 140 },
+    { title: t('proj.charter.col.sRole'), dataIndex: 'role', width: 180, render: (v) => v || '-' },
+    { title: t('proj.charter.col.concern'), dataIndex: 'duty', render: (v) => v || '-' },
+  ];
+  const renderOrgTable = (rows: ProjectOrgEntry[], columns: ColumnsType<ProjectOrgEntry>) =>
+    rows.length === 0 ? (
+      <Typography.Text type="secondary">-</Typography.Text>
+    ) : (
+      <Table<ProjectOrgEntry>
+        size="small"
+        rowKey={(_, i) => i ?? 0}
+        columns={columns}
+        dataSource={rows}
+        pagination={false}
+      />
+    );
+
+  const charterCard = (
+    <Card title={t('proj.charter.section')} size="small">
+      <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <CharterSection title={t('proj.charter.background')}>
+          <CharterText value={detail.background} />
+        </CharterSection>
+        <CharterSection title={t('proj.charter.goals')}>
+          <CharterText value={detail.goals} />
+        </CharterSection>
+        <CharterSection title={t('proj.charter.scope')}>
+          <Row gutter={[16, 12]}>
+            <Col xs={24} md={12}>
+              <Typography.Text type="secondary">
+                <span style={{ color: '#52c41a', marginRight: 4 }}>✔</span>
+                {t('proj.charter.scopeIn')}
+              </Typography.Text>
+              <div style={{ marginTop: 4 }}>
+                <CharterText value={detail.scope_in} />
+              </div>
+            </Col>
+            <Col xs={24} md={12}>
+              <Typography.Text type="secondary">
+                <span style={{ color: '#ff4d4f', marginRight: 4 }}>✘</span>
+                {t('proj.charter.scopeOut')}
+              </Typography.Text>
+              <div style={{ marginTop: 4 }}>
+                <CharterText value={detail.scope_out} />
+              </div>
+            </Col>
+          </Row>
+        </CharterSection>
+        <CharterSection title={t('proj.charter.budgetRes')}>
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <span>
+              <Typography.Text type="secondary" style={{ marginRight: 8 }}>
+                {t('proj.d.budget')}
+              </Typography.Text>
+              {fmt10k(detail.budget_10k)}
+            </span>
+            <CharterText value={detail.resource_note} />
+          </Space>
+        </CharterSection>
+        <CharterSection title={t('proj.charter.org')}>
+          <Space direction="vertical" size={8} style={{ width: '100%' }}>
+            <span>
+              <Typography.Text type="secondary" style={{ marginRight: 8 }}>
+                {t('proj.pm')}
+              </Typography.Text>
+              {detail.pm_name ? <Tag color="blue">{detail.pm_name}</Tag> : '-'}
+            </span>
+            <div>
+              <Typography.Text type="secondary">{t('proj.charter.members')}</Typography.Text>
+              <div style={{ marginTop: 4 }}>{renderOrgTable(detail.org_members ?? [], orgMemberColumns)}</div>
+            </div>
+            <div>
+              <Typography.Text type="secondary">{t('proj.charter.stakeholders')}</Typography.Text>
+              <div style={{ marginTop: 4 }}>{renderOrgTable(detail.stakeholders ?? [], stakeholderColumns)}</div>
+            </div>
+          </Space>
+        </CharterSection>
+        {detail.description && (
+          <CharterSection title={t('proj.charter.other')}>
+            <CharterText value={detail.description} />
+          </CharterSection>
+        )}
+      </Space>
+    </Card>
+  );
+
   // ----- 概述 -----
   const overviewTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -544,12 +657,9 @@ export default function ProjectDetail() {
             <span style={{ color: '#ff4d4f' }}>{t('proj.ov.redParen', { n: detail.red_risks })}</span>
           )}
         </Descriptions.Item>
-        <Descriptions.Item label={t('proj.desc')} span={2}>
-          <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-            {detail.description || '-'}
-          </Typography.Paragraph>
-        </Descriptions.Item>
       </Descriptions>
+
+      {charterCard}
 
       <Card title={t('proj.latestUpdate')} size="small">
         <Typography.Paragraph
@@ -1162,6 +1272,13 @@ export default function ProjectDetail() {
                 description: detail.description,
                 actual_start: detail.actual_start,
                 actual_end: detail.actual_end,
+                background: detail.background,
+                goals: detail.goals,
+                scope_in: detail.scope_in,
+                scope_out: detail.scope_out,
+                resource_note: detail.resource_note,
+                org_members: detail.org_members ?? [],
+                stakeholders: detail.stakeholders ?? [],
               }
             : null
         }
