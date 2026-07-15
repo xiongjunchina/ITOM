@@ -254,6 +254,8 @@ export const zh: Dict = {
   'admin.permissions.implicitAll': '隐式全权',
   'admin.permissions.matrixTitle': '权限矩阵',
   'admin.permissions.unsaved': '未保存',
+  'admin.permissions.discard': '放弃修改',
+  'admin.permissions.discarded': '已恢复为上次保存的配置',
   'admin.permissions.adminAlert': 'admin 隐式拥有全部权限，矩阵不可配置（防止系统被锁死）',
   'admin.permissions.selectRole': '请选择左侧角色',
 
@@ -566,6 +568,8 @@ export const en: Dict = {
   'admin.permissions.implicitAll': 'Implicit full access',
   'admin.permissions.matrixTitle': 'Permission matrix',
   'admin.permissions.unsaved': 'Unsaved',
+  'admin.permissions.discard': 'Discard changes',
+  'admin.permissions.discarded': 'Reverted to last saved configuration',
   'admin.permissions.adminAlert': 'admin implicitly has all permissions; the matrix is not configurable (to prevent locking out the system).',
   'admin.permissions.selectRole': 'Select a role on the left',
 

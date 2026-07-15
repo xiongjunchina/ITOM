@@ -78,6 +78,7 @@ export default function Permissions() {
 
   const [selected, setSelected] = useState<string>(''); // 角色 code
   const [matrix, setMatrix] = useState<Matrix>({});
+  const [savedMatrix, setSavedMatrix] = useState<Matrix>({}); // 上次加载/保存的矩阵（取消修改时恢复）
   const [savedSnapshot, setSavedSnapshot] = useState<string>('');
   const [gridLoading, setGridLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -91,12 +92,14 @@ export default function Permissions() {
       if (roleCode === 'admin') {
         // admin 隐式全权：不从后端取，网格只读全勾
         setMatrix({});
+        setSavedMatrix({});
         setSavedSnapshot('');
         return;
       }
       setGridLoading(true);
       // 先清空，避免加载期间残留上一角色的矩阵（及误判"未保存"）
       setMatrix({});
+      setSavedMatrix({});
       setSavedSnapshot(normalize({}, actions));
       try {
         const entries = await api.get<RolePermissionEntry[]>('/admin/permissions', { role: roleCode });
@@ -105,6 +108,7 @@ export default function Permissions() {
           m[e.module] = e.actions ?? [];
         });
         setMatrix(m);
+        setSavedMatrix(m);
         setSavedSnapshot(normalize(m, actions));
       } catch {
         // 已统一提示
@@ -175,12 +179,19 @@ export default function Permissions() {
         entries: modules.map((m) => ({ module: m.code, actions: matrix[m.code] ?? [] })),
       });
       message.success(t('admin.permissions.saved'));
+      setSavedMatrix(matrix);
       setSavedSnapshot(normalize(matrix, actions));
     } catch {
       // 已统一提示（如 ADMIN_LOCKED）
     } finally {
       setSaving(false);
     }
+  };
+
+  /** 放弃未保存的修改：恢复为上次加载/保存的矩阵 */
+  const handleDiscard = () => {
+    setMatrix(savedMatrix);
+    message.info(t('admin.permissions.discarded'));
   };
 
   /** 分组标题行 + 菜单页小标题 + 模块行（保持后端注册顺序，按菜单页分层） */
@@ -347,15 +358,22 @@ export default function Permissions() {
             )
           }
           extra={
-            <Button
-              type="primary"
-              icon={<SaveOutlined />}
-              loading={saving}
-              disabled={isAdmin || !selected || !dirty}
-              onClick={() => void handleSave()}
-            >
-              {t('common.save')}
-            </Button>
+            <Space>
+              {dirty && (
+                <Button onClick={handleDiscard} disabled={saving}>
+                  {t('admin.permissions.discard')}
+                </Button>
+              )}
+              <Button
+                type="primary"
+                icon={<SaveOutlined />}
+                loading={saving}
+                disabled={isAdmin || !selected || !dirty}
+                onClick={() => void handleSave()}
+              >
+                {t('common.save')}
+              </Button>
+            </Space>
           }
         >
           {isAdmin && (
