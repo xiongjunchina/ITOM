@@ -37,6 +37,7 @@ import {
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { useGoBack } from '../../utils/nav';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -593,6 +594,7 @@ export default function RequirementDetail() {
   const et = useEnums();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const goBack = useGoBack();
   const user = useAuthStore((s) => s.user);
   const { roleLabel } = useRoleOptions();
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
@@ -1032,7 +1034,7 @@ export default function RequirementDetail() {
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/requirements')}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => goBack('/requirements/overview')}>
               {t('req.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>

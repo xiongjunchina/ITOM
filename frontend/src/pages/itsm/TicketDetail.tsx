@@ -23,6 +23,7 @@ import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
+import { useGoBack } from '../../utils/nav';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type {
@@ -36,6 +37,13 @@ import type {
 import { PRIORITY_COLORS, TICKET_TYPE_COLORS } from '../../api/types';
 
 const fmt = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-');
+
+/** 工单类型 → 列表页（返回兜底：通知/直链打开无站内历史时使用） */
+const TYPE_LIST_PATH: Record<TicketType, string> = {
+  service_request: '/itsm/tickets',
+  incident: '/itsm/incidents',
+  change: '/itsm/changes',
+};
 
 function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning' | 'processing' {
   if (status === 'closed' || status === 'cancelled') return 'default';
@@ -54,6 +62,7 @@ function stepStatus(s: ProcessStep): 'finish' | 'process' | 'wait' {
 export default function TicketDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const goBack = useGoBack();
   const user = useAuthStore((s) => s.user);
   const t = useT();
   const et = useEnums();
@@ -281,7 +290,7 @@ export default function TicketDetail() {
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/itsm/tickets')}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => goBack(TYPE_LIST_PATH[detail.ticket_type as TicketType] ?? '/itsm/tickets')}>
               {t('itsm.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>

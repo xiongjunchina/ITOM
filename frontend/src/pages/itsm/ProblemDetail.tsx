@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -19,6 +19,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { ArrowLeftOutlined, LinkOutlined } from '@ant-design/icons';
+import { useGoBack } from '../../utils/nav';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -47,7 +48,7 @@ const NEEDS_ROOT_CAUSE = new Set(['known_error', 'resolved']);
 
 export default function ProblemDetail() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const goBack = useGoBack();
   const t = useT();
 
   /** 角色/组 code → 中文名（流程条处理人与知会人展示） */
@@ -214,7 +215,7 @@ export default function ProblemDetail() {
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/itsm/problems')}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => goBack('/itsm/problems')}>
               {t('itsm.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>

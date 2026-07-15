@@ -5,6 +5,7 @@ import { ArrowLeftOutlined, EditOutlined, EyeOutlined, LikeOutlined } from '@ant
 import dayjs from 'dayjs';
 import DOMPurify from 'dompurify';
 import { api } from '../../api/client';
+import { useGoBack } from '../../utils/nav';
 import { ExampleAlert } from '../../components/ExampleTag';
 import { hasAnyRole, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
@@ -108,6 +109,7 @@ function renderContent(content: string): JSX.Element[] {
 export default function KnowledgeDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const goBack = useGoBack();
   const user = useAuthStore((s) => s.user);
   const t = useT();
 
@@ -172,7 +174,7 @@ export default function KnowledgeDetail() {
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/itsm/knowledge')}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => goBack('/itsm/knowledge')}>
               {t('itsm.back')}
             </Button>
             <Typography.Title level={4} style={{ margin: 0 }}>
