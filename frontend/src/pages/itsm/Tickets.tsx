@@ -24,7 +24,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import { useT } from '../../i18n';
-import { useAuthStore, hasPermission } from '../../stores/auth';
+import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
 import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
@@ -80,6 +80,9 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   // M20 列表管理动作：编辑/关闭按类型模块 edit；删除按 delete（默认矩阵仅 admin）
   const canEdit = hasPermission(authUser, TYPE_MODULE[fixedType], 'edit');
   const canDelete = hasPermission(authUser, TYPE_MODULE[fixedType], 'delete');
+  // M27：进行中的事件/变更=强制关闭，仅 admin/IT运维负责人/信息安全负责人/CIO（服务请求维持 edit）
+  const canClose =
+    canEdit && (fixedType === 'service_request' || hasAnyRole(authUser, ['admin', 'it_op_leader', 'is_mgr', 'cio']));
   const navigate = useNavigate();
   const t = useT();
   const et = useEnums();
@@ -334,22 +337,22 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
               r.is_example ? null : (
                 <Space size={8}>
                   {canEdit && r.status !== 'closed' && r.status !== 'rejected' && (
-                    <>
-                      <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openEdit(r)}>
-                        {t('common.edit')}
-                      </Button>
-                      <Button
-                        type="link"
-                        size="small"
-                        style={{ padding: 0 }}
-                        onClick={() => {
-                          setCloseReason('');
-                          setClosing(r);
-                        }}
-                      >
-                        {t('itsm.ticket.close')}
-                      </Button>
-                    </>
+                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openEdit(r)}>
+                      {t('common.edit')}
+                    </Button>
+                  )}
+                  {canClose && r.status !== 'closed' && r.status !== 'rejected' && (
+                    <Button
+                      type="link"
+                      size="small"
+                      style={{ padding: 0 }}
+                      onClick={() => {
+                        setCloseReason('');
+                        setClosing(r);
+                      }}
+                    >
+                      {t('itsm.ticket.close')}
+                    </Button>
                   )}
                   {canDelete && (
                     <Popconfirm title={t('itsm.ticket.deleteConfirm')} onConfirm={() => void handleDelete(r)}>

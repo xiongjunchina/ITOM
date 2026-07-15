@@ -195,12 +195,28 @@ def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(
     return ok({"id": t.id, "status": t.status})
 
 
+#: 进行中的事件/变更强制关闭白名单（M27，用户指定）：admin、IT运维负责人、信息安全负责人、CIO
+FORCE_CLOSE_ROLES = frozenset({"admin", "it_op_leader", "is_mgr", "cio"})
+
+
 @router.post("/{ticket_id}/close")
 def close_ticket(ticket_id: str, body: TicketCloseIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """一键关单（M20 列表管理动作）：沿状态机路径推进至已关闭，理由必填。"""
     t = _get_ticket(db, ticket_id, user)
     _require_type_perm(db, user, t.ticket_type, "edit")
-    process_engine.require_flow_operator(db, user, svc.entity_type_of(t), t.id)  # M25：仅流程当前处理人
+    etype = svc.entity_type_of(t)
+    if t.ticket_type in ("incident", "change") and process_engine.current_pending_task(db, etype, t.id):
+        # M27：进行中的事件/变更单 = 强制关闭，仅管理角色可执行（登记人/普通处理人走流程步骤）
+        from app.services.rbac import actor_keys
+
+        if not (actor_keys(db, user) & FORCE_CLOSE_ROLES):
+            raise AppError(
+                "FORCE_CLOSE_FORBIDDEN",
+                "进行中的事件/变更单仅 管理员、IT运维负责人、信息安全负责人、CIO 可强制关闭",
+                403,
+            )
+    else:
+        process_engine.require_flow_operator(db, user, etype, t.id)  # M25：服务请求/无流程单按当前处理人
     ensure_not_example(t)
     svc.quick_close(db, t, body.reason, user)
     return ok({"id": t.id, "status": t.status})
