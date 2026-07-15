@@ -49,15 +49,19 @@ def transition(
     fields: dict,
     actor: AuthUser,
     status_attr: str = "status",
+    system: bool = False,
 ):
-    """执行状态流转；返回 (from_code, to_code)。调用方负责 commit 与事件。"""
+    """执行状态流转；返回 (from_code, to_code)。调用方负责 commit 与事件。
+
+    system=True：系统编排动作（如流程完成自动闭环）跳过角色校验——审批语义已在流程步骤中履行。
+    """
     from_code = getattr(entity, status_attr)
     rule = get_transition(db, entity_type, from_code, to_code)
     if not rule:
         raise AppError("INVALID_TRANSITION", f"不允许从「{from_code}」流转到「{to_code}」")
 
     allowed = rule.allowed_roles or []
-    if allowed:
+    if allowed and not system:
         held = actor_keys(db, actor)
         if ADMIN not in held and not (held & set(allowed)):
             raise AppError("FORBIDDEN", "当前角色无权执行此流转", 403)

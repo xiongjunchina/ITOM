@@ -298,6 +298,36 @@ def split_permission_modules_m172(db: Session):
     db.commit()
 
 
+def close_completed_process_tickets_m23(db: Session):
+    """M23 存量修复：流程实例已完成但工单仍停在中间状态（如变更复盘完毕却显示待审批）→ 自动闭环。
+
+    幂等：终态（closed/rejected）工单跳过；沿状态机路径推进（系统级，忽略角色限制）。
+    """
+    from app.models import AuthUser, ProcessInstance, Ticket
+    from app.services.tickets import auto_close_on_process_complete
+
+    admin = db.query(AuthUser).filter(AuthUser.username == "admin").first()
+    if not admin:
+        return
+    fixed = 0
+    for inst in (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type.in_(["ticket", "ticket_change"]),
+            ProcessInstance.status == "已完成",
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .all()
+    ):
+        t = db.get(Ticket, inst.entity_id)
+        if not t or t.is_deleted or t.is_example or t.status in ("closed", "rejected"):
+            continue
+        if auto_close_on_process_complete(db, t.id, admin):
+            fixed += 1
+    if fixed:
+        logger.info("流程已完成的工单自动闭环 %d 张（M23）", fixed)
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -310,6 +340,7 @@ def migrate_m35_org(db: Session):
     fix_ops_leader_m166(db)
     fix_delivery_step_branches_m167(db)
     split_permission_modules_m172(db)
+    close_completed_process_tickets_m23(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

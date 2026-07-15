@@ -82,10 +82,10 @@ def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
     return ticket
 
 
-def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: AuthUser) -> Ticket:
+def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: AuthUser, system: bool = False) -> Ticket:
     now = datetime.now()
     etype = entity_type_of(ticket)
-    from_code, _ = wf_transition(db, ticket, etype, to, fields, actor)
+    from_code, _ = wf_transition(db, ticket, etype, to, fields, actor, system=system)
 
     # 打点与派生
     if from_code == "new" and to != "new":
@@ -137,8 +137,11 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     return ticket
 
 
-def _closure_path(db: Session, etype: str, src: str, actor: AuthUser) -> list[str] | None:
-    """BFS 最短状态机路径 src→closed（尊重用户配置的转换与角色限制），不可达返回 None。"""
+def _closure_path(db: Session, etype: str, src: str, actor: AuthUser, ignore_roles: bool = False) -> list[str] | None:
+    """BFS 最短状态机路径 src→closed（尊重用户配置的转换与角色限制），不可达返回 None。
+
+    ignore_roles=True：系统编排（流程完成自动闭环）不受操作者角色限制。
+    """
     from collections import deque
 
     from app.core.rbac import ADMIN
@@ -154,7 +157,7 @@ def _closure_path(db: Session, etype: str, src: str, actor: AuthUser) -> list[st
     )
     for tr in rows:
         allowed = tr.allowed_roles or []
-        if not allowed or ADMIN in held or held & set(allowed):
+        if ignore_roles or not allowed or ADMIN in held or held & set(allowed):
             adj.setdefault(tr.from_code, []).append(tr.to_code)
     prev: dict[str, str | None] = {src: None}
     queue = deque([src])
@@ -199,6 +202,30 @@ def quick_close(db: Session, ticket: Ticket, reason: str, actor: AuthUser) -> Ti
     audit(db, "ticket", ticket.id, "quick_close", actor, {"code": ticket.ticket_code, "path": path, "reason": reason})
     db.commit()
     return ticket
+
+
+def auto_close_on_process_complete(db: Session, ticket_id: str, actor: AuthUser) -> bool:
+    """流程实例完成 → 工单沿状态机自动闭环到 closed（M23，用户实测：变更复盘完成后状态仍停在待审批）。
+
+    系统级编排：路径不受操作者角色限制（审批语义已在流程「变更审批」步骤履行）；
+    阶段必填字段兜底（solution/closure_code）。路径不可达仅记审计，不阻塞任务完成。
+    """
+    t = db.get(Ticket, ticket_id)
+    if not t or t.is_deleted or t.status in ("closed", "rejected"):
+        return False
+    etype = entity_type_of(t)
+    path = _closure_path(db, etype, t.status, actor, ignore_roles=True)
+    if not path:
+        audit(db, "ticket", t.id, "auto_close_blocked", actor, {"code": t.ticket_code, "status": t.status})
+        return False
+    if not t.solution:
+        t.solution = "流程执行完毕，系统自动闭环"
+    for to in path:
+        fields = {"closure_code": t.closure_code or "resolved"} if to == "closed" else {}
+        do_transition(db, t, to, fields, actor, system=True)
+    audit(db, "ticket", t.id, "auto_close", actor, {"code": t.ticket_code, "path": path})
+    db.commit()
+    return True
 
 
 def rate_satisfaction(db: Session, ticket: Ticket, score: int, actor: AuthUser) -> Ticket:

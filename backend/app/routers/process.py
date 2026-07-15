@@ -80,6 +80,11 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
         from app.routers.requirements import on_process_advanced
 
         on_process_advanced(db, instance.entity_id, user)
+    elif instance.entity_type in ("ticket", "ticket_change") and instance.status == "已完成":
+        # M23：工单流程走完（如变更复盘完成）→ 工单状态机自动闭环，不再停在中间状态
+        from app.services.tickets import auto_close_on_process_complete
+
+        auto_close_on_process_complete(db, instance.entity_id, user)
     db.commit()
     return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
 
