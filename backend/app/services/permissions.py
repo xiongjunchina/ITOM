@@ -17,7 +17,7 @@ ACTIONS = ("view", "create", "edit", "delete")
 # 标签与左侧导航/子标签保持同步（2026-07-12 M7 同步）；一个模块可对应多个菜单入口（如 tickets 覆盖服务请求/事件/变更）。
 MODULES = [
     ("dashboard", "总览", "总览"),
-    ("tickets", "工单（服务请求/事件/变更）", "ITSM"),
+    ("tickets", "工单（服务请求/变更管理/事件管理）", "ITSM"),
     ("catalog", "服务目录", "ITSM"),
     ("cmdb", "CMDB", "ITSM"),
     ("sla", "SLA", "ITSM"),
@@ -25,8 +25,9 @@ MODULES = [
     ("vendors", "供应商管理", "ITSM"),
     ("contracts", "合同管理", "ITSM"),
     ("knowledge", "知识库", "ITSM"),
-    ("projects", "项目管理", "项目管理"),
-    ("requirements", "需求管理", "需求管理"),
+    # M17：项目/需求拆为二级菜单后，一个权限模块覆盖多个菜单页（同 tickets 模式括号注明）
+    ("projects", "项目管理（项目列表/项目组合）", "项目管理"),
+    ("requirements", "需求管理（需求总览/任务跟踪/评分规则）", "需求管理"),
     ("process_definitions", "流程定义", "流程中心"),
     ("process_monitor", "流程监控", "流程中心"),
     ("team_overview", "团队总览", "团队管理"),
