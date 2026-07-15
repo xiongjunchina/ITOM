@@ -9,6 +9,8 @@ import {
   Drawer,
   Form,
   Input,
+  Modal,
+  Popconfirm,
   Select,
   Space,
   Switch,
@@ -75,6 +77,9 @@ const TYPE_MODULE: Record<TicketType, string> = {
 export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const authUser = useAuthStore((st) => st.user);
   const canCreate = authUser?.permissions ? hasPermission(authUser, TYPE_MODULE[fixedType], 'create') : true;
+  // M20 列表管理动作：编辑/关闭按类型模块 edit；删除按 delete（默认矩阵仅 admin）
+  const canEdit = hasPermission(authUser, TYPE_MODULE[fixedType], 'edit');
+  const canDelete = hasPermission(authUser, TYPE_MODULE[fixedType], 'delete');
   const navigate = useNavigate();
   const t = useT();
   const et = useEnums();
@@ -98,6 +103,14 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const [form] = Form.useForm<TicketFormValues>();
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+
+  // M20 行内编辑 / 关闭
+  const [editing, setEditing] = useState<TicketRow | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editForm] = Form.useForm<{ title: string; priority: TicketPriority; assignee?: string; description?: string; remarks?: string }>();
+  const [closing, setClosing] = useState<TicketRow | null>(null);
+  const [closeReason, setCloseReason] = useState('');
+  const [closeSaving, setCloseSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -187,6 +200,85 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
   };
 
+  // ---- M20 行内管理动作 ----
+  const loadMembers = () => {
+    if (members.length === 0) {
+      api
+        .getList<Member>('/members', { page: 1, page_size: 999 })
+        .then((res) => setMembers(res.items))
+        .catch(() => undefined);
+    }
+  };
+
+  const openEdit = async (row: TicketRow) => {
+    loadMembers();
+    setEditing(row);
+    try {
+      const d = await api.get<{ title: string; priority: TicketPriority; assignee: string | null; description: string | null; remarks: string | null }>(`/tickets/${row.id}`);
+      editForm.setFieldsValue({
+        title: d.title,
+        priority: d.priority,
+        assignee: d.assignee ?? undefined,
+        description: d.description ?? '',
+        remarks: d.remarks ?? '',
+      });
+    } catch {
+      setEditing(null);
+    }
+  };
+
+  const handleEditSave = async () => {
+    if (!editing) return;
+    const v = await editForm.validateFields();
+    setEditSaving(true);
+    try {
+      await api.patch(`/tickets/${editing.id}`, {
+        title: v.title,
+        priority: v.priority,
+        assignee: v.assignee ?? null,
+        description: v.description,
+        remarks: v.remarks,
+      });
+      message.success(t('itsm.ticket.updatedMsg'));
+      setEditing(null);
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleClose = async () => {
+    if (!closing) return;
+    if (closeReason.trim().length < 5) {
+      message.warning(t('itsm.ticket.closeReasonRequired'));
+      return;
+    }
+    setCloseSaving(true);
+    try {
+      await api.post(`/tickets/${closing.id}/close`, { reason: closeReason.trim() });
+      message.success(t('itsm.ticket.closedMsg'));
+      setClosing(null);
+      setCloseReason('');
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setCloseSaving(false);
+    }
+  };
+
+  const handleDelete = async (row: TicketRow) => {
+    try {
+      await api.delete(`/tickets/${row.id}`);
+      message.success(t('itsm.ticket.deletedMsg'));
+      void load();
+    } catch {
+      // 已统一提示
+    }
+  };
+
   const columns: ColumnsType<TicketRow> = [
     {
       title: t('itsm.f.code'),
@@ -230,6 +322,47 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     { title: 'SLA', key: 'sla', width: 90, render: (_, r) => renderSla(r, t) },
+    // M20：管理动作列（编辑/关闭需 edit；删除需 delete——默认矩阵仅 admin），示例数据只读
+    ...(canEdit || canDelete
+      ? ([
+          {
+            title: t('common.actions'),
+            key: 'actions',
+            width: 150,
+            fixed: 'right' as const,
+            render: (_: unknown, r: TicketRow) =>
+              r.is_example ? null : (
+                <Space size={8}>
+                  {canEdit && r.status !== 'closed' && r.status !== 'rejected' && (
+                    <>
+                      <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openEdit(r)}>
+                        {t('common.edit')}
+                      </Button>
+                      <Button
+                        type="link"
+                        size="small"
+                        style={{ padding: 0 }}
+                        onClick={() => {
+                          setCloseReason('');
+                          setClosing(r);
+                        }}
+                      >
+                        {t('itsm.ticket.close')}
+                      </Button>
+                    </>
+                  )}
+                  {canDelete && (
+                    <Popconfirm title={t('itsm.ticket.deleteConfirm')} onConfirm={() => void handleDelete(r)}>
+                      <Button type="link" size="small" danger style={{ padding: 0 }}>
+                        {t('common.delete')}
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
+              ),
+          },
+        ] as ColumnsType<TicketRow>)
+      : []),
   ];
 
   return (
@@ -429,6 +562,65 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           />
         </Form>
       </Drawer>
+
+      {/* M20 行内编辑（核心字段；改派/流转在详情页） */}
+      <Modal
+        title={editing ? `${t('itsm.ticket.editTitle')} · ${editing.ticket_code}` : t('itsm.ticket.editTitle')}
+        open={!!editing}
+        confirmLoading={editSaving}
+        onOk={() => void handleEditSave()}
+        onCancel={() => setEditing(null)}
+        destroyOnClose
+      >
+        <Form form={editForm} layout="vertical" preserve={false}>
+          <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+            <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
+            <Select options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))} />
+          </Form.Item>
+          <Form.Item name="assignee" label={t('itsm.f.assignee')}>
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              options={members.map((m) => ({
+                value: m.id,
+                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="description" label={t('itsm.f.description')}>
+            <Input.TextArea rows={4} maxLength={2000} />
+          </Form.Item>
+          <Form.Item name="remarks" label={t('common.remark')}>
+            <Input.TextArea rows={2} maxLength={500} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* M20 关闭工单：理由必填（≥5 字），沿状态机路径推进至已关闭 */}
+      <Modal
+        title={closing ? `${t('itsm.ticket.closeTitle')} · ${closing.ticket_code}` : t('itsm.ticket.closeTitle')}
+        open={!!closing}
+        confirmLoading={closeSaving}
+        okButtonProps={{ danger: true }}
+        onOk={() => void handleClose()}
+        onCancel={() => {
+          setClosing(null);
+          setCloseReason('');
+        }}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 8 }}>{t('itsm.ticket.closeReason')}</div>
+        <Input.TextArea
+          rows={3}
+          maxLength={500}
+          value={closeReason}
+          onChange={(e) => setCloseReason(e.target.value)}
+          placeholder={t('itsm.ticket.closeReasonPlaceholder')}
+        />
+      </Modal>
     </Card>
   );
 }

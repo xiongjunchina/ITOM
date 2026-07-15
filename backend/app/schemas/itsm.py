@@ -84,6 +84,12 @@ class TransitionIn(BaseModel):
     fields: dict = {}
 
 
+class TicketCloseIn(BaseModel):
+    """一键关单（M20）：理由必填，与项目关闭同规格（≥5 字）。"""
+
+    reason: str = Field(min_length=5, max_length=500)
+
+
 class SatisfactionIn(BaseModel):
     score: int = Field(ge=1, le=5)
 

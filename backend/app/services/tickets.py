@@ -137,6 +137,70 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     return ticket
 
 
+def _closure_path(db: Session, etype: str, src: str, actor: AuthUser) -> list[str] | None:
+    """BFS 最短状态机路径 src→closed（尊重用户配置的转换与角色限制），不可达返回 None。"""
+    from collections import deque
+
+    from app.core.rbac import ADMIN
+    from app.models import WorkflowTransition
+    from app.services.rbac import actor_keys
+
+    held = actor_keys(db, actor)
+    adj: dict[str, list[str]] = {}
+    rows = (
+        db.query(WorkflowTransition)
+        .filter(WorkflowTransition.entity_type == etype, WorkflowTransition.is_deleted.is_(False))
+        .all()
+    )
+    for tr in rows:
+        allowed = tr.allowed_roles or []
+        if not allowed or ADMIN in held or held & set(allowed):
+            adj.setdefault(tr.from_code, []).append(tr.to_code)
+    prev: dict[str, str | None] = {src: None}
+    queue = deque([src])
+    while queue:
+        cur = queue.popleft()
+        if cur == "closed":
+            break
+        for nxt in adj.get(cur, []):
+            if nxt not in prev:
+                prev[nxt] = cur
+                queue.append(nxt)
+    if "closed" not in prev:
+        return None
+    path: list[str] = []
+    node: str | None = "closed"
+    while node is not None and node != src:
+        path.append(node)
+        node = prev[node]
+    return list(reversed(path))
+
+
+def quick_close(db: Session, ticket: Ticket, reason: str, actor: AuthUser) -> Ticket:
+    """一键关单（M20，列表管理动作）：沿状态机允许路径逐步推进至 closed。
+
+    不绕过状态机——路径不可达（如变更单卡在待审批且无审批权）时报错提示。
+    理由记入解决方案（为空时）与备注，审计留痕。
+    """
+    if ticket.status in ("closed", "rejected"):
+        raise AppError("TICKET_FINAL", "工单已是终态")
+    etype = entity_type_of(ticket)
+    path = _closure_path(db, etype, ticket.status, actor)
+    if not path:
+        raise AppError("NO_CLOSE_PATH", "状态机不允许从当前状态流转到已关闭（或需要审批角色），请在详情页按流程处理")
+    if not ticket.solution:
+        ticket.solution = reason
+    note = f"[关单说明] {reason}"
+    ticket.remarks = f"{ticket.remarks}\n{note}" if ticket.remarks else note
+    for to in path:
+        # 阶段必填字段兜底：solution 已提前写入；closed 需关闭代码（默认「已解决」，语义由理由说明）
+        fields = {"closure_code": ticket.closure_code or "resolved"} if to == "closed" else {}
+        do_transition(db, ticket, to, fields, actor)
+    audit(db, "ticket", ticket.id, "quick_close", actor, {"code": ticket.ticket_code, "path": path, "reason": reason})
+    db.commit()
+    return ticket
+
+
 def rate_satisfaction(db: Session, ticket: Ticket, score: int, actor: AuthUser) -> Ticket:
     if ticket.status != "closed":
         raise AppError("NOT_CLOSED", "工单关闭后才能评价")

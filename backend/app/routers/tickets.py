@@ -9,7 +9,7 @@ from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, OrgMember, Ticket
 from app.schemas.common import ok, paginate
-from app.schemas.itsm import SatisfactionIn, TicketCreate, TicketUpdate, TransitionIn
+from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, TicketUpdate, TransitionIn
 from app.services import process_engine
 from app.services import tickets as svc
 from app.services.audit import audit
@@ -187,6 +187,41 @@ def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(
     ensure_not_example(t)
     svc.do_transition(db, t, body.to, body.fields, user)
     return ok({"id": t.id, "status": t.status})
+
+
+@router.post("/{ticket_id}/close")
+def close_ticket(ticket_id: str, body: TicketCloseIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """一键关单（M20 列表管理动作）：沿状态机路径推进至已关闭，理由必填。"""
+    t = _get_ticket(db, ticket_id, user)
+    _require_type_perm(db, user, t.ticket_type, "edit")
+    ensure_not_example(t)
+    svc.quick_close(db, t, body.reason, user)
+    return ok({"id": t.id, "status": t.status})
+
+
+@router.delete("/{ticket_id}")
+def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """删除工单（M20，软删）：按类型模块 delete 权限（默认仅 admin）；级联软删流程实例与任务。"""
+    t = _get_ticket(db, ticket_id, user)
+    _require_type_perm(db, user, t.ticket_type, "delete")
+    ensure_not_example(t)
+    from app.models import ProcessInstance, ProcessTask
+
+    t.is_deleted = True
+    etype = svc.entity_type_of(t)
+    instances = 0
+    for inst in db.query(ProcessInstance).filter(
+        ProcessInstance.entity_type == etype,
+        ProcessInstance.entity_id == t.id,
+        ProcessInstance.is_deleted.is_(False),
+    ):
+        inst.is_deleted = True
+        instances += 1
+        for task in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
+            task.is_deleted = True
+    audit(db, "ticket", t.id, "delete", user, {"code": t.ticket_code, "process_instances": instances})
+    db.commit()
+    return ok({"id": t.id, "process_instances": instances})
 
 
 @router.post("/{ticket_id}/satisfaction")
