@@ -17,6 +17,7 @@ import {
 import { api } from '../api/client';
 import { WidgetBoardDrawer, WidgetTitle, useWidgetBoard } from '../components/WidgetBoard';
 import type { WidgetDragProps, WidgetMeta } from '../components/WidgetBoard';
+import { hasPermission, useAuthStore } from '../stores/auth';
 import { useT } from '../i18n';
 import type { DashboardData } from '../api/types';
 
@@ -48,6 +49,19 @@ const WIDGET_ICONS: Record<WidgetKey, ReactNode> = {
   project: <ProjectOutlined style={{ color: '#2f54eb' }} />,
   requirement: <FileTextOutlined style={{ color: '#eb2f96' }} />,
   team: <TeamOutlined style={{ color: '#52c41a' }} />,
+};
+
+/** widget → 所需权限模块（任一有 view 即显示；M22 与后端 /dashboard 裁剪同规则） */
+const WIDGET_PERMS: Record<WidgetKey, string[]> = {
+  alerts: ['ticket_sr', 'ticket_incident', 'ticket_change', 'contracts', 'projects'],
+  itsm_service_request: ['ticket_sr'],
+  itsm_change: ['ticket_change'],
+  itsm_incident: ['ticket_incident'],
+  itsm_problem: ['problems'],
+  service_overview: ['ticket_sr', 'ticket_incident', 'ticket_change'],
+  project: ['projects'],
+  requirement: ['requirements'],
+  team: ['team_overview'],
 };
 
 /** 告警类型 → 颜色（红=风险 / 橙=待办；标签在组件内 t('dash.alert.*') 渲染） */
@@ -111,11 +125,17 @@ const SUB_ROW_STYLE: CSSProperties = {
 
 export default function Dashboard() {
   const t = useT();
+  const user = useAuthStore((s) => s.user);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // M22：注册表先按权限过滤——无权限的板块不渲染、不进自定义面板（存量会话缺 permissions 时全显回退）
+  const allowedKeys = WIDGET_KEYS.filter(
+    (k) => !user?.permissions || WIDGET_PERMS[k].some((m) => hasPermission(user, m)),
+  );
+
   /** widget 注册表：图标稳定 + 显示名随语言 t 渲染 */
-  const WIDGETS: WidgetMeta[] = WIDGET_KEYS.map((key) => ({
+  const WIDGETS: WidgetMeta[] = allowedKeys.map((key) => ({
     key,
     name: t('dash.widget.' + key),
     icon: WIDGET_ICONS[key],

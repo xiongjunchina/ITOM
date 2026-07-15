@@ -49,6 +49,19 @@ def test_matrix_edit_changes_access(client, admin_headers, ctx):
     assert r.json()["error"]["code"] == "ADMIN_LOCKED"
 
 
+def test_dashboard_sections_trimmed_by_permission(client, admin_headers, ctx):
+    """M22：总览聚合按权限裁剪——requester 只见服务请求块与需求段，无项目/团队。"""
+    _, h = ctx["member_and_user"]("业务丁", "req_d", ["requester"])
+    d = client.get("/api/dashboard", headers=h).json()["data"]
+    assert set(d["service"]["itsm_blocks"].keys()) == {"service_request"}
+    assert "requirement" in d and "project" not in d and "team" not in d
+    assert all(a["type"] == "sla_warning" for a in d["alerts"])  # 合同/项目告警不下发
+
+    da = client.get("/api/dashboard", headers=admin_headers).json()["data"]
+    assert set(da["service"]["itsm_blocks"].keys()) == {"service_request", "change", "incident", "problem"}
+    assert "project" in da and "team" in da and "requirement" in da
+
+
 def test_dashboard_gated_by_matrix(client, admin_headers, ctx):
     """M19：关掉角色的总览可见后，/api/dashboard 接口层 403（不只菜单隐藏）。"""
     _, h = ctx["member_and_user"]("业务丙", "req_c", ["requester"])

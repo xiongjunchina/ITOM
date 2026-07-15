@@ -198,16 +198,37 @@ def _requirement_section(db: Session) -> dict:
 
 
 @router.get("")
-def dashboard(db: Session = Depends(get_db), _=Depends(require_perm("dashboard", "view"))):  # M19：接口层强制，不只菜单隐藏
-    service, alerts = _service_section(db)
-    project_section, project_alerts = _project_section(db)
-    alerts = alerts + project_alerts
-    return ok(
-        {
-            "service": service,
-            "project": project_section,
-            "requirement": _requirement_section(db),
-            "team": _team_section(db),
-            "alerts": alerts,
-        }
-    )
+def dashboard(db: Session = Depends(get_db), user=Depends(require_perm("dashboard", "view"))):  # M19：接口层强制，不只菜单隐藏
+    """总览聚合（M22：按用户权限矩阵裁剪板块——无权限的模块不聚合、不下发）。"""
+    from app.services.permissions import has_perm
+
+    def can(module: str) -> bool:
+        return has_perm(db, user, module, "view")
+
+    any_ticket = can("ticket_sr") or can("ticket_incident") or can("ticket_change")
+    payload: dict = {"alerts": []}
+
+    if any_ticket or can("problems") or can("contracts"):
+        service, service_alerts = _service_section(db)
+        blocks = service["itsm_blocks"]
+        for key, module in (("service_request", "ticket_sr"), ("change", "ticket_change"),
+                            ("incident", "ticket_incident"), ("problem", "problems")):
+            if not can(module):
+                blocks.pop(key, None)
+        if not any_ticket:  # 仅问题/合同权限：工单级聚合不下发
+            for k in ("open_tickets", "open_by_priority", "by_type", "sla_rate", "change_success_rate"):
+                service.pop(k, None)
+        payload["service"] = service
+        payload["alerts"] += [
+            a for a in service_alerts
+            if (a["type"] == "sla_warning" and any_ticket) or (a["type"] == "contract_expiring" and can("contracts"))
+        ]
+    if can("projects"):
+        project_section, project_alerts = _project_section(db)
+        payload["project"] = project_section
+        payload["alerts"] += project_alerts
+    if can("requirements"):
+        payload["requirement"] = _requirement_section(db)
+    if can("team_overview"):
+        payload["team"] = _team_section(db)
+    return ok(payload)
