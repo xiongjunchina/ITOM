@@ -91,6 +91,7 @@ export const zh: Dict = {
   'proj.yearPlaceholder': '如 2026',
   'proj.sort': '排序',
   'proj.portfolioUpdated': '组合已更新',
+  'proj.portfolioDeleteConfirm': '确定删除该组合？组合内项目将解除挂接（项目保留）',
   'proj.portfolioCreated': '组合已创建',
 
   // 详情：头部 / 流转
@@ -406,6 +407,7 @@ export const en: Dict = {
   'proj.yearPlaceholder': 'e.g. 2026',
   'proj.sort': 'Sort',
   'proj.portfolioUpdated': 'Portfolio updated',
+  'proj.portfolioDeleteConfirm': 'Delete this portfolio? Member projects will be unlinked (projects kept)',
   'proj.portfolioCreated': 'Portfolio created',
 
   // Detail: header / transition

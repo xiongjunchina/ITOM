@@ -10,6 +10,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Progress,
   Select,
   Space,
@@ -591,6 +592,7 @@ function PortfolioPane() {
   const t = useT();
   const canCreate = useProjectPerm('create');
   const canEdit = useProjectPerm('edit');
+  const canDelete = useProjectPerm('delete'); // M21：默认矩阵仅 admin
 
   const [items, setItems] = useState<Portfolio[]>([]);
   const [loading, setLoading] = useState(false);
@@ -688,17 +690,35 @@ function PortfolioPane() {
         v > 0 ? <Link to={`/projects?portfolio=${r.id}`}>{v}</Link> : v,
     },
     { title: t('proj.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
-    ...(canEdit
+    ...(canEdit || canDelete
       ? [
           {
             title: t('common.actions'),
             key: 'action',
-            width: 90,
+            width: 120,
             render: (_: unknown, r: Portfolio) =>
               r.is_example ? null : (
-                <Button type="link" size="small" onClick={() => openModal(r)}>
-                  {t('common.edit')}
-                </Button>
+                <Space size={8}>
+                  {canEdit && (
+                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openModal(r)}>
+                      {t('common.edit')}
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Popconfirm
+                      title={t('proj.portfolioDeleteConfirm')}
+                      onConfirm={async () => {
+                        await api.delete(`/portfolios/${r.id}`);
+                        message.success(t('common.deleted'));
+                        void load();
+                      }}
+                    >
+                      <Button type="link" size="small" danger style={{ padding: 0 }}>
+                        {t('common.delete')}
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
               ),
           } as ColumnsType<Portfolio>[number],
         ]

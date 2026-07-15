@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Badge, Button, Card, Form, Input, Modal, Select, Space, Table, Tag, message } from 'antd';
+import { Badge, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import { hasPermission, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type { Member, ProblemRow, ServiceItem, TicketPriority } from '../../api/types';
@@ -32,6 +33,8 @@ export default function Problems() {
   const navigate = useNavigate();
   const t = useT();
   const et = useEnums();
+  const user = useAuthStore((s) => s.user);
+  const canDelete = hasPermission(user, 'problems', 'delete'); // M21：默认矩阵仅 admin
   const [items, setItems] = useState<ProblemRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -152,6 +155,32 @@ export default function Problems() {
       onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
+    // M21：删除（delete 权限，默认仅 admin），示例数据只读
+    ...(canDelete
+      ? ([
+          {
+            title: t('common.actions'),
+            key: 'actions',
+            width: 70,
+            fixed: 'right' as const,
+            render: (_: unknown, r: ProblemRow) =>
+              r.is_example ? null : (
+                <Popconfirm
+                  title={t('common.deleteConfirm')}
+                  onConfirm={async () => {
+                    await api.delete(`/problems/${r.id}`);
+                    message.success(t('common.deleted'));
+                    void load();
+                  }}
+                >
+                  <Button type="link" size="small" danger style={{ padding: 0 }}>
+                    {t('common.delete')}
+                  </Button>
+                </Popconfirm>
+              ),
+          },
+        ] as ColumnsType<ProblemRow>)
+      : []),
   ];
 
   return (

@@ -185,6 +185,30 @@ def create_relation(body: RelationIn, db: Session = Depends(get_db), actor=Depen
     return ok({"id": rel.id})
 
 
+@router.delete("/api/cis/{ci_id}")
+def delete_ci(ci_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "delete"))):
+    """删除配置项（M21，软删）：级联软删其上下游关系；关联工单解除 CI 挂接。"""
+    ci = db.get(Ci, ci_id)
+    if not ci or ci.is_deleted:
+        raise AppError("NOT_FOUND", "配置项不存在", 404)
+    ensure_not_example(ci)
+    ci.is_deleted = True
+    relations = 0
+    for rel in db.query(CiRelationship).filter(
+        or_(CiRelationship.source_ci_id == ci.id, CiRelationship.target_ci_id == ci.id),
+        CiRelationship.is_deleted.is_(False),
+    ):
+        rel.is_deleted = True
+        relations += 1
+    unlinked = 0
+    for t in db.query(Ticket).filter(Ticket.ci_id == ci.id, Ticket.is_deleted.is_(False)):
+        t.ci_id = None
+        unlinked += 1
+    audit(db, "ci", ci.id, "delete", actor, {"code": ci.ci_code, "relations": relations, "tickets_unlinked": unlinked})
+    db.commit()
+    return ok({"id": ci.id, "relations": relations, "tickets_unlinked": unlinked})
+
+
 @router.delete("/api/ci-relationships/{relation_id}")
 def delete_relation(relation_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "edit"))):
     rel = db.get(CiRelationship, relation_id)

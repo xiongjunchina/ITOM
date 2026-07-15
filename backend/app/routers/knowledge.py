@@ -130,6 +130,19 @@ def update_article(article_id: str, body: ArticleUpdate, db: Session = Depends(g
     return ok(_row(a, brief=False))
 
 
+@router.delete("/{article_id}")
+def delete_article(article_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("knowledge", "delete"))):
+    """删除知识文章（M21，软删；delete 权限默认仅 admin）。"""
+    a = db.get(KnowledgeArticle, article_id)
+    if not a or a.is_deleted:
+        raise AppError("NOT_FOUND", "文章不存在", 404)
+    ensure_not_example(a)
+    a.is_deleted = True
+    audit(db, "knowledge_article", a.id, "delete", actor, {"code": a.article_code, "title": a.title})
+    db.commit()
+    return ok({"id": a.id})
+
+
 @router.post("/import")
 async def import_document(
     file: UploadFile, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("knowledge", "create"))

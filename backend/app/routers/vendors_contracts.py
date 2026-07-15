@@ -120,6 +120,22 @@ def update_vendor(vendor_id: str, body: VendorUpdate, db: Session = Depends(get_
     return ok(_vendor_row(vendor, db))
 
 
+@router.delete("/api/vendors/{vendor_id}")
+def delete_vendor(vendor_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("vendors", "delete"))):
+    """删除供应商（M21，软删）：名下仍有合同时拒绝，先删除或转移合同。"""
+    vendor = db.get(Vendor, vendor_id)
+    if not vendor or vendor.is_deleted:
+        raise AppError("NOT_FOUND", "供应商不存在", 404)
+    ensure_not_example(vendor)
+    live = db.query(Contract).filter(Contract.vendor_id == vendor.id, Contract.is_deleted.is_(False)).count()
+    if live > 0:
+        raise AppError("VENDOR_IN_USE", f"该供应商名下还有 {live} 份合同，请先删除或转移合同")
+    vendor.is_deleted = True
+    audit(db, "vendor", vendor.id, "delete", actor, {"code": vendor.code, "name": vendor.name})
+    db.commit()
+    return ok({"id": vendor.id})
+
+
 @router.get("/api/contracts")
 def list_contracts(page: int = 1, page_size: int = 20, q: str = "", vendor_id: str = "", db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("contracts", "view"))):
     query = db.query(Contract).filter(Contract.is_deleted.is_(False))
@@ -159,3 +175,16 @@ def update_contract(contract_id: str, body: ContractUpdate, db: Session = Depend
     audit(db, "contract", contract.id, "update", actor, {"fields": list(data.keys())})
     db.commit()
     return ok(_contract_row(contract, db))
+
+
+@router.delete("/api/contracts/{contract_id}")
+def delete_contract(contract_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("contracts", "delete"))):
+    """删除合同（M21，软删；delete 权限默认仅 admin）。"""
+    contract = db.get(Contract, contract_id)
+    if not contract or contract.is_deleted:
+        raise AppError("NOT_FOUND", "合同不存在", 404)
+    ensure_not_example(contract)
+    contract.is_deleted = True
+    audit(db, "contract", contract.id, "delete", actor, {"code": contract.code, "name": contract.name})
+    db.commit()
+    return ok({"id": contract.id})

@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Button, Card, Input, Select, Space, Table, Tag, Upload, message } from 'antd';
+import { Button, Card, Input, Popconfirm, Select, Space, Table, Tag, Upload, message } from 'antd';
 import type { UploadProps } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { EditOutlined, EyeOutlined, ImportOutlined, LikeOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import { hasPermission, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
 import type { KnowledgeImportResult, KnowledgeRow, KnowledgeStatus } from '../../api/types';
 
 export default function Knowledge() {
   const navigate = useNavigate();
   const t = useT();
+  const user = useAuthStore((s) => s.user);
+  const canDelete = hasPermission(user, 'knowledge', 'delete'); // M21：默认矩阵仅 admin
   const [items, setItems] = useState<KnowledgeRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -132,6 +135,32 @@ export default function Knowledge() {
       onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
+    // M21：删除（delete 权限，默认仅 admin），示例数据只读
+    ...(canDelete
+      ? ([
+          {
+            title: t('common.actions'),
+            key: 'actions',
+            width: 70,
+            fixed: 'right' as const,
+            render: (_: unknown, r: KnowledgeRow) =>
+              r.is_example ? null : (
+                <Popconfirm
+                  title={t('common.deleteConfirm')}
+                  onConfirm={async () => {
+                    await api.delete(`/knowledge/${r.id}`);
+                    message.success(t('common.deleted'));
+                    void load();
+                  }}
+                >
+                  <Button type="link" size="small" danger style={{ padding: 0 }}>
+                    {t('common.delete')}
+                  </Button>
+                </Popconfirm>
+              ),
+          },
+        ] as ColumnsType<KnowledgeRow>)
+      : []),
   ];
 
   return (

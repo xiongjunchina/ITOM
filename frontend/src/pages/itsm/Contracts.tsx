@@ -7,6 +7,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Table,
@@ -20,7 +21,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
-import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { hasAnyRole, hasPermission, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type { Contract, ContractStatus, Member, Vendor } from '../../api/types';
@@ -38,6 +39,7 @@ interface ContractFormValues {
 export default function Contracts() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, ['it_ops', 'cio', 'admin']);
+  const canDelete = hasPermission(user, 'contracts', 'delete'); // M21：默认矩阵仅 admin
   const t = useT();
   const et = useEnums();
 
@@ -201,17 +203,35 @@ export default function Contracts() {
       render: (v: ContractStatus) => <Tag color={CONTRACT_STATUS_COLORS[v] ?? 'default'}>{et.contractStatus(v)}</Tag>,
     },
     { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
-    ...(canWrite
+    ...(canWrite || canDelete
       ? [
           {
             title: t('common.actions'),
             key: 'actions',
-            width: 80,
+            width: 110,
             render: (_: unknown, r: Contract) =>
               r.is_example ? null : (
-                <Button type="link" size="small" onClick={() => openEdit(r)}>
-                  {t('common.edit')}
-                </Button>
+                <Space size={8}>
+                  {canWrite && (
+                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openEdit(r)}>
+                      {t('common.edit')}
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Popconfirm
+                      title={t('common.deleteConfirm')}
+                      onConfirm={async () => {
+                        await api.delete(`/contracts/${r.id}`);
+                        message.success(t('common.deleted'));
+                        void load();
+                      }}
+                    >
+                      <Button type="link" size="small" danger style={{ padding: 0 }}>
+                        {t('common.delete')}
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
               ),
           } as ColumnsType<Contract>[number],
         ]

@@ -71,6 +71,22 @@ def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(g
     return ok({"id": catalog.id})
 
 
+@router.delete("/api/catalogs/{catalog_id}")
+def delete_catalog(catalog_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
+    """删除服务目录（M21，软删）：目录下仍有服务项时拒绝。"""
+    catalog = db.get(ServiceCatalog, catalog_id)
+    if not catalog or catalog.is_deleted:
+        raise AppError("NOT_FOUND", "目录不存在", 404)
+    ensure_not_example(catalog)
+    live = db.query(ServiceItem).filter(ServiceItem.catalog_id == catalog.id, ServiceItem.is_deleted.is_(False)).count()
+    if live > 0:
+        raise AppError("CATALOG_IN_USE", f"该目录下还有 {live} 个服务项，请先删除或迁移服务项")
+    catalog.is_deleted = True
+    audit(db, "service_catalog", catalog.id, "delete", actor, {"code": catalog.code, "name": catalog.name})
+    db.commit()
+    return ok({"id": catalog.id})
+
+
 # ---- 服务项 ----
 
 def _item_row(i: ServiceItem, db: Session) -> dict:
@@ -120,6 +136,24 @@ def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get
     audit(db, "service_item", item.id, "update", actor, {"fields": list(data.keys())})
     db.commit()
     return ok(_item_row(item, db))
+
+
+@router.delete("/api/service-items/{item_id}")
+def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
+    """删除服务项（M21，软删）：已有工单引用时拒绝（历史可溯），建议改为下架。"""
+    item = db.get(ServiceItem, item_id)
+    if not item or item.is_deleted:
+        raise AppError("NOT_FOUND", "服务项不存在", 404)
+    ensure_not_example(item)
+    from app.models import Ticket
+
+    used = db.query(Ticket).filter(Ticket.service_item_id == item.id, Ticket.is_deleted.is_(False)).count()
+    if used > 0:
+        raise AppError("ITEM_IN_USE", f"该服务项已被 {used} 张工单引用，不可删除；如不再提供请改为「下架」")
+    item.is_deleted = True
+    audit(db, "service_item", item.id, "delete", actor, {"code": item.item_code, "name": item.name})
+    db.commit()
+    return ok({"id": item.id})
 
 
 # ---- SLA 策略（admin）与看板 ----

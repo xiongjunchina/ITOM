@@ -10,6 +10,7 @@ import {
   Form,
   Input,
   Modal,
+  Popconfirm,
   Progress,
   Segmented,
   Select,
@@ -132,6 +133,8 @@ export default function Requirements() {
   const et = useEnums();
   const navigate = useNavigate();
   const canCreate = useReqPerm('create');
+  const user = useAuthStore((s) => s.user);
+  const canDelete = hasPermission(user, 'requirements', 'delete'); // M21：默认矩阵仅 admin
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [view, setView] = useState<'board' | 'table'>('table');
@@ -324,6 +327,32 @@ export default function Requirements() {
       width: 100,
       render: (v: number | null) => (v == null ? '-' : t('req.daysN', { n: v })),
     },
+    // M21：删除（delete 权限，默认仅 admin）：级联移除任务清单与流程记录，示例只读
+    ...(canDelete
+      ? ([
+          {
+            title: t('common.actions'),
+            key: 'actions',
+            width: 70,
+            fixed: 'right' as const,
+            render: (_: unknown, r: RequirementRow) =>
+              r.is_example ? null : (
+                <Popconfirm
+                  title={t('common.deleteConfirm')}
+                  onConfirm={async () => {
+                    await api.delete(`/requirements/${r.id}`);
+                    message.success(t('common.deleted'));
+                    void load();
+                  }}
+                >
+                  <Button type="link" size="small" danger style={{ padding: 0 }}>
+                    {t('common.delete')}
+                  </Button>
+                </Popconfirm>
+              ),
+          },
+        ] as ColumnsType<RequirementRow>)
+      : []),
   ];
 
   // ----- 看板视图 -----

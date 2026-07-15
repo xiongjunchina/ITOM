@@ -16,13 +16,14 @@ import {
   Tag,
   Typography,
   message,
+  Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
-import { useAuthStore, hasAnyRole } from '../../stores/auth';
+import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
@@ -51,6 +52,7 @@ interface ItemFormValues {
 export default function CatalogPage() {
   const user = useAuthStore((s) => s.user);
   const canManage = hasAnyRole(user, ['admin', 'cio']);
+  const canDelete = hasPermission(user, 'catalog', 'delete'); // M21：默认矩阵仅 admin
   const t = useT();
   const et = useEnums();
 
@@ -243,17 +245,36 @@ export default function CatalogPage() {
         <Badge status={v === '上架' ? 'success' : 'default'} text={et.catalogStatus(v)} />
       ),
     },
-    ...(canManage
+    ...(canManage || canDelete
       ? [
           {
             title: t('common.actions'),
             key: 'action',
-            width: 80,
+            width: 110,
             render: (_: unknown, record: ServiceItem) =>
               record.is_example ? null : (
-                <Button type="link" size="small" onClick={() => openItemEdit(record)}>
-                  {t('common.edit')}
-                </Button>
+                <Space size={8}>
+                  {canManage && (
+                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openItemEdit(record)}>
+                      {t('common.edit')}
+                    </Button>
+                  )}
+                  {canDelete && (
+                    <Popconfirm
+                      title={t('common.deleteConfirm')}
+                      onConfirm={async () => {
+                        await api.delete(`/service-items/${record.id}`);
+                        message.success(t('common.deleted'));
+                        void loadItems();
+                        void loadCatalogs();
+                      }}
+                    >
+                      <Button type="link" size="small" danger style={{ padding: 0 }}>
+                        {t('common.delete')}
+                      </Button>
+                    </Popconfirm>
+                  )}
+                </Space>
               ),
           } as ColumnsType<ServiceItem>[number],
         ]
@@ -304,17 +325,32 @@ export default function CatalogPage() {
                       <Badge status={c.status === '上架' ? 'success' : 'default'} text={et.catalogStatus(c.status)} />
                     </Typography.Text>
                   </Space>
-                  {canManage && !c.is_example && (
-                    <Button
-                      type="text"
-                      size="small"
-                      icon={<EditOutlined />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openCatalogEdit(c);
-                      }}
-                    />
-                  )}
+                  <Space size={0}>
+                    {canManage && !c.is_example && (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openCatalogEdit(c);
+                        }}
+                      />
+                    )}
+                    {canDelete && !c.is_example && (
+                      <Popconfirm
+                        title={t('common.deleteConfirm')}
+                        onConfirm={async () => {
+                          await api.delete(`/catalogs/${c.id}`);
+                          message.success(t('common.deleted'));
+                          if (selectedCatalog === c.id) setSelectedCatalog(null);
+                          void loadCatalogs();
+                        }}
+                      >
+                        <Button type="text" size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+                      </Popconfirm>
+                    )}
+                  </Space>
                 </Space>
               </Card>
             ))}

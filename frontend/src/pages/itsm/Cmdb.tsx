@@ -34,7 +34,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
-import { hasAnyRole, useAuthStore } from '../../stores/auth';
+import { hasAnyRole, hasPermission, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type {
@@ -74,6 +74,7 @@ const CI_WRITERS = ['it_ops', 'is_mgr', 'cio', 'admin'] as const;
 export default function Cmdb() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, [...CI_WRITERS]);
+  const canDelete = hasPermission(user, 'cmdb', 'delete'); // M21：默认矩阵仅 admin
   const t = useT();
   const et = useEnums();
 
@@ -327,6 +328,20 @@ export default function Cmdb() {
             <Button type="link" size="small" onClick={() => openEdit(r)}>
               {t('common.edit')}
             </Button>
+          )}
+          {canDelete && !r.is_example && (
+            <Popconfirm
+              title={t('common.deleteConfirm')}
+              onConfirm={async () => {
+                await api.delete(`/cis/${r.id}`);
+                message.success(t('common.deleted'));
+                void load();
+              }}
+            >
+              <Button type="link" size="small" danger>
+                {t('common.delete')}
+              </Button>
+            </Popconfirm>
           )}
         </Space>
       ),

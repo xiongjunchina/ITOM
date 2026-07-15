@@ -616,6 +616,34 @@ def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session
     return ok({"id": r.id})
 
 
+@router.delete("/{requirement_id}")
+def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("requirements", "delete"))):
+    """删除需求（M21，软删；delete 权限默认仅 admin）：级联软删开发任务清单与流程实例。"""
+    r = db.get(Requirement, requirement_id)
+    if not r or r.is_deleted:
+        raise AppError("NOT_FOUND", "需求不存在", 404)
+    ensure_not_example(r)
+    from app.models import ProcessInstance, ProcessTask, RequirementTask
+
+    r.is_deleted = True
+    stats = {"tasks": 0, "process_instances": 0}
+    for task in db.query(RequirementTask).filter(RequirementTask.requirement_id == r.id, RequirementTask.is_deleted.is_(False)):
+        task.is_deleted = True
+        stats["tasks"] += 1
+    for inst in db.query(ProcessInstance).filter(
+        ProcessInstance.entity_type == "requirement",
+        ProcessInstance.entity_id == r.id,
+        ProcessInstance.is_deleted.is_(False),
+    ):
+        inst.is_deleted = True
+        stats["process_instances"] += 1
+        for ptask in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
+            ptask.is_deleted = True
+    audit(db, "requirement", r.id, "delete", actor, {"code": r.requirement_code, **stats})
+    db.commit()
+    return ok({"id": r.id, **stats})
+
+
 @router.post("/{requirement_id}/transition")
 def transition_requirement(requirement_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)

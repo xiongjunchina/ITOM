@@ -192,6 +192,23 @@ def update_portfolio(portfolio_id: str, body: PortfolioIn, db: Session = Depends
     return ok({"id": row.id})
 
 
+@router.delete("/api/portfolios/{portfolio_id}")
+def delete_portfolio(portfolio_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "delete"))):
+    """删除项目组合（M21，软删）：组合仅是分组，成员项目解除挂接后保留。"""
+    row = db.get(Portfolio, portfolio_id)
+    if not row or row.is_deleted:
+        raise AppError("NOT_FOUND", "组合不存在", 404)
+    ensure_not_example(row)
+    unlinked = 0
+    for p in db.query(Project).filter(Project.portfolio_id == row.id, Project.is_deleted.is_(False)):
+        p.portfolio_id = None
+        unlinked += 1
+    row.is_deleted = True
+    audit(db, "portfolio", row.id, "delete", actor, {"name": row.name, "projects_unlinked": unlinked})
+    db.commit()
+    return ok({"id": row.id, "projects_unlinked": unlinked})
+
+
 # ---------- 项目 ----------
 
 def _project_row(p: Project, db: Session, names: dict, status_map: dict, with_metrics: bool = True) -> dict:

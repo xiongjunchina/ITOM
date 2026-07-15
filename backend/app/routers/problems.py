@@ -152,6 +152,33 @@ def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(g
     return ok({"id": p.id})
 
 
+@router.delete("/api/problems/{problem_id}")
+def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("problems", "delete"))):
+    """删除问题（M21，软删）：级联软删流程实例与任务；来源工单解除关联。"""
+    p = db.get(Problem, problem_id)
+    if not p or p.is_deleted:
+        raise AppError("NOT_FOUND", "问题不存在", 404)
+    ensure_not_example(p)
+    from app.models import ProcessInstance, ProcessTask, Ticket
+
+    p.is_deleted = True
+    unlinked = 0
+    for t in db.query(Ticket).filter(Ticket.problem_id == p.id, Ticket.is_deleted.is_(False)):
+        t.problem_id = None
+        unlinked += 1
+    for inst in db.query(ProcessInstance).filter(
+        ProcessInstance.entity_type == "problem",
+        ProcessInstance.entity_id == p.id,
+        ProcessInstance.is_deleted.is_(False),
+    ):
+        inst.is_deleted = True
+        for task in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
+            task.is_deleted = True
+    audit(db, "problem", p.id, "delete", actor, {"code": p.problem_code, "tickets_unlinked": unlinked})
+    db.commit()
+    return ok({"id": p.id, "tickets_unlinked": unlinked})
+
+
 @router.post("/api/problems/{problem_id}/transition")
 def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "edit"))):
     p = db.get(Problem, problem_id)
