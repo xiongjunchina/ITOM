@@ -123,10 +123,14 @@ def _get_ticket(db: Session, ticket_id: str, user: AuthUser) -> Ticket:
 
 @router.get("/{ticket_id}")
 def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    from app.services.permissions import has_perm
+
     t = _get_ticket(db, ticket_id, user)
     etype = svc.entity_type_of(t)
     names = status_names(db, etype)
     detail = _row(t, db, names)
+    # M18：无该类型编辑权限（如业务用户看自己的单）不下发流转按钮，与 transition 接口守卫一致
+    can_edit = has_perm(db, user, _ticket_module(t.ticket_type), "edit")
     detail.update(
         {
             "submitter": t.submitter,
@@ -142,10 +146,11 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "first_time_fix": t.first_time_fix,
             "sla_response_min": t.sla_response_min,
             "actual_response_min": t.actual_response_min, "actual_resolution_hours": t.actual_resolution_hours,
-            "allowed_transitions": [] if t.is_example else [
+            "allowed_transitions": [] if t.is_example or not can_edit else [
                 {"to": code, "to_name": names.get(code, code)}
                 for code in allowed_targets(db, etype, t.status, user)
             ],
+            "can_edit": can_edit and not t.is_example,
             "process": process_engine.instance_view(db, etype, t.id),
         }
     )

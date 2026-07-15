@@ -21,7 +21,7 @@ import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
-import { useAuthStore } from '../../stores/auth';
+import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
@@ -272,7 +272,8 @@ export default function TicketDetail() {
   // M3：非 requester（拥有任一内部角色）可升级为问题
   const isStaff = !!user && user.roles.some((r) => r !== 'requester');
   const canEscalate = !isExample && isStaff && detail.status !== 'new' && detail.status !== 'closed';
-  const canToKnowledge = !isExample && (detail.status === 'resolved' || detail.status === 'closed');
+  const canToKnowledge =
+    !isExample && (detail.status === 'resolved' || detail.status === 'closed') && hasPermission(user, 'knowledge', 'create');
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -340,7 +341,7 @@ export default function TicketDetail() {
                     </Typography.Text>
                   )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
-                  {s.task_status === '待处理' && s.task_id != null && !isExample && (
+                  {s.task_status === '待处理' && s.task_id != null && !isExample && canHandleTask(user, s) && (
                     <Button
                       size="small"
                       type="link"
@@ -371,7 +372,7 @@ export default function TicketDetail() {
           <Descriptions.Item label={t('itsm.f.assignee')}>
             <Space>
               {detail.assignee_name ?? '-'}
-              {!isExample && (
+              {!isExample && detail.can_edit !== false && (
                 <Button
                   type="link"
                   size="small"

@@ -89,6 +89,7 @@ ENTITY_LINKS = {
     "ticket_change": "/itsm/tickets/{id}",
     "problem": "/itsm/problems/{id}",
     "requirement": "/requirements/{id}",
+    "project": "/projects/{id}",
 }
 
 
@@ -168,6 +169,23 @@ def _requester_person(db: Session, entity_type: str, entity_id: str) -> str | No
     return u.person_id if u else None
 
 
+def _notify_assignee(db: Session, instance: ProcessInstance, step: ProcessStep, assignee: str | None, reassigned: bool = False):
+    """待办提醒（RACI 的 R）：任务落到谁头上就通知谁（M18，用户预期：钟俊歌收到受理提醒）。"""
+    if not assignee:
+        return
+    from app.events import notifier
+
+    link = ENTITY_LINKS.get(instance.entity_type, "").format(id=instance.entity_id)
+    notifier.notify(
+        db, "process.task_reassigned" if reassigned else "process.task_assigned",
+        instance.entity_type, instance.entity_id,
+        [assignee],
+        f"待办任务{'（改派给你）' if reassigned else ''}：{instance.definition.name}·{step.name}",
+        content="流程推进到你负责的节点，请及时处理",
+        link=link,
+    )
+
+
 def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):
     now = datetime.now()
     if step.default_role == "requester":
@@ -185,6 +203,7 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
             due_at=now + timedelta(hours=step.sla_hours) if step.sla_hours else None,
         )
     )
+    _notify_assignee(db, instance, step, assignee)
     _notify_cc(db, instance, step, assignee)
 
 
@@ -273,7 +292,12 @@ def reassign_task(db: Session, task_id: str, assignee: str) -> ProcessTask:
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    changed = assignee != task.assignee
     task.assignee = assignee
+    if changed:
+        instance = db.get(ProcessInstance, task.instance_id)
+        step = db.get(ProcessStep, task.step_id)
+        _notify_assignee(db, instance, step, assignee, reassigned=True)
     return task
 
 

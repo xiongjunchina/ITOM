@@ -53,3 +53,13 @@ export function hasPermission(user: AuthUser | null, module: string, action = 'v
   if (perms['*']) return true;
   return (perms[module] ?? []).includes(action);
 }
+
+/**
+ * 流程任务可操作判断（M18，与后端 _require_task_operator 同规则）：
+ * admin 或 任务处理人本人（step.assignee === user.person_id）。
+ */
+export function canHandleTask(user: AuthUser | null, step: { assignee?: string | null }): boolean {
+  if (!user) return false;
+  if (user.permissions?.['*']) return true;
+  return !!user.person_id && !!step.assignee && step.assignee === user.person_id;
+}

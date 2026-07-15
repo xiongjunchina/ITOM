@@ -339,6 +339,8 @@ export interface ProcessStep {
   autonomy_level?: string | null;
   task_id: string | null;
   task_status: '未开始' | '待处理' | '已完成';
+  /** 处理人 person id：与当前用户 person_id 比对决定「完成此步骤」可见性（M18） */
+  assignee?: string | null;
   assignee_name?: string | null;
   due_at?: string | null;
   completed_at?: string | null;
@@ -380,6 +382,8 @@ export interface TicketDetail extends TicketRow {
   actual_response_min?: number | null;
   actual_resolution_hours?: number | null;
   allowed_transitions: AllowedTransition[];
+  /** 当前用户对该类型工单有编辑权限（M18）：控制改派等写入口显隐 */
+  can_edit?: boolean;
   process?: TicketProcess | null;
 }
 

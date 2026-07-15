@@ -1242,7 +1242,8 @@ export default function ProjectDetail() {
             steps={detail.process.steps}
             roleLabel={roleLabel}
             currentSeq={detail.process.current_step_seq}
-            onCompleteStep={canEdit && !isExample ? setCompletingStep : undefined}
+            // M18：能否完成由 FlowDiagram 按任务处理人判定（与后端 _require_task_operator 一致）
+            onCompleteStep={!isExample ? setCompletingStep : undefined}
           />
         </Card>
       )}

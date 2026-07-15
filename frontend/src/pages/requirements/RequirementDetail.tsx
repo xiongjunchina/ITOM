@@ -1099,7 +1099,8 @@ export default function RequirementDetail() {
             steps={detail.process.steps}
             roleLabel={roleLabel}
             currentSeq={detail.process.current_step_seq}
-            onCompleteStep={canEdit && !detail.is_example ? setCompletingStep : undefined}
+            // M18：能否完成由 FlowDiagram 按任务处理人判定（PM 无需求编辑权也要能完成「实现交付」）
+            onCompleteStep={!detail.is_example ? setCompletingStep : undefined}
           />
         </Card>
       )}

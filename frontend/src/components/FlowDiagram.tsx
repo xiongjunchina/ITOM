@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Button, Tag, Typography } from 'antd';
 import { CheckOutlined, SoundOutlined, UserOutlined } from '@ant-design/icons';
+import { canHandleTask, useAuthStore } from '../stores/auth';
 import { useT } from '../i18n';
 import { useEnums } from '../i18n/enums';
 
@@ -17,6 +18,8 @@ export interface FlowDiagramStep {
   /** 实例视图字段（定义预览无）：有待处理任务时可渲染「完成此步骤」入口 */
   task_id?: string | null;
   task_status?: string | null;
+  /** 处理人 person id：完成按钮仅任务处理人本人或 admin 可见（M18） */
+  assignee?: string | null;
   assignee_name?: string | null;
 }
 
@@ -53,6 +56,7 @@ const CARD_CURRENT: CSSProperties = {
 export default function FlowDiagram({ steps, roleLabel, currentSeq, onCompleteStep }: FlowDiagramProps) {
   const t = useT();
   const et = useEnums();
+  const user = useAuthStore((s) => s.user);
   if (!steps || steps.length === 0) {
     return <Typography.Text type="secondary">{t('comp.flow.noStep')}</Typography.Text>;
   }
@@ -129,8 +133,8 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq, onCompleteSt
                     </Typography.Text>
                   </div>
                 )}
-                {/* 待处理步骤的推进入口（仅实例视图且调用方允许时） */}
-                {onCompleteStep && s.task_id && s.task_status === '待处理' && (
+                {/* 待处理步骤的推进入口（仅实例视图且当前用户是任务处理人或 admin，M18） */}
+                {onCompleteStep && s.task_id && s.task_status === '待处理' && canHandleTask(user, s) && (
                   <div style={{ marginTop: 6 }}>
                     <Button size="small" type="primary" ghost icon={<CheckOutlined />} onClick={() => onCompleteStep(s)}>
                       {t('comp.flow.completeStep')}
