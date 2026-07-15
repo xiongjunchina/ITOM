@@ -40,7 +40,7 @@ class ProcessInstance(GlidBase):
     definition_id: Mapped[str] = mapped_column(ForeignKey("process_definition.id"))
     entity_type: Mapped[str] = mapped_column(String(32), index=True)
     entity_id: Mapped[str] = mapped_column(String(26), index=True)
-    status: Mapped[str] = mapped_column(String(16), default="进行中", comment="进行中/已完成/已终止")
+    status: Mapped[str] = mapped_column(String(16), default="running", comment="running/completed（M24 统一英文 code，前端词表翻译）")
     current_step_seq: Mapped[int] = mapped_column(Integer, default=1)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)

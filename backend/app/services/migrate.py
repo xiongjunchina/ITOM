@@ -314,7 +314,7 @@ def close_completed_process_tickets_m23(db: Session):
         db.query(ProcessInstance)
         .filter(
             ProcessInstance.entity_type.in_(["ticket", "ticket_change"]),
-            ProcessInstance.status == "已完成",
+            ProcessInstance.status.in_(["completed", "已完成"]),
             ProcessInstance.is_deleted.is_(False),
         )
         .all()
@@ -326,6 +326,66 @@ def close_completed_process_tickets_m23(db: Session):
             fixed += 1
     if fixed:
         logger.info("流程已完成的工单自动闭环 %d 张（M23）", fixed)
+
+
+def sync_process_status_m24(db: Session):
+    """M24 存量修复：流程线与状态机双向脱节的历史数据。
+
+    正向：问题流程已完成但问题未终态 → 自动闭环；
+    反向：单据已终态（工单/问题/需求/项目）但流程实例仍 running → 收尾作废剩余待办。
+    幂等：均只处理不一致行。
+    """
+    from app.models import AuthUser, ProcessInstance, Problem, Project, Requirement, Ticket
+    from app.services import process_engine
+    from app.routers.problems import auto_close_problem_on_process_complete
+
+    # 实例状态值归一（历史混用：模型默认「进行中」、重启写 running、完成写「已完成」；
+    # 前端筛选一直发英文 code——统一库内为英文，监控页筛选自此生效）
+    normalized = db.execute(text("UPDATE process_instance SET status='running' WHERE status='进行中'")).rowcount
+    normalized += db.execute(text("UPDATE process_instance SET status='completed' WHERE status='已完成'")).rowcount
+    if normalized:
+        logger.info("流程实例状态值归一为英文 code %d 行（M24）", normalized)
+
+    admin = db.query(AuthUser).filter(AuthUser.username == "admin").first()
+    if not admin:
+        return
+    closed_problems = 0
+    for inst in (
+        db.query(ProcessInstance)
+        .filter(ProcessInstance.entity_type == "problem", ProcessInstance.status.in_(["completed", "已完成"]),
+                ProcessInstance.is_deleted.is_(False))
+        .all()
+    ):
+        p = db.get(Problem, inst.entity_id)
+        if p and not p.is_deleted and not p.is_example and p.status != "closed":
+            if auto_close_problem_on_process_complete(db, p.id, admin):
+                closed_problems += 1
+
+    finalized = 0
+    terminal = {
+        "ticket": (Ticket, ("closed", "rejected")),
+        "ticket_change": (Ticket, ("closed", "rejected")),
+        "problem": (Problem, ("closed",)),
+        "requirement": (Requirement, ("closed", "cancelled")),
+        "project": (Project, ("closed", "cancelled")),
+    }
+    for inst in (
+        db.query(ProcessInstance)
+        .filter(ProcessInstance.status.in_(["running", "进行中"]), ProcessInstance.is_deleted.is_(False))
+        .all()
+    ):
+        model_terminal = terminal.get(inst.entity_type)
+        if not model_terminal:
+            continue
+        model, terminal_statuses = model_terminal
+        entity = db.get(model, inst.entity_id)
+        if entity and not entity.is_deleted and getattr(entity, "is_example", False) is False \
+                and entity.status in terminal_statuses:
+            process_engine.finalize_instance(db, inst.entity_type, inst.entity_id, "单据已终态，流程随单收尾（M24 存量修复）")
+            finalized += 1
+    if closed_problems or finalized:
+        db.commit()
+        logger.info("流程/状态机双向同步修复：问题闭环 %d 个，收尾 running 实例 %d 个（M24）", closed_problems, finalized)
 
 
 def migrate_m35_org(db: Session):
@@ -341,6 +401,7 @@ def migrate_m35_org(db: Session):
     fix_delivery_step_branches_m167(db)
     split_permission_modules_m172(db)
     close_completed_process_tickets_m23(db)
+    sync_process_status_m24(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

@@ -191,8 +191,30 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
         publish(db, "problem.root_cause_found", "problem", p.id, {})
     if body.to == "closed":
         publish(db, "problem.closed", "problem", p.id, {})
+        process_engine.finalize_instance(db, "problem", p.id, "问题已关闭，流程随单收尾")  # M24
     db.commit()
     return ok({"id": p.id, "status": p.status})
+
+
+def auto_close_problem_on_process_complete(db: Session, problem_id: str, actor: AuthUser) -> bool:
+    """问题流程走完（关闭复盘完成）→ 问题沿状态机自动闭环（M24，与工单 M23 同规则）。"""
+    from app.services.workflow import closure_path
+
+    p = db.get(Problem, problem_id)
+    if not p or p.is_deleted or p.status == "closed":
+        return False
+    path = closure_path(db, "problem", p.status, actor, ignore_roles=True)
+    if not path:
+        audit(db, "problem", p.id, "auto_close_blocked", actor, {"status": p.status})
+        return False
+    if not p.root_cause:
+        p.root_cause = "流程执行完毕，系统自动闭环（详见流程处理记录）"
+    for to in path:
+        wf_transition(db, p, "problem", to, {}, actor, system=True)
+    publish(db, "problem.closed", "problem", p.id, {})
+    audit(db, "problem", p.id, "auto_close", actor, {"code": p.problem_code, "path": path})
+    db.commit()
+    return True
 
 
 @router.post("/api/problems/{problem_id}/link-ticket")

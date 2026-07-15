@@ -471,6 +471,8 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
         if not p.actual_end:
             p.actual_end = today  # 提前关闭同样落实际结束
         _close_linked_requirements(db, p, actor)  # M16：转项目需求自动闭环
+    if to in ("closed", "cancelled"):
+        process_engine.finalize_instance(db, "project", p.id, "项目已关闭，流程随单收尾")  # M24
     db.commit()
     return ok({"id": p.id, "status": p.status})
 

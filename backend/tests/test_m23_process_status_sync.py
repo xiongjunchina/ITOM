@@ -14,7 +14,7 @@ def _walk_process(client, headers, ticket_id, steps_to_complete=None):
     while True:
         d = client.get(f"/api/tickets/{ticket_id}", headers=headers).json()["data"]
         proc = d["process"]
-        if not proc or proc["status"] == "已完成":
+        if not proc or proc["status"] == "completed":
             return d
         if steps_to_complete is not None and done >= steps_to_complete:
             return d

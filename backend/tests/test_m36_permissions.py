@@ -186,4 +186,4 @@ def test_process_step_cc_notify(client, admin_headers, ctx):
     notif = client.get("/api/notifications", headers=cio_h).json()["data"]
     assert any("流程知会" in n["title"] for n in notif)
     r = client.post(f"/api/process-tasks/{step['task_id']}/complete", json={"comment": "done"}, headers=ops_h)
-    assert r.json()["data"]["status"] == "已完成"
+    assert r.json()["data"]["status"] == "completed"

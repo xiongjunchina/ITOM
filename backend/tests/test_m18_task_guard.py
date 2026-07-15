@@ -97,7 +97,7 @@ def test_assignee_chain_and_requester_confirm_step(client, ctx):
     r = client.post(f"/api/process-tasks/{step3['task_id']}/complete",
                     json={"comment": "问题已解决，确认关闭"}, headers=ctx["req_h"])
     assert r.json()["success"], r.text
-    assert r.json()["data"]["status"] == "已完成"
+    assert r.json()["data"]["status"] == "completed"
 
 
 def test_task_assignment_notifies_assignee(client, ctx):

@@ -116,6 +116,9 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     if to == "closed":
         ticket.closed_at = now
         publish(db, "ticket.closed", "ticket", ticket.id, {"sla_met": bool(ticket.sla_resolution_met)})
+    if to in ("closed", "rejected"):
+        # M24：单据终态 → 收尾流程实例（作废剩余待办，监控不再显示 running）
+        process_engine.finalize_instance(db, etype, ticket.id, f"单据已{'关闭' if to == 'closed' else '拒绝'}，流程随单收尾")
     # 变更审批
     if to == "pending_approval":
         publish(db, "change.approval_requested", "ticket", ticket.id, {})
@@ -138,45 +141,10 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
 
 
 def _closure_path(db: Session, etype: str, src: str, actor: AuthUser, ignore_roles: bool = False) -> list[str] | None:
-    """BFS 最短状态机路径 src→closed（尊重用户配置的转换与角色限制），不可达返回 None。
+    """状态机闭环路径（实现挪至 workflow.closure_path，问题单等实体共用）。"""
+    from app.services.workflow import closure_path
 
-    ignore_roles=True：系统编排（流程完成自动闭环）不受操作者角色限制。
-    """
-    from collections import deque
-
-    from app.core.rbac import ADMIN
-    from app.models import WorkflowTransition
-    from app.services.rbac import actor_keys
-
-    held = actor_keys(db, actor)
-    adj: dict[str, list[str]] = {}
-    rows = (
-        db.query(WorkflowTransition)
-        .filter(WorkflowTransition.entity_type == etype, WorkflowTransition.is_deleted.is_(False))
-        .all()
-    )
-    for tr in rows:
-        allowed = tr.allowed_roles or []
-        if ignore_roles or not allowed or ADMIN in held or held & set(allowed):
-            adj.setdefault(tr.from_code, []).append(tr.to_code)
-    prev: dict[str, str | None] = {src: None}
-    queue = deque([src])
-    while queue:
-        cur = queue.popleft()
-        if cur == "closed":
-            break
-        for nxt in adj.get(cur, []):
-            if nxt not in prev:
-                prev[nxt] = cur
-                queue.append(nxt)
-    if "closed" not in prev:
-        return None
-    path: list[str] = []
-    node: str | None = "closed"
-    while node is not None and node != src:
-        path.append(node)
-        node = prev[node]
-    return list(reversed(path))
+    return closure_path(db, etype, src, actor, ignore_roles=ignore_roles)
 
 
 def quick_close(db: Session, ticket: Ticket, reason: str, actor: AuthUser) -> Ticket:

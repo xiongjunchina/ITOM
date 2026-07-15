@@ -247,7 +247,7 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
         instance.current_step_seq = next_step.seq
         _spawn_task(db, instance, next_step, None)
     else:
-        instance.status = "已完成"
+        instance.status = "completed"
         instance.completed_at = datetime.now()
     return instance
 
@@ -285,6 +285,37 @@ def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: in
     db.flush()
     _spawn_task(db, instance, target, preferred_assignee)
     logger.info("process %s/%s rewound to step %s", entity_type, entity_id, target_seq)
+    return instance
+
+
+def finalize_instance(db: Session, entity_type: str, entity_id: str, note: str) -> ProcessInstance | None:
+    """单据到达终态时收尾流程实例（M24）：未处理任务作废式完成（留痕），实例标记完成。
+
+    修复反向脱节：手动关闭/驳回单据后，流程任务仍挂在处理人待办、监控显示 running。
+    幂等：无 running 实例时返回 None。
+    """
+    instance = (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type == entity_type,
+            ProcessInstance.entity_id == entity_id,
+            ProcessInstance.status.in_(["running", "进行中"]),  # 兼容历史中文值（M24 迁移归一）
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .order_by(ProcessInstance.created_at.desc())
+        .first()
+    )
+    if not instance:
+        return None
+    now = datetime.now()
+    for task in instance.tasks:
+        if task.status == "待处理" and not task.is_deleted:
+            task.status = "已完成"
+            task.completed_at = now
+            task.comment = note
+    instance.status = "completed"
+    instance.completed_at = now
+    logger.info("process %s/%s finalized: %s", entity_type, entity_id, note)
     return instance
 
 

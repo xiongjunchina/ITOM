@@ -81,6 +81,45 @@ def transition(
     return from_code, to_code
 
 
+def closure_path(db: Session, entity_type: str, src: str, actor: AuthUser,
+                 dst: str = "closed", ignore_roles: bool = False) -> list[str] | None:
+    """BFS 最短状态机路径 src→dst（尊重用户配置的转换与角色限制），不可达返回 None。
+
+    ignore_roles=True：系统编排（流程完成自动闭环）不受操作者角色限制。
+    """
+    from collections import deque
+
+    held = actor_keys(db, actor)
+    adj: dict[str, list[str]] = {}
+    rows = (
+        db.query(WorkflowTransition)
+        .filter(WorkflowTransition.entity_type == entity_type, WorkflowTransition.is_deleted.is_(False))
+        .all()
+    )
+    for tr in rows:
+        allowed = tr.allowed_roles or []
+        if ignore_roles or not allowed or ADMIN in held or held & set(allowed):
+            adj.setdefault(tr.from_code, []).append(tr.to_code)
+    prev: dict[str, str | None] = {src: None}
+    queue = deque([src])
+    while queue:
+        cur = queue.popleft()
+        if cur == dst:
+            break
+        for nxt in adj.get(cur, []):
+            if nxt not in prev:
+                prev[nxt] = cur
+                queue.append(nxt)
+    if dst not in prev:
+        return None
+    path: list[str] = []
+    node: str | None = dst
+    while node is not None and node != src:
+        path.append(node)
+        node = prev[node]
+    return list(reversed(path))
+
+
 def status_names(db: Session, entity_type: str) -> dict[str, str]:
     from app.core.i18n import localize_status_map
 

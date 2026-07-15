@@ -299,7 +299,7 @@ def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
     )
     if not inst:
         return
-    if inst.status == "已完成":
+    if inst.status == "completed":
         criteria = r.acceptance_criteria or []
         if criteria and not all(c.get("checked") for c in criteria):
             if r.owner:
@@ -674,6 +674,8 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
     if to == "closed":
         r.closed_at = now
         publish(db, "requirement.closed", "requirement", r.id, {})
+    if to in ("closed", "cancelled"):
+        process_engine.finalize_instance(db, "requirement", r.id, "需求已终态，流程随单收尾")  # M24
     publish(db, f"requirement.{to}", "requirement", r.id, {})
     # 通知提出人阶段变化
     if r.requester and r.requester != user.id:
@@ -763,7 +765,10 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
             flowed_to = "on_hold"
         elif r.decision == "驳回":
             wf_transition(db, r, "requirement", "cancelled", {}, user)
-            _complete_review_step(db, r, user, f"评审驳回：{(data.get('comment') or '').strip()}")
+            # M24：驳回=需求终态——收尾整个流程实例（评审任务记驳回理由），
+            # 不再走 _complete_review_step（那会推进流程、给产品 leader 派发方案评估任务）
+            process_engine.finalize_instance(db, "requirement", r.id,
+                                             f"评审驳回，需求关闭：{(data.get('comment') or '').strip()}"[:500])
             r.closure_note = f"[评审驳回] {(data.get('comment') or '').strip()}"
             r.closed_at = now
             if r.requester:
