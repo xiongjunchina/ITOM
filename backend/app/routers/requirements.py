@@ -579,9 +579,11 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             "problems": [{"id": p.id, "problem_code": p.problem_code, "title": p.title} for p in linked_problems],
             "articles": [{"id": a.id, "article_code": a.article_code, "title": a.title} for a in linked_articles],
         },
+        # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留
         "allowed_transitions": [] if r.is_example else [
             {"to": code, "to_name": status_map.get(code, code)}
-            for code in allowed_targets(db, "requirement", r.status, user)
+            for code in process_engine.filter_targets_by_flow(
+                db, user, "requirement", r.id, r.status, allowed_targets(db, "requirement", r.status, user))
         ],
         "process": process_engine.instance_view(db, "requirement", r.id),
         "can_edit": (not r.is_example) and has_perm(db, user, "requirements", "edit"),
@@ -648,6 +650,7 @@ def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor
 def transition_requirement(requirement_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
+    process_engine.require_flow_operator_for_transition(db, user, "requirement", r.id, r.status, body.to)  # M25
     # 阶段门校验
     if body.to == "analyzing" and r.status == "evaluating":
         # 评估门：从评估进入分析，必须已完成六维评分且决议为「立项」

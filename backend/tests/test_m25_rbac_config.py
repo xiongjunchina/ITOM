@@ -91,7 +91,7 @@ def test_group_membership_and_workflow_auth(client, admin_headers, ctx):
               "service_item_id": ctx["item"], "change_type": "标准"},
         headers=u1_headers,
     ).json()["data"]
-    client.post(f"/api/tickets/{t['id']}/transition", json={"to": "pending_approval", "fields": {}}, headers=u1_headers)
+    client.post(f"/api/tickets/{t['id']}/transition", json={"to": "pending_approval", "fields": {}}, headers=admin_headers)
     r = client.post(f"/api/tickets/{t['id']}/transition", json={"to": "approved", "fields": {}}, headers=u1_headers)
     assert r.json()["success"], r.text
 
@@ -151,7 +151,7 @@ def test_status_in_use_protected(client, admin_headers, ctx):
               "service_item_id": ctx["item"]},
         headers=u,
     ).json()["data"]
-    client.post(f"/api/tickets/{t['id']}/transition", json={"to": "processing", "fields": {}}, headers=u)
+    client.post(f"/api/tickets/{t['id']}/transition", json={"to": "processing", "fields": {}}, headers=admin_headers)
 
     cfg = client.get("/api/admin/workflow-config?entity_type=ticket", headers=admin_headers).json()["data"]
     statuses = [s for s in cfg["statuses"] if s["code"] != "processing"]

@@ -55,11 +55,15 @@ export function hasPermission(user: AuthUser | null, module: string, action = 'v
 }
 
 /**
- * 流程任务可操作判断（M18，与后端 _require_task_operator 同规则）：
- * admin 或 任务处理人本人（step.assignee === user.person_id）。
+ * 流程任务可操作判断（M18/M25，与后端 can_act_on_task 同规则）：
+ * admin、任务处理人本人；未指派任务由步骤默认角色持有者认领操作。
  */
-export function canHandleTask(user: AuthUser | null, step: { assignee?: string | null }): boolean {
+export function canHandleTask(
+  user: AuthUser | null,
+  step: { assignee?: string | null; default_role?: string | null },
+): boolean {
   if (!user) return false;
   if (user.permissions?.['*']) return true;
-  return !!user.person_id && !!step.assignee && step.assignee === user.person_id;
+  if (step.assignee) return !!user.person_id && step.assignee === user.person_id;
+  return !!step.default_role && (user.roles as string[]).includes(step.default_role);
 }

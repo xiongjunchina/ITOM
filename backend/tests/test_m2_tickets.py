@@ -97,13 +97,14 @@ def test_reopen_clears_first_time_fix(client, ctx):
     assert detail["reopen_count"] == 1 and detail["first_time_fix"] is False
 
 
-def test_change_approval_flow(client, ctx):
+def test_change_approval_flow(client, ctx, admin_headers):
     t = _create(
         client, ctx["ops"], ctx["item"],
         ticket_type="change", change_type="普通", risk_level="中", rollback_plan="回退方案",
     )
     tid = t["id"]
-    client.post(f"/api/tickets/{tid}/transition", json={"to": "pending_approval", "fields": {}}, headers=ctx["ops"])
+    # M25：普通流转归流程当前处理人——此处用 admin 提交审批（提单人不再有此按钮）
+    client.post(f"/api/tickets/{tid}/transition", json={"to": "pending_approval", "fields": {}}, headers=admin_headers)
 
     # it_ops 无权审批
     resp = client.post(f"/api/tickets/{tid}/transition", json={"to": "approved", "fields": {}}, headers=ctx["ops"])

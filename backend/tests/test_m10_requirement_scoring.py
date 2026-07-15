@@ -31,20 +31,20 @@ def _register(client, headers, domain, **kw):
 def test_score_weighted_total_and_quadrant(client, ctx):
     r = _register(client, ctx["pdm"], ctx["domain"])
     rid = r["id"]
-    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["admin"])
 
     # 六维评分 → 加权总分 3.8，象限=战略下注
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 5, "d2_value": 5, "d3_tech": 3, "d4_org": 3, "d5_risk": 3, "d6_speed": 3,
         "decision": "通过", "comment": "战略基建",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["admin"])
     data = resp.json()["data"]
     assert data["weighted_total"] == 3.8, resp.text
     assert data["quadrant"] == "战略下注"
     assert data["decision"] == "通过"
 
     # 列表/详情回填
-    detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
+    detail = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
     assert detail["d1_strategy"] == 5 and detail["weighted_total"] == 3.8
     assert len(detail["scores"]) == 1 and detail["scores"][0]["is_consensus"] is True
 
@@ -56,30 +56,30 @@ def test_eval_gate_quadrant_and_auto_flow(client, ctx):
     assert r["status"] == "evaluating"  # M16：登记即进评审
 
     # 未评分就立项 → 拦截
-    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "通过"}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "通过"}, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "EVAL_INCOMPLETE"
 
     # 低分落「重新评估」象限 → 立项被象限约束拦截
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 2, "d2_value": 2, "d3_tech": 3, "d4_org": 3, "d5_risk": 3, "d6_speed": 2,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "QUADRANT_REJECTED"
 
     # 驳回必填理由
-    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "驳回"}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "驳回"}, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "REASON_REQUIRED"
 
     # 搁置 → 自动流转 on_hold（补充后可重新评审）
-    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "搁置", "comment": "价值论证不足，请补充预期收益"}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/score", json={"decision": "搁置", "comment": "价值论证不足，请补充预期收益"}, headers=ctx["admin"])
     assert resp.json()["data"]["status"] == "on_hold"
 
     # 重新进入评审 → 提分至非重评象限 → 立项自动流转 analyzing
-    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["admin"])
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 3, "d5_risk": 2, "d6_speed": 4,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["admin"])
     data = resp.json()["data"]
     assert data["status"] == "analyzing" and data["flowed_to"] == "analyzing"
 
@@ -91,14 +91,14 @@ def test_reject_closes_with_reason(client, ctx):
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 1, "d2_value": 2, "d3_tech": 3, "d4_org": 3, "d5_risk": 4, "d6_speed": 2,
         "decision": "驳回", "comment": "与年度战略无关且价值不可量化",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["admin"])
     assert resp.json()["data"]["status"] == "cancelled", resp.text
-    detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
+    detail = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
     assert "评审驳回" in detail["closure_note"] and "价值不可量化" in detail["closure_note"]
 
 
 def test_scoring_config_admin_only(client, ctx):
-    cfg = client.get("/api/requirements/scoring-config", headers=ctx["pdm"]).json()["data"]
+    cfg = client.get("/api/requirements/scoring-config", headers=ctx["admin"]).json()["data"]
     assert cfg["weights"]["d1"] == 0.2 and cfg["thresholds"]["total"] == 3.5
 
     # 非管理员不可改
@@ -119,7 +119,7 @@ def test_scoring_config_admin_only(client, ctx):
 
 def test_template_download_and_import(client, ctx):
     # 下载模板
-    tpl = client.get("/api/requirements/template", headers=ctx["pdm"])
+    tpl = client.get("/api/requirements/template", headers=ctx["admin"])
     assert tpl.status_code == 200 and "spreadsheetml" in tpl.headers["content-type"]
 
     # 填充模板：一行已评分（进评估）、一行未评分（进登记）、一行业务域错误
@@ -137,13 +137,13 @@ def test_template_download_and_import(client, ctx):
     resp = client.post("/api/requirements/import",
                        files={"file": ("req.xlsx", buf.getvalue(),
                                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-                       headers=ctx["pdm"])
+                       headers=ctx["admin"])
     data = resp.json()["data"]
     assert data["imported"] == 2, resp.text
     assert len(data["errors"]) == 1 and "不存在" in data["errors"][0]["error"]
 
     # 已评分行落到评估中，且总分/象限计算正确
-    listing = client.get("/api/requirements?q=海外仓", headers=ctx["pdm"]).json()["data"]
+    listing = client.get("/api/requirements?q=海外仓", headers=ctx["admin"]).json()["data"]
     wms = next(x for x in listing if x["title"] == "海外仓WMS")
     assert wms["status"] == "evaluating" and wms["decision"] == "通过"
     # 5,5,4,3,2,4 → 0.2*5+0.2*5+0.2*4+0.1*3+0.1*(6-2)+0.2*4 = 1+1+0.8+0.3+0.4+0.8 = 4.3
@@ -154,20 +154,20 @@ def test_active_tasks_board(client, ctx):
     """需求走到实现阶段，任务(含描述/工天)出现在实现任务清单。"""
     r = _register(client, ctx["pdm"], ctx["domain"], title="任务看板需求")
     rid = r["id"]
-    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["pdm"])
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "evaluating", "fields": {}}, headers=ctx["admin"])
     client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 5, "d2_value": 5, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 5, "decision": "通过",
-    }, headers=ctx["pdm"])
-    client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["pdm"])
-    client.patch(f"/api/requirements/{rid}", json={"owner": ctx["pdm_p"], "solution": "MVP"}, headers=ctx["pdm"])
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["pdm"])
+    }, headers=ctx["admin"])
+    client.post(f"/api/requirements/{rid}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["admin"])
+    client.patch(f"/api/requirements/{rid}", json={"owner": ctx["pdm_p"], "solution": "MVP"}, headers=ctx["admin"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["admin"])
     assert resp.json()["data"]["status"] == "implementing", resp.text
 
     client.post(f"/api/requirements/{rid}/tasks", json={
         "name": "接口开发", "description": "对接海外仓API", "assignee": ctx["pdm_p"], "plan_effort": 5,
-    }, headers=ctx["pdm"])
+    }, headers=ctx["admin"])
 
-    rows = client.get("/api/requirements/tasks/active", headers=ctx["pdm"]).json()["data"]
+    rows = client.get("/api/requirements/tasks/active", headers=ctx["admin"]).json()["data"]
     mine = next(x for x in rows if x["requirement_id"] == rid)
     assert mine["description"] == "对接海外仓API" and mine["plan_effort"] == 5
     assert mine["requirement_code"] == r["requirement_code"] and mine["requirement_status"] == "implementing"

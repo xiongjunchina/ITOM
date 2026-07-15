@@ -59,7 +59,7 @@ def test_requester_scope(client, ctx):
     assert client.get(f"/api/requirements/{other['id']}", headers=ctx["req"]).status_code == 403
 
 
-def test_stage_gate_and_full_lifecycle(client, ctx):
+def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     r = _register(client, ctx["bp"], ctx["domain"], title="全流程需求")
     rid = r["id"]
     # M16：登记即 evaluating；评分立项自动流转 analyzing
@@ -70,7 +70,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx):
     assert resp.json()["data"]["status"] == "analyzing", resp.text
 
     # 未完成分析（缺 owner）不能进实现
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["error"]["code"] == "STAGE_FIELD_REQUIRED"
 
     client.patch(f"/api/requirements/{rid}", json={
@@ -78,7 +78,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx):
         "acceptance_criteria": [{"text": "报表口径与财务一致", "checked": False},
                                 {"text": "T+1 出数", "checked": False}],
     }, headers=ctx["pdm"])
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 
     # 任务分解 + 负责人自更新状态
@@ -93,14 +93,14 @@ def test_stage_gate_and_full_lifecycle(client, ctx):
     assert detail["task_total"] == 2 and detail["task_done"] == 1 and detail["progress"] == 50.0
 
     # 验收未全勾不能关闭
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "closed", "fields": {}}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "closed", "fields": {}}, headers=admin_headers)
     assert resp.json()["error"]["code"] == "ACCEPTANCE_PENDING"
 
     client.patch(f"/api/requirements/{rid}", json={
         "acceptance_criteria": [{"text": "报表口径与财务一致", "checked": True},
                                 {"text": "T+1 出数", "checked": True}],
     }, headers=ctx["pdm"])
-    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "closed", "fields": {}}, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "closed", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "closed"
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
     assert detail["lead_days"] is not None
@@ -124,14 +124,14 @@ def test_handover_problem_and_knowledge(client, ctx):
     assert "经验沉淀" in article["title"] and "上线方案A" in article["content"]
 
 
-def test_on_hold_and_cancel(client, ctx):
+def test_on_hold_and_cancel(client, ctx, admin_headers):
     r = _register(client, ctx["bp"], ctx["domain"], title="搁置需求")
-    client.post(f"/api/requirements/{r['id']}/transition", json={"to": "on_hold", "fields": {}}, headers=ctx["pdm"])
-    resp = client.post(f"/api/requirements/{r['id']}/transition", json={"to": "cancelled", "fields": {}}, headers=ctx["pdm"])
+    client.post(f"/api/requirements/{r['id']}/transition", json={"to": "on_hold", "fields": {}}, headers=admin_headers)
+    resp = client.post(f"/api/requirements/{r['id']}/transition", json={"to": "cancelled", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "cancelled"
 
 
-def test_dashboard_requirement_section(client, ctx):
+def test_dashboard_requirement_section(client, ctx, admin_headers):
     dash = client.get("/api/dashboard", headers=ctx["pdm"]).json()["data"]
     assert dash["requirement"]["by_stage"]["closed"] >= 1
     assert dash["requirement"]["avg_lead_days"] is not None

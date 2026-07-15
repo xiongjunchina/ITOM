@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import ADMIN
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
@@ -53,21 +52,16 @@ class DefinitionUpdate(BaseModel):
 
 
 def _require_task_operator(db: Session, user: AuthUser, task_id: str) -> None:
-    """流程任务操作权限（M18）：仅当前处理人本人或 admin。
+    """流程任务操作权限（M18/M25）：admin、任务处理人本人；未指派任务由步骤默认角色持有者认领。
 
     用户实测漏洞：业务用户能完成/改派指派给 IT 运维的「受理确认」任务。
     提交人在「用户确认关闭」类步骤（任务指派其本人）天然放行。
     """
-    from app.services.rbac import actor_keys
-
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
-    if ADMIN in actor_keys(db, user):
-        return
-    if user.person_id and task.assignee == user.person_id:
-        return
-    raise AppError("FORBIDDEN", "仅该任务的当前处理人可执行此操作", 403)
+    if not process_engine.can_act_on_task(db, user, task):
+        raise AppError("FORBIDDEN", "仅该任务的当前处理人可执行此操作", 403)
 
 
 @router.post("/api/process-tasks/{task_id}/complete")

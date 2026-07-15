@@ -125,9 +125,11 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
                 {"id": t.id, "ticket_code": t.ticket_code, "title": t.title, "status": t.status}
                 for t in tickets
             ],
-            "allowed_transitions": [
+            # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留
+            "allowed_transitions": [] if p.is_example else [
                 {"to": code, "to_name": names.get(code, code)}
-                for code in allowed_targets(db, "problem", p.status, user)
+                for code in process_engine.filter_targets_by_flow(
+                    db, user, "problem", p.id, p.status, allowed_targets(db, "problem", p.status, user))
             ],
             "process": process_engine.instance_view(db, "problem", p.id),
         }
@@ -185,6 +187,7 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_not_example(p)
+    process_engine.require_flow_operator_for_transition(db, user, "problem", p.id, p.status, body.to)  # M25
     had_root_cause = bool(p.root_cause)
     wf_transition(db, p, "problem", body.to, body.fields, user)
     if not had_root_cause and p.root_cause:

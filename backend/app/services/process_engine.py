@@ -288,6 +288,98 @@ def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: in
     return instance
 
 
+def current_pending_task(db: Session, entity_type: str, entity_id: str) -> ProcessTask | None:
+    """最新活跃流程实例的当前待处理任务；无实例或流程已完成返回 None。"""
+    db.flush()  # Session autoflush=False：先落刚生成的实例/任务再查
+    instance = (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type == entity_type,
+            ProcessInstance.entity_id == entity_id,
+            ProcessInstance.status.in_(["running", "进行中"]),
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .order_by(ProcessInstance.created_at.desc())
+        .first()
+    )
+    if not instance:
+        return None
+    return next((t for t in instance.tasks if t.status == "待处理" and not t.is_deleted), None)
+
+
+def can_act_on_task(db: Session, user: AuthUser, task: ProcessTask) -> bool:
+    """任务操作权（M18/M25 统一）：admin、任务处理人本人；
+    未指派任务（角色解析不到在岗用户）→ 步骤默认角色持有者可认领操作，避免流程卡死。"""
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    held = actor_keys(db, user)
+    if ADMIN in held:
+        return True
+    if task.assignee:
+        return bool(user.person_id and task.assignee == user.person_id)
+    role = task.step.default_role if task.step else None
+    return bool(role and role in held)
+
+
+def flow_operator_check(db: Session, user: AuthUser, entity_type: str, entity_id: str) -> tuple[bool, str | None]:
+    """流程驱动单据的状态操作权（M25）：有活跃流程时，仅当前步骤处理人或 admin 可流转状态。
+
+    返回 (是否可操作, 当前处理人姓名)。无活跃流程 → (True, None)，回退调用方的模块权限控制。
+    """
+    task = current_pending_task(db, entity_type, entity_id)
+    if not task:
+        return True, None
+    assignee_name = None
+    if task.assignee:
+        member = db.get(OrgMember, task.assignee)
+        assignee_name = member.name if member else None
+    return can_act_on_task(db, user, task), assignee_name
+
+
+def require_flow_operator(db: Session, user: AuthUser, entity_type: str, entity_id: str) -> None:
+    """接口层强制版 flow_operator_check：非当前处理人流转状态 → 403。"""
+    ok, assignee_name = flow_operator_check(db, user, entity_type, entity_id)
+    if not ok:
+        raise AppError(
+            "FLOW_OPERATOR_ONLY",
+            f"当前流程节点由「{assignee_name or '待指派'}」处理，仅节点处理人可操作单据状态",
+            403,
+        )
+
+
+def require_flow_operator_for_transition(db: Session, user: AuthUser, entity_type: str, entity_id: str,
+                                         from_code: str, to_code: str) -> None:
+    """状态流转的流程处理人校验（M25）：
+
+    - allowed_roles 为空的普通流转（如 新建→处理中）→ 谁在处理谁操作，要求流程当前处理人；
+    - 显式配置了 allowed_roles 的审批类流转（如 待审批→已批准 by CIO）→ 尊重状态机授权，
+      由 wf_transition 的角色校验把关，不叠加流程处理人限制。
+    """
+    from app.services.workflow import get_transition
+
+    rule = get_transition(db, entity_type, from_code, to_code)
+    if rule and (rule.allowed_roles or []):
+        return  # 审批类：状态机显式授权优先
+    require_flow_operator(db, user, entity_type, entity_id)
+
+
+def filter_targets_by_flow(db: Session, user: AuthUser, entity_type: str, entity_id: str,
+                           from_code: str, targets: list[str]) -> list[str]:
+    """detail 下发按钮列表的流程过滤：非当前处理人只保留审批类（显式授权）目标。"""
+    from app.services.workflow import get_transition
+
+    ok, _ = flow_operator_check(db, user, entity_type, entity_id)
+    if ok:
+        return targets
+    kept = []
+    for code in targets:
+        rule = get_transition(db, entity_type, from_code, code)
+        if rule and (rule.allowed_roles or []):
+            kept.append(code)
+    return kept
+
+
 def finalize_instance(db: Session, entity_type: str, entity_id: str, note: str) -> ProcessInstance | None:
     """单据到达终态时收尾流程实例（M24）：未处理任务作废式完成（留痕），实例标记完成。
 
