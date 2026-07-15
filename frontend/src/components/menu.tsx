@@ -145,6 +145,22 @@ export function filterMenu(nodes: MenuNode[], user: AuthUser | null): MenuNode[]
     .filter((n) => !n.children || n.children.length > 0);
 }
 
+/**
+ * 登录/首页落点：菜单序第一个有权限的页面（M19）。
+ * 总览被关掉的用户（如业务用户）落到其可见的第一项（服务请求），而不是硬闯 /dashboard。
+ */
+export function firstAccessiblePath(user: AuthUser | null): string {
+  const first = (nodes: MenuNode[]): string | null => {
+    for (const n of nodes) {
+      if (n.path) return n.path;
+      const p = n.children ? first(n.children) : null;
+      if (p) return p;
+    }
+    return null;
+  };
+  return first(filterMenu(MENU_TREE, user)) ?? '/dashboard';
+}
+
 /** path → 面包屑菜单 key 链（如 /itsm/tickets → ['itsm','/itsm/tickets']），由调用方经 t('menu.'+key) 翻译 */
 export function breadcrumbOf(pathname: string): string[] {
   for (const node of MENU_TREE) {

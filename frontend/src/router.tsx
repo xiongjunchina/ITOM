@@ -1,5 +1,7 @@
 import { Navigate, createBrowserRouter, useSearchParams } from 'react-router-dom';
 import MainLayout from './components/MainLayout';
+import { firstAccessiblePath } from './components/menu';
+import { hasPermission, useAuthStore } from './stores/auth';
 import Login from './pages/Login';
 import OnboardingPending from './pages/OnboardingPending';
 import FeishuCallback from './pages/FeishuCallback';
@@ -38,6 +40,21 @@ import ProjectDetail from './pages/projects/ProjectDetail';
 import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
 
+/** M19 首页落点：菜单序第一个有权限的页面（业务用户关掉总览后落到服务请求） */
+function HomeRedirect() {
+  const user = useAuthStore((s) => s.user);
+  return <Navigate to={firstAccessiblePath(user)} replace />;
+}
+
+/** 总览页权限门：无 dashboard 权限（且非存量缺权限会话）时重定向到首个可见页 */
+function DashboardGate() {
+  const user = useAuthStore((s) => s.user);
+  if (user?.permissions && !hasPermission(user, 'dashboard')) {
+    return <Navigate to={firstAccessiblePath(user)} replace />;
+  }
+  return <Dashboard />;
+}
+
 /** M17 旧地址兼容：/projects?tab=portfolios、/requirements?tab=tasks|scoring → 新二级菜单路径 */
 function LegacyProjectsRedirect() {
   const [sp] = useSearchParams();
@@ -61,8 +78,8 @@ export const router = createBrowserRouter([
     path: '/',
     element: <MainLayout />,
     children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
-      { path: 'dashboard', element: <Dashboard /> },
+      { index: true, element: <HomeRedirect /> },
+      { path: 'dashboard', element: <DashboardGate /> },
 
       // ITSM（M2 交付；M6.1 工单按类型拆分三入口，key 隔离筛选/分页状态）
       { path: 'itsm/tickets', element: <Tickets key="service_request" fixedType="service_request" /> },
@@ -127,7 +144,7 @@ export const router = createBrowserRouter([
       { path: 'admin/provision-rules', element: <Navigate to="/admin/access?tab=provision" replace /> },
       { path: 'admin/permissions', element: <Navigate to="/admin/access?tab=permissions" replace /> },
 
-      { path: '*', element: <Navigate to="/dashboard" replace /> },
+      { path: '*', element: <HomeRedirect /> },
     ],
   },
 ]);

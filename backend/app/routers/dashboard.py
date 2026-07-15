@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import require_perm
 from app.models import Contract, Milestone, Problem, Project, Requirement, Ticket
 from app.schemas.common import ok
 
@@ -198,7 +198,7 @@ def _requirement_section(db: Session) -> dict:
 
 
 @router.get("")
-def dashboard(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def dashboard(db: Session = Depends(get_db), _=Depends(require_perm("dashboard", "view"))):  # M19：接口层强制，不只菜单隐藏
     service, alerts = _service_section(db)
     project_section, project_alerts = _project_section(db)
     alerts = alerts + project_alerts

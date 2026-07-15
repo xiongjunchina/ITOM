@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Card, Result, Space, Spin, Typography, message } from 'antd';
 import { useT } from '../i18n';
 import { useAuthStore } from '../stores/auth';
+import { firstAccessiblePath } from '../components/menu';
 import type { Envelope, OnboardingStatusResult } from '../api/types';
 import LangSwitch from '../components/LangSwitch';
 
@@ -65,7 +66,7 @@ export default function OnboardingPending() {
           clearPending();
           setAuth(data.token, data.user);
           message.success(t('onboarding.approved'));
-          navigate('/dashboard', { replace: true });
+          navigate(firstAccessiblePath(data.user), { replace: true });
         } else if (data.status === 'rejected') {
           stop();
           setRejected(data.note || '');

@@ -6,6 +6,7 @@ import { isAxiosError } from 'axios';
 import { api } from '../api/client';
 import type { Envelope, FeishuScanResult, LoginResult } from '../api/types';
 import { useAuthStore } from '../stores/auth';
+import { firstAccessiblePath } from '../components/menu';
 import { useT } from '../i18n';
 import LangSwitch from '../components/LangSwitch';
 
@@ -26,11 +27,11 @@ export default function Login() {
   const [feishuStarting, setFeishuStarting] = useState(false);
   const [feishuForm] = Form.useForm<FeishuForm>();
   const navigate = useNavigate();
-  const { token, setAuth } = useAuthStore();
+  const { token, user, setAuth } = useAuthStore();
   const t = useT();
 
   if (token) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={firstAccessiblePath(user)} replace />;
   }
 
   const onFinish = async (values: LoginForm) => {
@@ -38,7 +39,8 @@ export default function Login() {
     try {
       const result = await api.post<LoginResult>('/auth/login', values);
       setAuth(result.token, result.user);
-      navigate('/dashboard', { replace: true });
+      // M19：落到该用户第一个有权限的页面（业务用户=服务请求），而不是写死总览
+      navigate(firstAccessiblePath(result.user), { replace: true });
     } catch (err) {
       // 401 由拦截器静默处理（登录页不跳转），在此提示；其余错误拦截器已提示
       if (isAxiosError<Envelope>(err) && err.response?.status === 401) {
@@ -94,7 +96,7 @@ export default function Login() {
       if (data.status === 'active') {
         setFeishuOpen(false);
         setAuth(data.token, data.user);
-        navigate('/dashboard', { replace: true });
+        navigate(firstAccessiblePath(data.user), { replace: true });
       } else {
         // pending：暂存 pending 凭据，进过渡页轮询开通结果
         localStorage.setItem('aom-pending-token', data.pending_token);

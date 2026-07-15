@@ -49,6 +49,23 @@ def test_matrix_edit_changes_access(client, admin_headers, ctx):
     assert r.json()["error"]["code"] == "ADMIN_LOCKED"
 
 
+def test_dashboard_gated_by_matrix(client, admin_headers, ctx):
+    """M19：关掉角色的总览可见后，/api/dashboard 接口层 403（不只菜单隐藏）。"""
+    _, h = ctx["member_and_user"]("业务丙", "req_c", ["requester"])
+    assert client.get("/api/dashboard", headers=h).json()["success"]
+
+    rows = client.get("/api/admin/permissions?role=requester", headers=admin_headers).json()["data"]
+    entries = [{"module": x["module"], "actions": [] if x["module"] == "dashboard" else x["actions"]} for x in rows]
+    client.put("/api/admin/permissions", json={"role_code": "requester", "entries": entries}, headers=admin_headers)
+    assert client.get("/api/dashboard", headers=h).status_code == 403
+
+    # 还原，避免影响同模块其他用例
+    for e in entries:
+        if e["module"] == "dashboard":
+            e["actions"] = ["view"]
+    client.put("/api/admin/permissions", json={"role_code": "requester", "entries": entries}, headers=admin_headers)
+
+
 def test_new_matrix_roles_seeded(client, admin_headers):
     roles = {r["code"]: r for r in client.get("/api/admin/roles", headers=admin_headers).json()["data"]}
     assert {"cio", "it_bm", "it_tm"} <= set(roles)
