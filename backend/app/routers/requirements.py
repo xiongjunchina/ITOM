@@ -839,9 +839,9 @@ def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_d
 @router.get("/tasks/active")
 def active_tasks(
     scope: str = "", status: str = "",
-    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("req_tasks", "view")),
 ):
-    """展示排期/实现中的需求任务：任务名/描述/处理人/关联需求/进度。"""
+    """任务跟踪清单（M17.2 独立授权：业务用户不可见）：任务/处理人/关联需求/进度。"""
     q = (
         db.query(RequirementTask, Requirement)
         .join(Requirement, RequirementTask.requirement_id == Requirement.id)
@@ -850,9 +850,7 @@ def active_tasks(
             Requirement.status.in_(("analyzing", "implementing")),
         )
     )
-    if _is_requester_only(db, user):
-        q = q.filter(Requirement.requester == user.id)
-    elif scope == "mine" and user.person_id:
+    if scope == "mine" and user.person_id:
         q = q.filter(RequirementTask.assignee == user.person_id)
     if status:
         q = q.filter(RequirementTask.status == status)
@@ -893,8 +891,17 @@ def active_tasks(
 
 # ---------- 实现阶段：任务分解 ----------
 
+def _require_task_perm(db: Session, user: AuthUser):
+    """任务维护权限：需求编辑 或 任务跟踪编辑 任一即可（详情页/任务跟踪页两个入口）。"""
+    from app.services.permissions import has_perm
+
+    if not (has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit")):
+        raise AppError("FORBIDDEN", "无任务维护权限（需 需求管理编辑 或 任务跟踪编辑）", 403)
+
+
 @router.post("/{requirement_id}/tasks")
-def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
+def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    _require_task_perm(db, user)
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
     from datetime import date as _date
@@ -922,9 +929,11 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
     ensure_not_example(db.get(Requirement, task.requirement_id))
     data = body.model_dump(exclude_unset=True)
     is_assignee = user.person_id and task.assignee == user.person_id
-    if not has_perm(db, user, "requirements", "edit"):
+    from app.services.permissions import has_perm as _hp
+
+    if not (_hp(db, user, "requirements", "edit") or _hp(db, user, "req_tasks", "edit")):
         if not (is_assignee and set(data) <= {"status"}):
-            raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的状态；其他修改需需求编辑权限", 403)
+            raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的状态；其他修改需 需求管理/任务跟踪 编辑权限", 403)
     if data.get("status") and data["status"] not in ("待处理", "进行中", "已完成"):
         raise AppError("INVALID_STATUS", "状态必须为 待处理/进行中/已完成")
     if "plan_date" in data and data["plan_date"]:
@@ -942,7 +951,8 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
 
 
 @router.delete("/tasks/{task_id}")
-def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
+def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    _require_task_perm(db, user)
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)

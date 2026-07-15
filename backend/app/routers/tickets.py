@@ -18,6 +18,27 @@ from app.services.workflow import allowed_targets, status_names
 router = APIRouter(prefix="/api/tickets", tags=["itsm"])
 
 
+def _ticket_module(ticket_type: str) -> str:
+    """M17.2：工单按类型独立授权（服务请求/事件/变更 三个权限模块）。"""
+    from app.services.permissions import TICKET_TYPE_MODULE
+
+    return TICKET_TYPE_MODULE.get(ticket_type, "ticket_sr")
+
+
+def _require_type_perm(db: Session, user: AuthUser, ticket_type: str, action: str):
+    from app.services.permissions import has_perm
+
+    module = _ticket_module(ticket_type)
+    if not has_perm(db, user, module, action):
+        raise AppError("FORBIDDEN", "当前角色无此工单类型的操作权限", 403)
+
+
+def _allowed_view_types(db: Session, user: AuthUser) -> list[str]:
+    from app.services.permissions import TICKET_TYPE_MODULE, has_perm
+
+    return [t for t, m in TICKET_TYPE_MODULE.items() if has_perm(db, user, m, "view")]
+
+
 def _is_requester_only(db: Session, user: AuthUser) -> bool:
     from app.services.rbac import effective_roles
 
@@ -57,7 +78,10 @@ def list_tickets(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    query = db.query(Ticket).filter(Ticket.is_deleted.is_(False))
+    allowed_types = _allowed_view_types(db, user)
+    if not allowed_types:
+        raise AppError("FORBIDDEN", "当前角色无任何工单类型的查看权限", 403)
+    query = db.query(Ticket).filter(Ticket.is_deleted.is_(False), Ticket.ticket_type.in_(allowed_types))
     if _is_requester_only(db, user) or scope == "mine":
         query = query.filter(or_(Ticket.submitter == user.id, Ticket.assignee == (user.person_id or "-")))
     if q:
@@ -76,7 +100,8 @@ def list_tickets(
 
 
 @router.post("")
-def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "create"))):
+def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    _require_type_perm(db, user, body.ticket_type, "create")  # M17.2：按工单类型鉴权
     ticket = svc.create_ticket(db, body.model_dump(exclude_none=True), user)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
     return ok(_row(ticket, db, names))
@@ -88,6 +113,11 @@ def _get_ticket(db: Session, ticket_id: str, user: AuthUser) -> Ticket:
         raise AppError("NOT_FOUND", "工单不存在", 404)
     if _is_requester_only(db, user) and t.submitter != user.id:
         raise AppError("FORBIDDEN", "无权查看他人工单", 403)
+    if t.submitter != user.id:  # 提交人恒可见自己的单；他人单按类型模块鉴权
+        from app.services.permissions import has_perm
+
+        if not has_perm(db, user, _ticket_module(t.ticket_type), "view"):
+            raise AppError("FORBIDDEN", "当前角色无此工单类型的查看权限", 403)
     return t
 
 
@@ -123,8 +153,9 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
 
 
 @router.patch("/{ticket_id}")
-def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "edit"))):
+def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
+    _require_type_perm(db, user, t.ticket_type, "edit")  # M17.2
     ensure_not_example(t)
     if t.status in ("closed", "rejected"):
         raise AppError("TICKET_FINAL", "终态工单不可编辑")
@@ -145,8 +176,9 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
 
 
 @router.post("/{ticket_id}/transition")
-def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("tickets", "edit"))):
+def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
+    _require_type_perm(db, user, t.ticket_type, "edit")  # M17.2
     ensure_not_example(t)
     svc.do_transition(db, t, body.to, body.fields, user)
     return ok({"id": t.id, "status": t.status})

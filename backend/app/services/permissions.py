@@ -17,17 +17,22 @@ ACTIONS = ("view", "create", "edit", "delete")
 # 标签与左侧导航/子标签保持同步（2026-07-12 M7 同步）；一个模块可对应多个菜单入口（如 tickets 覆盖服务请求/事件/变更）。
 MODULES = [
     ("dashboard", "总览", "总览"),
-    ("tickets", "工单（服务请求/变更管理/事件管理）", "ITSM"),
+    # M17.2：工单按类型独立授权（业务用户仅服务请求，不可发起变更/登记事件）
+    ("ticket_sr", "服务请求", "ITSM"),
     ("catalog", "服务目录", "ITSM"),
     ("cmdb", "CMDB", "ITSM"),
     ("sla", "SLA", "ITSM"),
+    ("ticket_change", "变更管理", "ITSM"),
+    ("ticket_incident", "事件管理", "ITSM"),
     ("problems", "问题管理", "ITSM"),
     ("vendors", "供应商管理", "ITSM"),
     ("contracts", "合同管理", "ITSM"),
     ("knowledge", "知识库", "ITSM"),
-    # M17：项目/需求拆为二级菜单后，一个权限模块覆盖多个菜单页（同 tickets 模式括号注明）
     ("projects", "项目管理（项目列表/项目组合）", "项目管理"),
-    ("requirements", "需求管理（需求总览/任务跟踪/评分规则）", "需求管理"),
+    # M17.2：需求域按菜单页独立授权（业务用户可登记需求，但不可见任务跟踪/评分规则）
+    ("requirements", "需求总览（登记/评审/方案）", "需求管理"),
+    ("req_tasks", "任务跟踪", "需求管理"),
+    ("req_scoring", "评分规则", "需求管理"),
     ("process_definitions", "流程定义", "流程中心"),
     ("process_monitor", "流程监控", "流程中心"),
     ("team_overview", "团队总览", "团队管理"),
@@ -52,6 +57,13 @@ MODULES = [
 ]
 MODULE_CODES = {m[0] for m in MODULES}
 
+# 工单类型 → 权限模块（M17.2 拆分后按单据类型鉴权）
+TICKET_TYPE_MODULE = {
+    "service_request": "ticket_sr",
+    "incident": "ticket_incident",
+    "change": "ticket_change",
+}
+
 # 菜单页分层（权限配置页按左侧导航的二级页组织；仅对"一页含多权限项"的合并页设置，
 # 其余模块=页 1:1 的不设，直接挂在分组下）。code 对应左侧导航的合并页。
 PAGE_NAMES = {
@@ -67,14 +79,15 @@ MODULE_PAGES = {
 
 # 动作缩写：v=view c=create e=edit d=delete
 _BUSINESS_VIEW = [
-    "dashboard", "tickets", "catalog", "cmdb", "sla", "problems", "vendors", "contracts",
-    "knowledge", "projects", "requirements", "team_overview", "activities",
-    "ideas", "charter",
+    "dashboard", "ticket_sr", "ticket_incident", "ticket_change", "catalog", "cmdb", "sla",
+    "problems", "vendors", "contracts", "knowledge", "projects", "requirements",
+    "req_tasks", "req_scoring", "team_overview", "activities", "ideas", "charter",
 ]
 
 def _staff_base() -> dict[str, str]:
     matrix = {m: "v" for m in _BUSINESS_VIEW}
-    matrix.update({"tickets": "vce", "knowledge": "vce", "requirements": "vc",
+    matrix.update({"ticket_sr": "vce", "ticket_incident": "vce", "ticket_change": "vce",
+                   "knowledge": "vce", "requirements": "vc",
                    "activities": "vc", "ideas": "vc"})
     return matrix
 
@@ -88,7 +101,7 @@ def _merge(base: dict[str, str], extra: dict[str, str]) -> dict[str, str]:
 
 # 内置角色默认矩阵（编码当前系统行为；admin 不在矩阵中——隐式全权）
 DEFAULT_MATRIX: dict[str, dict[str, str]] = {
-    "requester": {"dashboard": "v", "tickets": "vc", "knowledge": "v", "requirements": "vc"},
+    "requester": {"dashboard": "v", "ticket_sr": "vc", "knowledge": "v", "requirements": "vc"},
     "auditor": _merge(
         {m: "v" for m in _BUSINESS_VIEW},
         {"process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},
@@ -96,8 +109,8 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_dev": _staff_base(),
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
     "it_pdm": _merge(_staff_base(), {"requirements": "e"}),
-    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "process_monitor": "v"}),
-    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "process_monitor": "v"}),
+    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v"}),
+    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v"}),
     "it_pm": _merge(_staff_base(), {"projects": "ce"}),
     "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),

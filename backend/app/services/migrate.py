@@ -244,6 +244,60 @@ def fix_delivery_step_branches_m167(db: Session):
     db.commit()
 
 
+def split_permission_modules_m172(db: Session):
+    """M17.2：权限模块按菜单页拆分的存量迁移（幂等，以旧行存在为触发）。
+
+    - tickets → ticket_sr/ticket_incident/ticket_change：requester 仅保留服务请求
+      （业务用户不可发起变更/登记事件）；其余角色三行等权复制（能力不缩水，可再收紧）
+    - requirements 行衍生：req_tasks 等权复制、req_scoring 只读（requester 均不给——
+      业务用户可登记需求，但不可见任务跟踪与评分规则）
+    """
+    rows = db.execute(text(
+        "SELECT role_code, actions FROM role_permission WHERE module='tickets' AND is_deleted=false"
+    )).fetchall()
+    if rows:
+        from app.core.glid import new_glid
+        import json as _json
+        for role_code, actions in rows:
+            targets = ["ticket_sr"] if role_code == "requester" else [
+                "ticket_sr", "ticket_incident", "ticket_change"]
+            for m in targets:
+                exists = db.execute(text(
+                    "SELECT 1 FROM role_permission WHERE role_code=:r AND module=:m AND is_deleted=false"
+                ), {"r": role_code, "m": m}).first()
+                if not exists:
+                    db.execute(text(
+                        "INSERT INTO role_permission (id, role_code, module, actions, is_deleted, is_example, created_at, updated_at) "
+                        "VALUES (:id, :r, :m, CAST(:a AS jsonb), false, false, now(), now())"
+                    ), {"id": new_glid(), "r": role_code, "m": m,
+                        "a": _json.dumps(actions if isinstance(actions, list) else actions)})
+        db.execute(text("DELETE FROM role_permission WHERE module='tickets'"))
+        logger.info("tickets 权限拆分为按类型模块（%d 角色，requester 仅服务请求）", len(rows))
+
+    req_rows = db.execute(text(
+        "SELECT role_code, actions FROM role_permission WHERE module='requirements' AND is_deleted=false AND role_code != 'requester'"
+    )).fetchall()
+    if req_rows:
+        from app.core.glid import new_glid
+        import json as _json
+        added = 0
+        for role_code, actions in req_rows:
+            for m, acts in (("req_tasks", actions), ("req_scoring", ["view"])):
+                exists = db.execute(text(
+                    "SELECT 1 FROM role_permission WHERE role_code=:r AND module=:m AND is_deleted=false"
+                ), {"r": role_code, "m": m}).first()
+                if not exists:
+                    db.execute(text(
+                        "INSERT INTO role_permission (id, role_code, module, actions, is_deleted, is_example, created_at, updated_at) "
+                        "VALUES (:id, :r, :m, CAST(:a AS jsonb), false, false, now(), now())"
+                    ), {"id": new_glid(), "r": role_code, "m": m,
+                        "a": _json.dumps(acts if isinstance(acts, list) else acts)})
+                    added += 1
+        if added:
+            logger.info("需求域衍生权限 req_tasks/req_scoring 补种 %d 行（requester 不授予）", added)
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -255,6 +309,7 @@ def migrate_m35_org(db: Session):
     fix_acceptance_step_role_m165(db)
     fix_ops_leader_m166(db)
     fix_delivery_step_branches_m167(db)
+    split_permission_modules_m172(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

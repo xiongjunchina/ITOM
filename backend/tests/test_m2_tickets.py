@@ -146,7 +146,11 @@ def test_requester_only_sees_own_tickets(client, ctx, admin_headers):
     token = client.post("/api/auth/login", json={"username": "req01", "password": "pass123"}).json()["data"]["token"]
     req_headers = {"Authorization": f"Bearer {token}"}
 
-    mine = _create(client, req_headers, ctx["item"], title="业务用户的工单")
+    # M17.2：业务用户仅可提服务请求（事件/变更 403）
+    denied = client.post("/api/tickets", json={"title": "越权事件", "ticket_type": "incident", "priority": "P3",
+                                               "description": "d", "service_item_id": ctx["item"]}, headers=req_headers)
+    assert denied.status_code == 403
+    mine = _create(client, req_headers, ctx["item"], title="业务用户的工单", ticket_type="service_request")
     listing = client.get("/api/tickets", headers=req_headers).json()
     assert all(row["submitter_name"] == "req01" for row in listing["data"])
     assert any(row["id"] == mine["id"] for row in listing["data"])

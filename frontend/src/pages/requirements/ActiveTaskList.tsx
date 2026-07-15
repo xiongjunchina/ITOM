@@ -48,7 +48,9 @@ export default function ActiveTaskList() {
   const et = useEnums();
 
   const user = useAuthStore((st) => st.user);
-  const canEdit = user?.permissions ? hasPermission(user, 'requirements', 'edit') : true;
+  const canEdit = user?.permissions
+    ? hasPermission(user, 'requirements', 'edit') || hasPermission(user, 'req_tasks', 'edit')
+    : true;
 
   const [rows, setRows] = useState<ActiveTaskRow[]>([]);
   const [loading, setLoading] = useState(false);

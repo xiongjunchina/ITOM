@@ -21,7 +21,7 @@ def test_login_returns_permissions(client, admin_headers, ctx):
     _, h = ctx["member_and_user"]("开发甲", "dev_a", ["it_dev"])
     me = client.get("/api/auth/me", headers=h).json()["data"]
     assert "permissions" in me
-    assert "view" in me["permissions"]["tickets"] and "create" in me["permissions"]["tickets"]
+    assert "view" in me["permissions"]["ticket_sr"] and "create" in me["permissions"]["ticket_sr"]
     assert "cmdb" in me["permissions"] and me["permissions"]["cmdb"] == ["view"]
 
     admin_me = client.get("/api/auth/me", headers=admin_headers).json()["data"]
@@ -66,7 +66,7 @@ def test_custom_role_copies_template_matrix(client, admin_headers, ctx):
     perms = client.get("/api/admin/permissions?role=ai_eng", headers=admin_headers).json()["data"]
     assert perms, "模板矩阵应被复制"
     modules = {p["module"]: p["actions"] for p in perms}
-    assert "create" in modules["tickets"]
+    assert "create" in modules["ticket_sr"]
 
     # 复制后独立：改 ai_eng 不影响 it_dev
     entries = [{"module": m, "actions": a} for m, a in modules.items() if m != "knowledge"]

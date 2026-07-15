@@ -38,12 +38,12 @@ export const MENU_TREE: MenuNode[] = [
     label: 'ITSM',
     icon: <CustomerServiceOutlined />,
     children: [
-      { key: '/itsm/tickets', path: '/itsm/tickets', label: '服务请求', module: 'tickets' },
+      { key: '/itsm/tickets', path: '/itsm/tickets', label: '服务请求', module: 'ticket_sr' },
       { key: '/itsm/catalog', path: '/itsm/catalog', label: '服务目录', module: 'catalog', roles: STAFF },
       { key: '/itsm/cmdb', path: '/itsm/cmdb', label: 'CMDB', module: 'cmdb', roles: STAFF },
       { key: '/itsm/sla', path: '/itsm/sla', label: 'SLA', module: 'sla', roles: STAFF },
-      { key: '/itsm/changes', path: '/itsm/changes', label: '变更管理', module: 'tickets', roles: STAFF },
-      { key: '/itsm/incidents', path: '/itsm/incidents', label: '事件管理', module: 'tickets', roles: STAFF },
+      { key: '/itsm/changes', path: '/itsm/changes', label: '变更管理', module: 'ticket_change', roles: STAFF },
+      { key: '/itsm/incidents', path: '/itsm/incidents', label: '事件管理', module: 'ticket_incident', roles: STAFF },
       { key: '/itsm/problems', path: '/itsm/problems', label: '问题管理', module: 'problems', roles: STAFF },
       { key: '/itsm/vendors', path: '/itsm/vendors', label: '供应商管理', module: 'vendors', roles: STAFF },
       { key: '/itsm/contracts', path: '/itsm/contracts', label: '合同管理', module: 'contracts', roles: STAFF },
@@ -66,8 +66,8 @@ export const MENU_TREE: MenuNode[] = [
     icon: <FileTextOutlined />,
     children: [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
-      { key: '/requirements/tasks', path: '/requirements/tasks', label: '任务跟踪', module: 'requirements' },
-      { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'requirements' },
+      { key: '/requirements/tasks', path: '/requirements/tasks', label: '任务跟踪', module: 'req_tasks' },
+      { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'req_scoring' },
     ],
   },
   {

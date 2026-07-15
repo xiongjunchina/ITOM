@@ -179,13 +179,15 @@ def test_requester_scope(client, admin_headers, ctx):
         assert client.get(path, headers=req_h).status_code == 403, path
     # 但提单依赖的服务项列表可用（选择服务项）
     assert client.get("/api/service-items", headers=req_h).json()["success"]
-    # 变更类工单创建被类型权限拦截？requester 可建 service_request；建变更单应被业务拒绝或允许？
-    # 现行设计：类型不受矩阵限制，但页面入口仅服务请求；后端保持宽松（提交人只能跟踪自己的单）。
-    # 团队总览对 requester 开放与否：team_overview 模块 requester 无 → 菜单隐藏；接口 get_current_user 放行。
+    # M17.2：工单按类型授权——requester 仅服务请求，登记事件/变更被类型权限拦截
+    denied = client.post("/api/tickets", json={"title": "越权变更", "ticket_type": "change",
+                                               "description": "d", "priority": "P3", "service_item_id": item},
+                         headers=req_h)
+    assert denied.status_code == 403
     me = client.get("/api/auth/me", headers=req_h).json()["data"]
     perms = me["permissions"]
-    assert set(perms) == {"dashboard", "tickets", "knowledge", "requirements"}
-    assert perms["tickets"] == ["create", "view"] and perms["requirements"] == ["create", "view"]
+    assert set(perms) == {"dashboard", "ticket_sr", "knowledge", "requirements"}
+    assert perms["ticket_sr"] == ["create", "view"] and perms["requirements"] == ["create", "view"]
 
 
 # ---------- 季度考核制（M6.4）：Q1-Q3 单季 + 全年 All 聚合 ----------

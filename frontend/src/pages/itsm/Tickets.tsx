@@ -22,6 +22,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import { useT } from '../../i18n';
+import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
 import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
@@ -64,7 +65,16 @@ interface TicketFormValues {
   implementation_plan?: string;
 }
 
+/** 工单类型 → 权限模块（M17.2 按类型独立授权） */
+const TYPE_MODULE: Record<TicketType, string> = {
+  service_request: 'ticket_sr',
+  incident: 'ticket_incident',
+  change: 'ticket_change',
+};
+
 export default function Tickets({ fixedType }: { fixedType: TicketType }) {
+  const authUser = useAuthStore((st) => st.user);
+  const canCreate = authUser?.permissions ? hasPermission(authUser, TYPE_MODULE[fixedType], 'create') : true;
   const navigate = useNavigate();
   const t = useT();
   const et = useEnums();
@@ -226,9 +236,11 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     <Card
       title={t('itsm.ticket.title.' + fixedType)}
       extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          {t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
-        </Button>
+        canCreate && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            {t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
+          </Button>
+        )
       }
     >
       <Space wrap style={{ marginBottom: 16 }}>

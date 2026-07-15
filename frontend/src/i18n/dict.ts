@@ -103,7 +103,9 @@ const zh: Dict = {
 
   // 权限模块标签（与后端 MODULES 中文一致；权限配置页可用作 en 映射的中文基准）
   'module.dashboard': '总览',
-  'module.tickets': '工单（服务请求/变更管理/事件管理）',
+  'module.ticket_sr': '服务请求',
+  'module.ticket_change': '变更管理',
+  'module.ticket_incident': '事件管理',
   'module.catalog': '服务目录',
   'module.cmdb': 'CMDB',
   'module.sla': 'SLA',
@@ -112,7 +114,9 @@ const zh: Dict = {
   'module.contracts': '合同管理',
   'module.knowledge': '知识库',
   'module.projects': '项目管理（项目列表/项目组合）',
-  'module.requirements': '需求管理（需求总览/任务跟踪/评分规则）',
+  'module.requirements': '需求总览（登记/评审/方案）',
+  'module.req_tasks': '任务跟踪',
+  'module.req_scoring': '评分规则',
   'module.process_definitions': '流程定义',
   'module.process_monitor': '流程监控',
   'module.team_overview': '团队总览',
@@ -284,7 +288,9 @@ const en: Dict = {
   'onboarding.rejectReasonRequired': 'Please enter a rejection reason',
 
   'module.dashboard': 'Dashboard',
-  'module.tickets': 'Tickets (Service Request / Change / Incident)',
+  'module.ticket_sr': 'Service Requests',
+  'module.ticket_change': 'Change Management',
+  'module.ticket_incident': 'Incident Management',
   'module.catalog': 'Service Catalog',
   'module.cmdb': 'CMDB',
   'module.sla': 'SLA',
