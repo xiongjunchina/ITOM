@@ -50,8 +50,26 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/itsm/knowledge', path: '/itsm/knowledge', label: '知识库', module: 'knowledge' },
     ],
   },
-  { key: '/projects', path: '/projects', label: '项目管理', icon: <ProjectOutlined />, module: 'projects', roles: STAFF },
-  { key: '/requirements', path: '/requirements', label: '需求管理', icon: <FileTextOutlined />, module: 'requirements' },
+  {
+    key: 'projects',
+    label: '项目管理',
+    icon: <ProjectOutlined />,
+    roles: STAFF,
+    children: [
+      { key: '/projects/list', path: '/projects/list', label: '项目列表', module: 'projects' },
+      { key: '/projects/portfolios', path: '/projects/portfolios', label: '项目组合', module: 'projects' },
+    ],
+  },
+  {
+    key: 'requirements',
+    label: '需求管理',
+    icon: <FileTextOutlined />,
+    children: [
+      { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
+      { key: '/requirements/tasks', path: '/requirements/tasks', label: '任务跟踪', module: 'requirements' },
+      { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'requirements' },
+    ],
+  },
   {
     key: 'team',
     label: '团队管理',

@@ -827,7 +827,7 @@ def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_d
     notifier.notify(db, "requirement.to_dev", "requirement", r.id, [owner.id],
                     f"需求转开发实现：{r.requirement_code} {r.title}",
                     "您被指派为开发负责人。请在「需求管理 → 任务跟踪」登记开发任务清单并排期（优先级按六维评分排序）。",
-                    link="/requirements?tab=tasks")
+                    link="/requirements/tasks")
     audit(db, "requirement", r.id, "to_dev", user, {"owner": owner.name})
     publish(db, "requirement.to_dev", "requirement", r.id, {"owner_id": owner.id})
     db.commit()

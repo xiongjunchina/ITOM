@@ -1,4 +1,4 @@
-import { Navigate, createBrowserRouter } from 'react-router-dom';
+import { Navigate, createBrowserRouter, useSearchParams } from 'react-router-dom';
 import MainLayout from './components/MainLayout';
 import Login from './pages/Login';
 import OnboardingPending from './pages/OnboardingPending';
@@ -32,9 +32,24 @@ import Knowledge from './pages/itsm/Knowledge';
 import KnowledgeDetail from './pages/itsm/KnowledgeDetail';
 import KnowledgeEdit from './pages/itsm/KnowledgeEdit';
 import Projects from './pages/projects/Projects';
+import TaskTrackingPage from './pages/requirements/TaskTrackingPage';
+import RequirementScoring from './pages/admin/RequirementScoring';
 import ProjectDetail from './pages/projects/ProjectDetail';
 import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
+
+/** M17 旧地址兼容：/projects?tab=portfolios、/requirements?tab=tasks|scoring → 新二级菜单路径 */
+function LegacyProjectsRedirect() {
+  const [sp] = useSearchParams();
+  return <Navigate to={sp.get('tab') === 'portfolios' ? '/projects/portfolios' : '/projects/list'} replace />;
+}
+
+function LegacyRequirementsRedirect() {
+  const [sp] = useSearchParams();
+  const tab = sp.get('tab');
+  const to = tab === 'tasks' ? '/requirements/tasks' : tab === 'scoring' ? '/requirements/scoring' : '/requirements/overview';
+  return <Navigate to={to} replace />;
+}
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -67,11 +82,16 @@ export const router = createBrowserRouter([
       { path: 'itsm/knowledge/:id/edit', element: <KnowledgeEdit /> },
 
       // 项目管理（M4 交付）
-      { path: 'projects', element: <Projects /> },
+      { path: 'projects', element: <LegacyProjectsRedirect /> },
+      { path: 'projects/list', element: <Projects pane="list" /> },
+      { path: 'projects/portfolios', element: <Projects pane="portfolios" /> },
       { path: 'projects/:id', element: <ProjectDetail /> },
 
       // 需求管理（M5 交付）
-      { path: 'requirements', element: <Requirements /> },
+      { path: 'requirements', element: <LegacyRequirementsRedirect /> },
+      { path: 'requirements/overview', element: <Requirements /> },
+      { path: 'requirements/tasks', element: <TaskTrackingPage /> },
+      { path: 'requirements/scoring', element: <RequirementScoring /> },
       { path: 'requirements/:id', element: <RequirementDetail /> },
 
       // 流程中心
@@ -93,7 +113,7 @@ export const router = createBrowserRouter([
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
       // 需求评分规则已并入需求管理标签页（2026-07-14），保留旧地址重定向
-      { path: 'admin/requirement-scoring', element: <Navigate to="/requirements?tab=scoring" replace /> },
+      { path: 'admin/requirement-scoring', element: <Navigate to="/requirements/scoring" replace /> },
       { path: 'admin/feishu', element: <FeishuIntegration /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
 

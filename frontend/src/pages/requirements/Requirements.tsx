@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Alert,
   Button,
@@ -17,7 +17,6 @@ import {
   Spin,
   Switch,
   Table,
-  Tabs,
   Tag,
   Typography,
   message,
@@ -47,8 +46,6 @@ import type {
 import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/types';
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag } from './shared';
 import RequirementImportModal from './RequirementImportModal';
-import ActiveTaskList from './ActiveTaskList';
-import RequirementScoring from '../admin/RequirementScoring';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
@@ -137,7 +134,6 @@ export default function Requirements() {
   const canCreate = useReqPerm('create');
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
-  const [searchParams] = useSearchParams();
   const [view, setView] = useState<'board' | 'table'>('table');
   const [items, setItems] = useState<RequirementRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -577,16 +573,6 @@ export default function Requirements() {
     </>
   );
 
-  return (
-    <Card title={t('req.title')}>
-      <Tabs
-        defaultActiveKey={searchParams.get('tab') ?? 'overview'}
-        items={[
-          { key: 'overview', label: t('req.tab.overview'), children: overviewTab },
-          { key: 'tasks', label: t('req.tab.tasks'), children: <ActiveTaskList /> },
-          { key: 'scoring', label: t('req.tab.scoring'), children: <RequirementScoring embedded /> },
-        ]}
-      />
-    </Card>
-  );
+  // M17：任务跟踪/评分规则已拆为左侧导航二级菜单独立页，本页只承载需求总览
+  return <Card title={t('req.tab.overview')}>{overviewTab}</Card>;
 }

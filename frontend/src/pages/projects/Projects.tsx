@@ -15,7 +15,6 @@ import {
   Space,
   Switch,
   Table,
-  Tabs,
   Tooltip,
   message,
 } from 'antd';
@@ -761,21 +760,12 @@ function PortfolioPane() {
 
 // ---------------- 页面：Tabs ----------------
 
-export default function Projects() {
+/** 二级菜单页（M17）：项目列表 / 项目组合 由左侧导航直达，不再用页内 Tabs */
+export default function Projects({ pane }: { pane: 'list' | 'portfolios' }) {
   const t = useT();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tab = searchParams.get('tab') === 'portfolios' ? 'portfolios' : 'list';
-
   return (
-    <Card title={t('proj.title')}>
-      <Tabs
-        activeKey={tab}
-        onChange={(k) => setSearchParams(k === 'portfolios' ? { tab: 'portfolios' } : {})}
-        items={[
-          { key: 'list', label: t('proj.tab.list'), children: <ProjectList /> },
-          { key: 'portfolios', label: t('proj.tab.portfolios'), children: <PortfolioPane /> },
-        ]}
-      />
+    <Card title={t(pane === 'portfolios' ? 'proj.tab.portfolios' : 'proj.tab.list')}>
+      {pane === 'portfolios' ? <PortfolioPane /> : <ProjectList />}
     </Card>
   );
 }
