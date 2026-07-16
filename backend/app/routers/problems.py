@@ -105,7 +105,7 @@ def _create_problem(db: Session, data: dict, actor: AuthUser, source_ticket: Tic
 @router.get("/api/problems")
 def list_problems(
     page: int = 1, page_size: int = 20, q: str = "", status: str = "", priority: str = "",
-    db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("problems", "view")),
+    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "view")),
 ):
     query = db.query(Problem).filter(Problem.is_deleted.is_(False))
     if q:
@@ -116,7 +116,8 @@ def list_problems(
         query = query.filter(Problem.priority == priority)
     items, total = paginate(query.order_by(Problem.is_example.desc(), Problem.created_at.desc()), page, page_size)
     names = status_names(db, "problem")
-    return ok([_row(p, db, names) for p in items], total=total, page=page)
+    pend = process_engine.pending_steps_map(db, ["problem"], [x.id for x in items], user)
+    return ok([{**_row(p, db, names), "pending_step": pend.get(p.id)} for p in items], total=total, page=page)
 
 
 @router.post("/api/problems")
@@ -161,7 +162,7 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
                     process_engine.filter_targets_by_flow(
                         db, user, "problem", p.id, p.status, allowed_targets(db, "problem", p.status, user)),
                     allow_terminal=_is_admin(db, user))
-                if code != "resolved" or _is_admin(db, user)
+                if code == "known_error" or _is_admin(db, user)
             ],
             "process": process_engine.instance_view(db, "problem", p.id),
         }
@@ -333,9 +334,10 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_not_example(p)
-    if body.to == "resolved" and not _is_admin(db, user):
-        # M29.1：已解决由「完成流程步骤」自动同步，手动流转仅 admin（防状态与流程脱节）
-        raise AppError("USE_PROCESS_STEP", "请通过「完成此步骤」推进流程，问题状态将自动同步为已解决", 403)
+    if body.to != "known_error" and not _is_admin(db, user):
+        # M31：问题状态全程由流程编排同步（确认→分析中、验证完→已解决、确认关→关闭）；
+        # 非 admin 仅保留「已知错误」（独立登记语义，不动流程节点）
+        raise AppError("USE_PROCESS_STEP", "请通过「完成此步骤」推进流程，问题状态将自动同步", 403)
     require_terminal_transition_admin(db, user, "problem", p.status, body.to)  # M28：强关仅 admin
     process_engine.require_flow_operator_for_transition(db, user, "problem", p.id, p.status, body.to)  # M25
     had_root_cause = bool(p.root_cause)

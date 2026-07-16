@@ -47,18 +47,22 @@ def test_initiator_has_no_transition_buttons_or_api(client, ctx):
     assert d["flow_operator_name"] == "运维负责人M25"
 
     r = client.post(f"/api/tickets/{t['id']}/transition", json={"to": "processing", "fields": {}}, headers=ctx["ops_h"])
-    assert r.status_code == 403 and "运维负责人M25" in r.json()["error"]["message"]
+    assert r.status_code == 403  # M31：手动流转收敛，提示走流程步骤
     r = client.post(f"/api/tickets/{t['id']}/close", json={"reason": "发起人试图关单"}, headers=ctx["ops_h"])
     assert r.status_code == 403
 
 
 def test_current_operator_and_admin_can_transition(client, ctx):
-    """当前节点处理人可流转；admin 恒可。"""
-    t = _incident(client, ctx, "断网-处理人可流转")
+    """M31：处理人通过完成步骤推进（状态自动同步 processing）；admin 手动流转恒可。"""
+    t = _incident(client, ctx, "断网-处理人步骤推进")
     d = client.get(f"/api/tickets/{t['id']}", headers=ctx["leader_h"]).json()["data"]
-    assert any(x["to"] == "processing" for x in d["allowed_transitions"])  # 处理人有按钮
-    r = client.post(f"/api/tickets/{t['id']}/transition", json={"to": "processing", "fields": {}}, headers=ctx["leader_h"])
+    assert all(x["to"] != "processing" for x in d["allowed_transitions"])  # 手动流转按钮已收敛
+    proc = d["process"]
+    cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
+    r = client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "受理定级完成"}, headers=ctx["leader_h"])
     assert r.json()["success"], r.text
+    d = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]
+    assert d["status"] == "processing"  # 编排自动同步（首响 SLA 打点）
 
     t2 = _incident(client, ctx, "断网-admin恒可")
     r = client.post(f"/api/tickets/{t2['id']}/transition", json={"to": "processing", "fields": {}}, headers=ctx["admin"])
@@ -77,9 +81,9 @@ def test_flow_finished_falls_back_to_module_perm(client, ctx):
         client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "完成节点"}, headers=ctx["admin"])
     d = client.get(f"/api/tickets/{t['id']}", headers=ctx["ops_h"]).json()["data"]
     assert d["status"] == "closed"
-    # 终态无可流转目标，但接口不再因流程拦截（403 FLOW_OPERATOR_ONLY 不应出现）
+    # 终态修正口子归 admin（M31：非 admin 手动流转统一收敛为 USE_PROCESS_STEP）
     r = client.post(f"/api/tickets/{t['id']}/transition", json={"to": "processing", "fields": {}}, headers=ctx["ops_h"])
-    assert r.status_code != 403 or r.json().get("error", {}).get("code") != "FLOW_OPERATOR_ONLY"
+    assert r.json().get("error", {}).get("code") in ("USE_PROCESS_STEP", "INVALID_TRANSITION")
 
 
 def test_problem_transition_follows_flow_operator(client, ctx):
@@ -95,7 +99,10 @@ def test_problem_transition_follows_flow_operator(client, ctx):
     assert d["allowed_transitions"] == []
     r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["ops_h"])
     assert r.status_code == 403
+    # M31：问题状态全由编排同步，处理人手动 analyzing 也收敛（仅 admin 修数据）
     r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["leader_h"])
+    assert r.status_code == 403 and r.json()["error"]["code"] == "USE_PROCESS_STEP"
+    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["admin"])
     assert r.json()["success"], r.text
 
 

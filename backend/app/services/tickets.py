@@ -173,6 +173,53 @@ def quick_close(db: Session, ticket: Ticket, reason: str, actor: AuthUser) -> Ti
     return ticket
 
 
+def on_ticket_advanced(db: Session, ticket_id: str, actor: AuthUser) -> None:
+    """工单流程编排（M31）：状态由流程自动同步，处理人不再手动流转。
+
+    服务请求/事件：任一步骤完成后状态仍 new → 处理中（打首次响应 SLA）；
+    进入最后一步（用户确认/关闭复盘）→ 已解决（打解决 SLA、通知提交人确认评价）；
+    流程完成 → 已关闭（M23）。变更单保持状态机审批链（显式授权），仅终点闭环。
+    """
+    from app.services.process_engine import _live_steps, current_pending_task
+    from app.services.workflow import closure_path
+
+    t = db.get(Ticket, ticket_id)
+    if not t or t.is_deleted or t.status in ("closed", "rejected"):
+        return
+    etype = entity_type_of(t)
+    task = current_pending_task(db, etype, t.id)
+    if not task:
+        auto_close_on_process_complete(db, t.id, actor)
+        return
+    if t.ticket_type == "change":
+        return  # 变更：审批链走状态机显式授权，不做中间态映射
+    from app.models import ProcessInstance
+
+    inst = db.get(ProcessInstance, task.instance_id)
+    live = _live_steps(inst.definition)
+    last_seq = max(s.seq for s in live) if live else None
+    cur_seq = task.step.seq if task.step else None
+    if cur_seq is not None and last_seq is not None and cur_seq == last_seq and t.status not in ("resolved",):
+        if not t.solution:
+            from app.models import ProcessTask
+
+            done = (
+                db.query(ProcessTask)
+                .filter(ProcessTask.instance_id == inst.id, ProcessTask.status == "已完成",
+                        ProcessTask.is_deleted.is_(False))
+                .order_by(ProcessTask.completed_at.desc())
+                .all()
+            )
+            t.solution = next((x.comment for x in done if x.comment), None) or "详见流程处理记录"
+        path = closure_path(db, etype, t.status, actor, dst="resolved", ignore_roles=True)
+        for to in path or []:
+            do_transition(db, t, to, {}, actor, system=True)
+    elif t.status == "new":
+        path = closure_path(db, etype, t.status, actor, dst="processing", ignore_roles=True)
+        for to in path or []:
+            do_transition(db, t, to, {}, actor, system=True)
+
+
 def auto_close_on_process_complete(db: Session, ticket_id: str, actor: AuthUser) -> bool:
     """流程实例完成 → 工单沿状态机自动闭环到 closed（M23，用户实测：变更复盘完成后状态仍停在待审批）。
 

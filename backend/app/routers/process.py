@@ -74,11 +74,11 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
         from app.routers.requirements import on_process_advanced
 
         on_process_advanced(db, instance.entity_id, user)
-    elif instance.entity_type in ("ticket", "ticket_change") and instance.status == "completed":
-        # M23：工单流程走完（如变更复盘完成）→ 工单状态机自动闭环，不再停在中间状态
-        from app.services.tickets import auto_close_on_process_complete
+    elif instance.entity_type in ("ticket", "ticket_change"):
+        # M23/M31：工单流程编排——中间态自动同步（SR/事件），流程完成自动闭环
+        from app.services.tickets import on_ticket_advanced
 
-        auto_close_on_process_complete(db, instance.entity_id, user)
+        on_ticket_advanced(db, instance.entity_id, user)
     elif instance.entity_type == "problem":
         # M24/M29：问题流程编排（步骤延续/负责人指派/状态同步；完成→自动闭环）
         from app.routers.problems import on_problem_advanced

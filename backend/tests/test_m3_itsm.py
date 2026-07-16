@@ -222,14 +222,14 @@ def test_knowledge_flow(client, ctx, admin_headers):
     assert detail["view_count"] >= 2 and detail["voted"] is True
 
 
-def test_ticket_to_knowledge_draft(client, ctx):
+def test_ticket_to_knowledge_draft(client, ctx, admin_headers):
     t = client.post(
         "/api/tickets",
         json={"title": "VPN 证书过期处理", "ticket_type": "incident", "priority": "P3",
               "description": "证书到期导致无法拨入", "service_item_id": ctx["item"]},
         headers=ctx["ops"],
     ).json()["data"]
-    client.post(f"/api/tickets/{t['id']}/transition", json={"to": "resolved", "fields": {"solution": "更换证书并设置到期提醒"}}, headers=ctx["ops"])
+    client.post(f"/api/tickets/{t['id']}/transition", json={"to": "resolved", "fields": {"solution": "更换证书并设置到期提醒"}}, headers=admin_headers)
 
     r = client.post(f"/api/tickets/{t['id']}/to-knowledge", headers=ctx["ops"])
     article_id = r.json()["data"]["article_id"]

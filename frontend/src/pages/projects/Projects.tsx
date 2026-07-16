@@ -25,6 +25,8 @@ import { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { ExampleTag } from '../../components/ExampleTag';
+import PendingStepCell from '../../components/PendingStepCell';
+import type { PendingStep } from '../../components/PendingStepCell';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type {
   Member,
@@ -317,6 +319,14 @@ function ProjectList() {
         >
           <span>{r.milestone_total}</span>
         </Badge>
+      ),
+    },
+    {
+      title: t('comp.pending.col'),
+      key: 'pending',
+      width: 190,
+      render: (_: unknown, r: ProjectRow) => (
+        <PendingStepCell pending={(r as ProjectRow & { pending_step?: PendingStep | null }).pending_step} onDone={() => void load()} />
       ),
     },
     ...(canEdit

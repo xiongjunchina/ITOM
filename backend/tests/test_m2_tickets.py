@@ -53,23 +53,23 @@ def test_ticket_lifecycle_and_sla(client, ctx, admin_headers):
     tid = t["id"]
 
     # 非法跳转：new → closed
-    resp = client.post(f"/api/tickets/{tid}/transition", json={"to": "closed", "fields": {}}, headers=ctx["ops"])
+    resp = client.post(f"/api/tickets/{tid}/transition", json={"to": "closed", "fields": {}}, headers=admin_headers)
     assert resp.json()["error"]["code"] == "INVALID_TRANSITION"
 
-    # 受理 → first_response 打点
-    client.post(f"/api/tickets/{tid}/transition", json={"to": "processing", "fields": {}}, headers=ctx["ops"])
+    # 受理 → first_response 打点（M31：手动流转归 admin；日常由完成流程步骤自动同步）
+    client.post(f"/api/tickets/{tid}/transition", json={"to": "processing", "fields": {}}, headers=admin_headers)
     detail = client.get(f"/api/tickets/{tid}", headers=ctx["ops"]).json()["data"]
     assert detail["first_response_at"] is not None
     assert detail["sla_response_met"] is True  # 立即受理必然达标
 
     # 解决时缺 solution 被拒
-    resp = client.post(f"/api/tickets/{tid}/transition", json={"to": "resolved", "fields": {}}, headers=ctx["ops"])
+    resp = client.post(f"/api/tickets/{tid}/transition", json={"to": "resolved", "fields": {}}, headers=admin_headers)
     assert resp.json()["error"]["code"] == "STAGE_FIELD_REQUIRED"
 
     client.post(
         f"/api/tickets/{tid}/transition",
         json={"to": "resolved", "fields": {"solution": "已修复"}},
-        headers=ctx["ops"],
+        headers=admin_headers,
     )
     detail = client.get(f"/api/tickets/{tid}", headers=ctx["ops"]).json()["data"]
     assert detail["sla_resolution_met"] is True and detail["first_time_fix"] is True
@@ -93,12 +93,12 @@ def test_ticket_lifecycle_and_sla(client, ctx, admin_headers):
     assert resp.json()["data"]["satisfaction"] == 5
 
 
-def test_reopen_clears_first_time_fix(client, ctx):
+def test_reopen_clears_first_time_fix(client, ctx, admin_headers):
     t = _create(client, ctx["ops"], ctx["item"])
     tid = t["id"]
-    client.post(f"/api/tickets/{tid}/transition", json={"to": "resolved", "fields": {"solution": "fix"}}, headers=ctx["ops"])
-    client.post(f"/api/tickets/{tid}/transition", json={"to": "processing", "fields": {}}, headers=ctx["ops"])
-    client.post(f"/api/tickets/{tid}/transition", json={"to": "resolved", "fields": {}}, headers=ctx["ops"])
+    client.post(f"/api/tickets/{tid}/transition", json={"to": "resolved", "fields": {"solution": "fix"}}, headers=admin_headers)
+    client.post(f"/api/tickets/{tid}/transition", json={"to": "processing", "fields": {}}, headers=admin_headers)
+    client.post(f"/api/tickets/{tid}/transition", json={"to": "resolved", "fields": {}}, headers=admin_headers)
     detail = client.get(f"/api/tickets/{tid}", headers=ctx["ops"]).json()["data"]
     assert detail["reopen_count"] == 1 and detail["first_time_fix"] is False
 
@@ -179,7 +179,7 @@ def test_process_task_complete_advances(client, ctx):
     assert steps[0]["task_status"] == "已完成" and steps[1]["task_status"] == "待处理"
 
 
-def test_sla_dashboard_and_main_dashboard(client, ctx):
+def test_sla_dashboard_and_main_dashboard(client, ctx, admin_headers):
     resp = client.get("/api/sla/dashboard", headers=ctx["ops"]).json()["data"]
     assert "by_priority" in resp and resp["by_priority"]["P3"]["resolved"] >= 1
 

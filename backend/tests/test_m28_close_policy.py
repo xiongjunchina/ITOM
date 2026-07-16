@@ -51,7 +51,7 @@ def test_requirement_manual_terminal_transition_admin_only(client, ctx):
                                                "business_domain_id": ctx["domain"], "description": "d"},
                     headers=ctx["admin"]).json()["data"]
     resp = client.post(f"/api/requirements/{r['id']}/transition", json={"to": "cancelled", "fields": {}}, headers=ctx["pdm_h"])
-    assert resp.status_code == 403 and resp.json()["error"]["code"] == "FORCE_CLOSE_FORBIDDEN"
+    assert resp.status_code == 403 and resp.json()["error"]["code"] in ("FORCE_CLOSE_FORBIDDEN", "USE_PROCESS_STEP")
     resp = client.post(f"/api/requirements/{r['id']}/transition", json={"to": "cancelled", "fields": {}}, headers=ctx["admin"])
     assert resp.json()["success"], resp.text
 

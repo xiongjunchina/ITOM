@@ -6,6 +6,8 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import PendingStepCell from '../../components/PendingStepCell';
+import type { PendingStep } from '../../components/PendingStepCell';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
@@ -156,6 +158,26 @@ export default function Problems() {
       width: 150,
       onCell: () => ({ className: 'cell-nowrap' }),
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
+    },
+    {
+      title: t('comp.pending.col'),
+      key: 'pending',
+      width: 200,
+      render: (_, r) => (
+        <PendingStepCell
+          pending={(r as ProblemRow & { pending_step?: PendingStep | null }).pending_step}
+          onDone={() => void load()}
+          extraActions={(p) =>
+            p.seq === 1 ? (
+              <Space size={8}>
+                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate(`/itsm/problems/${r.id}`)}>
+                  {t('itsm.problem.confirmGo')}
+                </Button>
+              </Space>
+            ) : null
+          }
+        />
+      ),
     },
     // M21：删除（delete 权限，默认仅 admin），示例数据只读
     ...(canDelete

@@ -202,11 +202,12 @@ def list_requirements(
     if decision:
         query = query.filter(Requirement.decision == decision)
     items, total = paginate(query.order_by(Requirement.is_example.desc(), Requirement.created_at.desc()), page, page_size)
+    pend = process_engine.pending_steps_map(db, ["requirement"], [x.id for x in items], user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     cfg = requirement_scoring.get_config(db)
-    return ok([_row(r, db, names, domains, status_map, cfg) for r in items], total=total, page=page)
+    return ok([{**_row(r, db, names, domains, status_map, cfg), "pending_step": pend.get(r.id)} for r in items], total=total, page=page)
 
 
 def _current_process_task(db: Session, requirement_id: str):
@@ -579,15 +580,11 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             "problems": [{"id": p.id, "problem_code": p.problem_code, "title": p.title} for p in linked_problems],
             "articles": [{"id": a.id, "article_code": a.article_code, "title": a.title} for a in linked_articles],
         },
-        # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留；M28 终态仅可关闭人；
-        # M29.1：无 requirements.edit（如业务用户）不下发（与 transition 接口权限一致）
-        "allowed_transitions": [] if r.is_example or not has_perm(db, user, "requirements", "edit") else [
+        # M31：需求状态全程由编排驱动（决议/转开发/转项目/流程闭环/主动关闭均有专门动作）——
+        # 手动状态按钮仅 admin（修数据口子）
+        "allowed_transitions": [] if r.is_example or not _is_req_admin(db, user) else [
             {"to": code, "to_name": status_map.get(code, code)}
-            for code in restrict_terminal_targets(
-                db, "requirement", r.status,
-                process_engine.filter_targets_by_flow(
-                    db, user, "requirement", r.id, r.status, allowed_targets(db, "requirement", r.status, user)),
-                allow_terminal=_is_req_admin(db, user))
+            for code in allowed_targets(db, "requirement", r.status, user)
         ],
         "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
         "process": process_engine.instance_view(db, "requirement", r.id),
@@ -710,8 +707,9 @@ def close_requirement(requirement_id: str, body: RequirementCloseIn, db: Session
 def transition_requirement(requirement_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
-    require_terminal_transition_admin(db, user, "requirement", r.status, body.to)  # M28：强关仅 admin
-    process_engine.require_flow_operator_for_transition(db, user, "requirement", r.id, r.status, body.to)  # M25
+    if not _is_req_admin(db, user):
+        # M31：需求状态由评分决议/转开发/转项目/流程闭环等专门动作驱动，手动流转仅 admin
+        raise AppError("USE_PROCESS_STEP", "请使用评审决议、转开发/转项目或完成流程步骤推进，需求状态将自动同步", 403)
     # 阶段门校验
     if body.to == "analyzing" and r.status == "evaluating":
         # 评估门：从评估进入分析，必须已完成六维评分且决议为「立项」

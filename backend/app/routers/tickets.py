@@ -103,7 +103,8 @@ def list_tickets(
         query = query.filter(Ticket.assignee == assignee)
     items, total = paginate(query.order_by(Ticket.is_example.desc(), Ticket.submitted_at.desc()), page, page_size)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
-    return ok([_row(t, db, names) for t in items], total=total, page=page)
+    pend = process_engine.pending_steps_map(db, ["ticket", "ticket_change"], [t.id for t in items], user)
+    return ok([{**_row(t, db, names), "pending_step": pend.get(t.id)} for t in items], total=total, page=page)
 
 
 @router.post("")
@@ -155,7 +156,8 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "first_time_fix": t.first_time_fix,
             "sla_response_min": t.sla_response_min,
             "actual_response_min": t.actual_response_min, "actual_resolution_hours": t.actual_resolution_hours,
-            # M30：终态状态按钮仅 admin（与 transition 接口一致）；登记人关单走专门的 can_close 按钮
+            # M31：SR/事件状态全程由流程编排同步——非 admin 仅保留 挂起/恢复（SLA 暂停语义，
+            # 不与流程脱节）；变更保持审批链按钮（M25 处理人过滤+显式授权）；终态仅 admin（M30）
             "allowed_transitions": [] if t.is_example or not can_edit else [
                 {"to": code, "to_name": names.get(code, code)}
                 for code in restrict_terminal_targets(
@@ -163,6 +165,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
                     process_engine.filter_targets_by_flow(
                         db, user, etype, t.id, t.status, allowed_targets(db, etype, t.status, user)),
                     allow_terminal=_is_admin(db, user))
+                if _ticket_target_allowed(db, user, t, code)
             ],
             "can_close": _can_close_ticket(db, user, t) and not t.is_example and t.status not in ("closed", "rejected"),
             "can_edit": can_edit and not t.is_example,
@@ -200,6 +203,9 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
 def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
     _require_type_perm(db, user, t.ticket_type, "edit")  # M17.2
+    if not _ticket_target_allowed(db, user, t, body.to):
+        # M31：SR/事件状态由完成流程步骤自动同步（受理→处理中，末步→已解决，完成→关闭）
+        raise AppError("USE_PROCESS_STEP", "请通过「完成此步骤」推进流程，工单状态将自动同步", 403)
     # M28：普通授权的终态流转=强制关闭，仅系统管理员（正常闭环走流程完成自动关闭）
     require_terminal_transition_admin(db, user, svc.entity_type_of(t), t.status, body.to)
     # M25：普通流转仅流程当前处理人；审批类流转由状态机 allowed_roles 授权
@@ -207,6 +213,21 @@ def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(
     ensure_not_example(t)
     svc.do_transition(db, t, body.to, body.fields, user)
     return ok({"id": t.id, "status": t.status})
+
+
+#: M31：SR/事件非 admin 可手动操作的状态目标（挂起/从挂起恢复）——其余状态由流程编排自动同步
+_MANUAL_TARGETS_NON_CHANGE = {"paused", "processing"}
+
+
+def _ticket_target_allowed(db: Session, user: AuthUser, t: Ticket, to_code: str) -> bool:
+    """SR/事件：非 admin 仅 挂起（processing→paused）与 恢复（paused→processing）；变更不限（审批链）。"""
+    if t.ticket_type == "change" or _is_admin(db, user):
+        return True
+    if to_code == "paused":
+        return True
+    if to_code == "processing" and t.status == "paused":
+        return True
+    return False
 
 
 def _can_close_ticket(db: Session, user: AuthUser, t: Ticket) -> bool:

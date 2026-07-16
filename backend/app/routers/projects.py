@@ -242,9 +242,10 @@ def list_projects(
     if scope == "mine" and user.person_id:
         query = query.filter(Project.pm == user.person_id)
     items, total = paginate(query.order_by(Project.is_example.desc(), Project.created_at.desc()), page, page_size)
+    pend = process_engine.pending_steps_map(db, ["project"], [x.id for x in items], user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     status_map = status_names(db, "project")
-    return ok([_project_row(p, db, names, status_map) for p in items], total=total, page=page)
+    return ok([{**_project_row(p, db, names, status_map), "pending_step": pend.get(p.id)} for p in items], total=total, page=page)
 
 
 def _link_requirement(db: Session, project: Project, requirement_id: str, actor: AuthUser):

@@ -23,6 +23,8 @@ import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import PendingStepCell from '../../components/PendingStepCell';
+import type { PendingStep } from '../../components/PendingStepCell';
 import { useT } from '../../i18n';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
@@ -326,6 +328,12 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       render: (v: string) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-'),
     },
     { title: 'SLA', key: 'sla', width: 90, render: (_, r) => renderSla(r, t) },
+    {
+      title: t('comp.pending.col'),
+      key: 'pending',
+      width: 190,
+      render: (_, r) => <PendingStepCell pending={(r as TicketRow & { pending_step?: PendingStep | null }).pending_step} onDone={() => void load()} />,
+    },
     // M20：管理动作列（编辑/关闭需 edit；删除需 delete——默认矩阵仅 admin），示例数据只读
     ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin
       ? ([

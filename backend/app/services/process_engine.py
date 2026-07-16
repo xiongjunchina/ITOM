@@ -322,6 +322,48 @@ def can_act_on_task(db: Session, user: AuthUser, task: ProcessTask) -> bool:
     return bool(role and role in held)
 
 
+def pending_steps_map(db: Session, entity_types: list[str], entity_ids: list[str], user: AuthUser) -> dict:
+    """列表页待办标识（M31）：批量取各单据当前待处理节点，标记是否轮到当前用户处理。
+
+    返回 {entity_id: {"task_id","name","seq","assignee_name","mine"}}；无活跃节点的单据不在结果中。
+    """
+    if not entity_ids:
+        return {}
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    held = actor_keys(db, user)
+    is_admin = ADMIN in held
+    instances = (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type.in_(entity_types),
+            ProcessInstance.entity_id.in_(entity_ids),
+            ProcessInstance.status.in_(["running", "进行中"]),
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .all()
+    )
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    out: dict = {}
+    for inst in instances:
+        task = next((t for t in inst.tasks if t.status == "待处理" and not t.is_deleted), None)
+        if not task:
+            continue
+        mine = is_admin or bool(user.person_id and task.assignee == user.person_id)
+        if not mine and not task.assignee:  # 未指派：默认角色持有者可认领（M25）
+            role = task.step.default_role if task.step else None
+            mine = bool(role and role in held)
+        out[inst.entity_id] = {
+            "task_id": task.id,
+            "name": task.step.name if task.step else "",
+            "seq": task.step.seq if task.step else None,
+            "assignee_name": names.get(task.assignee) if task.assignee else None,
+            "mine": mine,
+        }
+    return out
+
+
 def flow_operator_check(db: Session, user: AuthUser, entity_type: str, entity_id: str) -> tuple[bool, str | None]:
     """流程驱动单据的状态操作权（M25）：有活跃流程时，仅当前步骤处理人或 admin 可流转状态。
 

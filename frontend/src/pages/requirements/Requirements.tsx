@@ -36,6 +36,8 @@ import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleTag } from '../../components/ExampleTag';
+import PendingStepCell from '../../components/PendingStepCell';
+import type { PendingStep } from '../../components/PendingStepCell';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type {
   BusinessDomain,
@@ -326,6 +328,12 @@ export default function Requirements() {
       dataIndex: 'lead_days',
       width: 100,
       render: (v: number | null) => (v == null ? '-' : t('req.daysN', { n: v })),
+    },
+    {
+      title: t('comp.pending.col'),
+      key: 'pending',
+      width: 200,
+      render: (_, r) => <PendingStepCell pending={(r as RequirementRow & { pending_step?: PendingStep | null }).pending_step} onDone={() => void load()} />,
     },
     // M21：删除（delete 权限，默认仅 admin）：级联移除任务清单与流程记录，示例只读
     ...(canDelete
