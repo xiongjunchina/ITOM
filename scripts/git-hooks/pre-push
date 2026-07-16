@@ -1,0 +1,12 @@
+#!/bin/sh
+# 分支保护（本地版）：禁止直推 main——请走 feature/develop 分支 + Pull Request 合入。
+# 特殊情况可用 ALLOW_MAIN_PUSH=1 git push 显式放行。
+if [ "$ALLOW_MAIN_PUSH" = "1" ]; then exit 0; fi
+while read local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "✗ 已拦截：main 为保护分支，请在 develop/feature 分支提交后通过 Pull Request 合入。"
+    echo "  （确需直推：ALLOW_MAIN_PUSH=1 git push)"
+    exit 1
+  fi
+done
+exit 0

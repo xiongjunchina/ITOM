@@ -106,8 +106,9 @@ deploy/          docker-compose、Nginx、备份
 - **飞书扫码登录 + 开通审批**：员工扫码通过身份校验后不立即登录，落 `login_request`（pending）；管理员配置用户名/角色/默认语言/关联人员并开通后，员工过渡页轮询到 approved 自动进入系统；通知走站内 + 发件箱。
 
 ### 分支与协作
-- `main`：稳定分支，受保护——只接受 Pull Request 合入，禁止 force push 与删除。
+- `main`：稳定分支，受保护——只接受 Pull Request 合入，禁止直推（本地 pre-push 钩子拦截；紧急放行 `ALLOW_MAIN_PUSH=1 git push`）。
 - `develop`：日常开发集成分支；功能开发从 `develop` 拉 `feature/<名称>` 分支，完成后 PR 合回。
+- 首次 clone 后启用钩子：`git config core.hooksPath scripts/git-hooks`。
 - 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误。
 
 ### 里程碑
@@ -215,8 +216,9 @@ deploy/          docker-compose, Nginx, backups
 - **Feishu QR sign-in + provisioning approval**: after an employee passes Feishu identity verification they are NOT logged in immediately; a `login_request` (pending) is recorded. Once an admin configures the username/roles/default language/linked person and approves, the employee's waiting page polls until `approved` and enters the system automatically. Notifications go through in-app + outbox.
 
 ### Branching & collaboration
-- `main`: stable, protected — merged via Pull Request only; force pushes and deletion are blocked.
+- `main`: stable, protected — merged via Pull Request only; direct pushes are blocked by a local pre-push hook (override with `ALLOW_MAIN_PUSH=1 git push` in emergencies).
 - `develop`: day-to-day integration branch; cut `feature/<name>` branches from it and PR back.
+- After cloning, enable the hooks once: `git config core.hooksPath scripts/git-hooks`.
 - Pre-commit checklist: backend `pytest -q` all green, frontend `npm run build` with zero errors.
 
 ### Milestones
