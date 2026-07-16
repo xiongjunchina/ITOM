@@ -22,7 +22,7 @@ const STAT_META: { key: keyof FeishuSyncStats; label: string; color: string }[] 
 /** POST /admin/feishu-config/test 结果 */
 interface FeishuTestResult {
   connected: boolean;
-  it_department_name?: string | null;
+  scope_names?: string[] | null;
 }
 
 export default function FeishuIntegration() {
@@ -40,7 +40,7 @@ export default function FeishuIntegration() {
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
-  const [itDeptId, setItDeptId] = useState('');
+  const [syncScope, setSyncScope] = useState('');
   const [enabled, setEnabled] = useState(false);
 
   // 需在飞书开放平台登记的重定向 URL（动态取当前站点）
@@ -53,7 +53,7 @@ export default function FeishuIntegration() {
       setConfig(c);
       setApiBase(c.api_base || DEFAULT_API_BASE);
       setAppId(c.app_id ?? '');
-      setItDeptId(c.it_department_id ?? '');
+      setSyncScope(c.sync_scope ?? '');
       setEnabled(!!c.enabled);
       setAppSecret(''); // 密钥不回显，输入框留空
     } catch {
@@ -73,7 +73,7 @@ export default function FeishuIntegration() {
       const body: Record<string, unknown> = {
         api_base: apiBase.trim() || DEFAULT_API_BASE,
         app_id: appId.trim(),
-        it_department_id: itDeptId.trim(),
+        sync_scope: syncScope.trim(),
         enabled,
       };
       const secret = appSecret.trim();
@@ -92,8 +92,8 @@ export default function FeishuIntegration() {
     setTesting(true);
     try {
       const r = await api.post<FeishuTestResult>('/admin/feishu-config/test');
-      const dept = r.it_department_name ? t('feishu.testOkDept', { name: r.it_department_name }) : '';
-      message.success(t('feishu.testOk') + dept);
+      const scope = r.scope_names?.length ? t('feishu.testOkDept', { name: r.scope_names.join('、') }) : '';
+      message.success(t('feishu.testOk') + scope);
     } catch {
       // 失败已统一提示（msg 带飞书上游错误）
     } finally {
@@ -175,16 +175,16 @@ export default function FeishuIntegration() {
           />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography.Text>{t('feishu.itDeptId')}</Typography.Text>
-          <Input
-            value={itDeptId}
+          <Typography.Text>{t('feishu.syncScope')}</Typography.Text>
+          <Input.TextArea
+            value={syncScope}
             disabled={disabled}
-            placeholder="od-xxx"
-            onChange={(e) => setItDeptId(e.target.value)}
-            autoComplete="off"
+            placeholder="od-xxx, od-yyy 或 0"
+            autoSize={{ minRows: 1, maxRows: 3 }}
+            onChange={(e) => setSyncScope(e.target.value)}
           />
           <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
-            {t('feishu.itDeptIdHint')}
+            {t('feishu.syncScopeHint')}
           </Typography.Text>
         </div>
         <Space>

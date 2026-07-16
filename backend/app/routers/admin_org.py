@@ -327,7 +327,7 @@ class FeishuConfigIn(_BM):
     api_base: str | None = None
     app_id: str | None = None
     app_secret: str | None = None  # 留空=不修改
-    it_department_id: str | None = None
+    sync_scope: str | None = None
     enabled: bool | None = None
 
 
@@ -341,7 +341,7 @@ def _feishu_cfg_payload(cfg) -> dict:
     return {
         "api_base": cfg.api_base, "app_id": cfg.app_id,
         "app_secret_masked": _mask(cfg.app_secret), "has_secret": bool(cfg.app_secret),
-        "it_department_id": cfg.it_department_id, "enabled": cfg.enabled,
+        "sync_scope": cfg.sync_scope, "enabled": cfg.enabled,
         "last_sync_at": cfg.last_sync_at, "last_sync_stats": cfg.last_sync_stats,
     }
 
@@ -383,11 +383,17 @@ def test_feishu_config(db: Session = Depends(get_db), _=Depends(require_roles("a
     """测试连接：换 tenant_token；配置了 IT 部门则顺带取部门名。"""
     from app.services.feishu import build_client, get_config
 
+    from app.services.feishu import parse_scope
+
     cfg = get_config(db)
     client = build_client(cfg)
     token = client.tenant_access_token()
-    dept_name = None
-    if cfg.it_department_id:
-        dept_name = (client.get_department(token, cfg.it_department_id) or {}).get("name")
+    scope = parse_scope(cfg.sync_scope)
+    scope_names = []
+    for dep in scope[:5]:
+        if dep == "0":
+            scope_names.append("全公司")
+        else:
+            scope_names.append((client.get_department(token, dep) or {}).get("name") or dep)
     db.commit()
-    return ok({"connected": True, "it_department_name": dept_name})
+    return ok({"connected": True, "scope_names": scope_names})

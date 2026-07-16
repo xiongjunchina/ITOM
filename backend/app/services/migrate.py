@@ -440,9 +440,20 @@ def rebuild_problem_flow_m29(db: Session):
     db.commit()
 
 
+def rename_feishu_scope_m32(db: Session):
+    """M32：feishu_config.it_department_id → sync_scope（语义扩展为同步范围，保留原值）。"""
+    cols = _columns(db, "feishu_config")
+    if "it_department_id" in cols and "sync_scope" not in cols:
+        db.execute(text("ALTER TABLE feishu_config RENAME COLUMN it_department_id TO sync_scope"))
+        db.execute(text("ALTER TABLE feishu_config ALTER COLUMN sync_scope TYPE VARCHAR(512)"))
+        logger.info("feishu_config.it_department_id -> sync_scope（M32 同步范围）")
+        db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
+    rename_feishu_scope_m32(db)
     ensure_columns(db)
     drop_columns(db)
     fix_project_flow_pmo(db)

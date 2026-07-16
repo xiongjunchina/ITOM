@@ -137,8 +137,8 @@ export interface FeishuConfig {
   app_id: string;
   app_secret_masked: string;
   has_secret: boolean;
-  /** IT 团队根部门 open_department_id，仅同步该子树 */
-  it_department_id: string;
+  /** 组织架构同步范围：open_department_id 列表（逗号分隔），0=全公司（M32） */
+  sync_scope: string;
   enabled: boolean;
   last_sync_at: string | null;
   last_sync_stats: FeishuSyncStats | null;

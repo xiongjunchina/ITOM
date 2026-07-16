@@ -148,38 +148,48 @@ def build_client(cfg: FeishuConfig) -> FeishuClient:
 
 
 class FeishuOrgProvider(OrgSyncProvider):
-    """仅拉取配置的 IT 团队根部门子树 + 各部门成员，产出 OrgSnapshot。"""
+    """按配置的同步范围拉取部门子树 + 成员，产出 OrgSnapshot（M32：支持多部门/全公司）。"""
 
     source = "feishu"
 
-    def __init__(self, client: FeishuClient, it_department_id: str):
+    def __init__(self, client: FeishuClient, scope: list[str]):
         self.client = client
-        self.root_id = it_department_id
+        self.roots = scope  # open_department_id 列表；"0" 表示全公司
 
     def fetch(self) -> OrgSnapshot:
         token = self.client.tenant_access_token()
-        root = self.client.get_department(token, self.root_id)
-        children = self.client.list_child_departments(token, self.root_id)
-
         snapshot = OrgSnapshot()
-        subtree_ids = {self.root_id}
-        # 根部门：parent 置空（IT 团队即本系统组织树的顶层）
-        snapshot.departments.append(DeptIn(
-            external_id=self.root_id, name=root.get("name") or "IT",
-            parent_external_id=None, sort=int(root.get("order") or 0),
-        ))
-        for d in children:
-            ext = d.get("open_department_id") or d.get("department_id")
-            subtree_ids.add(ext)
-            parent = d.get("parent_department_id")
-            snapshot.departments.append(DeptIn(
-                external_id=ext, name=d.get("name") or ext,
-                parent_external_id=parent if parent in subtree_ids or parent == self.root_id else self.root_id,
-                sort=int(d.get("order") or 0),
-            ))
+        subtree_ids: set[str] = set()
+        for root_id in self.roots:
+            if root_id == "0":
+                # 全公司：飞书根部门 0 的子树即全部部门；顶层部门 parent 置空
+                children = self.client.list_child_departments(token, "0")
+                top_parent = None
+            else:
+                if root_id in subtree_ids:
+                    continue
+                root = self.client.get_department(token, root_id)
+                subtree_ids.add(root_id)
+                snapshot.departments.append(DeptIn(
+                    external_id=root_id, name=root.get("name") or root_id,
+                    parent_external_id=None, sort=int(root.get("order") or 0),
+                ))
+                children = self.client.list_child_departments(token, root_id)
+                top_parent = root_id
+            for d in children:
+                ext = d.get("open_department_id") or d.get("department_id")
+                if ext in subtree_ids:
+                    continue
+                subtree_ids.add(ext)
+                parent = d.get("parent_department_id")
+                snapshot.departments.append(DeptIn(
+                    external_id=ext, name=d.get("name") or ext,
+                    parent_external_id=parent if parent in subtree_ids else top_parent,
+                    sort=int(d.get("order") or 0),
+                ))
 
         seen: set[str] = set()
-        for dept_ext in [self.root_id] + [d.external_id for d in snapshot.departments[1:]]:
+        for dept_ext in [d.external_id for d in snapshot.departments]:
             for u in self.client.list_department_users(token, dept_ext):
                 open_id = u.get("open_id")
                 if not open_id or open_id in seen:
@@ -204,13 +214,22 @@ class FeishuOrgProvider(OrgSyncProvider):
         return snapshot
 
 
+def parse_scope(raw: str | None) -> list[str]:
+    """解析同步范围：逗号/空白分隔的 open_department_id 列表；含 "0" 时视为全公司（仅保留 0）。"""
+    import re as _re
+
+    ids = [x for x in _re.split(r"[,\s，、;；]+", (raw or "").strip()) if x]
+    return ["0"] if "0" in ids else ids
+
+
 def provider_from_db(db: Session) -> FeishuOrgProvider:
     cfg = get_config(db)
     if not cfg.enabled:
         raise AppError("SYNC_NOT_CONFIGURED", "飞书集成未启用（系统管理→飞书集成）", 501)
-    if not cfg.it_department_id:
-        raise AppError("SYNC_NOT_CONFIGURED", "未配置 IT 团队根部门 ID（open_department_id）", 501)
-    return FeishuOrgProvider(build_client(cfg), cfg.it_department_id)
+    scope = parse_scope(cfg.sync_scope)
+    if not scope:
+        raise AppError("SYNC_NOT_CONFIGURED", "未配置组织架构同步范围（部门 open_department_id，0=全公司）", 501)
+    return FeishuOrgProvider(build_client(cfg), scope)
 
 
 def run_feishu_sync(db: Session) -> dict:

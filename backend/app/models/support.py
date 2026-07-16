@@ -252,7 +252,7 @@ class Attachment(GlidBase):
 
 
 class FeishuConfig(GlidBase):
-    """飞书集成单行配置（M11）：组织同步（仅 IT 团队子树）+ 扫码登录 OAuth。
+    """飞书集成单行配置（M11/M32）：组织同步（按配置范围）+ 扫码登录 OAuth。
 
     app_secret 仅在 PUT 时写入，GET 返回掩码；enabled=False 时扫码登录退回模拟入口（开发用）。
     """
@@ -262,7 +262,7 @@ class FeishuConfig(GlidBase):
     api_base: Mapped[str] = mapped_column(String(100), default="https://open.feishu.cn", comment="飞书开放平台 API 基址")
     app_id: Mapped[str | None] = mapped_column(String(64), comment="自建应用 App ID")
     app_secret: Mapped[str | None] = mapped_column(String(128), comment="自建应用 App Secret")
-    it_department_id: Mapped[str | None] = mapped_column(String(64), comment="IT 团队根部门 open_department_id（仅同步该子树）")
+    sync_scope: Mapped[str | None] = mapped_column(String(512), comment="组织架构同步范围：open_department_id 列表（逗号分隔），0=全公司（M32）")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, comment="启用真实飞书（同步+扫码）")
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_sync_stats: Mapped[dict | None] = mapped_column(JsonCol, comment="上次同步统计")

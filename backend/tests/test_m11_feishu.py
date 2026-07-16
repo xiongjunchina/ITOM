@@ -8,7 +8,7 @@ from app.services.feishu import FeishuClient
 def cfg_ready(client, admin_headers):
     """写入并启用飞书配置（IT 根部门 od-root）。"""
     r = client.put("/api/admin/feishu-config", json={
-        "app_id": "cli_test_app", "app_secret": "s3cret-value", "it_department_id": "od-root", "enabled": True,
+        "app_id": "cli_test_app", "app_secret": "s3cret-value", "sync_scope": "od-root", "enabled": True,
     }, headers=admin_headers)
     assert r.json()["success"], r.text
     return r.json()["data"]
@@ -31,9 +31,9 @@ def test_config_crud_and_mask(client, admin_headers):
     assert cfg["app_secret_masked"].startswith("supe")
 
     # secret 留空更新其它字段 → 不清空
-    client.put("/api/admin/feishu-config", json={"it_department_id": "od-root"}, headers=admin_headers)
+    client.put("/api/admin/feishu-config", json={"sync_scope": "od-root"}, headers=admin_headers)
     cfg = client.get("/api/admin/feishu-config", headers=admin_headers).json()["data"]
-    assert cfg["has_secret"] is True and cfg["it_department_id"] == "od-root"
+    assert cfg["has_secret"] is True and cfg["sync_scope"] == "od-root"
 
 
 FAKE_DEPTS = [  # od-root 的子孙
