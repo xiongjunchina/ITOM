@@ -153,7 +153,7 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
                 {"id": t.id, "ticket_code": t.ticket_code, "title": t.title, "status": t.status}
                 for t in tickets
             ],
-            # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留
+            # M25：普通流转按钮只给当前节点处理人；M29.1：resolved 由流程自动同步（仅 admin 手动）
             "allowed_transitions": [] if p.is_example else [
                 {"to": code, "to_name": names.get(code, code)}
                 for code in restrict_terminal_targets(
@@ -161,6 +161,7 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
                     process_engine.filter_targets_by_flow(
                         db, user, "problem", p.id, p.status, allowed_targets(db, "problem", p.status, user)),
                     allow_terminal=_is_admin(db, user))
+                if code != "resolved" or _is_admin(db, user)
             ],
             "process": process_engine.instance_view(db, "problem", p.id),
         }
@@ -327,11 +328,14 @@ def on_problem_advanced(db: Session, problem_id: str, actor: AuthUser):
 
 
 @router.post("/api/problems/{problem_id}/transition")
-def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "edit"))):
+def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "view"))):
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_not_example(p)
+    if body.to == "resolved" and not _is_admin(db, user):
+        # M29.1：已解决由「完成流程步骤」自动同步，手动流转仅 admin（防状态与流程脱节）
+        raise AppError("USE_PROCESS_STEP", "请通过「完成此步骤」推进流程，问题状态将自动同步为已解决", 403)
     require_terminal_transition_admin(db, user, "problem", p.status, body.to)  # M28：强关仅 admin
     process_engine.require_flow_operator_for_transition(db, user, "problem", p.id, p.status, body.to)  # M25
     had_root_cause = bool(p.root_cause)

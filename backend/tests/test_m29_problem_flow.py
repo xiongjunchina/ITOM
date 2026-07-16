@@ -128,3 +128,29 @@ def test_line_options_and_default(client, ctx):
     r = client.post("/api/problems", json={"title": "M29-非法线", "description": "d", "priority": "P3",
                                            "assigned_line": "network"}, headers=ctx["admin"])
     assert r.json()["error"]["code"] == "INVALID_LINE"
+
+
+def test_known_error_button_semantics(client, ctx):
+    """M29.1：节点处理人（产品经理）可转已知错误（独立 ITIL 语义）；
+    已解决按钮不下发、手动流转 403（由完成流程步骤自动同步）。"""
+    p = _problem(client, ctx, "M29-已知错误语义")
+    client.post(f"/api/problems/{p['id']}/confirm", json={"handler_id": ctx["dev_pid"]}, headers=ctx["pdm_leader_h"])
+    # 处理人视角：按钮只有已知错误，没有已解决
+    d = client.get(f"/api/problems/{p['id']}", headers=ctx["dev_h"]).json()["data"]
+    targets = [x["to"] for x in d["allowed_transitions"]]
+    assert "known_error" in targets and "resolved" not in targets
+    # 手动转已解决 → 403 提示走流程
+    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "resolved", "fields": {}}, headers=ctx["dev_h"])
+    assert r.status_code == 403 and r.json()["error"]["code"] == "USE_PROCESS_STEP"
+    # 转已知错误（根因+规避）成功
+    r = client.post(f"/api/problems/{p['id']}/transition",
+                    json={"to": "known_error", "fields": {"root_cause": "第三方组件缺陷", "workaround": "定时重启规避"}},
+                    headers=ctx["dev_h"])
+    assert r.json()["success"], r.text
+    # 之后正常完成步骤 2/3 → 状态自动到 resolved（known_error→resolved 路径）
+    for _ in range(2):
+        proc = _proc(client, ctx["admin"], p["id"])
+        cur = _cur(proc)
+        client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "推进完成"}, headers=ctx["admin"])
+    d = client.get(f"/api/problems/{p['id']}", headers=ctx["admin"]).json()["data"]
+    assert d["status"] == "resolved"

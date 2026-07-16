@@ -579,8 +579,9 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             "problems": [{"id": p.id, "problem_code": p.problem_code, "title": p.title} for p in linked_problems],
             "articles": [{"id": a.id, "article_code": a.article_code, "title": a.title} for a in linked_articles],
         },
-        # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留；M28 终态仅可关闭人
-        "allowed_transitions": [] if r.is_example else [
+        # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留；M28 终态仅可关闭人；
+        # M29.1：无 requirements.edit（如业务用户）不下发（与 transition 接口权限一致）
+        "allowed_transitions": [] if r.is_example or not has_perm(db, user, "requirements", "edit") else [
             {"to": code, "to_name": status_map.get(code, code)}
             for code in restrict_terminal_targets(
                 db, "requirement", r.status,
