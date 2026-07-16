@@ -181,29 +181,33 @@ PRIORITY_DEFINITIONS = [
 # 问题=根因管理；需求=BP登记→产品分析→BM排期协调→开发→产品验收（M5 单据上线即挂接）
 PROCESS_DEFS = [
     {
+        # 用户调试版（M33 固化）：受理定级由 IT 运维负责人把关
         "code": "incident_flow", "name": "事件处理流程", "entity_type": "ticket",
         "trigger": {"ticket_type": "incident"},
         "steps": [
-            ("受理定级", IT_OPS, "L3", 0.5),
+            ("受理定级", IT_OP_LEADER, "L3", 0.5),
             ("诊断与处理", IT_OPS, "L3", None),
             ("解决与用户确认", IT_OPS, "L3", None),
             ("关闭复盘", IT_OP_LEADER, "L2", 24),
         ],
     },
     {
+        # 用户调试版（M33 固化）：最后一步指派登记人本人确认（default_role=requester 动态解析）
         "code": "sr_flow", "name": "服务请求交付流程", "entity_type": "ticket",
         "trigger": {"ticket_type": "service_request"},
         "steps": [
             ("受理确认", IT_OPS, "L2", 4),
             ("实施交付", IT_OPS, "L3", None),
-            ("用户确认关闭", IT_BP, "L3", 24),
+            ("用户确认关闭", "requester", "L3", 24),
         ],
     },
     {
+        # 用户调试版（M33 固化）：登记与风险评估拆分为两步
         "code": "change_flow", "name": "变更管理流程", "entity_type": "ticket_change",
         "trigger": {"ticket_type": "change"},
         "steps": [
-            ("变更登记与风险评估", IS_MGR, "L3", 8, [IT_TM]),
+            ("变更登记", IT_OPS, "L3", None),
+            ("风险评估", IS_MGR, "L3", 8, [IT_TM]),
             ("变更审批", CIO, "L3", 24, [IT_BM]),
             ("实施与验证", IT_OPS, "L3", None, [IS_MGR, IT_BM]),
             ("变更复盘(PIR)", IT_OP_LEADER, "L2", 48, [CIO]),

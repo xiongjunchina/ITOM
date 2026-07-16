@@ -101,7 +101,8 @@ def _merge(base: dict[str, str], extra: dict[str, str]) -> dict[str, str]:
 
 # 内置角色默认矩阵（编码当前系统行为；admin 不在矩阵中——隐式全权）
 DEFAULT_MATRIX: dict[str, dict[str, str]] = {
-    "requester": {"dashboard": "v", "ticket_sr": "vc", "knowledge": "v", "requirements": "vc"},
+    # M33：requester 总览默认关闭（登录落点自动=服务请求）
+    "requester": {"ticket_sr": "vc", "knowledge": "v", "requirements": "vc"},
     "auditor": _merge(
         {m: "v" for m in _BUSINESS_VIEW},
         {"process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},

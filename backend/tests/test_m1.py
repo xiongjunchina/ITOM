@@ -58,8 +58,8 @@ def test_user_crud_and_rbac(client, admin_headers):
     biz_headers = {"Authorization": f"Bearer {resp.json()['data']['token']}"}
     assert client.post("/api/members", json={"name": "李四"}, headers=biz_headers).status_code == 403
     assert client.get("/api/admin/users", headers=biz_headers).status_code == 403
-    # 但可以读 dashboard
-    assert client.get("/api/dashboard", headers=biz_headers).status_code == 200
+    # M33：业务用户出厂默认无总览（登录落点=服务请求）
+    assert client.get("/api/dashboard", headers=biz_headers).status_code == 403
 
 
 def test_duplicate_username_rejected(client, admin_headers):

@@ -111,7 +111,7 @@ def test_unassigned_task_claimable_by_default_role(client, ctx):
 
     用户实测：TK-202607-0003 受理定级 default_role=IT运维负责人但库里无该角色用户 → 任务空指派。
     """
-    # 变更流程第 1 步 default_role=is_mgr，本测试库尚无 is_mgr 用户 → 任务未指派
+    # M33 变更流程五步：第 2 步「风险评估」default_role=is_mgr，本测试库尚无 is_mgr 用户 → 任务未指派
     t = client.post("/api/tickets", json={
         "title": "M25未指派认领", "ticket_type": "change", "priority": "P3",
         "description": "d", "service_item_id": ctx["item"],
@@ -119,7 +119,10 @@ def test_unassigned_task_claimable_by_default_role(client, ctx):
     }, headers=ctx["admin"]).json()["data"]
     proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
     cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
-    assert cur["assignee"] is None
+    client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "变更登记完成"}, headers=ctx["admin"])
+    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
+    assert cur["name"] == "风险评估" and cur["assignee"] is None
 
     # 非该角色（运维）不能完成
     r = client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "越权认领"}, headers=ctx["ops_h"])

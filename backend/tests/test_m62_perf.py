@@ -186,7 +186,7 @@ def test_requester_scope(client, admin_headers, ctx):
     assert denied.status_code == 403
     me = client.get("/api/auth/me", headers=req_h).json()["data"]
     perms = me["permissions"]
-    assert set(perms) == {"dashboard", "ticket_sr", "knowledge", "requirements"}
+    assert set(perms) == {"ticket_sr", "knowledge", "requirements"}  # M33：总览默认关闭
     assert perms["ticket_sr"] == ["create", "view"] and perms["requirements"] == ["create", "view"]
 
 
