@@ -156,9 +156,10 @@ def quick_close(db: Session, ticket: Ticket, reason: str, actor: AuthUser) -> Ti
     if ticket.status in ("closed", "rejected"):
         raise AppError("TICKET_FINAL", "工单已是终态")
     etype = entity_type_of(ticket)
-    path = _closure_path(db, etype, ticket.status, actor)
+    # 关闭权已在端点校验（admin/登记人，M28）——路径不再受操作者角色限制
+    path = _closure_path(db, etype, ticket.status, actor, ignore_roles=True)
     if not path:
-        raise AppError("NO_CLOSE_PATH", "状态机不允许从当前状态流转到已关闭（或需要审批角色），请在详情页按流程处理")
+        raise AppError("NO_CLOSE_PATH", "状态机不允许从当前状态流转到已关闭，请检查状态机配置")
     if not ticket.solution:
         ticket.solution = reason
     note = f"[关单说明] {reason}"
@@ -166,7 +167,7 @@ def quick_close(db: Session, ticket: Ticket, reason: str, actor: AuthUser) -> Ti
     for to in path:
         # 阶段必填字段兜底：solution 已提前写入；closed 需关闭代码（默认「已解决」，语义由理由说明）
         fields = {"closure_code": ticket.closure_code or "resolved"} if to == "closed" else {}
-        do_transition(db, ticket, to, fields, actor)
+        do_transition(db, ticket, to, fields, actor, system=True)
     audit(db, "ticket", ticket.id, "quick_close", actor, {"code": ticket.ticket_code, "path": path, "reason": reason})
     db.commit()
     return ticket

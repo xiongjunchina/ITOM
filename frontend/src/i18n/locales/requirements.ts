@@ -225,6 +225,11 @@ export const zh: Dict = {
 
   // 评估评分面板
   'req.evaluation': '评估评分',
+  'req.closeTitle': '关闭需求',
+  'req.closeReason': '关闭理由',
+  'req.closeReasonRequired': '请填写关闭理由（至少 5 个字）',
+  'req.closeReasonPlaceholder': '如：业务方撤回 / 需求合并，将记入关闭说明并审计',
+  'req.closedMsg': '需求已关闭',
   'req.evalScore': '六维评分',
   'req.weightedTotal': '加权总分',
   'req.quadrant': '象限',
@@ -556,6 +561,11 @@ export const en: Dict = {
 
   // Evaluation scoring panel
   'req.evaluation': 'Evaluation Scoring',
+  'req.closeTitle': 'Close Requirement',
+  'req.closeReason': 'Closure reason',
+  'req.closeReasonRequired': 'Closure reason is required (at least 5 characters)',
+  'req.closeReasonPlaceholder': 'e.g. withdrawn by business / merged; recorded into closure note & audited',
+  'req.closedMsg': 'Requirement closed',
   'req.evalScore': 'Six-dimension Scoring',
   'req.weightedTotal': 'Weighted Score',
   'req.quadrant': 'Quadrant',

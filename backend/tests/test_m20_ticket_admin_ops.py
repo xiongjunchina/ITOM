@@ -51,10 +51,15 @@ def test_admin_quick_close_from_new(client, ctx):
     assert client.post(f"/api/tickets/{t2['id']}/close", json={"reason": "abc"}, headers=ctx["admin"]).status_code == 422
 
 
-def test_requester_cannot_close(client, ctx):
-    """业务用户对自己的单也无关闭权（无 ticket_sr.edit）。"""
+def test_requester_closes_own_sr(client, ctx):
+    """M28：登记人可主动关闭自己的服务请求（理由必填、审计留痕）；他人单仍 403。"""
     t = _sr(client, ctx, "业务用户的单", headers=ctx["req_h"])
-    r = client.post(f"/api/tickets/{t['id']}/close", json={"reason": "我自己关掉它"}, headers=ctx["req_h"])
+    r = client.post(f"/api/tickets/{t['id']}/close", json={"reason": "问题自行解决，撤回申请"}, headers=ctx["req_h"])
+    assert r.json()["success"], r.text
+    assert r.json()["data"]["status"] == "closed"
+    # 他人的服务请求不可关（ops 的单，requester 连看都看不到 → 403）
+    t2 = _sr(client, ctx, "他人的单")
+    r = client.post(f"/api/tickets/{t2['id']}/close", json={"reason": "试图关他人单"}, headers=ctx["req_h"])
     assert r.status_code == 403
 
 

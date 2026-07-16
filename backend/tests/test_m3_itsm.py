@@ -23,7 +23,7 @@ def ctx(client, admin_headers):
 
 # ---------- 问题 ----------
 
-def test_problem_lifecycle(client, ctx):
+def test_problem_lifecycle(client, ctx, admin_headers):
     r = client.post(
         "/api/problems",
         json={"title": "数据库连接池频繁耗尽", "description": "近一周 3 次", "priority": "P2", "owner": ctx["ops_person"]},
@@ -48,7 +48,10 @@ def test_problem_lifecycle(client, ctx):
     )
     assert r.json()["data"]["status"] == "known_error"
     client.post(f"/api/problems/{p['id']}/transition", json={"to": "resolved", "fields": {}}, headers=ctx["ops"])
+    # M28：手动关闭问题=强制关闭，仅系统管理员（正常闭环走流程完成自动关闭）
     r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "closed", "fields": {}}, headers=ctx["ops"])
+    assert r.status_code == 403
+    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "closed", "fields": {}}, headers=admin_headers)
     assert r.json()["data"]["status"] == "closed"
 
 

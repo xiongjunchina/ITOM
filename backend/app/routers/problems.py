@@ -15,7 +15,7 @@ from app.schemas.common import ok, paginate
 from app.services import process_engine
 from app.services.audit import audit
 from app.services.codes import gen_code
-from app.services.workflow import allowed_targets, status_names
+from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
 from app.services.workflow import transition as wf_transition
 
 router = APIRouter(tags=["itsm"])
@@ -128,8 +128,11 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
             # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留
             "allowed_transitions": [] if p.is_example else [
                 {"to": code, "to_name": names.get(code, code)}
-                for code in process_engine.filter_targets_by_flow(
-                    db, user, "problem", p.id, p.status, allowed_targets(db, "problem", p.status, user))
+                for code in restrict_terminal_targets(
+                    db, "problem", p.status,
+                    process_engine.filter_targets_by_flow(
+                        db, user, "problem", p.id, p.status, allowed_targets(db, "problem", p.status, user)),
+                    allow_terminal=_is_admin(db, user))
             ],
             "process": process_engine.instance_view(db, "problem", p.id),
         }
@@ -187,6 +190,7 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_not_example(p)
+    require_terminal_transition_admin(db, user, "problem", p.status, body.to)  # M28：强关仅 admin
     process_engine.require_flow_operator_for_transition(db, user, "problem", p.id, p.status, body.to)  # M25
     had_root_cause = bool(p.root_cause)
     wf_transition(db, p, "problem", body.to, body.fields, user)
@@ -197,6 +201,13 @@ def transition_problem(problem_id: str, body: TransitionIn, db: Session = Depend
         process_engine.finalize_instance(db, "problem", p.id, "问题已关闭，流程随单收尾")  # M24
     db.commit()
     return ok({"id": p.id, "status": p.status})
+
+
+def _is_admin(db: Session, user: AuthUser) -> bool:
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    return ADMIN in actor_keys(db, user)
 
 
 def auto_close_problem_on_process_complete(db: Session, problem_id: str, actor: AuthUser) -> bool:

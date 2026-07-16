@@ -345,7 +345,9 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
         "allowed_transitions": [] if p.is_example else [
             {"to": code, "to_name": status_map.get(code, code)}
             for code in allowed_targets(db, "project", p.status, user)
+            if code not in ("closed", "cancelled") or _can_close_project(db, user, p)
         ],
+        "can_close": (not p.is_example) and _can_close_project(db, user, p),
         "process": process_engine.instance_view(db, "project", p.id),
         "can_edit": (not p.is_example) and has_perm(db, user, "projects", "edit"),
     })
@@ -440,6 +442,16 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
     return ok({"id": p.id, "cascade": stats})
 
 
+def _can_close_project(db: Session, user: AuthUser, p: Project) -> bool:
+    """关闭项目权限（M28）：admin 恒可；项目经理本人可关（理由必填已有）；其余节点走流程。"""
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    if ADMIN in actor_keys(db, user):
+        return True
+    return bool(p.pm and user.person_id and p.pm == user.person_id)
+
+
 @router.post("/api/projects/{project_id}/transition")
 def transition_project(project_id: str, body: TransitionIn, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
     p = db.get(Project, project_id)
@@ -450,6 +462,9 @@ def transition_project(project_id: str, body: TransitionIn, db: Session = Depend
     reason = str((body.fields or {}).pop("reason", "") or "").strip()
     if body.to in ("paused", "closed") and len(reason) < 2:
         raise AppError("REASON_REQUIRED", "暂停/关闭项目必须填写理由")
+    if body.to in ("closed", "cancelled") and not _can_close_project(db, actor, p):
+        # M28：项目关闭仅项目经理本人或系统管理员（理由+审计已具备）；其余节点走流程闭环
+        raise AppError("FORCE_CLOSE_FORBIDDEN", "仅该项目的项目经理或系统管理员可关闭项目", 403)
     from_code, to = wf_transition(db, p, "project", body.to, body.fields, actor)
     if reason and to in ("paused", "closed"):
         label = "暂停" if to == "paused" else "关闭"

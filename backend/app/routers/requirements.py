@@ -31,7 +31,7 @@ from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
 from app.services.rbac import effective_roles
-from app.services.workflow import allowed_targets, status_names
+from app.services.workflow import allowed_targets, closure_path, restrict_terminal_targets, require_terminal_transition_admin, status_names
 from app.services.workflow import transition as wf_transition
 
 router = APIRouter(prefix="/api/requirements", tags=["requirements"])
@@ -579,12 +579,16 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             "problems": [{"id": p.id, "problem_code": p.problem_code, "title": p.title} for p in linked_problems],
             "articles": [{"id": a.id, "article_code": a.article_code, "title": a.title} for a in linked_articles],
         },
-        # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留
+        # M25：普通流转按钮只给当前节点处理人；审批类（显式授权）保留；M28 终态仅可关闭人
         "allowed_transitions": [] if r.is_example else [
             {"to": code, "to_name": status_map.get(code, code)}
-            for code in process_engine.filter_targets_by_flow(
-                db, user, "requirement", r.id, r.status, allowed_targets(db, "requirement", r.status, user))
+            for code in restrict_terminal_targets(
+                db, "requirement", r.status,
+                process_engine.filter_targets_by_flow(
+                    db, user, "requirement", r.id, r.status, allowed_targets(db, "requirement", r.status, user)),
+                allow_terminal=_can_close_requirement(db, user, r))
         ],
+        "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
         "process": process_engine.instance_view(db, "requirement", r.id),
         "can_edit": (not r.is_example) and has_perm(db, user, "requirements", "edit"),
     })
@@ -646,10 +650,60 @@ def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor
     return ok({"id": r.id, **stats})
 
 
+def _can_close_requirement(db: Session, user: AuthUser, r: Requirement) -> bool:
+    """关闭需求权限（M28）：admin 恒可强关；登记人（提出人）本人可关（理由+审计）；
+    处理节点无权关闭——走完流程自动闭环。"""
+    from app.services.rbac import actor_keys
+
+    if ADMIN in actor_keys(db, user):
+        return True
+    return bool(r.requester and r.requester == user.id)
+
+
+class RequirementCloseIn(BaseModel):
+    """主动关闭需求（M28）：理由必填（≥5 字），审计留痕。"""
+
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post("/{requirement_id}/close")
+def close_requirement(requirement_id: str, body: RequirementCloseIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """登记人/管理员主动关闭需求 → 已取消（与评审驳回同终态）；流程实例随单收尾。"""
+    r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
+    if r.status in ("closed", "cancelled"):
+        raise AppError("REQ_FINAL", "需求已是终态")
+    if not _can_close_requirement(db, user, r):
+        raise AppError(
+            "FORCE_CLOSE_FORBIDDEN",
+            "仅需求提出人本人可主动关闭（须写明理由）；处理节点请完成流程步骤，走完流程自动闭环。强制关闭请联系系统管理员",
+            403,
+        )
+    path = closure_path(db, "requirement", r.status, user, dst="cancelled", ignore_roles=True)
+    if path:
+        for to in path:
+            wf_transition(db, r, "requirement", to, {}, user, system=True)
+    else:  # 状态机不可达时按管理动作直接落终态（登记人撤回不应被配置卡死）
+        r.status = "cancelled"
+    now = datetime.now()
+    r.closed_at = now
+    r.closure_note = f"[主动关闭] {body.reason}"
+    process_engine.finalize_instance(db, "requirement", r.id, f"需求已主动关闭：{body.reason}"[:500])
+    audit(db, "requirement", r.id, "close", user, {"code": r.requirement_code, "reason": body.reason})
+    if r.owner:
+        notifier.notify(db, "requirement.cancelled", "requirement", r.id, [r.owner],
+                        f"需求已关闭：{r.requirement_code} {r.title}",
+                        f"关闭理由：{body.reason}", link=f"/requirements/{r.id}")
+    publish(db, "requirement.cancelled", "requirement", r.id, {})
+    db.commit()
+    return ok({"id": r.id, "status": r.status})
+
+
 @router.post("/{requirement_id}/transition")
 def transition_requirement(requirement_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
+    require_terminal_transition_admin(db, user, "requirement", r.status, body.to)  # M28：强关仅 admin
     process_engine.require_flow_operator_for_transition(db, user, "requirement", r.id, r.status, body.to)  # M25
     # 阶段门校验
     if body.to == "analyzing" and r.status == "evaluating":

@@ -24,7 +24,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import { useT } from '../../i18n';
-import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
+import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
 import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
@@ -80,9 +80,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   // M20 列表管理动作：编辑/关闭按类型模块 edit；删除按 delete（默认矩阵仅 admin）
   const canEdit = hasPermission(authUser, TYPE_MODULE[fixedType], 'edit');
   const canDelete = hasPermission(authUser, TYPE_MODULE[fixedType], 'delete');
-  // M27：进行中的事件/变更=强制关闭，仅 admin/IT运维负责人/信息安全负责人/CIO（服务请求维持 edit）
-  const canClose =
-    canEdit && (fixedType === 'service_request' || hasAnyRole(authUser, ['admin', 'it_op_leader', 'is_mgr', 'cio']));
+  // M28（用户定稿）：admin 恒可强关；服务请求登记人本人可关（理由+审计）；事件/变更走流程闭环
+  const isAdmin = !!authUser?.permissions?.['*'];
+  const canCloseRow = (r: TicketRow): boolean =>
+    isAdmin || (fixedType === 'service_request' && !!r.submitter && r.submitter === authUser?.id);
   const navigate = useNavigate();
   const t = useT();
   const et = useEnums();
@@ -326,7 +327,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     },
     { title: 'SLA', key: 'sla', width: 90, render: (_, r) => renderSla(r, t) },
     // M20：管理动作列（编辑/关闭需 edit；删除需 delete——默认矩阵仅 admin），示例数据只读
-    ...(canEdit || canDelete
+    ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin
       ? ([
           {
             title: t('common.actions'),
@@ -341,7 +342,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                       {t('common.edit')}
                     </Button>
                   )}
-                  {canClose && r.status !== 'closed' && r.status !== 'rejected' && (
+                  {canCloseRow(r) && r.status !== 'closed' && r.status !== 'rejected' && (
                     <Button
                       type="link"
                       size="small"

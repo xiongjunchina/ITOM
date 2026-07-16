@@ -622,6 +622,10 @@ export default function RequirementDetail() {
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
+  // M28 主动关闭（登记人/admin）
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closeReason, setCloseReason] = useState('');
+  const [closeReqSaving, setCloseReqSaving] = useState(false);
   /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/转出按钮） */
   const isExample = detail?.is_example === true;
   useEffect(() => {
@@ -1045,6 +1049,17 @@ export default function RequirementDetail() {
           </Space>
           {canEdit && (
             <Space wrap>
+              {detail.can_close && (
+                <Button
+                  danger
+                  onClick={() => {
+                    setCloseReason('');
+                    setCloseOpen(true);
+                  }}
+                >
+                  {t('req.closeTitle')}
+                </Button>
+              )}
               {(detail.allowed_transitions ?? []).map((tr) => {
                 const closeBlocked = tr.to === 'closed' && pendingAcceptance > 0;
                 const btn = (
@@ -1608,6 +1623,35 @@ export default function RequirementDetail() {
           </Form.Item>
         </Form>
       </Modal>
-    </Space>
+          <Modal
+        title={`${t('req.closeTitle')} · ${detail.requirement_code}`}
+        open={closeOpen}
+        confirmLoading={closeReqSaving}
+        okButtonProps={{ danger: true }}
+        onOk={async () => {
+          if (closeReason.trim().length < 5) {
+            message.warning(t('req.closeReasonRequired'));
+            return;
+          }
+          setCloseReqSaving(true);
+          try {
+            await api.post(`/requirements/${id}/close`, { reason: closeReason.trim() });
+            message.success(t('req.closedMsg'));
+            setCloseOpen(false);
+            void load();
+          } catch {
+            // 已统一提示
+          } finally {
+            setCloseReqSaving(false);
+          }
+        }}
+        onCancel={() => setCloseOpen(false)}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 8 }}>{t('req.closeReason')}</div>
+        <Input.TextArea rows={3} maxLength={500} value={closeReason} onChange={(e) => setCloseReason(e.target.value)}
+          placeholder={t('req.closeReasonPlaceholder')} />
+      </Modal>
+</Space>
   );
 }

@@ -48,7 +48,7 @@ def test_create_auto_fields(client, ctx):
     assert [s["task_status"] for s in detail["process"]["steps"]][0] == "待处理"
 
 
-def test_ticket_lifecycle_and_sla(client, ctx):
+def test_ticket_lifecycle_and_sla(client, ctx, admin_headers):
     t = _create(client, ctx["ops"], ctx["item"], priority="P1")
     tid = t["id"]
 
@@ -74,11 +74,17 @@ def test_ticket_lifecycle_and_sla(client, ctx):
     detail = client.get(f"/api/tickets/{tid}", headers=ctx["ops"]).json()["data"]
     assert detail["sla_resolution_met"] is True and detail["first_time_fix"] is True
 
-    # 关闭需 closure_code
+    # 关闭需 closure_code；M28：手动流转到已关闭=强制关闭，仅系统管理员
     resp = client.post(
         f"/api/tickets/{tid}/transition",
         json={"to": "closed", "fields": {"closure_code": "resolved"}},
         headers=ctx["ops"],
+    )
+    assert resp.status_code == 403
+    resp = client.post(
+        f"/api/tickets/{tid}/transition",
+        json={"to": "closed", "fields": {"closure_code": "resolved"}},
+        headers=admin_headers,
     )
     assert resp.json()["data"]["status"] == "closed"
 

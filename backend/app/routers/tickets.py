@@ -13,7 +13,7 @@ from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, Ticket
 from app.services import process_engine
 from app.services import tickets as svc
 from app.services.audit import audit
-from app.services.workflow import allowed_targets, status_names
+from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
 
 router = APIRouter(prefix="/api/tickets", tags=["itsm"])
 
@@ -55,7 +55,7 @@ def _row(t: Ticket, db: Session, names: dict) -> dict:
         "service_item_id": t.service_item_id,
         "service_item_name": t.service_item.name if t.service_item else None,
         "service_line": t.service_line,
-        "submitter_name": t.submitter_name, "submitter_dept": t.submitter_dept,
+        "submitter": t.submitter, "submitter_name": t.submitter_name, "submitter_dept": t.submitter_dept,
         "assignee": t.assignee, "assignee_name": assignee.name if assignee else None,
         "submitted_at": t.submitted_at,
         "sla_resolution_hours": t.sla_resolution_hours,
@@ -150,9 +150,13 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "actual_response_min": t.actual_response_min, "actual_resolution_hours": t.actual_resolution_hours,
             "allowed_transitions": [] if t.is_example or not can_edit else [
                 {"to": code, "to_name": names.get(code, code)}
-                for code in process_engine.filter_targets_by_flow(
-                    db, user, etype, t.id, t.status, allowed_targets(db, etype, t.status, user))
+                for code in restrict_terminal_targets(
+                    db, etype, t.status,
+                    process_engine.filter_targets_by_flow(
+                        db, user, etype, t.id, t.status, allowed_targets(db, etype, t.status, user)),
+                    allow_terminal=_can_close_ticket(db, user, t))
             ],
+            "can_close": _can_close_ticket(db, user, t) and not t.is_example and t.status not in ("closed", "rejected"),
             "can_edit": can_edit and not t.is_example,
             "flow_operator_name": flow_assignee,  # 前端可提示"由谁处理中"
             "process": process_engine.instance_view(db, etype, t.id),
@@ -188,6 +192,8 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
 def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
     _require_type_perm(db, user, t.ticket_type, "edit")  # M17.2
+    # M28：普通授权的终态流转=强制关闭，仅系统管理员（正常闭环走流程完成自动关闭）
+    require_terminal_transition_admin(db, user, svc.entity_type_of(t), t.status, body.to)
     # M25：普通流转仅流程当前处理人；审批类流转由状态机 allowed_roles 授权
     process_engine.require_flow_operator_for_transition(db, user, svc.entity_type_of(t), t.id, t.status, body.to)
     ensure_not_example(t)
@@ -195,28 +201,27 @@ def transition_ticket(ticket_id: str, body: TransitionIn, db: Session = Depends(
     return ok({"id": t.id, "status": t.status})
 
 
-#: 进行中的事件/变更强制关闭白名单（M27，用户指定）：admin、IT运维负责人、信息安全负责人、CIO
-FORCE_CLOSE_ROLES = frozenset({"admin", "it_op_leader", "is_mgr", "cio"})
+def _can_close_ticket(db: Session, user: AuthUser, t: Ticket) -> bool:
+    """关闭工单权限（M28，用户定稿）：admin 恒可强关；服务请求登记人本人可关（理由+审计）；
+    事件/变更必须走完流程自动闭环，处理节点亦无权关闭。"""
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    if ADMIN in actor_keys(db, user):
+        return True
+    return t.ticket_type == "service_request" and t.submitter == user.id
 
 
 @router.post("/{ticket_id}/close")
 def close_ticket(ticket_id: str, body: TicketCloseIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    """一键关单（M20 列表管理动作）：沿状态机路径推进至已关闭，理由必填。"""
+    """一键关单：理由必填、审计留痕（M20/M28）。登记人关闭自己的服务请求不要求模块 edit 权限。"""
     t = _get_ticket(db, ticket_id, user)
-    _require_type_perm(db, user, t.ticket_type, "edit")
-    etype = svc.entity_type_of(t)
-    if t.ticket_type in ("incident", "change") and process_engine.current_pending_task(db, etype, t.id):
-        # M27：进行中的事件/变更单 = 强制关闭，仅管理角色可执行（登记人/普通处理人走流程步骤）
-        from app.services.rbac import actor_keys
-
-        if not (actor_keys(db, user) & FORCE_CLOSE_ROLES):
-            raise AppError(
-                "FORCE_CLOSE_FORBIDDEN",
-                "进行中的事件/变更单仅 管理员、IT运维负责人、信息安全负责人、CIO 可强制关闭",
-                403,
-            )
-    else:
-        process_engine.require_flow_operator(db, user, etype, t.id)  # M25：服务请求/无流程单按当前处理人
+    if not _can_close_ticket(db, user, t):
+        raise AppError(
+            "FORCE_CLOSE_FORBIDDEN",
+            "服务请求仅登记人本人可主动关闭；事件/变更须走完流程自动闭环。强制关闭请联系系统管理员",
+            403,
+        )
     ensure_not_example(t)
     svc.quick_close(db, t, body.reason, user)
     return ok({"id": t.id, "status": t.status})

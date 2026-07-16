@@ -79,6 +79,10 @@ export default function TicketDetail() {
   const [transSaving, setTransSaving] = useState(false);
   const [closureCodes, setClosureCodes] = useState<MasterDataItem[]>([]);
 
+  // M28 主动关闭（登记人/admin）
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closeReason, setCloseReason] = useState('');
+  const [closeSaving, setCloseSaving] = useState(false);
   // 改派
   const [reassignOpen, setReassignOpen] = useState(false);
   const [reassignTo, setReassignTo] = useState<string | undefined>();
@@ -311,6 +315,17 @@ export default function TicketDetail() {
             {canToKnowledge && (
               <Button loading={toKnowledgeSaving} onClick={() => void toKnowledge()}>
                 {t('itsm.ticket.toKnowledge')}
+              </Button>
+            )}
+            {detail.can_close && (
+              <Button
+                danger
+                onClick={() => {
+                  setCloseReason('');
+                  setCloseOpen(true);
+                }}
+              >
+                {t('itsm.ticket.closeTitle')}
               </Button>
             )}
             {(detail.allowed_transitions ?? []).map((tr) => (
@@ -598,6 +613,35 @@ export default function TicketDetail() {
           onChange={(e) => setTaskComment(e.target.value)}
         />
       </Modal>
-    </Space>
+          <Modal
+        title={`${t('itsm.ticket.closeTitle')} · ${detail.ticket_code}`}
+        open={closeOpen}
+        confirmLoading={closeSaving}
+        okButtonProps={{ danger: true }}
+        onOk={async () => {
+          if (closeReason.trim().length < 5) {
+            message.warning(t('itsm.ticket.closeReasonRequired'));
+            return;
+          }
+          setCloseSaving(true);
+          try {
+            await api.post(`/tickets/${id}/close`, { reason: closeReason.trim() });
+            message.success(t('itsm.ticket.closedMsg'));
+            setCloseOpen(false);
+            void load();
+          } catch {
+            // 已统一提示
+          } finally {
+            setCloseSaving(false);
+          }
+        }}
+        onCancel={() => setCloseOpen(false)}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 8 }}>{t('itsm.ticket.closeReason')}</div>
+        <Input.TextArea rows={3} maxLength={500} value={closeReason} onChange={(e) => setCloseReason(e.target.value)}
+          placeholder={t('itsm.ticket.closeReasonPlaceholder')} />
+      </Modal>
+</Space>
   );
 }

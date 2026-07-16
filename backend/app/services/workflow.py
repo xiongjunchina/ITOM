@@ -81,6 +81,39 @@ def transition(
     return from_code, to_code
 
 
+#: 终态目标（M28）：普通授权的终态流转 = 强制关闭
+TERMINAL_TARGETS = ("closed", "cancelled")
+
+
+def require_terminal_transition_admin(db: Session, user: AuthUser, entity_type: str, from_code: str, to_code: str) -> None:
+    """M28：普通授权（allowed_roles 空）的终态流转 = 强制关闭，仅系统管理员；
+    显式授权的审批终态（如变更审批拒绝 by CIO）不受影响。单据正常闭环走流程完成自动关闭。"""
+    if to_code not in TERMINAL_TARGETS:
+        return
+    rule = get_transition(db, entity_type, from_code, to_code)
+    if rule is None:
+        return  # 不存在的转换交由 wf_transition 报 INVALID_TRANSITION（语义更准确）
+    if rule.allowed_roles or []:
+        return
+    if ADMIN not in actor_keys(db, user):
+        raise AppError("FORCE_CLOSE_FORBIDDEN", "单据须走完流程自动闭环；仅系统管理员可强制关闭", 403)
+
+
+def restrict_terminal_targets(db: Session, entity_type: str, from_code: str,
+                              targets: list[str], allow_terminal: bool) -> list[str]:
+    """detail 按钮列表的终态过滤（M28）：allow_terminal=False 时移除普通授权的终态目标。"""
+    if allow_terminal:
+        return targets
+    kept = []
+    for code in targets:
+        if code in TERMINAL_TARGETS:
+            rule = get_transition(db, entity_type, from_code, code)
+            if not (rule and (rule.allowed_roles or [])):
+                continue
+        kept.append(code)
+    return kept
+
+
 def closure_path(db: Session, entity_type: str, src: str, actor: AuthUser,
                  dst: str = "closed", ignore_roles: bool = False) -> list[str] | None:
     """BFS 最短状态机路径 src→dst（尊重用户配置的转换与角色限制），不可达返回 None。

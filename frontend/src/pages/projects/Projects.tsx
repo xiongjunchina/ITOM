@@ -72,6 +72,9 @@ function ProjectList() {
   const canCreate = useProjectPerm('create');
   const canEdit = useProjectPerm('edit');
   const canDelete = useProjectPerm('delete');
+  // M28：关闭项目仅 admin 或该项目 PM 本人
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = !!user?.permissions?.['*'];
 
   const [items, setItems] = useState<ProjectRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -352,7 +355,8 @@ function ProjectList() {
                 <span style={{ whiteSpace: 'nowrap' }}>
                   {linkBtn(t('common.edit'), !isFinal, () => void openRowEdit(r), t('proj.editFinalTooltip'))}
                   {linkBtn(t('proj.op.pause'), st === 'active', () => runTransition(r, 'paused', t('proj.op.pause')), t('proj.op.onlyActive'))}
-                  {linkBtn(t('proj.op.close'), ['active', 'paused', 'completed'].includes(st), () => runTransition(r, 'closed', t('proj.op.close')), t('proj.op.closeDisabled'))}
+                  {(isAdmin || r.pm === user?.person_id) &&
+                    linkBtn(t('proj.op.close'), ['active', 'paused', 'completed'].includes(st), () => runTransition(r, 'closed', t('proj.op.close')), t('proj.op.closeDisabled'))}
                   {linkBtn(t('proj.op.restart'), ['paused', 'closed', 'completed'].includes(st), () => runTransition(r, 'active', t('proj.op.restart')), t('proj.op.restartDisabled'))}
                   {canDelete && linkBtn(t('common.delete'), true, () => runDelete(r), '', true)}
                 </span>

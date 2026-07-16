@@ -309,6 +309,7 @@ export interface TicketRow {
   service_item_id: string | null;
   service_item_name: string | null;
   service_line: string | null;
+  submitter?: string | null;
   submitter_name: string | null;
   submitter_dept: string | null;
   assignee: string | null;
@@ -384,6 +385,10 @@ export interface TicketDetail extends TicketRow {
   allowed_transitions: AllowedTransition[];
   /** 当前用户对该类型工单有编辑权限（M18）：控制改派等写入口显隐 */
   can_edit?: boolean;
+  /** 可主动/强制关闭（M28）：admin 或服务请求登记人本人 */
+  can_close?: boolean;
+  /** 当前流程节点处理人姓名（M25） */
+  flow_operator_name?: string | null;
   process?: TicketProcess | null;
 }
 
@@ -1455,6 +1460,8 @@ export interface RequirementDetail extends RequirementRow {
   process: TicketProcess | null;
   /** 当前用户是否有 requirements.edit 权限 */
   can_edit: boolean;
+  /** 可主动/强制关闭（M28）：admin 或需求提出人本人 */
+  can_close?: boolean;
 }
 
 // ============ M6 团队管理 ============
