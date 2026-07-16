@@ -25,6 +25,7 @@ interface ProblemFormValues {
   title: string;
   description: string;
   priority: TicketPriority;
+  assigned_line: string;
   service_item_id?: string;
   owner?: string;
 }
@@ -101,6 +102,7 @@ export default function Problems() {
         title: values.title,
         description: values.description,
         priority: values.priority,
+        assigned_line: values.assigned_line,
         service_item_id: values.service_item_id ?? undefined,
         owner: values.owner ?? undefined,
       });
@@ -264,6 +266,17 @@ export default function Problems() {
           </Form.Item>
           <Form.Item name="description" label={t('itsm.f.description')} rules={[{ required: true, message: t('itsm.rule.description') }]}>
             <Input.TextArea rows={4} maxLength={2000} placeholder={t('itsm.problem.descPlaceholder')} />
+          </Form.Item>
+          <Form.Item
+            name="assigned_line"
+            label={t('itsm.problem.line')}
+            rules={[{ required: true, message: t('itsm.problem.lineRequired') }]}
+            extra={t('itsm.problem.lineHint')}
+          >
+            <Select
+              options={['product', 'ops', 'dev'].map((v) => ({ value: v, label: t('itsm.problem.line.' + v) }))}
+              placeholder={t('itsm.problem.linePlaceholder')}
+            />
           </Form.Item>
           <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
             <Select

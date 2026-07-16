@@ -94,6 +94,10 @@ ENSURE_COLUMNS = {
     "knowledge_article": [
         ("content_format", "VARCHAR(8) NOT NULL DEFAULT 'markdown'"),
     ],
+    "problem": [
+        ("assigned_line", "VARCHAR(16)"),
+        ("reporter", "VARCHAR(26)"),
+    ],
 }
 
 
@@ -388,6 +392,54 @@ def sync_process_status_m24(db: Session):
         logger.info("流程/状态机双向同步修复：问题闭环 %d 个，收尾 running 实例 %d 个（M24）", closed_problems, finalized)
 
 
+def rebuild_problem_flow_m29(db: Session):
+    """M29：问题流程重构（确认→根因分析→解决验证→解决确认关闭，专业线动态指派）。
+
+    有历史实例（用户 PB-202607-0001 等）→ 另存新版本激活、旧版停用（老单沿旧版展示）；
+    无实例 → 直接重建步骤。幂等：激活定义首步含新说明则跳过。
+    """
+    import json as _json
+
+    row = db.execute(text(
+        "SELECT id, code, version FROM process_definition "
+        "WHERE code LIKE 'problem_flow%' AND active=true AND is_deleted=false ORDER BY version DESC LIMIT 1"
+    )).first()
+    if not row:
+        return
+    def_id, code, version = row
+    first_desc = db.execute(text(
+        "SELECT description FROM process_step WHERE definition_id=:d AND is_deleted=false ORDER BY seq LIMIT 1"
+    ), {"d": def_id}).scalar()
+    if first_desc and "专业线" in first_desc:
+        return  # 已是新版
+    steps = [
+        (1, "问题确认", "L3", 24, "按问题所属专业线自动指派对应负责人；不属实可驳回退回提单人（必填理由）"),
+        (2, "根因分析", "L3", None, "确认属实时由专业线负责人指定处理人"),
+        (3, "解决与验证", "L3", None, "延续根因分析处理人"),
+        (4, "解决确认与关闭", "L2", 24, "专业线负责人确认已解决并登记关闭说明，完成后问题自动关闭"),
+    ]
+    used = db.execute(text("SELECT count(*) FROM process_instance WHERE definition_id=:d"), {"d": def_id}).scalar()
+    if used:
+        new_ver = (version or 1) + 1
+        new_id = new_glid()
+        db.execute(text(
+            "INSERT INTO process_definition (id, code, name, entity_type, version, active, is_deleted, is_example, created_at, updated_at) "
+            "VALUES (:id, :code, '问题分析流程', 'problem', :ver, true, false, false, now(), now())"
+        ), {"id": new_id, "code": f"problem_flow@v{new_ver}", "ver": new_ver})
+        db.execute(text("UPDATE process_definition SET active=false WHERE id=:d"), {"d": def_id})
+        target = new_id
+    else:
+        db.execute(text("DELETE FROM process_step WHERE definition_id=:d"), {"d": def_id})
+        target = def_id
+    for seq, name, level, sla, desc in steps:
+        db.execute(text(
+            "INSERT INTO process_step (id, definition_id, seq, name, default_role, cc_roles, autonomy_level, sla_hours, description, is_deleted, is_example, created_at, updated_at) "
+            "VALUES (:id, :d, :seq, :name, NULL, '[]'::jsonb, :level, :sla, :desc, false, false, now(), now())"
+        ), {"id": new_glid(), "d": target, "seq": seq, "name": name, "level": level, "sla": sla, "desc": desc})
+    logger.info("problem_flow 已重构为 M29 四步流程（%s）", "新版本激活" if used else "原定义重建")
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -402,6 +454,7 @@ def migrate_m35_org(db: Session):
     split_permission_modules_m172(db)
     close_completed_process_tickets_m23(db)
     sync_process_status_m24(db)
+    rebuild_problem_flow_m29(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

@@ -138,6 +138,43 @@ SLA_POLICIES = [
     ("P1", 30, 4), ("P2", 60, 8), ("P3", 240, 24), ("P4", 480, 72),
 ]
 
+# P1-P4 优先级定义初稿（M29，参考 ITIL 4「影响×紧急度」矩阵与 ServiceNow 缺省实践）；管理员可在 SLA 页编辑适配企业实际
+PRIORITY_DEFINITIONS = [
+    # (flow_type, priority, definition, examples)
+    ("incident", "P1", "致命：核心业务系统全面中断或存在数据丢失风险，影响全公司或对外服务，且无可用替代方案。需立即响应、专人全程跟进，必要时启动重大事件流程并通报管理层。",
+     "ERP/订单系统全面宕机；机房断电断网；生产数据库损坏；对外服务大面积不可用"),
+    ("incident", "P2", "严重：核心系统部分功能不可用或性能严重下降，影响某业务域多数用户；存在临时绕行方案但代价较高。优先处理，持续同步进展。",
+     "订单接口批量超时；仓库扫描枪集体离线但可手工录入；某分公司网络中断"),
+    ("incident", "P3", "一般：非核心功能故障或个别用户受阻，业务整体可继续运转。按 SLA 正常排队处理。",
+     "个别用户无法打印；单个账号异常锁定；报表偶发打开缓慢"),
+    ("incident", "P4", "轻微：外观、体验类问题或使用咨询，几乎不影响业务，可计划性安排处理。",
+     "页面显示错位；提示文案错误；功能使用方法咨询"),
+    ("service_request", "P1", "紧急：影响业务开展或关键岗位/高管的开通、权限、配置类请求，需当日完成；通常伴随明确的业务截止时间。",
+     "新高管入职账号全套开通；投标截止前的系统权限开通；月结前财务系统配置调整"),
+    ("service_request", "P2", "高：影响部门级工作效率的请求，需要优先安排。",
+     "部门批量账号开通；共享盘扩容；常用系统配置调整"),
+    ("service_request", "P3", "普通：常规单人请求，按服务目录承诺时限排期交付。",
+     "软件安装；单人权限申请；邮箱容量调整"),
+    ("service_request", "P4", "低：非急需的物品/配置请求或改进建议，可纳入计划批量处理。",
+     "外设更换预约；桌面壁纸/签名规范咨询；体验优化建议"),
+    ("change", "P1", "紧急变更：为修复 P1/P2 事件或封堵重大安全漏洞而必须立即实施的变更。走紧急审批通道（可事后补审），必须有回退方案，实施后 48 小时内完成复盘。",
+     "生产库紧急扩容；高危漏洞紧急补丁；核心服务紧急回滚"),
+    ("change", "P2", "高风险变更：影响核心系统或跨多业务域的重大版本升级、架构调整。需完整评审、变更窗口与回退演练，相关方提前知会。",
+     "ERP 大版本升级；数据库迁移；网络架构调整"),
+    ("change", "P3", "常规变更：影响面可控的普通发布或配置变更，走标准审批流程，在变更窗口内实施。",
+     "业务系统常规迭代发布；防火墙策略调整；中间件参数变更"),
+    ("change", "P4", "标准变更：风险低、步骤固化、已预授权的例行操作，按模板执行，免逐次审批但留痕。",
+     "例行补丁；证书更换；账号例行回收"),
+    ("problem", "P1", "重大问题：已引发或极可能再次引发 P1 级事件的根因，重复造成核心业务中断。需立项根治、升级管理层跟踪，未解决期间维持临时措施并持续监控。",
+     "反复导致核心系统宕机的底层缺陷；无法定位的间歇性数据错乱"),
+    ("problem", "P2", "高影响问题：重复引发 P2 级事件，或已知错误波及多个系统/业务域。优先安排根因分析并明确修复计划。",
+     "每逢月结高峰即出现的性能瓶颈；多系统共用组件的兼容缺陷"),
+    ("problem", "P3", "一般问题：偶发且影响有限，安排常规根因分析，确认后纳入已知错误库并给出规避方案。",
+     "低频出现的接口重试；特定操作序列触发的小故障"),
+    ("problem", "P4", "低影响问题：轻微隐患或优化类问题，视资源情况列入技术改进计划。",
+     "日志噪音治理；非关键任务的偶发告警"),
+]
+
 # ITIL 4 实践 × 矩阵式组织（docs/06 §六）：
 # 事件=快速恢复(运维处理,TM 复盘)；服务请求=标准交付(BP 对接用户确认)；
 # 变更=风险评估(信息安全)→授权(CIO/TM)→实施(运维)→PIR 复盘(TM)；
@@ -173,13 +210,15 @@ PROCESS_DEFS = [
         ],
     },
     {
+        # M29 重构：确认(专业线负责人,可驳回退回提单人)→根因分析(负责人转派处理人)→
+        # 解决与验证(延续处理人)→解决确认与关闭(负责人登记关闭说明,完成自动关闭)
         "code": "problem_flow", "name": "问题分析流程", "entity_type": "problem",
         "trigger": None,
         "steps": [
-            ("问题确认", IT_OPS, "L3", 24),
-            ("根因分析", IT_OPS, "L3", None),
-            ("解决与验证", IT_OPS, "L3", None),
-            ("关闭复盘", IT_TM, "L2", 48),
+            ("问题确认", None, "L3", 24, [], "按问题所属专业线自动指派对应负责人；不属实可驳回退回提单人（必填理由）"),
+            ("根因分析", None, "L3", None, [], "确认属实时由专业线负责人指定处理人"),
+            ("解决与验证", None, "L3", None, [], "延续根因分析处理人"),
+            ("解决确认与关闭", None, "L2", 24, [], "专业线负责人确认已解决并登记关闭说明，完成后问题自动关闭"),
         ],
     },
     {
@@ -222,6 +261,10 @@ def run_seed_itsm(db: Session):
     for priority, resp, reso in SLA_POLICIES:
         if not db.query(SlaPolicy).filter_by(priority=priority).first():
             db.add(SlaPolicy(priority=priority, response_minutes=resp, resolution_hours=reso))
+    from app.models import SlaPriorityDefinition
+    for flow_type, priority, definition, examples in PRIORITY_DEFINITIONS:
+        if not db.query(SlaPriorityDefinition).filter_by(flow_type=flow_type, priority=priority).first():
+            db.add(SlaPriorityDefinition(flow_type=flow_type, priority=priority, definition=definition, examples=examples))
     for d in PROCESS_DEFS:
         if not db.query(ProcessDefinition).filter_by(code=d["code"]).first():
             definition = ProcessDefinition(

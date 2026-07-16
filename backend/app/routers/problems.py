@@ -27,6 +27,20 @@ class ProblemCreate(BaseModel):
     priority: str = "P3"
     service_item_id: str | None = None
     owner: str | None = None
+    assigned_line: str | None = None  # M29 专业线：product/ops/dev（页面必选；工单升级默认 ops）
+
+
+#: 专业线 → 负责人角色（M29）：问题确认与解决确认由对应专业线负责人执行
+LINE_LEADER_ROLE = {"product": "it_pdm_leader", "ops": "it_op_leader", "dev": "it_dev_leader"}
+
+
+def _line_leader_person(db: Session, line: str | None) -> str | None:
+    """解析专业线负责人在岗人员（取第一个持有该角色的用户）。"""
+    role = LINE_LEADER_ROLE.get(line or "")
+    if not role:
+        return None
+    persons = process_engine._resolve_key_persons(db, role)
+    return persons[0] if persons else None
 
 
 class ProblemUpdate(BaseModel):
@@ -65,8 +79,13 @@ def _row(p: Problem, db: Session, names: dict) -> dict:
 
 
 def _create_problem(db: Session, data: dict, actor: AuthUser, source_ticket: Ticket | None = None) -> Problem:
+    if not data.get("assigned_line"):
+        data["assigned_line"] = "ops"  # 工单升级等未选专业线时默认运维线
+    if data["assigned_line"] not in LINE_LEADER_ROLE:
+        raise AppError("INVALID_LINE", "所属专业线须为 产品线/运维线/开发线")
     problem = Problem(
         **data,
+        reporter=actor.id,
         problem_code=gen_code(db, Problem, "problem_code", "PB"),
         source_ticket_id=source_ticket.id if source_ticket else None,
     )
@@ -75,7 +94,9 @@ def _create_problem(db: Session, data: dict, actor: AuthUser, source_ticket: Tic
     if source_ticket:
         db.add(ProblemTicket(problem_id=problem.id, ticket_id=source_ticket.id))
         source_ticket.problem_id = problem.id
-    process_engine.start_instance(db, "problem", problem.id, {}, preferred_assignee=problem.owner)
+    # M29：第 1 步「问题确认」指派对应专业线负责人（产品/运维/开发），而非登记时填的负责人
+    process_engine.start_instance(db, "problem", problem.id, {},
+                                  preferred_assignee=_line_leader_person(db, problem.assigned_line))
     audit(db, "problem", problem.id, "create", actor, {"code": problem.problem_code, "from_ticket": source_ticket.ticket_code if source_ticket else None})
     publish(db, "problem.created", "problem", problem.id, {})
     return problem
@@ -114,11 +135,18 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
     detail = _row(p, db, names)
     links = db.query(ProblemTicket).filter(ProblemTicket.problem_id == p.id, ProblemTicket.is_deleted.is_(False)).all()
     tickets = db.query(Ticket).filter(Ticket.id.in_([l.ticket_id for l in links] or ["-"])).all()
+    cur_task = process_engine.current_pending_task(db, "problem", p.id)
+    cur_seq = cur_task.step.seq if cur_task and cur_task.step else None
     detail.update(
         {
             "description": p.description,
             "root_cause": p.root_cause,
             "workaround": p.workaround,
+            "assigned_line": p.assigned_line,
+            "reporter": p.reporter,
+            # M29：第 1 步「问题确认」当前处理人 → 前端显示 确认属实/驳回 双按钮
+            "can_confirm": bool(cur_task and cur_seq == 1 and not p.is_example
+                                and process_engine.can_act_on_task(db, user, cur_task)),
             "source_ticket_id": p.source_ticket_id,
             "source_requirement_id": p.source_requirement_id,
             "linked_tickets": [
@@ -182,6 +210,120 @@ def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends
     audit(db, "problem", p.id, "delete", actor, {"code": p.problem_code, "tickets_unlinked": unlinked})
     db.commit()
     return ok({"id": p.id, "tickets_unlinked": unlinked})
+
+
+class ConfirmIn(BaseModel):
+    handler_id: str = Field(min_length=1, description="根因分析处理人 person id")
+
+
+class RejectConfirmIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post("/api/problems/{problem_id}/confirm")
+def confirm_problem(problem_id: str, body: ConfirmIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "view"))):
+    """M29：专业线负责人确认问题属实 → 指定处理人进入根因分析；问题状态 → 分析中。"""
+    p = db.get(Problem, problem_id)
+    if not p or p.is_deleted:
+        raise AppError("NOT_FOUND", "问题不存在", 404)
+    ensure_not_example(p)
+    task = process_engine.current_pending_task(db, "problem", p.id)
+    if not task or not task.step or task.step.seq != 1:
+        raise AppError("NOT_CONFIRM_STEP", "当前不在「问题确认」节点")
+    if not process_engine.can_act_on_task(db, user, task):
+        raise AppError("FORBIDDEN", "仅该节点处理人（专业线负责人）可确认", 403)
+    handler = db.get(OrgMember, body.handler_id)
+    if not handler or handler.is_deleted:
+        raise AppError("NOT_FOUND", "处理人不存在", 404)
+    process_engine.complete_task(db, task.id, user, "确认问题属实，转根因分析")
+    nxt = process_engine.current_pending_task(db, "problem", p.id)
+    if nxt:
+        process_engine.reassign_task(db, nxt.id, body.handler_id)  # 指派处理人（自动通知）
+    if p.status == "new":
+        wf_transition(db, p, "problem", "analyzing", {}, user, system=True)
+    audit(db, "problem", p.id, "confirm", user, {"code": p.problem_code, "handler": handler.name})
+    db.commit()
+    return ok({"id": p.id, "status": p.status})
+
+
+@router.post("/api/problems/{problem_id}/reject-confirm")
+def reject_confirm_problem(problem_id: str, body: RejectConfirmIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "view"))):
+    """M29：确认阶段驳回——问题不属实，退回提单人（理由必填、审计留痕、通知提单人）。"""
+    p = db.get(Problem, problem_id)
+    if not p or p.is_deleted:
+        raise AppError("NOT_FOUND", "问题不存在", 404)
+    ensure_not_example(p)
+    task = process_engine.current_pending_task(db, "problem", p.id)
+    if not task or not task.step or task.step.seq != 1:
+        raise AppError("NOT_CONFIRM_STEP", "当前不在「问题确认」节点")
+    if not process_engine.can_act_on_task(db, user, task):
+        raise AppError("FORBIDDEN", "仅该节点处理人（专业线负责人）可驳回", 403)
+    reporter_person = None
+    if p.reporter:
+        ru = db.get(AuthUser, p.reporter)
+        reporter_person = ru.person_id if ru else None
+    task.comment = f"[驳回] {body.reason}"
+    process_engine.reassign_task(db, task.id, reporter_person) if reporter_person else None
+    audit(db, "problem", p.id, "reject_confirm", user, {"code": p.problem_code, "reason": body.reason})
+    if reporter_person:
+        from app.events import notifier
+
+        notifier.notify(db, "problem.rejected", "problem", p.id, [reporter_person],
+                        f"问题被驳回：{p.problem_code} {p.title}",
+                        f"驳回理由：{body.reason}。请补充说明后在流程节点改派回专业线负责人重新确认。",
+                        link=f"/itsm/problems/{p.id}")
+    db.commit()
+    return ok({"id": p.id, "rejected_to": reporter_person})
+
+
+def on_problem_advanced(db: Session, problem_id: str, actor: AuthUser):
+    """M29 问题流程编排：步骤 3 延续步骤 2 处理人；步骤 4 指派专业线负责人并同步状态 resolved；
+    流程完成 → 自动闭环（M24）。"""
+    from app.services.workflow import closure_path
+
+    p = db.get(Problem, problem_id)
+    if not p or p.is_deleted:
+        return
+    task = process_engine.current_pending_task(db, "problem", p.id)
+    if not task:  # 无待处理任务：流程可能已完成
+        auto_close_problem_on_process_complete(db, p.id, actor)
+        return
+    seq = task.step.seq if task.step else None
+    if seq == 3 and not task.assignee:
+        # 解决与验证：延续根因分析处理人
+        from app.models import ProcessTask
+
+        prev = (
+            db.query(ProcessTask)
+            .join(ProcessTask.step)
+            .filter(ProcessTask.instance_id == task.instance_id, ProcessTask.status == "已完成",
+                    ProcessTask.is_deleted.is_(False))
+            .all()
+        )
+        prev = next((t for t in prev if t.step and t.step.seq == 2), None)
+        if prev and prev.assignee:
+            process_engine.reassign_task(db, task.id, prev.assignee)
+    elif seq == 4:
+        if not task.assignee:
+            leader = _line_leader_person(db, p.assigned_line)
+            if leader:
+                process_engine.reassign_task(db, task.id, leader)
+        if p.status not in ("resolved", "closed"):
+            if not p.root_cause:
+                # 根因兜底：取「根因分析」步骤的处理说明（阶段校验 resolved 必填 root_cause）
+                from app.models import ProcessTask
+
+                done = (
+                    db.query(ProcessTask)
+                    .filter(ProcessTask.instance_id == task.instance_id, ProcessTask.status == "已完成",
+                            ProcessTask.is_deleted.is_(False))
+                    .all()
+                )
+                rc = next((t.comment for t in done if t.step and t.step.seq == 2 and t.comment), None)
+                p.root_cause = rc or "详见流程处理记录（根因分析步骤）"
+            path = closure_path(db, "problem", p.status, actor, dst="resolved", ignore_roles=True)
+            for to in path or []:
+                wf_transition(db, p, "problem", to, {}, actor, system=True)
 
 
 @router.post("/api/problems/{problem_id}/transition")

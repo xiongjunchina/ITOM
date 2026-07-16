@@ -2,6 +2,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -181,6 +182,50 @@ def upsert_sla_policies(body: list[SlaPolicyIn], db: Session = Depends(get_db), 
         else:
             db.add(SlaPolicy(**entry.model_dump()))
     audit(db, "sla_policy", "batch", "upsert", actor, {"count": len(body)})
+    db.commit()
+    return ok({"count": len(body)})
+
+
+class PriorityDefinitionIn(BaseModel):
+    flow_type: str
+    priority: str
+    definition: str = Field(min_length=1, max_length=2000)
+    examples: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/api/sla/priority-definitions")
+def list_priority_definitions(db: Session = Depends(get_db), _=Depends(require_perm("sla", "view"))):
+    """P1-P4 优先级定义（M29）：四流程 × 四级，seed ITIL/ServiceNow 初稿，管理员可编辑。"""
+    from app.models import SlaPriorityDefinition
+
+    rows = db.query(SlaPriorityDefinition).filter(SlaPriorityDefinition.is_deleted.is_(False)).all()
+    return ok([
+        {"flow_type": r.flow_type, "priority": r.priority, "definition": r.definition, "examples": r.examples}
+        for r in rows
+    ])
+
+
+@router.put("/api/sla/priority-definitions")
+def upsert_priority_definitions(body: list[PriorityDefinitionIn], db: Session = Depends(get_db), actor=Depends(require_perm("sla", "edit"))):
+    from app.models import SlaPriorityDefinition
+
+    valid_flows = {"service_request", "incident", "change", "problem"}
+    valid_priorities = {"P1", "P2", "P3", "P4"}
+    for entry in body:
+        if entry.flow_type not in valid_flows or entry.priority not in valid_priorities:
+            raise AppError("INVALID_DEFINITION", f"非法的流程类型或优先级：{entry.flow_type}/{entry.priority}")
+        row = (
+            db.query(SlaPriorityDefinition)
+            .filter(SlaPriorityDefinition.flow_type == entry.flow_type, SlaPriorityDefinition.priority == entry.priority)
+            .first()
+        )
+        if row:
+            row.definition = entry.definition
+            row.examples = entry.examples
+            row.is_deleted = False
+        else:
+            db.add(SlaPriorityDefinition(**entry.model_dump()))
+    audit(db, "sla_priority_definition", "batch", "upsert", actor, {"count": len(body)})
     db.commit()
     return ok({"count": len(body)})
 

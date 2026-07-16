@@ -20,12 +20,14 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { ArrowLeftOutlined, LinkOutlined } from '@ant-design/icons';
 import { useGoBack } from '../../utils/nav';
+import { canHandleTask, useAuthStore } from '../../stores/auth';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import type {
   AllowedTransition,
   LinkedTicketBrief,
+  Member,
   ProblemDetail as ProblemDetailData,
   ProcessStep,
   TicketRow,
@@ -49,6 +51,7 @@ const NEEDS_ROOT_CAUSE = new Set(['known_error', 'resolved']);
 export default function ProblemDetail() {
   const { id } = useParams<{ id: string }>();
   const goBack = useGoBack();
+  const user = useAuthStore((st) => st.user);
   const t = useT();
 
   /** 角色/组 code → 中文名（流程条处理人与知会人展示） */
@@ -162,6 +165,58 @@ export default function ProblemDetail() {
     }
   };
 
+  // M29 确认/驳回（第 1 步专业线负责人）
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmHandler, setConfirmHandler] = useState<string | undefined>();
+  const [confirmSaving, setConfirmSaving] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectSaving, setRejectSaving] = useState(false);
+  const [members, setMembers] = useState<Member[]>([]);
+
+  const loadMembers = () => {
+    if (members.length === 0) {
+      api.getList<Member>('/members', { page: 1, page_size: 999 }).then((res) => setMembers(res.items)).catch(() => undefined);
+    }
+  };
+
+  const submitConfirm = async () => {
+    if (!confirmHandler) {
+      message.warning(t('itsm.problem.handlerRequired'));
+      return;
+    }
+    setConfirmSaving(true);
+    try {
+      await api.post(`/problems/${id}/confirm`, { handler_id: confirmHandler });
+      message.success(t('itsm.problem.confirmed'));
+      setConfirmOpen(false);
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setConfirmSaving(false);
+    }
+  };
+
+  const submitReject = async () => {
+    if (rejectReason.trim().length < 5) {
+      message.warning(t('itsm.problem.rejectReasonRequired'));
+      return;
+    }
+    setRejectSaving(true);
+    try {
+      await api.post(`/problems/${id}/reject-confirm`, { reason: rejectReason.trim() });
+      message.success(t('itsm.problem.rejectedMsg'));
+      setRejectOpen(false);
+      setRejectReason('');
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setRejectSaving(false);
+    }
+  };
+
   const submitTaskComplete = async () => {
     if (!completingTask?.task_id) return;
     setTaskSaving(true);
@@ -225,6 +280,29 @@ export default function ProblemDetail() {
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
           </Space>
           <Space wrap>
+            {detail.can_confirm && (
+              <>
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    loadMembers();
+                    setConfirmHandler(undefined);
+                    setConfirmOpen(true);
+                  }}
+                >
+                  {t('itsm.problem.confirmBtn')}
+                </Button>
+                <Button
+                  danger
+                  onClick={() => {
+                    setRejectReason('');
+                    setRejectOpen(true);
+                  }}
+                >
+                  {t('itsm.problem.rejectBtn')}
+                </Button>
+              </>
+            )}
             {(detail.allowed_transitions ?? []).map((tr) => (
               <Button key={tr.to} type="primary" onClick={() => openTransition(tr)}>
                 {tr.to_name}
@@ -257,7 +335,8 @@ export default function ProblemDetail() {
                     </Typography.Text>
                   )}
                   {s.completed_at && <span>{fmt(s.completed_at)}</span>}
-                  {s.task_status === '待处理' && s.task_id != null && !isExample && (
+                  {s.task_status === '待处理' && s.task_id != null && !isExample && s.seq !== 1 &&
+                    canHandleTask(user, s) && (
                     <Button
                       size="small"
                       type="link"
@@ -280,6 +359,9 @@ export default function ProblemDetail() {
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>
           <Descriptions.Item label={t('itsm.f.serviceItem')}>{detail.service_item_name ?? '-'}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.problem.line')}>
+            {detail.assigned_line ? t('itsm.problem.line.' + detail.assigned_line) : '-'}
+          </Descriptions.Item>
           <Descriptions.Item label={t('itsm.f.owner')}>{detail.owner_name ?? '-'}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.f.createdAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.created_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.problem.sourceTicket')}>
@@ -405,6 +487,41 @@ export default function ProblemDetail() {
           onChange={(e) => setTaskComment(e.target.value)}
         />
       </Modal>
-    </Space>
+          <Modal
+        title={t('itsm.problem.confirmTitle')}
+        open={confirmOpen}
+        confirmLoading={confirmSaving}
+        onOk={() => void submitConfirm()}
+        onCancel={() => setConfirmOpen(false)}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 8 }}>{t('itsm.problem.handlerLabel')}</div>
+        <Select
+          showSearch
+          optionFilterProp="label"
+          style={{ width: '100%' }}
+          placeholder={t('itsm.problem.handlerPlaceholder')}
+          value={confirmHandler}
+          onChange={setConfirmHandler}
+          options={members.map((m) => ({
+            value: m.id,
+            label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+          }))}
+        />
+      </Modal>
+      <Modal
+        title={t('itsm.problem.rejectTitle')}
+        open={rejectOpen}
+        confirmLoading={rejectSaving}
+        okButtonProps={{ danger: true }}
+        onOk={() => void submitReject()}
+        onCancel={() => setRejectOpen(false)}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 8 }}>{t('itsm.problem.rejectReasonLabel')}</div>
+        <Input.TextArea rows={3} maxLength={500} value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+          placeholder={t('itsm.problem.rejectReasonPlaceholder')} />
+      </Modal>
+</Space>
   );
 }

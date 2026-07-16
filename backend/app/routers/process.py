@@ -79,11 +79,11 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
         from app.services.tickets import auto_close_on_process_complete
 
         auto_close_on_process_complete(db, instance.entity_id, user)
-    elif instance.entity_type == "problem" and instance.status == "completed":
-        # M24：问题流程走完（关闭复盘）→ 问题自动闭环
-        from app.routers.problems import auto_close_problem_on_process_complete
+    elif instance.entity_type == "problem":
+        # M24/M29：问题流程编排（步骤延续/负责人指派/状态同步；完成→自动闭环）
+        from app.routers.problems import on_problem_advanced
 
-        auto_close_problem_on_process_complete(db, instance.entity_id, user)
+        on_problem_advanced(db, instance.entity_id, user)
     elif instance.entity_type == "project" and instance.status == "completed":
         # M24：项目流程走完 → 不自动关（关闭需理由，M14.1），通知 PM 确认收尾
         from app.models import Project

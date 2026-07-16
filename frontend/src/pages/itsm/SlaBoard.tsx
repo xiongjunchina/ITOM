@@ -4,12 +4,14 @@ import {
   Button,
   Card,
   Col,
+  Input,
   InputNumber,
   Row,
   Space,
   Statistic,
   Switch,
   Table,
+  Tabs,
   Tag,
   Typography,
   message,
@@ -26,6 +28,127 @@ import { PRIORITY_COLORS } from '../../api/types';
 const PRIORITIES: TicketPriority[] = ['P1', 'P2', 'P3', 'P4'];
 
 type WarningTicket = SlaDashboard['warning_tickets'][number];
+
+/** P1-P4 优先级定义（M29）：四流程 × 四级，ITIL/ServiceNow 初稿，管理员可编辑 */
+interface PriorityDef {
+  flow_type: string;
+  priority: TicketPriority;
+  definition: string;
+  examples: string | null;
+}
+
+const DEF_FLOWS = ['service_request', 'incident', 'change', 'problem'] as const;
+
+function PriorityDefinitions({ isAdmin }: { isAdmin: boolean }) {
+  const t = useT();
+  const [defs, setDefs] = useState<PriorityDef[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api
+      .get<PriorityDef[]>('/sla/priority-definitions')
+      .then((rows) => setDefs(rows ?? []))
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const cell = (flow: string, priority: TicketPriority): PriorityDef => {
+    const found = defs.find((d) => d.flow_type === flow && d.priority === priority);
+    return found ?? { flow_type: flow, priority, definition: '', examples: '' };
+  };
+
+  const update = (flow: string, priority: TicketPriority, field: 'definition' | 'examples', value: string) => {
+    setDefs((prev) => {
+      const idx = prev.findIndex((d) => d.flow_type === flow && d.priority === priority);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], [field]: value };
+        return next;
+      }
+      return [...prev, { flow_type: flow, priority, definition: '', examples: '', [field]: value }];
+    });
+    setDirty(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put('/sla/priority-definitions', defs.filter((d) => d.definition.trim()));
+      message.success(t('itsm.sla.defSaved'));
+      setDirty(false);
+    } catch {
+      // 已统一提示
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <Card size="small">
+        <Space style={{ width: '100%', justifyContent: 'space-between' }} wrap>
+          <Typography.Text type="secondary">{t('itsm.sla.defHint')}</Typography.Text>
+          {isAdmin && (
+            <Button type="primary" icon={<SaveOutlined />} disabled={!dirty} loading={saving} onClick={() => void save()}>
+              {t('itsm.sla.saveDef')}
+            </Button>
+          )}
+        </Space>
+      </Card>
+      {DEF_FLOWS.map((flow) => (
+        <Card key={flow} title={t('itsm.sla.defCard.' + flow)} size="small" loading={loading}>
+          <Table<{ priority: TicketPriority }>
+            rowKey="priority"
+            size="small"
+            pagination={false}
+            dataSource={PRIORITIES.map((p) => ({ priority: p }))}
+            columns={[
+              {
+                title: t('itsm.sla.defColLevel'),
+                dataIndex: 'priority',
+                width: 70,
+                render: (p: TicketPriority) => <Tag color={PRIORITY_COLORS[p]}>{p}</Tag>,
+              },
+              {
+                title: t('itsm.sla.defColDefinition'),
+                key: 'definition',
+                render: (_, r) =>
+                  isAdmin ? (
+                    <Input.TextArea
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                      value={cell(flow, r.priority).definition}
+                      onChange={(e) => update(flow, r.priority, 'definition', e.target.value)}
+                    />
+                  ) : (
+                    <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+                      {cell(flow, r.priority).definition || '-'}
+                    </Typography.Paragraph>
+                  ),
+              },
+              {
+                title: t('itsm.sla.defColExamples'),
+                key: 'examples',
+                width: 360,
+                render: (_, r) =>
+                  isAdmin ? (
+                    <Input.TextArea
+                      autoSize={{ minRows: 2, maxRows: 6 }}
+                      value={cell(flow, r.priority).examples ?? ''}
+                      onChange={(e) => update(flow, r.priority, 'examples', e.target.value)}
+                    />
+                  ) : (
+                    <Typography.Text type="secondary">{cell(flow, r.priority).examples || '-'}</Typography.Text>
+                  ),
+              },
+            ]}
+          />
+        </Card>
+      ))}
+    </Space>
+  );
+}
 
 export default function SlaBoard() {
   const navigate = useNavigate();
@@ -173,7 +296,7 @@ export default function SlaBoard() {
     },
   ];
 
-  return (
+  const boardTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Card
         title={
@@ -259,5 +382,15 @@ export default function SlaBoard() {
         />
       </Card>
     </Space>
+  );
+
+  return (
+    <Tabs
+      defaultActiveKey="board"
+      items={[
+        { key: 'board', label: t('itsm.sla.tabBoard'), children: boardTab },
+        { key: 'definitions', label: t('itsm.sla.tabDefinitions'), children: <PriorityDefinitions isAdmin={isAdmin} /> },
+      ]}
+    />
   );
 }

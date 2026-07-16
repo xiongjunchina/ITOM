@@ -715,6 +715,11 @@ export interface ProblemDetail extends ProblemRow {
   source_ticket_id?: string | null;
   linked_tickets: LinkedTicketBrief[];
   allowed_transitions: AllowedTransition[];
+  /** M29：所属专业线 product/ops/dev */
+  assigned_line?: string | null;
+  reporter?: string | null;
+  /** M29：当前用户是「问题确认」节点处理人 → 显示确认/驳回按钮 */
+  can_confirm?: boolean;
   process?: TicketProcess | null;
 }
 

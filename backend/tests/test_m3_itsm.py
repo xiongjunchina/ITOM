@@ -35,19 +35,19 @@ def test_problem_lifecycle(client, ctx, admin_headers):
     detail = client.get(f"/api/problems/{p['id']}", headers=ctx["ops"]).json()["data"]
     assert detail["process"]["definition_name"] == "问题分析流程"
 
-    # 转已知错误缺根因被拒
-    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "analyzing", "fields": {}}, headers=ctx["ops"])
+    # 转已知错误缺根因被拒（M29：新问题流程节点未指派时普通流转仅 admin，老式手动流转用 admin）
+    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "analyzing", "fields": {}}, headers=admin_headers)
     assert r.json()["success"]
-    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "known_error", "fields": {}}, headers=ctx["ops"])
+    r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "known_error", "fields": {}}, headers=admin_headers)
     assert r.json()["error"]["code"] == "STAGE_FIELD_REQUIRED"
 
     r = client.post(
         f"/api/problems/{p['id']}/transition",
         json={"to": "known_error", "fields": {"root_cause": "连接泄漏：ORM session 未关闭", "workaround": "定时重启连接池"}},
-        headers=ctx["ops"],
+        headers=admin_headers,
     )
     assert r.json()["data"]["status"] == "known_error"
-    client.post(f"/api/problems/{p['id']}/transition", json={"to": "resolved", "fields": {}}, headers=ctx["ops"])
+    client.post(f"/api/problems/{p['id']}/transition", json={"to": "resolved", "fields": {}}, headers=admin_headers)
     # M28：手动关闭问题=强制关闭，仅系统管理员（正常闭环走流程完成自动关闭）
     r = client.post(f"/api/problems/{p['id']}/transition", json={"to": "closed", "fields": {}}, headers=ctx["ops"])
     assert r.status_code == 403

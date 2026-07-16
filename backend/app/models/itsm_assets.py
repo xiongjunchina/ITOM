@@ -78,6 +78,8 @@ class Problem(GlidBase):
     root_cause: Mapped[str | None] = mapped_column(Text, comment="转已知错误时必填")
     workaround: Mapped[str | None] = mapped_column(Text)
     owner: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
+    assigned_line: Mapped[str | None] = mapped_column(String(16), comment="所属专业线 product/ops/dev（M29 确认指派）")
+    reporter: Mapped[str | None] = mapped_column(String(26), comment="提单人 auth_user.id（M29 驳回退回）")
     source_ticket_id: Mapped[str | None] = mapped_column(String(26), comment="工单升级来源")
     source_requirement_id: Mapped[str | None] = mapped_column(String(26), comment="需求遗留转入(M5)")
 

@@ -1,4 +1,4 @@
-from app.models.itsm import ServiceCatalog, ServiceItem, SlaPolicy, Ticket
+from app.models.itsm import ServiceCatalog, ServiceItem, SlaPolicy, SlaPriorityDefinition, Ticket
 from app.models.itsm_assets import (
     Ci,
     CiRelationship,
@@ -104,6 +104,7 @@ __all__ = [
     "ServiceCatalog",
     "ServiceItem",
     "SlaPolicy",
+    "SlaPriorityDefinition",
     "TeamCharter",
     "Ticket",
     "Risk",

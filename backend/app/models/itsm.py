@@ -1,7 +1,7 @@
 """ITSM 域模型 M2 部分（docs/04 §2.1-2.3, 2.8）。"""
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase
@@ -42,6 +42,18 @@ class SlaPolicy(GlidBase):
     response_minutes: Mapped[int] = mapped_column(Integer)
     resolution_hours: Mapped[float] = mapped_column(Float)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class SlaPriorityDefinition(GlidBase):
+    """P1-P4 优先级定义（M29）：按流程类型分别定义。seed ITIL/ServiceNow 风格初稿，管理员可编辑适配企业实际。"""
+
+    __tablename__ = "sla_priority_definition"
+    __table_args__ = (UniqueConstraint("flow_type", "priority"),)
+
+    flow_type: Mapped[str] = mapped_column(String(32), comment="service_request/incident/change/problem")
+    priority: Mapped[str] = mapped_column(String(8), comment="P1-P4")
+    definition: Mapped[str] = mapped_column(Text, comment="级别定义")
+    examples: Mapped[str | None] = mapped_column(Text, comment="典型示例")
 
 
 class Ticket(GlidBase):
