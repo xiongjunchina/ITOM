@@ -326,7 +326,7 @@ function ProjectList() {
       key: 'pending',
       width: 190,
       render: (_: unknown, r: ProjectRow) => (
-        <PendingStepCell pending={(r as ProjectRow & { pending_step?: PendingStep | null }).pending_step} onDone={() => void load()} />
+        <PendingStepCell pending={(r as ProjectRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/projects/${r.id}`)} />
       ),
     },
     ...(canEdit

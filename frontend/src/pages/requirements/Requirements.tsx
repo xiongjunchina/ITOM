@@ -333,7 +333,7 @@ export default function Requirements() {
       title: t('comp.pending.col'),
       key: 'pending',
       width: 200,
-      render: (_, r) => <PendingStepCell pending={(r as RequirementRow & { pending_step?: PendingStep | null }).pending_step} onDone={() => void load()} />,
+      render: (_, r) => <PendingStepCell pending={(r as RequirementRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/requirements/${r.id}`)} />,
     },
     // M21：删除（delete 权限，默认仅 admin）：级联移除任务清单与流程记录，示例只读
     ...(canDelete

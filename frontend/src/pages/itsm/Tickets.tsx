@@ -332,7 +332,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       title: t('comp.pending.col'),
       key: 'pending',
       width: 190,
-      render: (_, r) => <PendingStepCell pending={(r as TicketRow & { pending_step?: PendingStep | null }).pending_step} onDone={() => void load()} />,
+      render: (_, r) => <PendingStepCell pending={(r as TicketRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/itsm/tickets/${r.id}`)} />,
     },
     // M20：管理动作列（编辑/关闭需 edit；删除需 delete——默认矩阵仅 admin），示例数据只读
     ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin

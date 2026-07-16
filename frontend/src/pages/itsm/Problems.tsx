@@ -166,16 +166,7 @@ export default function Problems() {
       render: (_, r) => (
         <PendingStepCell
           pending={(r as ProblemRow & { pending_step?: PendingStep | null }).pending_step}
-          onDone={() => void load()}
-          extraActions={(p) =>
-            p.seq === 1 ? (
-              <Space size={8}>
-                <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate(`/itsm/problems/${r.id}`)}>
-                  {t('itsm.problem.confirmGo')}
-                </Button>
-              </Space>
-            ) : null
-          }
+          onGo={() => navigate(`/itsm/problems/${r.id}`)}
         />
       ),
     },
