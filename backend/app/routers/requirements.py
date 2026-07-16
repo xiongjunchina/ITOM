@@ -587,7 +587,7 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
                 db, "requirement", r.status,
                 process_engine.filter_targets_by_flow(
                     db, user, "requirement", r.id, r.status, allowed_targets(db, "requirement", r.status, user)),
-                allow_terminal=_can_close_requirement(db, user, r))
+                allow_terminal=_is_req_admin(db, user))
         ],
         "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
         "process": process_engine.instance_view(db, "requirement", r.id),
@@ -649,6 +649,12 @@ def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor
     audit(db, "requirement", r.id, "delete", actor, {"code": r.requirement_code, **stats})
     db.commit()
     return ok({"id": r.id, **stats})
+
+
+def _is_req_admin(db: Session, user: AuthUser) -> bool:
+    from app.services.rbac import actor_keys
+
+    return ADMIN in actor_keys(db, user)
 
 
 def _can_close_requirement(db: Session, user: AuthUser, r: Requirement) -> bool:

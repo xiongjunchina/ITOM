@@ -342,7 +342,8 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
         "resource_note": p.resource_note,
         "org_members": p.org_members or [], "stakeholders": p.stakeholders or [],
         "service_item_id": p.service_item_id,
-        "allowed_transitions": [] if p.is_example else [
+        # M30：无 projects.edit 不下发状态按钮（与 transition 接口一致）；关闭仅 admin/PM 本人
+        "allowed_transitions": [] if p.is_example or not has_perm(db, user, "projects", "edit") else [
             {"to": code, "to_name": status_map.get(code, code)}
             for code in allowed_targets(db, "project", p.status, user)
             if code not in ("closed", "cancelled") or _can_close_project(db, user, p)

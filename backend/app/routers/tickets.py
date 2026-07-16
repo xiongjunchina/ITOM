@@ -18,6 +18,13 @@ from app.services.workflow import allowed_targets, restrict_terminal_targets, re
 router = APIRouter(prefix="/api/tickets", tags=["itsm"])
 
 
+def _is_admin(db: Session, user: AuthUser) -> bool:
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    return ADMIN in actor_keys(db, user)
+
+
 def _ticket_module(ticket_type: str) -> str:
     """M17.2：工单按类型独立授权（服务请求/事件/变更 三个权限模块）。"""
     from app.services.permissions import TICKET_TYPE_MODULE
@@ -148,13 +155,14 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "first_time_fix": t.first_time_fix,
             "sla_response_min": t.sla_response_min,
             "actual_response_min": t.actual_response_min, "actual_resolution_hours": t.actual_resolution_hours,
+            # M30：终态状态按钮仅 admin（与 transition 接口一致）；登记人关单走专门的 can_close 按钮
             "allowed_transitions": [] if t.is_example or not can_edit else [
                 {"to": code, "to_name": names.get(code, code)}
                 for code in restrict_terminal_targets(
                     db, etype, t.status,
                     process_engine.filter_targets_by_flow(
                         db, user, etype, t.id, t.status, allowed_targets(db, etype, t.status, user)),
-                    allow_terminal=_can_close_ticket(db, user, t))
+                    allow_terminal=_is_admin(db, user))
             ],
             "can_close": _can_close_ticket(db, user, t) and not t.is_example and t.status not in ("closed", "rejected"),
             "can_edit": can_edit and not t.is_example,
