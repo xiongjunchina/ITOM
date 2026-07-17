@@ -53,7 +53,8 @@ def list_members(
     query = db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))
     if q:
         query = query.filter(OrgMember.name.ilike(f"%{q}%"))
-    items, total = paginate(query.order_by(OrgMember.created_at.desc()), page, page_size)
+    # 全员同步后近千人，人员下拉需一次取全：上限放宽到 2000（M36.1）
+    items, total = paginate(query.order_by(OrgMember.created_at.desc()), page, page_size, max_size=2000)
     return ok([_member_row(m) for m in items], total=total, page=page)
 
 

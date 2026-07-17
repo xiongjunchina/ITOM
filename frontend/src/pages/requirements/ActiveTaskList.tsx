@@ -70,7 +70,7 @@ export default function ActiveTaskList() {
     try {
       const [reqs, members] = await Promise.all([
         api.getList<RequirementRow>('/requirements', { status: 'implementing', page: 1, page_size: 200 }),
-        api.getList<Member>('/members', { page: 1, page_size: 999 }),
+        api.getList<Member>('/members', { page: 1, page_size: 2000 }),
       ]);
       setReqOptions(
         reqs.items
@@ -132,7 +132,7 @@ export default function ActiveTaskList() {
     setEditing(row);
     if (memberOptions.length === 0) {
       try {
-        const members = await api.getList<Member>('/members', { page: 1, page_size: 999 });
+        const members = await api.getList<Member>('/members', { page: 1, page_size: 2000 });
         setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
       } catch {
         // 已统一提示

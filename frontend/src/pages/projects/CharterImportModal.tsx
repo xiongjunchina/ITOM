@@ -110,7 +110,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
     }
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 999 })
+        .getList<Member>('/members', { page: 1, page_size: 2000 })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }

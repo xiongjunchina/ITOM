@@ -176,7 +176,7 @@ export default function ProblemDetail() {
 
   const loadMembers = () => {
     if (members.length === 0) {
-      api.getList<Member>('/members', { page: 1, page_size: 999 }).then((res) => setMembers(res.items)).catch(() => undefined);
+      api.getList<Member>('/members', { page: 1, page_size: 2000 }).then((res) => setMembers(res.items)).catch(() => undefined);
     }
   };
 

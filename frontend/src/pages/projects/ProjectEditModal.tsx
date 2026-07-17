@@ -112,7 +112,7 @@ export default function ProjectEditModal({
     // 下拉数据惰性加载（同原 ProjectDetail 编辑弹窗取数方式）
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 999 })
+        .getList<Member>('/members', { page: 1, page_size: 2000 })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }

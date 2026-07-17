@@ -205,3 +205,16 @@ def test_delete_user_unbinds_person_keeps_master_data(client, admin_headers, ctx
     r = client.post("/api/admin/users", json={"username": "del_me", "password": "pass123", "roles": ["it_dev"]},
                     headers=admin_headers)
     assert r.json()["success"], r.text
+
+
+def test_members_dropdown_returns_beyond_200(client, admin_headers):
+    """M36.1：全员同步近千人后，人员接口 page_size 上限放宽到 2000，下拉不再截断到 200。"""
+    for i in range(230):
+        r = client.post("/api/members", json={"name": f"批量人员{i:03d}"}, headers=admin_headers)
+        assert r.json()["success"], r.text
+    res = client.get("/api/members?page_size=2000", headers=admin_headers).json()
+    assert res["total"] >= 230
+    assert len(res["data"]) >= 230  # 旧上限 200 会在此截断
+    # 名称过滤仍可用（服务端 q）
+    res = client.get("/api/members?page_size=2000&q=批量人员001", headers=admin_headers).json()
+    assert any(m["name"] == "批量人员001" for m in res["data"])

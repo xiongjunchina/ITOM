@@ -116,7 +116,7 @@ export default function CatalogPage() {
   useEffect(() => {
     if (canManage) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 999 })
+        .getList<Member>('/members', { page: 1, page_size: 2000 })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
