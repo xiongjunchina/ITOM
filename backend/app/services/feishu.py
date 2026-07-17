@@ -80,7 +80,7 @@ class FeishuClient:
                           {"app_id": self.app_id, "app_secret": self.app_secret})
         return data["app_access_token"]
 
-    # ---------- 通讯录（仅 IT 团队子树） ----------
+    # ---------- 通讯录（按配置的同步范围拉取） ----------
 
     def get_department(self, token: str, department_id: str) -> dict:
         data = self._get(f"/open-apis/contact/v3/departments/{department_id}",
