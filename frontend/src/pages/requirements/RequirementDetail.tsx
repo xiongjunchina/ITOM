@@ -631,7 +631,7 @@ export default function RequirementDetail() {
   useEffect(() => {
     if (!canEdit) return;
     api
-      .getList<Member>('/members', { page: 1, page_size: 999 })
+      .getList<Member>('/members', { page: 1, page_size: 2000 })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
     api

@@ -75,7 +75,7 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
       .then((res) => setRoles(res.items.filter((r) => r.code !== 'admin')))
       .catch(() => undefined);
     api
-      .getList<Member>('/members', { page_size: 200 })
+      .getList<Member>('/members', { page_size: 2000 })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
   }, []);
@@ -195,14 +195,23 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
   ];
 
   const roleOptions = useMemo(() => roles.map((r) => ({ value: r.code, label: r.name })), [roles]);
-  const memberOptions = useMemo(
-    () =>
-      members.map((m) => ({
-        value: m.id,
-        label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-      })),
-    [members],
-  );
+  const memberOptions = useMemo(() => {
+    const opts = members.map((m) => ({
+      value: m.id,
+      label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+    }));
+    // 兜底：自动匹配到的人员若不在已加载列表（超出分页上限），并入选项保证预填可见
+    if (
+      approveTarget?.matched_person_id &&
+      !members.some((m) => m.id === approveTarget.matched_person_id)
+    ) {
+      opts.unshift({
+        value: approveTarget.matched_person_id,
+        label: approveTarget.matched_person_name ?? approveTarget.matched_person_id,
+      });
+    }
+    return opts;
+  }, [members, approveTarget]);
 
   return (
     <Card
