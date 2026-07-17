@@ -47,3 +47,12 @@
 .cell-nowrap {
   white-space: nowrap;
 }
+
+html[data-theme='dark'] body,
+html[data-theme='dark'] #root {
+  background: #141414;
+}
+
+html[data-density='compact'] .ant-layout-content {
+  margin: 10px !important;
+}

@@ -10,6 +10,10 @@ import {
   Input,
   Select,
   Space,
+  Switch,
+  Table,
+  Popconfirm,
+  Radio,
   Tabs,
   Tag,
   Typography,
@@ -19,7 +23,7 @@ import {
 import { UserOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../api/client';
-import type { ProfileData } from '../api/types';
+import type { PersonalAuditLog, ProfileData } from '../api/types';
 import { useAuthStore } from '../stores/auth';
 import { useLangStore, type Lang } from '../i18n/store';
 import { useT } from '../i18n';
@@ -63,6 +67,8 @@ export default function Profile() {
   const [savingPref, setSavingPref] = useState(false);
   const [pwdForm] = Form.useForm<{ current_password?: string; new_password: string; confirm: string }>();
   const [savingPwd, setSavingPwd] = useState(false);
+  const [auditRows, setAuditRows] = useState<PersonalAuditLog[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -77,6 +83,11 @@ export default function Profile() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (params.get('tab') === 'audit') void loadAudit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const displayName = data?.person?.name || user?.name || user?.username || '';
 
@@ -140,6 +151,35 @@ export default function Profile() {
 
   const account = data?.account;
   const person = data?.person;
+
+  const saveExtendedPreferences = async (patch: Record<string, unknown>) => {
+    await api.patch('/auth/me/preferences', patch);
+    if (user) setUser({ ...user, preferences: { ...user.preferences, ...patch } });
+    setData((prev) => prev ? { ...prev, preferences: { ...prev.preferences, ...patch } as ProfileData['preferences'] } : prev);
+    message.success(t('profile.saved'));
+  };
+
+  const loadAudit = async () => {
+    setAuditLoading(true);
+    try {
+      const res = await api.getList<PersonalAuditLog>('/auth/me/audit-logs', { page_size: 100 });
+      setAuditRows(res.items);
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const startFeishuBind = async () => {
+    const redirectUri = `${window.location.origin}/login/feishu-callback?mode=bind`;
+    const res = await api.get<{ url: string }>('/auth/me/feishu-binding/authorize-url', { redirect_uri: redirectUri });
+    window.location.href = res.url;
+  };
+
+  const unbindFeishu = async () => {
+    await api.delete('/auth/me/feishu-binding');
+    message.success(t('profile.feishuUnbound'));
+    void load();
+  };
 
   const basicTab = (
     <Space direction="vertical" size={16} style={{ display: 'flex' }}>
@@ -299,14 +339,97 @@ export default function Profile() {
     </Card>
   );
 
+  const notificationTab = (
+    <Card title={t('profile.notificationTitle')} style={{ maxWidth: 680 }}>
+      <Space direction="vertical" size={20} style={{ display: 'flex' }}>
+        {(['work', 'workflow', 'system'] as const).map((key) => (
+          <Space key={key} style={{ justifyContent: 'space-between', display: 'flex' }}>
+            <Space direction="vertical" size={0}>
+              <Typography.Text strong>{t(`profile.notification.${key}`)}</Typography.Text>
+              <Typography.Text type="secondary">{t(`profile.notification.${key}Hint`)}</Typography.Text>
+            </Space>
+            <Switch
+              checked={data?.preferences.notification_preferences?.[key] !== false}
+              onChange={(checked) => void saveExtendedPreferences({
+                notification_preferences: { ...data?.preferences.notification_preferences, [key]: checked },
+              })}
+            />
+          </Space>
+        ))}
+      </Space>
+    </Card>
+  );
+
+  const auditTab = (
+    <Card title={t('profile.auditTitle')}>
+      <Table<PersonalAuditLog>
+        rowKey="id" loading={auditLoading} dataSource={auditRows} pagination={{ pageSize: 20 }}
+        columns={[
+          { title: t('profile.auditTime'), dataIndex: 'created_at', render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm') },
+          { title: t('profile.auditAction'), dataIndex: 'action' },
+          { title: t('profile.auditObject'), render: (_, r) => `${r.entity_type} · ${r.entity_id}` },
+          { title: t('profile.auditDetail'), dataIndex: 'summary', render: (v) => v ? JSON.stringify(v) : '-' },
+        ]}
+      />
+    </Card>
+  );
+
+  const bindingTab = (
+    <Card title={t('profile.feishuBinding')} style={{ maxWidth: 680 }}>
+      <Descriptions column={1}>
+        <Descriptions.Item label={t('profile.bindState')}>
+          <Tag color={account?.feishu_bound ? 'green' : 'default'}>
+            {account?.feishu_bound ? t('profile.feishuBound') : t('profile.feishuNotBound')}
+          </Tag>
+        </Descriptions.Item>
+      </Descriptions>
+      <Alert type="info" showIcon message={t('profile.feishuBindHint')} style={{ marginBottom: 16 }} />
+      <Space>
+        <Button type="primary" onClick={() => void startFeishuBind()}>{account?.feishu_bound ? t('profile.feishuRebind') : t('profile.feishuBind')}</Button>
+        {account?.feishu_bound && (
+          <Popconfirm title={t('profile.feishuUnbindConfirm')} onConfirm={() => void unbindFeishu()}>
+            <Button danger disabled={!account.password_set}>{t('profile.feishuUnbind')}</Button>
+          </Popconfirm>
+        )}
+      </Space>
+    </Card>
+  );
+
+  const appearanceTab = (
+    <Card title={t('profile.appearance')} style={{ maxWidth: 680 }}>
+      <Form layout="vertical">
+        <Form.Item label={t('profile.theme')}>
+          <Radio.Group value={data?.preferences.theme} onChange={(e) => void saveExtendedPreferences({ theme: e.target.value })}>
+            <Radio.Button value="light">{t('profile.themeLight')}</Radio.Button>
+            <Radio.Button value="dark">{t('profile.themeDark')}</Radio.Button>
+            <Radio.Button value="system">{t('profile.themeSystem')}</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+        <Form.Item label={t('profile.density')}>
+          <Radio.Group value={data?.preferences.density} onChange={(e) => void saveExtendedPreferences({ density: e.target.value })}>
+            <Radio.Button value="default">{t('profile.densityDefault')}</Radio.Button>
+            <Radio.Button value="compact">{t('profile.densityCompact')}</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+      </Form>
+    </Card>
+  );
+
   return (
     <Card title={t('profile.title')} styles={{ body: { paddingTop: 8 } }}>
       <Tabs
-        activeKey={params.get('tab') === 'security' ? 'security' : 'basic'}
-        onChange={(k) => setParams(k === 'security' ? { tab: 'security' } : {}, { replace: true })}
+        activeKey={params.get('tab') || 'basic'}
+        onChange={(k) => {
+          setParams(k === 'basic' ? {} : { tab: k }, { replace: true });
+          if (k === 'audit') void loadAudit();
+        }}
         items={[
           { key: 'basic', label: t('profile.tabBasic'), children: basicTab },
           { key: 'security', label: t('profile.tabSecurity'), children: securityTab },
+          { key: 'notifications', label: t('profile.tabNotifications'), children: notificationTab },
+          { key: 'audit', label: t('profile.tabAudit'), children: auditTab },
+          { key: 'binding', label: t('profile.tabBinding'), children: bindingTab },
+          { key: 'appearance', label: t('profile.tabAppearance'), children: appearanceTab },
         ]}
       />
     </Card>

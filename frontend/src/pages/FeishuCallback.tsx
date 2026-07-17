@@ -5,6 +5,7 @@ import type { Envelope, FeishuScanResult } from '../api/types';
 import { useAuthStore } from '../stores/auth';
 import { firstAccessiblePath } from '../components/menu';
 import { useT } from '../i18n';
+import { api } from '../api/client';
 
 /**
  * 真实飞书 OAuth 回调页（公开路由，不在 MainLayout 内）：
@@ -26,6 +27,7 @@ export default function FeishuCallback() {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const state = params.get('state');
+    const binding = params.get('mode') === 'bind';
     if (!code || !state) {
       message.error(t('login.feishuCallbackMissing'));
       navigate('/login', { replace: true });
@@ -34,6 +36,12 @@ export default function FeishuCallback() {
 
     const run = async () => {
       try {
+        if (binding) {
+          await api.post('/auth/me/feishu-binding', { code, state });
+          message.success(t('profile.feishuBindSuccess'));
+          navigate('/profile?tab=binding', { replace: true });
+          return;
+        }
         const res = await fetch('/api/auth/feishu/callback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

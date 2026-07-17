@@ -58,6 +58,9 @@ export interface UserPreferences {
   team_overview_widgets?: string[];
   /** 显示语言 zh/en */
   language?: 'zh' | 'en';
+  notification_preferences?: Record<'work' | 'workflow' | 'system', boolean>;
+  theme?: 'light' | 'dark' | 'system';
+  density?: 'default' | 'compact';
 }
 
 /** 登录用户 */
@@ -1825,5 +1828,19 @@ export interface ProfileData {
     hire_date: string | null;
     external_source: string | null;
   } | null;
-  preferences: { language: 'zh' | 'en'; bio: string | null; avatar: string | null };
+  preferences: {
+    language: 'zh' | 'en'; bio: string | null; avatar: string | null;
+    notification_preferences: Record<string, boolean>;
+    theme: 'light' | 'dark' | 'system';
+    density: 'default' | 'compact';
+  };
+}
+
+export interface PersonalAuditLog {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  summary: Record<string, unknown> | null;
+  created_at: string;
 }
