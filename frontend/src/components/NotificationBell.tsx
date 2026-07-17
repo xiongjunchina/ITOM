@@ -24,6 +24,18 @@ export default function NotificationBell() {
 
   useEffect(() => {
     void load();
+    // M34：60s 轮询未读（仅页面可见时），管理员无需刷新即可看到开通申请等新通知
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [load]);
 
   const unread = items.filter((i) => !i.read_at).length;

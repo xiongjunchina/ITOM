@@ -1,0 +1,72 @@
+# Dedicated PostgreSQL 16 for ITOM (matches deploy/docker-compose.yml `db`).
+# Image is mirrored into Harbor (sn/postgres:16-alpine) so nodes can pull it on
+# the VPN-internal / air-gapped cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: itom-db
+  namespace: itom
+  labels: { app: itom-db }
+spec:
+  clusterIP: None          # headless, for the StatefulSet
+  selector: { app: itom-db }
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: itom-db
+  namespace: itom
+  labels: { app: itom-db }
+spec:
+  serviceName: itom-db
+  replicas: 1
+  selector:
+    matchLabels: { app: itom-db }
+  template:
+    metadata:
+      labels: { app: itom-db }
+    spec:
+      imagePullSecrets:
+        - name: harbor-isa
+      containers:
+        - name: postgres
+          image: core.harbor.domain/sn/postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+          env:
+            - { name: POSTGRES_USER, value: aom }
+            - { name: POSTGRES_DB, value: new_aom }
+            - { name: TZ, value: Asia/Shanghai }
+            # subdir keeps initdb happy on volumes that carry a lost+found
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: itom-secrets, key: DB_PASSWORD }
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U aom -d new_aom"] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec: { command: ["sh", "-c", "pg_isready -U aom -d new_aom"] }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # default cluster SC: local-replica2-delay-bind (2-way replicated, WFFC)
+        resources:
+          requests:
+            storage: 10Gi

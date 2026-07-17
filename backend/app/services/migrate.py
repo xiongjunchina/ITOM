@@ -450,10 +450,23 @@ def rename_feishu_scope_m32(db: Session):
         db.commit()
 
 
+def drop_notification_recipient_fk_m34(db: Session):
+    """M34：通知收件人改双语义（人员 id 或账号 id）——删除到 org_member 的外键约束。"""
+    row = db.execute(text(
+        "SELECT conname FROM pg_constraint WHERE conrelid='in_app_notification'::regclass "
+        "AND contype='f' AND conname LIKE '%recipient%'"
+    )).first()
+    if row:
+        db.execute(text(f"ALTER TABLE in_app_notification DROP CONSTRAINT {row.conname}"))
+        logger.info("已删除 in_app_notification.recipient 外键（M34 双语义收件）")
+        db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
     rename_feishu_scope_m32(db)
+    drop_notification_recipient_fk_m34(db)
     ensure_columns(db)
     drop_columns(db)
     fix_project_flow_pmo(db)

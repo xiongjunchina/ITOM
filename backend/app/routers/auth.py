@@ -106,13 +106,14 @@ class RejectIn(BaseModel):
 
 
 def _admin_person_ids(db: Session) -> list[str]:
-    """有 admin_users.create 权限且已绑定人员的管理员（用于站内通知收件人）。"""
+    """有 admin_users.create 权限的管理员收件标识（M34：未绑定人员时用账号 id 兜底，
+    确保 admin 初装未绑人员也能收到开通申请通知）。"""
     from app.services.permissions import has_perm
 
     ids = []
     for u in db.query(AuthUser).filter(AuthUser.is_deleted.is_(False), AuthUser.is_active.is_(True)):
-        if u.person_id and has_perm(db, u, "admin_users", "create"):
-            ids.append(u.person_id)
+        if has_perm(db, u, "admin_users", "create"):
+            ids.append(u.person_id or u.id)
     return ids
 
 

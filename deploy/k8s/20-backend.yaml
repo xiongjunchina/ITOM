@@ -1,0 +1,86 @@
+# ITOM backend — FastAPI/uvicorn on :6800. Self-initialises the DB on startup
+# (create_all + run_migrations + run_seed) so a fresh empty Postgres just works.
+# Service is named "backend" because the frontend nginx.conf proxies to
+# http://backend:6800 — do not rename without also changing nginx.conf.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: itom-uploads
+  namespace: itom
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: itom
+  labels: { app: itom-backend }
+spec:
+  selector: { app: itom-backend }
+  ports:
+    - name: http
+      port: 6800
+      targetPort: 6800
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: itom-backend
+  namespace: itom
+  labels: { app: itom-backend }
+spec:
+  replicas: 1                # uploads PVC is RWO (single writer); scale needs RWX
+  selector:
+    matchLabels: { app: itom-backend }
+  strategy:
+    type: Recreate           # RWO volume can't be attached to two pods at once
+  template:
+    metadata:
+      labels: { app: itom-backend }
+    spec:
+      imagePullSecrets:
+        - name: harbor-isa
+      containers:
+        - name: backend
+          image: core.harbor.domain/sn/itom-backend:87b8f90b
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6800
+          env:
+            - { name: UPLOAD_DIR, value: /data/uploads }
+            - { name: TZ, value: Asia/Shanghai }
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: itom-secrets, key: DATABASE_URL }
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef: { name: itom-secrets, key: JWT_SECRET }
+            - name: ADMIN_INIT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: itom-secrets, key: ADMIN_INIT_PASSWORD }
+          volumeMounts:
+            - name: uploads
+              mountPath: /data/uploads
+          readinessProbe:
+            httpGet: { path: /api/health, port: 6800 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: 6800 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          startupProbe:
+            httpGet: { path: /api/health, port: 6800 }
+            failureThreshold: 40      # up to ~200s for first-boot schema+seed
+            periodSeconds: 5
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: itom-uploads

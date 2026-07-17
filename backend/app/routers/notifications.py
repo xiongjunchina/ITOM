@@ -12,13 +12,16 @@ from app.schemas.common import ok
 router = APIRouter(prefix="/api/notifications", tags=["support"])
 
 
+def _my_recipient_ids(user: AuthUser) -> list[str]:
+    """我的收件标识（M34 双语义）：人员 id（业务通知按人投递）+ 账号 id（未绑人员的管理员兜底）。"""
+    return [x for x in (user.person_id, user.id) if x]
+
+
 @router.get("")
 def list_my_notifications(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    if not user.person_id:
-        return ok([], total=0)
     items = (
         db.query(InAppNotification)
-        .filter(InAppNotification.recipient == user.person_id, InAppNotification.is_deleted.is_(False))
+        .filter(InAppNotification.recipient.in_(_my_recipient_ids(user)), InAppNotification.is_deleted.is_(False))
         .order_by(InAppNotification.created_at.desc())
         .limit(50)
         .all()
@@ -42,7 +45,7 @@ def list_my_notifications(db: Session = Depends(get_db), user: AuthUser = Depend
 @router.post("/{notification_id}/read")
 def mark_read(notification_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     n = db.get(InAppNotification, notification_id)
-    if not n or n.recipient != user.person_id:
+    if not n or n.recipient not in _my_recipient_ids(user):
         raise AppError("NOT_FOUND", "通知不存在", 404)
     n.read_at = n.read_at or datetime.now()
     db.commit()
