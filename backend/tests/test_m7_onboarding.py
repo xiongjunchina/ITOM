@@ -143,3 +143,20 @@ def _make_user(client, username, roles):
                 json={"username": username, "password": "pass123", "roles": roles, "person_id": m["id"]}, headers=ah)
     tok = client.post("/api/auth/login", json={"username": username, "password": "pass123"}).json()["data"]["token"]
     return m["id"], {"Authorization": f"Bearer {tok}"}
+
+
+def test_onboarding_request_notifies_admin_without_person(client, admin_headers):
+    """M34：新开通申请通知管理员——admin 未绑定人员也能收到（账号 id 兜底投递）。"""
+    r = client.post("/api/auth/feishu/scan", json={"external_id": "ou_m34_notify", "display_name": "通知验证员"})
+    assert r.json()["data"]["status"] == "pending"
+    notes = client.get("/api/notifications", headers=admin_headers).json()["data"]
+    assert any("登录开通请求" in n["title"] and "通知验证员" in n["title"] for n in notes),         [n["title"] for n in notes[:5]]
+    # 重复扫码不重复通知
+    before = sum(1 for n in notes if "通知验证员" in n["title"])
+    client.post("/api/auth/feishu/scan", json={"external_id": "ou_m34_notify", "display_name": "通知验证员"})
+    notes = client.get("/api/notifications", headers=admin_headers).json()["data"]
+    after = sum(1 for n in notes if "通知验证员" in n["title"])
+    assert after == before
+    # 已读接口对账号 id 收件同样可用
+    target = next(n for n in notes if "通知验证员" in n["title"])
+    assert client.post(f"/api/notifications/{target['id']}/read", headers=admin_headers).json()["success"]

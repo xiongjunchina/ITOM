@@ -233,7 +233,7 @@ class NotificationOutbox(GlidBase):
 class InAppNotification(GlidBase):
     __tablename__ = "in_app_notification"
 
-    recipient: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    recipient: Mapped[str] = mapped_column(String(26), index=True, comment="收件标识：人员 id 或账号 id（M34 双语义，无外键弱引用）")
     title: Mapped[str] = mapped_column(String(200))
     content: Mapped[str | None] = mapped_column(Text)
     link: Mapped[str | None] = mapped_column(String(200), comment="前端路由")

@@ -1,0 +1,30 @@
+# Expose ITOM at https://itom.prod.sn.local via ingress-nginx.
+# TLS reuses the internal-CA wildcard secret (copied into the itom namespace by
+# k8s-deploy.sh). external-dns target pins the A record to the ingress VIP
+# (10.60.65.220); node-IP status records don't serve :443.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: itom
+  namespace: itom
+  annotations:
+    external-dns.alpha.kubernetes.io/ttl: "60"
+    external-dns.alpha.kubernetes.io/target: "10.60.65.220"
+    nginx.ingress.kubernetes.io/proxy-body-size: "60m"   # matches nginx client_max_body_size
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - itom.prod.sn.local
+      secretName: wildcard-prod-sn-local-tls
+  rules:
+    - host: itom.prod.sn.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: itom-frontend
+                port:
+                  number: 80
