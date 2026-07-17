@@ -83,6 +83,7 @@ ENSURE_COLUMNS = {
         ("preferences", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("auth_source", "VARCHAR(16) NOT NULL DEFAULT 'local'"),
         ("external_id", "VARCHAR(128)"),
+        ("password_set_at", "TIMESTAMP"),  # M36.2 个人安全设置
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
@@ -474,6 +475,15 @@ def widen_department_sort_m341(db: Session):
         db.commit()
 
 
+def backfill_password_set_m362(db: Session):
+    """M36.2：存量本地账号口令视为已人为设定（创建即告知本人），改密需验当前密码。"""
+    db.execute(text(
+        "UPDATE auth_user SET password_set_at = created_at "
+        "WHERE auth_source = 'local' AND password_set_at IS NULL"
+    ))
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -481,6 +491,7 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    backfill_password_set_m362(db)
     drop_columns(db)
     fix_project_flow_pmo(db)
     rebuild_requirement_flow_m16(db)

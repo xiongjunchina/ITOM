@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Breadcrumb, Dropdown, Layout, Menu, Space, Typography, theme } from 'antd';
+import { Avatar, Breadcrumb, Dropdown, Layout, Menu, Space, Typography, theme } from 'antd';
 import type { MenuProps } from 'antd';
-import { DownOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons';
+import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import { useAuthStore } from '../stores/auth';
@@ -64,6 +64,19 @@ export default function MainLayout() {
   const userMenu: MenuProps = {
     items: [
       {
+        key: 'profile',
+        icon: <UserOutlined />,
+        label: t('profile.menu'),
+        onClick: () => navigate('/profile'),
+      },
+      {
+        key: 'security',
+        icon: <SafetyOutlined />,
+        label: t('profile.securityMenu'),
+        onClick: () => navigate('/profile?tab=security'),
+      },
+      { type: 'divider' },
+      {
         key: 'logout',
         icon: <LogoutOutlined />,
         label: t('header.logout'),
@@ -119,7 +132,13 @@ export default function MainLayout() {
             <NotificationBell />
             <Dropdown menu={userMenu}>
               <Space style={{ cursor: 'pointer' }}>
-                <UserOutlined />
+                {user?.avatar ? (
+                  <Avatar size={26} src={user.avatar} />
+                ) : (
+                  <Avatar size={26} style={{ backgroundColor: '#1677ff' }}>
+                    {(user?.name || user?.username || '?')[0]}
+                  </Avatar>
+                )}
                 <Typography.Text>{user?.name || user?.username || t('header.user')}</Typography.Text>
                 <DownOutlined style={{ fontSize: 10 }} />
               </Space>

@@ -1,5 +1,6 @@
 """幂等种子数据：启动时执行（docs/05 §7）。"""
 import logging
+from datetime import datetime
 
 from sqlalchemy.orm import Session
 
@@ -94,6 +95,7 @@ def run_seed(db: Session):
                 password_hash=hash_password(settings.admin_init_password),
                 roles=[ADMIN],
                 is_active=True,
+                password_set_at=datetime.now(),  # 初始口令为已知口令，本人改密需验当前密码
             )
         )
         logger.info("seeded admin user")
