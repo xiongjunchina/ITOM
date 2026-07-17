@@ -38,6 +38,7 @@ import {
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
+import { runOrgSyncAndWait } from '../../utils/orgSync';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import { DEPT_TYPE_COLORS, DEPT_TYPE_LABELS } from '../../api/types';
 import type {
@@ -316,12 +317,16 @@ export default function OrgArchitecture() {
   const handleSync = async () => {
     if (!data || data.sync_sources.length === 0) return;
     setSyncing(true);
+    message.info(t('admin.org.syncStarted'));
     try {
-      await api.post('/admin/org-sync', { source: data.sync_sources[0] });
-      message.success(t('admin.org.syncDone'));
+      // M35：同步在后台执行（全公司耗时较长），此处轮询直至完成
+      const stats = await runOrgSyncAndWait(data.sync_sources[0]);
+      message.success(t('admin.org.syncDoneStats', {
+        created: stats.member_created ?? 0, updated: stats.member_updated ?? 0, left: stats.member_left ?? 0,
+      }));
       void load();
-    } catch {
-      // 已统一提示
+    } catch (e) {
+      message.error((e as Error).message || t('common.requestFailed'));
     } finally {
       setSyncing(false);
     }

@@ -99,5 +99,5 @@ def test_org_tree_and_sync_endpoint(client, admin_headers):
     assert any(m["name"] == "飞书李四" for m in root["members"])
     assert tree["sync_sources"] == []  # 未配置凭据
 
-    r = client.post("/api/admin/org-sync", json={"source": "feishu"}, headers=admin_headers)
+    r = client.post("/api/admin/org-sync", json={"source": "feishu", "sync": True}, headers=admin_headers)
     assert r.status_code == 501 and r.json()["error"]["code"] == "SYNC_NOT_CONFIGURED"

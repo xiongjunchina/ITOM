@@ -308,14 +308,61 @@ def org_tree(db: Session = Depends(get_db), _=Depends(require_perm("admin_depart
 
 @router.post("/org-sync")
 def trigger_org_sync(body: dict, db: Session = Depends(get_db), actor=Depends(require_perm("admin_departments", "edit"))):
-    """手动触发组织同步（飞书凭据上线前返回 501）。"""
+    """触发组织同步（M35 异步化：全公司同步耗时较长，后台执行+完成通知，避免请求超时）。
+
+    sync=false（默认）：启动后台线程立即返回 started；前端轮询 feishu-config.last_sync_stats.status。
+    sync=true：同步等待返回统计（测试/脚本用）。
+    """
+    import threading
+
+    from app.services.feishu import get_config
     from app.services.org_sync import run_sync
 
     source = (body or {}).get("source", "feishu")
-    stats = run_sync(db, source)
-    audit(db, "org_sync", source, "run", actor, stats)
+    if (body or {}).get("sync"):  # 同步模式（测试/脚本）
+        stats = run_sync(db, source)
+        return ok({**stats, "status": "done"})
+
+    cfg = get_config(db)
+    if (cfg.last_sync_stats or {}).get("status") == "running":
+        raise AppError("SYNC_RUNNING", "组织同步正在进行中，请稍候（完成后将收到站内通知）", 409)
+    cfg.last_sync_stats = {**(cfg.last_sync_stats or {}), "status": "running"}
+    audit(db, "org_sync", "manual", "trigger", actor, {"source": source})
     db.commit()
-    return ok(stats)
+
+    recipient = actor.person_id or actor.id
+
+    def _run_in_background():
+        from app.db import SessionLocal
+        from app.events import notifier
+
+        db2 = SessionLocal()
+        try:
+            stats = run_sync(db2, source)  # 内部写 last_sync_at/stats
+            cfg2 = get_config(db2)
+            cfg2.last_sync_stats = {**stats, "status": "done"}
+            notifier.notify(
+                db2, "org_sync.done", "org_sync", "manual", [recipient],
+                f"组织同步完成：新增 {stats.get('member_created', 0)} 人 / 更新 {stats.get('member_updated', 0)} 人"
+                f" / 离职 {stats.get('member_left', 0)} 人，部门 +{stats.get('dept_created', 0)}",
+                link="/admin/org?tab=architecture",
+            )
+            db2.commit()
+        except Exception as e:  # noqa: BLE001 后台线程兜底：失败落状态+通知，不静默
+            db2.rollback()
+            try:
+                cfg2 = get_config(db2)
+                cfg2.last_sync_stats = {"status": "failed", "error": str(e)[:300]}
+                notifier.notify(db2, "org_sync.failed", "org_sync", "manual", [recipient],
+                                "组织同步失败", str(e)[:200], link="/admin/feishu")
+                db2.commit()
+            except Exception:
+                db2.rollback()
+        finally:
+            db2.close()
+
+    threading.Thread(target=_run_in_background, daemon=True).start()
+    return ok({"started": True})
 
 
 # ==================== 飞书集成配置（M11，仅 admin） ====================

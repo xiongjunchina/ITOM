@@ -123,6 +123,9 @@ export interface OnboardingRequest {
 
 /** 飞书组织同步统计（GET /admin/feishu-config.last_sync_stats / POST /admin/org-sync 返回） */
 export interface FeishuSyncStats {
+  /** M35 异步同步状态：running/done/failed */
+  status?: string;
+  error?: string;
   dept_created: number;
   dept_updated: number;
   dept_deactivated: number;

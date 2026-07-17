@@ -3,6 +3,7 @@ import { Alert, Button, Card, Divider, Input, Space, Spin, Switch, Tag, Typograp
 import { ApiOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
+import { runOrgSyncAndWait } from '../../utils/orgSync';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
 import type { FeishuConfig, FeishuSyncStats } from '../../api/types';
@@ -103,12 +104,14 @@ export default function FeishuIntegration() {
 
   const handleSync = async () => {
     setSyncing(true);
+    message.info(t('admin.org.syncStarted'));
     try {
-      await api.post('/admin/org-sync', { source: 'feishu' });
+      // M35：后台执行+轮询完成（全公司同步耗时较长）
+      await runOrgSyncAndWait('feishu');
       message.success(t('feishu.syncDone'));
       void load(); // 刷新 last_sync_at / last_sync_stats 展示本次统计
-    } catch {
-      // 已统一提示
+    } catch (e) {
+      message.error((e as Error).message || t('common.requestFailed'));
     } finally {
       setSyncing(false);
     }
