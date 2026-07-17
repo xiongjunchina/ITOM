@@ -151,6 +151,9 @@ class AuthUser(GlidBase):
     preferences: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="个人偏好：总览 widget 配置等")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    password_set_at: Mapped[datetime | None] = mapped_column(
+        DateTime, comment="本地口令最近一次被人为设定的时间；NULL=仍是开通时的随机口令（飞书用户），首次自设密码免验当前密码"
+    )
 
     person: Mapped[OrgMember | None] = relationship()
 

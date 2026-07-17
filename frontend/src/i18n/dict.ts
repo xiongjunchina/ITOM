@@ -392,8 +392,9 @@ import * as admin from './locales/admin';
 import * as process from './locales/process';
 import * as dashboard from './locales/dashboard';
 import * as components from './locales/components';
+import * as profile from './locales/profile';
 
-const domains = [itsm, projects, requirements, team, admin, process, dashboard, components];
+const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile];
 
 export const DICT: Record<'zh' | 'en', Dict> = {
   zh: Object.assign({}, zh, ...domains.map((d) => d.zh)),

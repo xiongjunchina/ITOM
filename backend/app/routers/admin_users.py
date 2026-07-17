@@ -55,12 +55,15 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), actor=Depends(r
 
         person = db.get(OrgMember, body.person_id) if body.person_id else None
         roles = default_roles_for(db, person.department_id if person else None)
+    from datetime import datetime
+
     user = AuthUser(
         username=body.username,
         password_hash=hash_password(body.password),
         roles=roles,
         person_id=body.person_id,
         is_active=body.is_active,
+        password_set_at=datetime.now(),  # 初始口令由管理员告知本人，本人改密时需验当前密码
     )
     db.add(user)
     db.flush()
@@ -80,7 +83,10 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
         changes["roles"] = {"from": user.roles, "to": body.roles}
         user.roles = body.roles
     if body.password:
+        from datetime import datetime
+
         user.password_hash = hash_password(body.password)
+        user.password_set_at = datetime.now()
         changes["password"] = "reset"
     if body.person_id is not None:
         user.person_id = body.person_id or None

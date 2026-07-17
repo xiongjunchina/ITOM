@@ -76,6 +76,8 @@ export interface AuthUser {
   permissions?: Record<string, string[]>;
   auth_source?: AuthSource;
   person_id: string | null;
+  /** 自设头像（data URL），顶栏与个人中心展示 */
+  avatar?: string | null;
   /** 显示语言（登录/刷新载荷均含，登录后立即应用） */
   language?: 'zh' | 'en';
   /** 个人偏好（登录响应不含；进入布局后由 GET /auth/me 刷新写入 store） */
@@ -1800,4 +1802,28 @@ export interface SlaDashboard {
     submitted_at: string;
     sla_resolution_hours: number | null;
   }[];
+}
+
+export interface ProfileData {
+  account: {
+    username: string;
+    auth_source: AuthSource;
+    roles: string[];
+    role_names: Record<string, string>;
+    created_at: string | null;
+    last_login_at: string | null;
+    password_set: boolean;
+    feishu_bound: boolean;
+  };
+  person: {
+    name: string;
+    employee_no: string | null;
+    department_name: string | null;
+    position_name: string | null;
+    email: string | null;
+    mobile: string | null;
+    hire_date: string | null;
+    external_source: string | null;
+  } | null;
+  preferences: { language: 'zh' | 'en'; bio: string | null; avatar: string | null };
 }

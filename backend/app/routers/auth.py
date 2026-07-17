@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.security import create_token, verify_password
+from app.core.security import create_token, hash_password, verify_password
 from app.db import get_db
 from app.deps import get_current_user
 from app.models import AuthUser
@@ -29,6 +29,7 @@ def _user_payload(db: Session, user: AuthUser) -> dict:
         "auth_source": user.auth_source,
         "person_id": user.person_id,
         "language": (user.preferences or {}).get("language", "zh"),  # 显示语言：zh/en（登录即应用）
+        "avatar": (user.preferences or {}).get("avatar"),  # 自设头像（data URL），顶栏展示
     }
 
 
@@ -53,17 +54,93 @@ class PreferencesIn(BaseModel):
     dashboard_widgets: list[str] | None = None
     team_overview_widgets: list[str] | None = None
     language: str | None = Field(default=None, pattern="^(zh|en)$")
+    bio: str | None = Field(default=None, max_length=500)
+    avatar: str | None = None  # data:image/... base64；显式传 null 表示移除
 
 
 @router.patch("/me/preferences")
 def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """个人偏好（总览 widget 配置等）：只更新提交的键。"""
+    """个人偏好（总览 widget 配置 / 语言 / 头像 / 个人说明等）：只更新提交的键。"""
+    import re as _re
+
+    if body.avatar:
+        if not _re.match(r"^data:image/(png|jpe?g|webp|gif);base64,", body.avatar):
+            raise AppError("BAD_AVATAR", "头像格式不支持，请上传图片")
+        if len(body.avatar) > 400_000:  # 前端已压缩到 256px，此为兜底（约 300KB 图）
+            raise AppError("BAD_AVATAR", "头像图片过大")
     prefs = dict(user.preferences or {})
     for k, v in body.model_dump(exclude_unset=True).items():
         prefs[k] = v
     user.preferences = prefs
     db.commit()
     return ok({"preferences": prefs})
+
+
+@router.get("/me/profile")
+def my_profile(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """个人中心（M36.2）：账号信息 + 关联人员主数据（只读，组织同步维护）+ 个性化偏好。"""
+    from app.models import Role
+    from app.services.rbac import effective_roles
+
+    roles = sorted(effective_roles(db, user))
+    role_names = {r.code: r.name for r in db.query(Role).filter(Role.code.in_(roles)).all()} if roles else {}
+    person = user.person
+    prefs = user.preferences or {}
+    return ok({
+        "account": {
+            "username": user.username,
+            "auth_source": user.auth_source,
+            "roles": roles,
+            "role_names": role_names,
+            "created_at": user.created_at,
+            "last_login_at": user.last_login_at,
+            "password_set": user.password_set_at is not None,
+            "feishu_bound": bool(user.external_id),
+        },
+        "person": {
+            "name": person.name,
+            "employee_no": person.employee_no,
+            "department_name": person.department.name if person.department else None,
+            "position_name": person.position.name if person.position else None,
+            "email": person.email,
+            "mobile": person.mobile,
+            "hire_date": person.hire_date,
+            "external_source": person.external_source,
+        } if person else None,
+        "preferences": {
+            "language": prefs.get("language", "zh"),
+            "bio": prefs.get("bio"),
+            "avatar": prefs.get("avatar"),
+        },
+    })
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str | None = None
+    new_password: str = Field(min_length=8, max_length=64)
+
+
+@router.post("/me/password")
+def change_my_password(body: ChangePasswordIn, user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """修改本地登录密码（M36.2）。
+
+    飞书开通的账号初始为随机口令（本人不知道），首次自设密码免验当前密码；
+    一旦人为设定过（本人自设/管理员重置/本地创建），再改必须验当前密码。
+    """
+    import re as _re
+
+    if not (_re.search(r"[A-Za-z]", body.new_password) and _re.search(r"\d", body.new_password)):
+        raise AppError("WEAK_PASSWORD", "新密码至少 8 位，且需同时包含字母和数字")
+    if user.password_set_at is not None:
+        if not body.current_password or not verify_password(body.current_password, user.password_hash):
+            raise AppError("PASSWORD_WRONG", "当前密码不正确")
+    from app.services.audit import audit as _audit
+
+    user.password_hash = hash_password(body.new_password)
+    user.password_set_at = datetime.now()
+    _audit(db, "auth_user", user.id, "change_password", user, {})
+    db.commit()
+    return ok({"password_set": True})
 
 
 # ==================== 飞书扫码登录 + 管理员开通审批（M7） ====================

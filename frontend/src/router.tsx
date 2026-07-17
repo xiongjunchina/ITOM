@@ -3,6 +3,7 @@ import MainLayout from './components/MainLayout';
 import { firstAccessiblePath } from './components/menu';
 import { hasPermission, useAuthStore } from './stores/auth';
 import Login from './pages/Login';
+import Profile from './pages/Profile';
 import OnboardingPending from './pages/OnboardingPending';
 import FeishuCallback from './pages/FeishuCallback';
 import Dashboard from './pages/Dashboard';
@@ -80,6 +81,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <HomeRedirect /> },
       { path: 'dashboard', element: <DashboardGate /> },
+      { path: 'profile', element: <Profile /> },
 
       // ITSM（M2 交付；M6.1 工单按类型拆分三入口，key 隔离筛选/分页状态）
       { path: 'itsm/tickets', element: <Tickets key="service_request" fixedType="service_request" /> },
