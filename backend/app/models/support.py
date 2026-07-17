@@ -1,7 +1,7 @@
 """支撑域模型（docs/04 §1）+ 岗位表（人员主数据依赖）。"""
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -26,7 +26,7 @@ class Department(GlidBase):
     dept_type: Mapped[str] = mapped_column(String(16), default="business", comment="it/business/audit")
     external_source: Mapped[str | None] = mapped_column(String(16), comment="同步来源预留：feishu/ad")
     external_id: Mapped[str | None] = mapped_column(String(128), comment="外部组织节点 ID 预留")
-    sort: Mapped[int] = mapped_column(Integer, default=0)
+    sort: Mapped[int] = mapped_column(BigInteger, default=0, comment="排序（飞书部门 order 为超大整数，M34.1 扩为 BIGINT）")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

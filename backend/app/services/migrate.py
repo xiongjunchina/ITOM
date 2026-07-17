@@ -462,11 +462,24 @@ def drop_notification_recipient_fk_m34(db: Session):
         db.commit()
 
 
+def widen_department_sort_m341(db: Session):
+    """M34.1：飞书部门 order 为超大整数（>int32），department.sort 扩为 BIGINT。"""
+    row = db.execute(text(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_name='department' AND column_name='sort'"
+    )).first()
+    if row and row.data_type == "integer":
+        db.execute(text("ALTER TABLE department ALTER COLUMN sort TYPE BIGINT"))
+        logger.info("department.sort -> BIGINT（M34.1 飞书 order 溢出修复）")
+        db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
     rename_feishu_scope_m32(db)
     drop_notification_recipient_fk_m34(db)
+    widen_department_sort_m341(db)
     ensure_columns(db)
     drop_columns(db)
     fix_project_flow_pmo(db)
