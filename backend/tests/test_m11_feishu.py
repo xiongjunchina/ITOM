@@ -64,7 +64,7 @@ def mock_feishu(monkeypatch):
 
 
 def test_org_sync_it_subtree(client, admin_headers, cfg_ready, mock_feishu):
-    stats = client.post("/api/admin/org-sync", json={"source": "feishu"}, headers=admin_headers).json()["data"]
+    stats = client.post("/api/admin/org-sync", json={"source": "feishu", "sync": True}, headers=admin_headers).json()["data"]
     assert stats["dept_created"] == 3 and stats["member_created"] == 3
 
     org = client.get("/api/admin/org-tree", headers=admin_headers).json()["data"]
