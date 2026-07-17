@@ -184,3 +184,24 @@ def test_process_step_cc_notify(client, admin_headers, ctx):
     assert any("流程知会" in n["title"] for n in notif)
     r = client.post(f"/api/process-tasks/{step['task_id']}/complete", json={"comment": "done"}, headers=ops_h)
     assert r.json()["data"]["status"] == "completed"
+
+
+def test_delete_user_unbinds_person_keeps_master_data(client, admin_headers, ctx):
+    """M36：删除用户账号——解绑人员但人员主数据保留；admin/自身不可删；用户名释放可重开。"""
+    pid, h = ctx["member_and_user"]("待删账号者", "del_me", ["it_dev"])
+    users = client.get("/api/admin/users?page_size=200", headers=admin_headers).json()["data"]
+    target = next(u for u in users if u["username"] == "del_me")
+    admin_user = next(u for u in users if u["username"] == "admin")
+
+    # admin 账号不可删；被删账号登录失效
+    assert client.delete(f"/api/admin/users/{admin_user['id']}", headers=admin_headers).json()["error"]["code"] == "ADMIN_LOCKED"
+    r = client.delete(f"/api/admin/users/{target['id']}", headers=admin_headers)
+    assert r.json()["success"], r.text
+    assert client.post("/api/auth/login", json={"username": "del_me", "password": "pass123"}).status_code == 401
+    # 人员主数据保留
+    members = client.get("/api/members?page_size=999", headers=admin_headers).json()["data"]
+    assert any(m["id"] == pid for m in members)
+    # 用户名已释放：可重新创建同名账号
+    r = client.post("/api/admin/users", json={"username": "del_me", "password": "pass123", "roles": ["it_dev"]},
+                    headers=admin_headers)
+    assert r.json()["success"], r.text

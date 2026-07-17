@@ -90,3 +90,28 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
     audit(db, "auth_user", user.id, "update", actor, changes)
     db.commit()
     return ok(_row(user))
+
+
+@router.delete("/{user_id}")
+def delete_user(user_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_users", "delete"))):
+    """删除用户账号（M36）：软删并释放用户名、解绑关联人员——人员主数据与部门不受影响。
+
+    admin 内置账号与当前登录账号不可删（防锁死/防自杀）。同一员工后续可重新开通同名账号。
+    """
+    u = db.get(AuthUser, user_id)
+    if not u or u.is_deleted:
+        raise AppError("NOT_FOUND", "用户不存在", 404)
+    if u.username == "admin":
+        raise AppError("ADMIN_LOCKED", "内置管理员账号不可删除")
+    if u.id == actor.id:
+        raise AppError("SELF_DELETE", "不能删除当前登录账号")
+    unbound_person = u.person_id
+    u.is_deleted = True
+    u.is_active = False
+    u.person_id = None  # 解绑人员（人员主数据保留）
+    u.username = f"{u.username}#del-{u.id[-6:]}"  # 释放用户名，便于同名重新开通
+    audit(db, "auth_user", u.id, "delete", actor,
+          {"username": u.username, "person_unbound": bool(unbound_person)})
+    db.commit()
+    return ok({"id": u.id})
+

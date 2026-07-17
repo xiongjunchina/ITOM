@@ -11,6 +11,7 @@ import {
   Table,
   Tag,
   message,
+  Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
@@ -288,6 +289,20 @@ export default function Users() {
           >
             {t('admin.users.resetPassword')}
           </Button>
+          {record.username !== 'admin' && (
+            <Popconfirm
+              title={t('admin.users.deleteConfirm')}
+              onConfirm={async () => {
+                await api.delete(`/admin/users/${record.id}`);
+                message.success(t('common.deleted'));
+                void load();
+              }}
+            >
+              <Button type="link" size="small" danger>
+                {t('common.delete')}
+              </Button>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },

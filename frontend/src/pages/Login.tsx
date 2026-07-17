@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Button, Card, Divider, Form, Input, Modal, Typography, message } from 'antd';
 import { LockOutlined, QrcodeOutlined, UserOutlined } from '@ant-design/icons';
@@ -20,6 +20,51 @@ interface FeishuForm {
   external_id: string;
 }
 
+/** 飞书客户端内免登（M36 工作台应用）：动态加载 H5 JSSDK → requestAuthCode → 后端换身份 */
+async function tryFeishuAppLogin(): Promise<
+  | { status: 'active'; token: string; user: import('../api/types').AuthUser }
+  | { status: 'pending'; pending_token: string; display_name: string }
+  | null
+> {
+  if (!/Lark|Feishu/i.test(navigator.userAgent)) return null;
+  try {
+    const cfgRes = await fetch('/api/auth/feishu/client-config');
+    const cfg = (await cfgRes.json())?.data;
+    if (!cfg?.enabled || !cfg?.app_id) return null;
+    await new Promise<void>((resolve, reject) => {
+      if ((window as any).h5sdk) return resolve();
+      const sc = document.createElement('script');
+      sc.src = 'https://lf-scm-cn.feishucdn.com/lark/op/h5-js-sdk-1.5.35.js';
+      sc.onload = () => resolve();
+      sc.onerror = () => reject(new Error('sdk load failed'));
+      document.head.appendChild(sc);
+    });
+    const code = await new Promise<string>((resolve, reject) => {
+      const h5sdk = (window as any).h5sdk;
+      const tt = (window as any).tt;
+      if (!h5sdk || !tt) return reject(new Error('sdk unavailable'));
+      h5sdk.error(reject);
+      h5sdk.ready(() => {
+        tt.requestAuthCode({
+          appId: cfg.app_id,
+          success: (r: { code: string }) => resolve(r.code),
+          fail: reject,
+        });
+      });
+    });
+    const res = await fetch('/api/auth/feishu/app-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const env = await res.json();
+    if (!res.ok || !env?.success) return null;
+    return env.data;
+  } catch {
+    return null; // 免登失败静默回退普通登录页
+  }
+}
+
 export default function Login() {
   const [loading, setLoading] = useState(false);
   const [feishuOpen, setFeishuOpen] = useState(false);
@@ -29,6 +74,26 @@ export default function Login() {
   const navigate = useNavigate();
   const { token, user, setAuth } = useAuthStore();
   const t = useT();
+  const [appLoginTrying, setAppLoginTrying] = useState(/Lark|Feishu/i.test(navigator.userAgent));
+
+  useEffect(() => {
+    if (token || !appLoginTrying) return;
+    void tryFeishuAppLogin().then((data) => {
+      if (!data) {
+        setAppLoginTrying(false);
+        return;
+      }
+      if (data.status === 'active') {
+        setAuth(data.token, data.user);
+        navigate(firstAccessiblePath(data.user), { replace: true });
+      } else {
+        localStorage.setItem('aom-pending-token', data.pending_token);
+        localStorage.setItem('aom-pending-name', data.display_name);
+        navigate('/onboarding/pending', { replace: true });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (token) {
     return <Navigate to={firstAccessiblePath(user)} replace />;

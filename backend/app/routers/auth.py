@@ -233,6 +233,44 @@ def feishu_callback(body: FeishuCallbackIn, db: Session = Depends(get_db)):
     ))
 
 
+class FeishuAppLoginIn(BaseModel):
+    code: str = Field(min_length=1)
+
+
+@router.get("/feishu/client-config")
+def feishu_client_config(db: Session = Depends(get_db)):
+    """登录页公开配置（M36）：真实飞书是否启用 + App ID（非机密，工作台免登 JSAPI 需要）。"""
+    from app.services.feishu import get_config, is_enabled
+
+    enabled = is_enabled(db)
+    cfg = get_config(db) if enabled else None
+    db.commit()
+    return ok({"enabled": enabled, "app_id": cfg.app_id if cfg else None})
+
+
+@router.post("/feishu/app-login")
+def feishu_app_login(body: FeishuAppLoginIn, db: Session = Depends(get_db)):
+    """飞书客户端内免登（M36 工作台应用）：JSAPI requestAuthCode 的免登 code 换身份。
+
+    与扫码 OAuth 共用兑换端点与身份处理（直登或落开通请求）；免登无 state（code 一次性+短时）。
+    """
+    from app.services.feishu import build_client, get_config, is_enabled
+
+    if not is_enabled(db):
+        raise AppError("FEISHU_NOT_ENABLED", "飞书认证未启用", 501)
+    client = build_client(get_config(db))
+    info = client.oauth_user_info(body.code)
+    external_id = info.get("open_id") or info.get("union_id")
+    if not external_id:
+        raise AppError("FEISHU_ERROR", "飞书未返回用户标识", 502)
+    return ok(_handle_feishu_identity(
+        db, external_id=external_id,
+        display_name=info.get("name") or info.get("en_name") or external_id,
+        email=info.get("enterprise_email") or info.get("email"),
+        mobile=info.get("mobile"), avatar_url=info.get("avatar_url"),
+    ))
+
+
 @router.get("/onboarding/status")
 def onboarding_status(authorization: str = Header(default=""), db: Session = Depends(get_db)):
     """过渡页轮询：pending 停留等待；approved 直接返回正式令牌进入系统；rejected 显示原因。"""
