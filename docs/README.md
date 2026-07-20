@@ -12,5 +12,5 @@ The Chinese files are authoritative; the English translations under `en/` are fo
 | 05 | [API 契约与架构设计](05-API契约与架构设计.md) | [API & Architecture](en/05-api-and-architecture.md) | 接口约定与分层架构 / API conventions and layered architecture |
 | 06 | [用户身份与组织模型设计](06-用户身份与组织模型设计.md) | [Identity & Org Model](en/06-identity-and-org-model.md) | 身份、角色、矩阵式组织、飞书 SoT / Identity, roles, matrix org, Feishu SoT |
 
-> 文档随里程碑更新；实现细节以代码与测试为准。仓库总览见 [../README.md](../README.md)。
-> Docs evolve with milestones; code and tests are the source of truth for implementation details. See [../README.md](../README.md) for the repo overview.
+> 中文文档是产品与技术契约的权威版本，代码和测试是实现证据，三者必须保持一致；英文译本须在同一次交付中同步更新。任何影响功能、接口、数据模型、配置、部署、权限或用户流程的代码变更，如未同步受影响文档，不算完整交付。仓库总览见 [../README.md](../README.md)，执行规则见 [../AGENTS.md](../AGENTS.md)。
+> Chinese docs are the authoritative product and technical contract; code and tests are implementation evidence, and all three must remain aligned. English mirrors must be updated in the same delivery. A code change affecting behavior, APIs, data models, configuration, deployment, permissions, or workflows is incomplete until the affected docs are synchronized. See [../README.md](../README.md) and [../AGENTS.md](../AGENTS.md).

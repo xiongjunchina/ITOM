@@ -26,11 +26,17 @@ spec:
     metadata:
       labels: { app: itom-frontend }
     spec:
+      # Temporary production workaround: the Flannel/CNI path on k8s-01/02 is
+      # intermittently unable to resolve/reach the backend Service, which makes
+      # nginx return 502. Keep the frontend with backend + DB on healthy k8s-03
+      # until the cluster network incident is resolved.
+      nodeSelector:
+        kubernetes.io/hostname: sn-prod-k8s-03
       imagePullSecrets:
         - name: harbor-isa
       containers:
         - name: nginx
-          image: core.harbor.domain/sn/itom-frontend:87b8f90b
+          image: core.harbor.domain/sn/itom-frontend:36604a3a
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80

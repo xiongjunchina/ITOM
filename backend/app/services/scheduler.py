@@ -121,7 +121,29 @@ def scan_overdue_milestones():
         db.commit()
 
 
-SCANNERS = [scan_sla_warnings, scan_contract_expiry, scan_overdue_milestones]
+def scan_feishu_org_sync():
+    """按管理员配置的周期自动同步飞书组织；先登记尝试时间，防止失败时高频重试。"""
+    from datetime import timedelta
+    from app.services.feishu import is_enabled
+    from app.services.org_settings import get_org_settings
+    from app.services.org_sync import run_sync
+
+    with SessionLocal() as db:
+        settings = get_org_settings(db)
+        if not settings.feishu_auto_sync_enabled or not is_enabled(db):
+            db.commit()
+            return
+        now = datetime.now()
+        last = settings.feishu_auto_sync_last_attempt_at
+        if last and now - last < timedelta(minutes=settings.feishu_auto_sync_interval_minutes):
+            db.commit()
+            return
+        settings.feishu_auto_sync_last_attempt_at = now
+        db.commit()
+        run_sync(db, "feishu")
+
+
+SCANNERS = [scan_sla_warnings, scan_contract_expiry, scan_overdue_milestones, scan_feishu_org_sync]
 
 
 async def run_forever():

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Button,
   Card,
   Empty,
@@ -257,6 +258,12 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
         <Typography.Paragraph type="secondary">
           {t('onboarding.hello', { name: approveTarget?.display_name || '' })}
         </Typography.Paragraph>
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t('onboarding.passwordEmailHint', { email: approveTarget?.email || t('onboarding.linkedPersonEmail') })}
+        />
         <Form<ApproveForm> form={approveForm} layout="vertical" preserve={false}>
           <Form.Item
             name="username"

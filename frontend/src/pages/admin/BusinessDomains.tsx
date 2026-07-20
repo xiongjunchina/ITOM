@@ -7,17 +7,19 @@ import {
   Input,
   InputNumber,
   Modal,
+  Popconfirm,
   Select,
   Space,
   Switch,
   Table,
   Tag,
+  TreeSelect,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
-import type { BusinessDomain, Member } from '../../api/types';
+import type { BusinessDomain, Department, Member } from '../../api/types';
 import { useT } from '../../i18n';
 
 interface DomainForm {
@@ -26,6 +28,8 @@ interface DomainForm {
   description?: string;
   owner_id?: string | null;
   backup_owner_id?: string | null;
+  department_ids: string[];
+  include_children: boolean;
   sort?: number;
 }
 
@@ -34,6 +38,7 @@ export default function BusinessDomains() {
   const [items, setItems] = useState<BusinessDomain[]>([]);
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessDomain | null>(null);
@@ -43,6 +48,10 @@ export default function BusinessDomains() {
   const [teamTarget, setTeamTarget] = useState<BusinessDomain | null>(null);
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [savingTeam, setSavingTeam] = useState(false);
+  const [departmentTarget, setDepartmentTarget] = useState<BusinessDomain | null>(null);
+  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  const [includeChildren, setIncludeChildren] = useState(true);
+  const [savingDepartments, setSavingDepartments] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -61,10 +70,10 @@ export default function BusinessDomains() {
   }, [load]);
 
   useEffect(() => {
-    api
-      .getList<Member>('/members', { page: 1, page_size: 2000 })
-      .then((res) => setMembers(res.items))
-      .catch(() => undefined);
+    void Promise.all([
+      api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }).then((res) => setMembers(res.items)),
+      api.getList<Department>('/admin/departments').then((res) => setDepartments(res.items)),
+    ]).catch(() => undefined);
   }, []);
 
   const ownerOptions = useMemo(
@@ -75,6 +84,16 @@ export default function BusinessDomains() {
       })),
     [members],
   );
+  const departmentTree = useMemo(() => {
+    const selectable = departments.filter((d) => d.active && d.dept_type === 'business');
+    const ids = new Set(selectable.map((d) => d.id));
+    return selectable.map((d) => ({
+      id: d.id,
+      pId: d.parent_id && ids.has(d.parent_id) ? d.parent_id : null,
+      value: d.id,
+      title: d.name,
+    }));
+  }, [departments]);
 
   const openCreate = () => {
     setEditing(null);
@@ -90,6 +109,8 @@ export default function BusinessDomains() {
       description: record.description ?? undefined,
       owner_id: record.owner_id ?? undefined,
       backup_owner_id: record.backup_owner_id ?? undefined,
+      department_ids: (record.departments ?? []).map((d) => d.id),
+      include_children: (record.departments ?? []).some((d) => d.include_children) || (record.departments ?? []).length === 0,
       sort: record.sort,
     });
     setModalOpen(true);
@@ -102,6 +123,8 @@ export default function BusinessDomains() {
       description: values.description ?? null,
       owner_id: values.owner_id ?? null,
       backup_owner_id: values.backup_owner_id ?? null,
+      department_ids: values.department_ids ?? [],
+      include_children: values.include_children ?? true,
       sort: values.sort ?? 0,
     };
     setSaving(true);
@@ -144,6 +167,31 @@ export default function BusinessDomains() {
     }
   };
 
+  const openDepartments = (record: BusinessDomain) => {
+    const assigned = record.departments ?? [];
+    setDepartmentTarget(record);
+    setDepartmentIds(assigned.map((d) => d.id));
+    setIncludeChildren(assigned.some((d) => d.include_children) || assigned.length === 0);
+  };
+
+  const handleSaveDepartments = async () => {
+    if (!departmentTarget) return;
+    setSavingDepartments(true);
+    try {
+      await api.put(`/admin/business-domains/${departmentTarget.id}/departments`, {
+        department_ids: departmentIds,
+        include_children: includeChildren,
+      });
+      message.success(t('admin.domains.departmentsUpdated'));
+      setDepartmentTarget(null);
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setSavingDepartments(false);
+    }
+  };
+
   const toggleActive = async (record: BusinessDomain, checked: boolean) => {
     try {
       await api.patch(`/admin/business-domains/${record.id}`, { active: checked });
@@ -154,6 +202,12 @@ export default function BusinessDomains() {
     } catch {
       // 已统一提示
     }
+  };
+
+  const handleDelete = async (record: BusinessDomain) => {
+    await api.delete(`/admin/business-domains/${record.id}`);
+    message.success(t('admin.domains.deleted'));
+    void load();
   };
 
   const columns: ColumnsType<BusinessDomain> = [
@@ -186,6 +240,17 @@ export default function BusinessDomains() {
         ),
     },
     {
+      title: t('admin.domains.departments'),
+      dataIndex: 'departments',
+      width: 300,
+      render: (list: BusinessDomain['departments']) =>
+        (list ?? []).length === 0 ? '-' : (list ?? []).map((d) => (
+          <Tag key={d.id} color={d.active ? undefined : 'default'}>
+            {d.name}{d.include_children ? t('admin.domains.childrenSuffix') : ''}
+          </Tag>
+        )),
+    },
+    {
       title: t('admin.common.description'),
       dataIndex: 'description',
       ellipsis: true,
@@ -207,7 +272,7 @@ export default function BusinessDomains() {
     {
       title: t('common.actions'),
       key: 'action',
-      width: 160,
+      width: 240,
       render: (_, record) => (
         <Space>
           <Button type="link" size="small" onClick={() => openEdit(record)}>
@@ -216,6 +281,14 @@ export default function BusinessDomains() {
           <Button type="link" size="small" onClick={() => openTeam(record)}>
             {t('admin.domains.manageTeam')}
           </Button>
+          <Button type="link" size="small" onClick={() => openDepartments(record)}>
+            {t('admin.domains.manageDepartments')}
+          </Button>
+          <Popconfirm title={t('admin.domains.deleteConfirm')} onConfirm={() => void handleDelete(record)}>
+            <Button type="link" danger size="small" icon={<DeleteOutlined />}>
+              {t('common.delete')}
+            </Button>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -252,7 +325,7 @@ export default function BusinessDomains() {
         onCancel={() => setModalOpen(false)}
         destroyOnClose
       >
-        <Form<DomainForm> form={form} layout="vertical" preserve={false} initialValues={{ sort: 0 }}>
+        <Form<DomainForm> form={form} layout="vertical" preserve={false} initialValues={{ sort: 0, department_ids: [], include_children: true }}>
           <Form.Item
             name="code"
             label={t('admin.common.code')}
@@ -275,7 +348,7 @@ export default function BusinessDomains() {
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder={t('admin.common.selectFromPeople')}
+              placeholder={t('admin.domains.selectDigitalTeam')}
               options={ownerOptions}
             />
           </Form.Item>
@@ -284,9 +357,25 @@ export default function BusinessDomains() {
               allowClear
               showSearch
               optionFilterProp="label"
-              placeholder={t('admin.common.selectFromPeople')}
+              placeholder={t('admin.domains.selectDigitalTeam')}
               options={ownerOptions}
             />
+          </Form.Item>
+          <Form.Item name="department_ids" label={t('admin.domains.departments')}>
+            <TreeSelect
+              treeDataSimpleMode
+              treeData={departmentTree}
+              treeCheckable
+              showCheckedStrategy={TreeSelect.SHOW_PARENT}
+              showSearch
+              treeNodeFilterProp="title"
+              maxTagCount="responsive"
+              placeholder={t('admin.domains.selectDepartments')}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+          <Form.Item name="include_children" label={t('admin.domains.includeChildren')} valuePropName="checked">
+            <Switch />
           </Form.Item>
           <Form.Item name="description" label={t('admin.common.description')}>
             <Input.TextArea rows={2} maxLength={200} />
@@ -317,6 +406,34 @@ export default function BusinessDomains() {
             label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
           }))}
         />
+      </Modal>
+
+      <Modal
+        title={t('admin.domains.departmentsTitle', { name: departmentTarget?.name ?? '' })}
+        open={!!departmentTarget}
+        onOk={() => void handleSaveDepartments()}
+        confirmLoading={savingDepartments}
+        onCancel={() => setDepartmentTarget(null)}
+        destroyOnClose
+      >
+        <Alert type="info" showIcon message={t('admin.domains.departmentsHint')} style={{ marginBottom: 16 }} />
+        <TreeSelect
+          treeDataSimpleMode
+          treeData={departmentTree}
+          treeCheckable
+          showCheckedStrategy={TreeSelect.SHOW_PARENT}
+          value={departmentIds}
+          onChange={setDepartmentIds}
+          showSearch
+          treeNodeFilterProp="title"
+          maxTagCount="responsive"
+          placeholder={t('admin.domains.selectDepartments')}
+          style={{ width: '100%', marginBottom: 20 }}
+        />
+        <Space style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>{t('admin.domains.includeChildren')}</span>
+          <Switch checked={includeChildren} onChange={setIncludeChildren} />
+        </Space>
       </Modal>
     </Card>
   );

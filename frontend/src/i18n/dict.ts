@@ -57,7 +57,7 @@ const zh: Dict = {
   'login.orDivider': '或',
   'login.feishu': '飞书认证',
   'login.feishuScanTitle': '飞书扫码登录',
-  'login.feishuScanHint': '真实飞书未启用，当前为模拟扫码（系统管理→飞书集成 可启用）',
+  'login.feishuScanHint': '真实飞书未启用，当前为模拟扫码（系统管理→系统集成→飞书集成 可启用）',
   'login.feishuName': '姓名',
   'login.feishuId': '飞书用户标识',
   'login.feishuIdPlaceholder': '如 open_id / 工号',
@@ -88,6 +88,8 @@ const zh: Dict = {
   'onboarding.approve': '开通',
   'onboarding.reject': '驳回',
   'onboarding.approveTitle': '开通账号',
+  'onboarding.passwordEmailHint': '批准时系统将生成随机初始密码并发送至 {email}；邮件发送成功后账号才会正式开通。',
+  'onboarding.linkedPersonEmail': '所选关联人员的邮箱',
   'onboarding.setUsername': '系统用户名',
   'onboarding.setUsernameHint': '仅字母数字与 _.-，登录后不可改',
   'onboarding.setRoles': '基础角色',
@@ -140,8 +142,9 @@ const zh: Dict = {
   'module.admin_business_domains': '业务域',
   'module.admin_master_data': '数据字典',
   'module.admin_workflow': '状态机配置',
-  'module.admin_feishu': '飞书集成',
+  'module.admin_feishu': '系统集成',
   'module.admin_audit': '审计日志',
+  'module.admin_ui_branding': '界面与品牌',
   // 权限配置：菜单页小标题（合并页）
   'permPage.admin_org': '组织管理',
   'permPage.admin_identity': '用户与组管理',
@@ -195,7 +198,9 @@ const zh: Dict = {
   'menu./admin/master-data': '数据字典',
   'menu./admin/workflow-config': '状态机配置',
   'menu./admin/feishu': '飞书集成',
+  'menu./admin/integrations': '系统集成',
   'menu./admin/audit-logs': '审计日志',
+  'menu./admin/ui-branding': '界面与品牌',
 };
 
 const en: Dict = {
@@ -249,7 +254,7 @@ const en: Dict = {
   'login.orDivider': 'or',
   'login.feishu': 'Feishu Sign-in',
   'login.feishuScanTitle': 'Feishu QR sign-in',
-  'login.feishuScanHint': 'Real Feishu sign-in is not enabled; this simulates the scan (enable it in System → Feishu Integration)',
+  'login.feishuScanHint': 'Real Feishu sign-in is not enabled; this simulates the scan (enable it in System → System Integrations → Feishu)',
   'login.feishuName': 'Name',
   'login.feishuId': 'Feishu user ID',
   'login.feishuIdPlaceholder': 'e.g. open_id / employee no.',
@@ -279,6 +284,8 @@ const en: Dict = {
   'onboarding.approve': 'Approve',
   'onboarding.reject': 'Reject',
   'onboarding.approveTitle': 'Provision account',
+  'onboarding.passwordEmailHint': 'Approval generates a random initial password and emails it to {email}; the account is activated only after delivery succeeds.',
+  'onboarding.linkedPersonEmail': 'the linked person’s email',
   'onboarding.setUsername': 'System username',
   'onboarding.setUsernameHint': 'Letters, digits and _.- only; fixed after sign-in',
   'onboarding.setRoles': 'Base roles',
@@ -328,8 +335,9 @@ const en: Dict = {
   'module.admin_business_domains': 'Business Domains',
   'module.admin_master_data': 'Data Dictionary',
   'module.admin_workflow': 'State Machine',
-  'module.admin_feishu': 'Feishu Integration',
+  'module.admin_feishu': 'System Integrations',
   'module.admin_audit': 'Audit Log',
+  'module.admin_ui_branding': 'Interface & Branding',
   'permPage.admin_org': 'Organization',
   'permPage.admin_identity': 'Users & Groups',
   'permPage.admin_access': 'Roles & Permissions',
@@ -380,7 +388,9 @@ const en: Dict = {
   'menu./admin/master-data': 'Data Dictionary',
   'menu./admin/workflow-config': 'State Machine',
   'menu./admin/feishu': 'Feishu Integration',
+  'menu./admin/integrations': 'System Integrations',
   'menu./admin/audit-logs': 'Audit Log',
+  'menu./admin/ui-branding': 'Interface & Branding',
 };
 
 // 分域文案（每个域一个文件，便于并行维护，互不冲突）

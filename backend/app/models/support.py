@@ -83,6 +83,17 @@ class BusinessDomainMember(GlidBase):
     person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
 
 
+class BusinessDomainDepartment(GlidBase):
+    """业务域服务范围：关联组织架构中的业务部门，可选择覆盖其下级部门。"""
+
+    __tablename__ = "business_domain_department"
+    __table_args__ = (UniqueConstraint("domain_id", "department_id"),)
+
+    domain_id: Mapped[str] = mapped_column(ForeignKey("business_domain.id"), index=True)
+    department_id: Mapped[str] = mapped_column(ForeignKey("department.id"), index=True)
+    include_children: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class ProvisionRule(GlidBase):
     """账号首次开通的默认角色映射（仅首次生效，之后角色自由增减，绝不绑死）。"""
 
@@ -152,8 +163,12 @@ class AuthUser(GlidBase):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
     password_set_at: Mapped[datetime | None] = mapped_column(
-        DateTime, comment="本地口令最近一次被人为设定的时间；NULL=仍是开通时的随机口令（飞书用户），首次自设密码免验当前密码"
+        DateTime, comment="本地口令最近一次设定时间"
     )
+    initial_password_ciphertext: Mapped[str | None] = mapped_column(
+        Text, comment="审批生成初始密码的加密密文；改密/重置后清空"
+    )
+    initial_password_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     person: Mapped[OrgMember | None] = relationship()
 
@@ -254,6 +269,33 @@ class Attachment(GlidBase):
     uploaded_by: Mapped[str | None] = mapped_column(String(26))
 
 
+class UiBrandingVersion(GlidBase):
+    """UI 品牌配置快照：草稿与每次发布均保留完整 JSON，支持审计回滚。"""
+
+    __tablename__ = "ui_branding_version"
+
+    version: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True, comment="draft/published")
+    config: Mapped[dict] = mapped_column(JsonCol, default=dict)
+    published_by: Mapped[str | None] = mapped_column(String(26))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class UiBrandingAsset(GlidBase):
+    """受控品牌图片；仅允许白名单位图类型，经公开只读端点提供。"""
+
+    __tablename__ = "ui_branding_asset"
+
+    kind: Mapped[str] = mapped_column(String(32), comment="logo_light/logo_dark/logo_square/favicon/login_background")
+    filename: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(500))
+    content_type: Mapped[str] = mapped_column(String(64))
+    size: Mapped[int] = mapped_column(Integer)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    uploaded_by: Mapped[str | None] = mapped_column(String(26))
+
+
 class FeishuConfig(GlidBase):
     """飞书集成单行配置（M11/M32）：组织同步（按配置范围）+ 扫码登录 OAuth。
 
@@ -269,3 +311,23 @@ class FeishuConfig(GlidBase):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, comment="启用真实飞书（同步+扫码）")
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_sync_stats: Mapped[dict | None] = mapped_column(JsonCol, comment="上次同步统计")
+
+
+class SystemIntegrationConfig(GlidBase):
+    """系统集成全局配置单行记录；敏感字段在 JSON 内以加密密文保存。"""
+
+    __tablename__ = "system_integration_config"
+    email_config: Mapped[dict] = mapped_column(JsonCol, default=dict)
+    ldap_config: Mapped[dict] = mapped_column(JsonCol, default=dict)
+
+
+class OrgSettings(GlidBase):
+    """组织治理单行配置：数字化团队口径与飞书自动同步策略。"""
+
+    __tablename__ = "org_settings"
+
+    digital_team_department_ids: Mapped[list] = mapped_column(JsonCol, default=list)
+    digital_team_include_children: Mapped[bool] = mapped_column(Boolean, default=True)
+    feishu_auto_sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    feishu_auto_sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=1440)
+    feishu_auto_sync_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)

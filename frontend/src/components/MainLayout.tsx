@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Avatar, Breadcrumb, Dropdown, Layout, Menu, Space, Typography, theme } from 'antd';
+import { Alert, Avatar, Button, Breadcrumb, Dropdown, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
-import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined } from '@ant-design/icons';
+import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import { useAuthStore } from '../stores/auth';
@@ -10,7 +10,8 @@ import { translate, useT } from '../i18n';
 import { useLangStore, type Lang } from '../i18n/store';
 import NotificationBell from './NotificationBell';
 import LangSwitch from './LangSwitch';
-import { MENU_TREE, breadcrumbOf, filterMenu, type MenuNode } from './menu';
+import { MENU_TREE, breadcrumbOf, filterMenu, isRequesterOnly, type MenuNode } from './menu';
+import { localized, useBrandingStore } from '../stores/branding';
 
 const { Header, Sider, Content } = Layout;
 
@@ -30,9 +31,7 @@ export default function MainLayout() {
   const { token, user, setUser, logout } = useAuthStore();
   const t = useT();
   const lang = useLangStore((s) => s.lang);
-  const {
-    token: { colorBgContainer },
-  } = theme.useToken();
+  const branding = useBrandingStore((s) => s.current?.config);
 
   // 进入布局后刷新一次当前用户信息（token 失效则由拦截器跳登录页）
   useEffect(() => {
@@ -45,6 +44,12 @@ export default function MainLayout() {
   }, [token]);
 
   const menuItems = useMemo(() => toAntdItems(filterMenu(MENU_TREE, user), lang), [user, lang]);
+  const requesterPortal = isRequesterOnly(user);
+  const portalItems = useMemo(() => {
+    const visible = filterMenu(MENU_TREE, user);
+    const leaves = visible.flatMap((node) => node.children ?? [node]).filter((node) => node.path);
+    return leaves.slice(0, 6);
+  }, [user]);
 
   const openKey = useMemo(() => {
     const seg = location.pathname.split('/')[1];
@@ -60,6 +65,20 @@ export default function MainLayout() {
   }
 
   const crumbs = breadcrumbOf(location.pathname);
+  const brandName = localized(branding, 'brand', 'system_name', lang, t('app.title'));
+  const shortName = localized(branding, 'brand', 'short_name', lang, t('app.titleShort'));
+  const horizontalLogo = branding?.brand.logo_light_url || branding?.brand.logo_dark_url;
+  const logo = collapsed ? branding?.brand.logo_square_url : horizontalLogo;
+  const announcement = localized(branding, 'announcement', 'text', lang);
+  const now = Date.now();
+  const announcementActive = !!branding?.announcement.enabled && !!announcement && (!branding.announcement.starts_at || Date.parse(branding.announcement.starts_at) <= now) && (!branding.announcement.ends_at || Date.parse(branding.announcement.ends_at) >= now);
+  const environment = branding?.environment;
+  const themePreference = user?.preferences?.theme ?? branding?.appearance.default_theme ?? 'light';
+  const shellDark = themePreference === 'dark'
+    || (themePreference === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
+  const currentTitleKey = crumbs[crumbs.length - 1];
+  const currentTitle = currentTitleKey ? t('menu.' + currentTitleKey) : brandName;
+  const siderTheme = branding?.appearance.sidebar_theme === 'light' ? 'light' : 'dark';
 
   const userMenu: MenuProps = {
     items: [
@@ -88,26 +107,62 @@ export default function MainLayout() {
     ],
   };
 
+  const userControl = (
+    <Dropdown menu={userMenu}>
+      <Space className="app-user-menu">
+        <Avatar size={26} src={user?.avatar} style={{ backgroundColor: '#2b58d6' }}>
+          {(user?.name || user?.username || '?')[0]}
+        </Avatar>
+        <Typography.Text>{user?.name || user?.username || t('header.user')}</Typography.Text>
+        <DownOutlined style={{ fontSize: 10 }} />
+      </Space>
+    </Dropdown>
+  );
+
+  if (requesterPortal) {
+    return (
+      <Layout className={`portal-f ${shellDark ? 'portal-f--dark' : ''}`}>
+        <Header className="portal-f__header">
+          <button className="portal-f__brand" onClick={() => navigate('/')}>
+            {branding?.brand.logo_square_url
+              ? <img src={branding.brand.logo_square_url} alt="" />
+              : <span>IT</span>}
+            <strong>{shortName}</strong>
+          </button>
+          <nav className="portal-f__nav" aria-label="业务门户导航">
+            {portalItems.map((item) => (
+              <button key={item.path} className={location.pathname === item.path ? 'is-active' : ''} onClick={() => navigate(item.path!)}>
+                {translate(lang, 'menu.' + item.key)}
+              </button>
+            ))}
+          </nav>
+          <Space size={12}>
+            <Button className="portal-f__search" type="text" icon={<SearchOutlined />} aria-label="搜索" />
+            <LangSwitch />
+            <NotificationBell />
+            {userControl}
+          </Space>
+        </Header>
+        {environment?.show_marker && environment.label !== 'production' && <div className="environment-ribbon">{environment.label.toUpperCase()}</div>}
+        {announcementActive && <Alert banner closable={branding?.announcement.dismissible} type={branding?.announcement.type === 'maintenance' ? 'warning' : branding.announcement.type} message={announcement} />}
+        <Content className="portal-f__content">
+          <main className="portal-f__inner"><Outlet /></main>
+        </Content>
+      </Layout>
+    );
+  }
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} width={220}>
-        <div
-          style={{
-            height: 56,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: collapsed ? 14 : 16,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-          }}
-        >
-          {collapsed ? t('app.titleShort') : t('app.title')}
+    <Layout className={`app-shell workbench-c ${shellDark ? 'workbench-c--dark' : ''} app-shell--${siderTheme}`}>
+      <Sider className="app-sider" theme="light" collapsed={collapsed} width={216} collapsedWidth={72} trigger={null}>
+        <div className={`app-brand ${collapsed ? 'is-collapsed' : ''}`}>
+          {logo ? <img src={logo} alt={brandName} className="app-brand__logo" /> : <span className="app-brand__mark">IT</span>}
+          {!collapsed && <div className="app-brand__copy"><strong>{brandName}</strong><span>{shortName} / OPERATIONS</span></div>}
         </div>
+        {!collapsed && <div className="app-nav-caption">WORKSPACE</div>}
         <Menu
-          theme="dark"
+          className="app-menu"
+          theme="light"
           mode="inline"
           items={menuItems}
           selectedKeys={[location.pathname]}
@@ -116,37 +171,25 @@ export default function MainLayout() {
           onClick={({ key }) => navigate(key)}
         />
       </Sider>
-      <Layout>
-        <Header
-          style={{
-            background: colorBgContainer,
-            padding: '0 24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <Breadcrumb items={crumbs.map((key) => ({ title: t('menu.' + key) }))} />
+      <Layout className="app-main">
+        <Header className="app-header">
+          <Space size={14}>
+            <Button className="app-collapse" type="text" aria-label={collapsed ? '展开导航' : '收起导航'} icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} />
+            <div className="app-page-identity">
+              <Typography.Title level={4}>{currentTitle}</Typography.Title>
+              <Breadcrumb items={crumbs.map((key) => ({ title: t('menu.' + key) }))} />
+            </div>
+          </Space>
           <Space size="middle">
             <LangSwitch />
             <NotificationBell />
-            <Dropdown menu={userMenu}>
-              <Space style={{ cursor: 'pointer' }}>
-                {user?.avatar ? (
-                  <Avatar size={26} src={user.avatar} />
-                ) : (
-                  <Avatar size={26} style={{ backgroundColor: '#1677ff' }}>
-                    {(user?.name || user?.username || '?')[0]}
-                  </Avatar>
-                )}
-                <Typography.Text>{user?.name || user?.username || t('header.user')}</Typography.Text>
-                <DownOutlined style={{ fontSize: 10 }} />
-              </Space>
-            </Dropdown>
+            {userControl}
           </Space>
         </Header>
-        <Content style={{ margin: 16 }}>
-          <Outlet />
+        {environment?.show_marker && environment.label !== 'production' && <div className="environment-ribbon">{environment.label.toUpperCase()}</div>}
+        {announcementActive && <Alert banner closable={branding?.announcement.dismissible} type={branding?.announcement.type === 'maintenance' ? 'warning' : branding.announcement.type} message={announcement} />}
+        <Content className="app-content">
+          <main className="app-content__inner"><Outlet /></main>
         </Content>
       </Layout>
     </Layout>

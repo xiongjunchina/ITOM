@@ -58,6 +58,9 @@ export interface UserPreferences {
   team_overview_widgets?: string[];
   /** 显示语言 zh/en */
   language?: 'zh' | 'en';
+  notification_preferences?: Record<'work' | 'workflow' | 'system', boolean>;
+  theme?: 'light' | 'dark' | 'system';
+  density?: 'default' | 'compact';
 }
 
 /** 登录用户 */
@@ -149,6 +152,14 @@ export interface FeishuConfig {
   last_sync_stats: FeishuSyncStats | null;
 }
 
+export interface OrgSettings {
+  digital_team_department_ids: string[];
+  digital_team_include_children: boolean;
+  feishu_auto_sync_enabled: boolean;
+  feishu_auto_sync_interval_minutes: number;
+  feishu_auto_sync_last_attempt_at: string | null;
+}
+
 /** 系统用户（管理端） */
 export interface AdminUser {
   id: string;
@@ -158,6 +169,8 @@ export interface AdminUser {
   is_active: boolean;
   auth_source: AuthSource;
   last_login_at?: string | null;
+  initial_password_available?: boolean;
+  initial_password_sent_at?: string | null;
 }
 
 /** 人员主数据（人的档案，纯数据零权限） */
@@ -514,6 +527,8 @@ export interface BusinessDomain {
   backup_owner_name?: string | null;
   /** 服务团队成员（跟随该业务线的 BP/开发等） */
   members: { id: string; name: string }[];
+  /** 从组织架构选取的服务部门；include_children 表示覆盖下级部门 */
+  departments: { id: string; name: string; parent_id: string | null; active: boolean; include_children: boolean }[];
   sort: number;
   active: boolean;
 }
@@ -1825,5 +1840,19 @@ export interface ProfileData {
     hire_date: string | null;
     external_source: string | null;
   } | null;
-  preferences: { language: 'zh' | 'en'; bio: string | null; avatar: string | null };
+  preferences: {
+    language: 'zh' | 'en'; bio: string | null; avatar: string | null;
+    notification_preferences: Record<string, boolean>;
+    theme: 'light' | 'dark' | 'system';
+    density: 'default' | 'compact';
+  };
+}
+
+export interface PersonalAuditLog {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  action: string;
+  summary: Record<string, unknown> | null;
+  created_at: string;
 }

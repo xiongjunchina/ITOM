@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Button, Card, Divider, Form, Input, Modal, Typography, message } from 'antd';
+import { Alert, Button, Card, Divider, Form, Input, Modal, Space, Typography, message } from 'antd';
 import { LockOutlined, QrcodeOutlined, UserOutlined } from '@ant-design/icons';
 import { isAxiosError } from 'axios';
 import { api } from '../api/client';
@@ -9,6 +9,8 @@ import { useAuthStore } from '../stores/auth';
 import { firstAccessiblePath } from '../components/menu';
 import { useT } from '../i18n';
 import LangSwitch from '../components/LangSwitch';
+import { localized, useBrandingStore } from '../stores/branding';
+import { useLangStore } from '../i18n/store';
 
 interface LoginForm {
   username: string;
@@ -74,6 +76,8 @@ export default function Login() {
   const navigate = useNavigate();
   const { token, user, setAuth } = useAuthStore();
   const t = useT();
+  const lang = useLangStore((s) => s.lang);
+  const branding = useBrandingStore((s) => s.current?.config);
   const [appLoginTrying, setAppLoginTrying] = useState(/Lark|Feishu/i.test(navigator.userAgent));
 
   useEffect(() => {
@@ -98,6 +102,13 @@ export default function Login() {
   if (token) {
     return <Navigate to={firstAccessiblePath(user)} replace />;
   }
+  const brandName = localized(branding, 'brand', 'system_name', lang, t('app.title'));
+  const brandDescription = localized(branding, 'brand', 'description', lang, t('app.subtitle'));
+  const loginTitle = localized(branding, 'login', 'title', lang, brandName);
+  const loginDescription = localized(branding, 'login', 'description', lang, brandDescription);
+  const loginNotice = localized(branding, 'login', 'notice', lang);
+  const systemAnnouncement = localized(branding, 'announcement', 'text', lang);
+  const bgImage = branding?.login.background_type === 'image' && branding.login.background_image_url ? `url(${branding.login.background_image_url})` : branding?.login.background_type === 'pattern' ? 'radial-gradient(circle at 10% 20%, rgba(36,87,214,.12), transparent 30%), radial-gradient(circle at 90% 80%, rgba(25,168,140,.12), transparent 32%)' : undefined;
 
   const onFinish = async (values: LoginForm) => {
     setLoading(true);
@@ -184,19 +195,25 @@ export default function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f0f2f5',
+        backgroundColor: String(branding?.login.background_color || '#f0f2f5'),
+        backgroundImage: bgImage,
+        backgroundSize: branding?.login.background_type === 'image' ? 'cover' : undefined,
       }}
     >
       <div style={{ position: 'absolute', top: 16, right: 16 }}>
         <LangSwitch />
       </div>
-      <Card style={{ width: 380, boxShadow: '0 2px 8px rgba(0,0,0,0.09)' }}>
+      {branding?.announcement.enabled && branding.announcement.show_on_login && systemAnnouncement && <Alert banner type={branding.announcement.type === 'maintenance' ? 'warning' : branding.announcement.type} message={systemAnnouncement} style={{position:'absolute',top:0,left:0,right:0}} />}
+      {branding?.login.layout === 'split' && <section className="login-brand-panel"><div><Typography.Title style={{color:'#fff'}}>{brandName}</Typography.Title><Typography.Paragraph style={{color:'rgba(255,255,255,.78)',fontSize:18}}>{brandDescription}</Typography.Paragraph></div></section>}
+      <Card style={{ width: 400, boxShadow: '0 18px 55px rgba(15,23,42,0.12)', borderRadius: 16 }}>
+        {branding?.login.show_logo && branding.brand.logo_light_url && <img src={branding.brand.logo_light_url} alt={brandName} style={{display:'block',maxWidth:180,maxHeight:48,objectFit:'contain',margin:'0 auto 20px'}} />}
         <Typography.Title level={3} style={{ textAlign: 'center', marginBottom: 8 }}>
-          {t('app.title')}
+          {loginTitle}
         </Typography.Title>
         <Typography.Paragraph type="secondary" style={{ textAlign: 'center' }}>
-          {t('app.subtitle')}
+          {loginDescription}
         </Typography.Paragraph>
+        {loginNotice && <Alert showIcon message={loginNotice} style={{marginBottom:20}} />}
         <Form<LoginForm> onFinish={(v) => void onFinish(v)} size="large">
           <Form.Item name="username" rules={[{ required: true, message: t('login.usernameRequired') }]}>
             <Input prefix={<UserOutlined />} placeholder={t('login.username')} autoComplete="username" />
@@ -221,6 +238,13 @@ export default function Login() {
         <Button block icon={<QrcodeOutlined />} loading={feishuStarting} onClick={() => void onFeishuClick()}>
           {t('login.feishu')}
         </Button>
+        <Space wrap size="small" style={{marginTop:20,justifyContent:'center',width:'100%'}}>
+          {branding?.login.help_url && <a href={String(branding.login.help_url)}>帮助</a>}
+          {branding?.login.privacy_url && <a href={String(branding.login.privacy_url)}>隐私政策</a>}
+          {branding?.login.terms_url && <a href={String(branding.login.terms_url)}>使用条款</a>}
+        </Space>
+        {branding?.login.support_text && <Typography.Paragraph type="secondary" style={{textAlign:'center',marginTop:12,marginBottom:0}}>{String(branding.login.support_text)}</Typography.Paragraph>}
+        {branding?.login.copyright && <Typography.Paragraph type="secondary" style={{textAlign:'center',fontSize:12,marginTop:8,marginBottom:0}}>{String(branding.login.copyright)}</Typography.Paragraph>}
       </Card>
 
       <Modal

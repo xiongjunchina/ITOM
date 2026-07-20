@@ -12,6 +12,12 @@ from app.db import Base, engine
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def stub_initial_password_email(monkeypatch):
+    """除邮件专项用例外，避免审批测试依赖外部 SMTP。"""
+    monkeypatch.setattr("app.services.email.send_initial_password_email", lambda *_args, **_kwargs: None)
+
+
 @pytest.fixture(scope="module")
 def client():
     """每个测试模块独立建库，杜绝跨模块数据干扰。"""

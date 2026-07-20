@@ -62,7 +62,12 @@ ITOM/
 
 ```text
 POST /api/auth/login | GET /api/auth/me
-GET/POST/PATCH /api/admin/users          # admin
+GET /api/auth/me/profile | PATCH /api/auth/me/preferences
+POST /api/auth/me/password | GET /api/auth/me/audit-logs
+GET /api/auth/me/feishu-binding/authorize-url
+POST/DELETE /api/auth/me/feishu-binding
+GET /api/auth/feishu/client-config | POST /api/auth/feishu/app-login
+GET/POST/PATCH/DELETE /api/admin/users   # admin；删除为账号软删+解绑人员
 GET/POST/PATCH /api/members              # 人员主数据
 GET /api/admin/master-data?category=     # 字典（全员只读，admin 可写）
 GET/PUT /api/admin/workflow-config       # 状态机
@@ -70,6 +75,18 @@ GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read   # 站内通知
 POST /api/attachments (multipart) | GET /api/attachments?entity=
 ```
+
+个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
+
+### 4.1a 组织同步（M35）
+
+```text
+POST /api/admin/org-sync                 # 默认后台启动，返回 {started:true}
+POST /api/admin/org-sync {sync:true}     # 测试/脚本同步等待，直接返回统计
+GET /api/admin/feishu-config             # last_sync_stats.status: running|done|failed
+```
+
+后台同步运行期间重复触发返回 HTTP 409 / `SYNC_RUNNING`。前端每 3 秒读取 `last_sync_stats`，最长等待 10 分钟；完成或失败后向触发人发送站内通知。后台任务使用独立数据库会话，不能复用请求会话。
 
 ### 4.2 ITSM
 
@@ -196,3 +213,41 @@ services:
 | M4 项目 | portfolios/projects/wbs/milestones/risks/costs/charter-import | 项目两标签页/详情 5 tab/甘特 | PRD §6 |
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/dashboard/流程监控 | 团队 6 页/总览/流程监控 | PRD §4/8/9 |
+
+## 8.1 业务域服务部门 API（M41）
+
+```text
+GET /api/admin/departments
+    # 读取组织架构部门；前端筛选 active=true 且 dept_type=business 并构造部门树
+GET /api/admin/business-domains
+    # 每个业务域返回 departments[]：id/name/parent_id/active/include_children
+PUT /api/admin/business-domains/{domain_id}/departments
+    # body: { department_ids: string[], include_children: boolean }
+POST /api/admin/business-domains
+    # 新建 body 可直接带 department_ids/include_children；owner_id/backup_owner_id 仅允许数字化团队成员
+PATCH /api/admin/business-domains/{domain_id}
+    # 编辑 body 可同步替换 department_ids/include_children；负责人范围同上
+PUT /api/admin/business-domains/{domain_id}/members
+    # 服务团队成员必须属于统一数字化团队口径
+```
+
+部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。负责人、备份负责人和服务团队在服务端统一通过 `it_member_ids` 校验，不允许全公司其他人员绕过前端写入。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。
+
+M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队部门范围和飞书自动同步策略；新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
+
+## 9. UI 品牌配置 API（M38）
+
+```text
+GET  /api/public/ui-branding                         # 无需登录；最新发布配置，未发布时返回内置默认
+GET  /api/public/ui-branding/assets/{asset_id}       # 公开读取已上传品牌图片
+GET  /api/admin/ui-branding                          # 草稿与当前发布版
+PUT  /api/admin/ui-branding/draft                    # 保存完整草稿
+POST /api/admin/ui-branding/assets?kind=             # 上传受控图片
+POST /api/admin/ui-branding/publish                  # 草稿发布为新版本
+GET  /api/admin/ui-branding/history                  # 发布历史
+POST /api/admin/ui-branding/rollback/{version}       # 以历史配置生成新的发布版本
+POST /api/admin/ui-branding/reset                    # 草稿恢复内置默认
+```
+
+除两个 public 读取端点外均要求 `admin_ui_branding` 权限，写操作进入 `audit_log`。前端启动先读取公开配置；接口失败、无发布版本或字段缺失时逐字段合并内置默认值，确保品牌配置故障不会阻断登录。
+M44：审批接口生成 12 位密码并保存加密密文，不发信。`GET /api/admin/users/{id}/initial-password` 鉴权解密查看；`POST .../initial-password/email` 手工发送。`GET/PUT /api/admin/integrations/email|ldap` 管理全局配置，`POST .../test` 执行连接测试。敏感配置只返回 `has_secret`，不回显密钥。

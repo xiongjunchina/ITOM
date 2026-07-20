@@ -225,7 +225,7 @@ def parse_scope(raw: str | None) -> list[str]:
 def provider_from_db(db: Session) -> FeishuOrgProvider:
     cfg = get_config(db)
     if not cfg.enabled:
-        raise AppError("SYNC_NOT_CONFIGURED", "飞书集成未启用（系统管理→飞书集成）", 501)
+        raise AppError("SYNC_NOT_CONFIGURED", "飞书集成未启用（系统管理→系统集成→飞书集成）", 501)
     scope = parse_scope(cfg.sync_scope)
     if not scope:
         raise AppError("SYNC_NOT_CONFIGURED", "未配置组织架构同步范围（部门 open_department_id，0=全公司）", 501)

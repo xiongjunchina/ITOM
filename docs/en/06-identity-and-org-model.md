@@ -1,4 +1,4 @@
-# User Identity & Organization Model Design (M3.5 / M3.6)
+# User Identity & Organization Model Design (M3.5–M3.9 / M34–M37)
 
 > English translation of [../06-用户身份与组织模型设计.md](../06-用户身份与组织模型设计.md). For the authoritative version, the Chinese source prevails.
 
@@ -34,16 +34,26 @@ Auth-source adapter (AuthProvider) → on success returns a user profile (Provis
 ```
 
 - **Provisioning rules** (admin-configurable, first-login-only): match by department type (it/business/audit) or specific department → a list of default roles; a specific-department rule takes priority, lower `sort` first, and matching stops on the first hit. Seed default: all three department types → `requester`.
-- **Auth sources**: `auth_user.auth_source` (local/ad/feishu/sms/wechat) + `external_id`. Currently only local; AD domain / Feishu / SMS / WeChat register their respective adapters into `PROVIDERS` before go-live, with zero changes to the business layer.
+- **Auth sources**: `auth_user.auth_source` (local/ad/feishu/sms/wechat) + `external_id`. Local and Feishu are implemented: Feishu supports QR OAuth, workplace app login, first-time provisioning approval, and post-login binding/rebinding. AD/SMS/WeChat remain reserved adapters.
 - When an admin creates an account manually without selecting a role, the default is likewise taken from the rules (based on the associated person's department).
 
 ## 4. Source of Organization Data: Feishu is the Source of Truth (finalized M3.9)
 
 **Company personnel master data is stored in Feishu, and Feishu is authoritative** (2026-07-11 product decision). This is implemented in three layers:
 
-1. **The sync engine is implemented** (`services/org_sync.py`, provider-agnostic and testable): `apply_org_snapshot()` performs an idempotent upsert keyed by `(external_source, external_id)`; **the external side wins** (the Feishu value overrides the local one); a two-pass process establishes department parent-child and personnel supervisor relationships; a person that disappears externally → marked **departed** (the profile and historical record links are retained), and a department that disappears → deactivated; locally hand-maintained records (empty external_source) are unaffected by sync. The Feishu API client registers into `SYNC_PROVIDERS` before go-live, with the trigger endpoint `POST /api/admin/org-sync` (returns 501 when unconfigured).
+1. **The sync engine and Feishu provider are implemented** (`services/org_sync.py` / `services/feishu.py`): `apply_org_snapshot()` performs an idempotent upsert keyed by `(external_source, external_id)`; **the external side wins**; a two-pass process establishes department and supervisor relationships; externally missing people are marked departed and missing departments are deactivated, while local-only records are unaffected. `POST /api/admin/org-sync` returns 501 when Feishu is unconfigured.
 2. **Synced records are locked locally**: a person's HR base fields (name / employee number / gender / date of birth / employment type / supervisor / office location / department / contact / hire date / status) and department structure fields are rejected for edits by the backend (SYNCED_READONLY); **locally, only the IT extensions are maintained** — a person's position/skills/remarks, and a department's it/business/audit classification. Feishu manages HR; ITOM manages the IT extensions.
 3. **Manual entry during development is transitional**: the same set of fields, taken over by sync once connected.
+
+**M35 asynchronous sync protocol**: the admin trigger starts a background thread with an independent database session and returns immediately. `feishu_config.last_sync_stats.status` records `running/done/failed`; a repeated trigger while running returns `SYNC_RUNNING`. The UI polls for status, and completion or failure sends an in-app notification to the initiating account/person.
+
+## 4-A. Account Lifecycle and Personal Identity (M36–M37)
+
+- `auth_user` and `org_member` have separate lifecycles. Deleting an account only soft-deletes, disables, and unlinks it; personnel master data and historical references remain. The built-in admin and current account cannot be deleted.
+- Browser QR login and Feishu workplace login share identity handling: an active bound account signs in directly, while a new identity enters the `login_request` approval flow.
+- A signed-in account may bind or rebind one Feishu open_id; the identity cannot be occupied by another active account. Unbinding requires a local password and does not unlink the person record.
+- Since M44, approval generates a 12-character initial password and stores recoverable encrypted ciphertext without automatic delivery. Reveal and manual email actions are audited, and changing/resetting the password clears the ciphertext.
+- `preferences` stores language, avatar, bio, notification categories, theme, and density. The personal audit view is isolated to the current account as actor.
 
 **Field mapping (Feishu directory → org_member)**: name→name, en_name→name_en, employee_no→employee_no, gender→gender, employee_type→employment_type, leader_user_id→supervisor_id (resolved via external_id in the second pass), city→work_location, mobile/email mapped directly, department_ids[primary department]→department_id, open_id→external_id; department open_department_id→department.external_id, parent→parent_id. The company name is a local configuration (master_data sys_config/company_name).
 
@@ -61,7 +71,7 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 
 | Organizational concept | System carrier |
 | --- | --- |
-| Horizontal · service line (business domain: a BM leads BP/development serving a business domain) | `business_domain`: owner = BM (field) + `business_domain_member` service team |
+| Horizontal · service line (business domain) | `business_domain`: owner/backup owner (digital team only) + `business_domain_member` service team (digital team only) + `business_domain_department` service scope (selected during creation, optionally including descendants) |
 | Vertical · technical line (resource pool: a TM centrally manages personnel in a technical direction) | `user_group`: owner = TM (field) + roles group-granted roles (e.g. the development resource pool grants it_dev) + members |
 | Professional identity | Roles: it_pdm/it_pm/it_dev/it_ops/is_mgr/it_bp + custom additions (data governance, AI, etc.) |
 | Management layer | cio (IT Head) / it_bm / it_tm, three built-in roles (manager was removed on 2026-07-11) |
@@ -112,3 +122,4 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 - The process-definition page shows a **process diagram** for each process (node cards: step name + handler in blue + CC in gray + autonomy level/SLA), with live preview in the editor.
 - The record-detail process bar also shows the CC parties.
 - Seed example: the four steps of the change-management process CC it_tm / it_bm / is_mgr+it_bm / cio respectively.
+The digital-team population is an explicit shared department-tree scope in `org_settings`, optionally including descendants. It is authoritative for team metrics and business-domain owner, backup-owner, and service-team selectors; the legacy `dept_type`/role heuristic is used only until an administrator configures the scope.

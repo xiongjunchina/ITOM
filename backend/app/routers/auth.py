@@ -36,11 +36,19 @@ def _user_payload(db: Session, user: AuthUser) -> dict:
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
     user = db.query(AuthUser).filter(AuthUser.username == body.username, AuthUser.is_deleted.is_(False)).first()
-    if not user or not verify_password(body.password, user.password_hash):
+    valid = bool(user and verify_password(body.password, user.password_hash))
+    if user and not valid:
+        from app.services.ldap_auth import authenticate_ldap
+        valid = authenticate_ldap(db, body.username, body.password)
+        if valid:
+            user.auth_source = "ad"
+    if not user or not valid:
         raise AppError("LOGIN_FAILED", "用户名或密码错误", 401)
     if not user.is_active:
         raise AppError("LOGIN_FAILED", "账号已禁用", 401)
     user.last_login_at = datetime.now()
+    from app.services.audit import audit as _audit
+    _audit(db, "auth_user", user.id, "login", user, {"source": "password"})
     db.commit()
     return ok({"token": create_token(user.id), "user": _user_payload(db, user)})
 
@@ -56,6 +64,9 @@ class PreferencesIn(BaseModel):
     language: str | None = Field(default=None, pattern="^(zh|en)$")
     bio: str | None = Field(default=None, max_length=500)
     avatar: str | None = None  # data:image/... base64；显式传 null 表示移除
+    notification_preferences: dict[str, bool] | None = None
+    theme: str | None = Field(default=None, pattern="^(light|dark|system)$")
+    density: str | None = Field(default=None, pattern="^(default|compact)$")
 
 
 @router.patch("/me/preferences")
@@ -72,6 +83,9 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
     for k, v in body.model_dump(exclude_unset=True).items():
         prefs[k] = v
     user.preferences = prefs
+    from app.services.audit import audit as _audit
+    _audit(db, "auth_user", user.id, "update_preferences", user,
+           {"keys": sorted(body.model_dump(exclude_unset=True))})
     db.commit()
     return ok({"preferences": prefs})
 
@@ -111,8 +125,89 @@ def my_profile(user: AuthUser = Depends(get_current_user), db: Session = Depends
             "language": prefs.get("language", "zh"),
             "bio": prefs.get("bio"),
             "avatar": prefs.get("avatar"),
+            "notification_preferences": prefs.get("notification_preferences", {}),
+            "theme": prefs.get("theme", "light"),
+            "density": prefs.get("density", "default"),
         },
     })
+
+
+@router.get("/me/audit-logs")
+def my_audit_logs(
+    page: int = 1, page_size: int = 20,
+    user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """当前账号自己的操作记录，不暴露其他人的审计数据。"""
+    from app.models import AuditLog
+    from app.schemas.common import paginate
+
+    page_size = min(max(page_size, 1), 100)
+    query = db.query(AuditLog).filter(AuditLog.actor == user.id)
+    items, total = paginate(query.order_by(AuditLog.created_at.desc()), page, page_size)
+    return ok([{
+        "id": item.id, "entity_type": item.entity_type, "entity_id": item.entity_id,
+        "action": item.action, "summary": item.summary, "created_at": item.created_at,
+    } for item in items], total=total, page=page)
+
+
+@router.delete("/me/feishu-binding")
+def unbind_my_feishu(user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    """解绑前必须已设置本地密码，确保用户仍可登录。人员主数据关联不受影响。"""
+    if not user.external_id:
+        raise AppError("NOT_BOUND", "当前账号未绑定飞书")
+    if user.password_set_at is None:
+        raise AppError("PASSWORD_REQUIRED", "请先设置本地登录密码，再解绑飞书")
+    from app.services.audit import audit as _audit
+
+    _audit(db, "auth_user", user.id, "unbind_feishu", user, {})
+    user.external_id = None
+    user.auth_source = "local"
+    db.commit()
+    return ok({"feishu_bound": False, "auth_source": "local"})
+
+
+class BindFeishuIn(BaseModel):
+    code: str = Field(min_length=1, max_length=256)
+    state: str = Field(min_length=1, max_length=512)
+
+
+@router.get("/me/feishu-binding/authorize-url")
+def feishu_binding_authorize_url(
+    redirect_uri: str, user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """为当前已登录账号发起飞书绑定/换绑 OAuth。"""
+    from app.services.feishu import build_client, get_config, is_enabled
+
+    if not is_enabled(db):
+        raise AppError("FEISHU_NOT_ENABLED", "飞书认证未启用", 501)
+    state = create_pending_token(f"bind:{user.id}")
+    return ok({"url": build_client(get_config(db)).authorize_url(redirect_uri, state)})
+
+
+@router.post("/me/feishu-binding")
+def bind_my_feishu(
+    body: BindFeishuIn, user: AuthUser = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """将 OAuth 返回的飞书身份绑定到当前账号；同一身份不可占用两个账号。"""
+    from app.services.feishu import build_client, get_config, is_enabled
+    from app.services.audit import audit as _audit
+
+    if decode_pending_token(body.state) != f"bind:{user.id}":
+        raise AppError("INVALID_STATE", "绑定会话校验失败，请重试", 401)
+    if not is_enabled(db):
+        raise AppError("FEISHU_NOT_ENABLED", "飞书认证未启用", 501)
+    info = build_client(get_config(db)).oauth_user_info(body.code)
+    external_id = info.get("open_id")
+    occupied = db.query(AuthUser).filter(
+        AuthUser.external_id == external_id, AuthUser.id != user.id, AuthUser.is_deleted.is_(False)
+    ).first()
+    if occupied:
+        raise AppError("FEISHU_ALREADY_BOUND", "该飞书身份已绑定其他账号")
+    user.external_id = external_id
+    user.auth_source = "feishu"
+    _audit(db, "auth_user", user.id, "bind_feishu", user, {})
+    db.commit()
+    return ok({"feishu_bound": True, "auth_source": "feishu"})
 
 
 class ChangePasswordIn(BaseModel):
@@ -138,6 +233,8 @@ def change_my_password(body: ChangePasswordIn, user: AuthUser = Depends(get_curr
 
     user.password_hash = hash_password(body.new_password)
     user.password_set_at = datetime.now()
+    user.initial_password_ciphertext = None
+    user.initial_password_sent_at = None
     _audit(db, "auth_user", user.id, "change_password", user, {})
     db.commit()
     return ok({"password_set": True})
@@ -218,6 +315,7 @@ def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
         if not existing.is_active:
             raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
         existing.last_login_at = datetime.now()
+        audit(db, "auth_user", existing.id, "login", existing, {"source": "feishu"})
         db.commit()
         return {"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)}
 
@@ -409,7 +507,7 @@ def pending_count(db: Session = Depends(get_db), _=Depends(require_perm("admin_u
 
 @router.post("/onboarding/requests/{request_id}/approve")
 def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("admin_users", "create"))):
-    """开通：为员工创建飞书账号（用户名/角色/默认语言），标记请求已处理并通知员工。"""
+    """开通：生成随机初始密码并邮件送达；发送失败则事务回滚。"""
     from app.services.rbac import valid_role_codes
 
     req = db.get(LoginRequest, request_id)
@@ -434,13 +532,23 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
         raise AppError("NOT_FOUND", "关联人员不存在", 404)
 
     import secrets
+    import string
+
+    person = db.get(OrgMember, body.person_id) if body.person_id else None
+    alphabet = string.ascii_letters + string.digits + "!@#$%"
+    initial_password = "".join([
+        secrets.choice(string.ascii_uppercase), secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits), secrets.choice("!@#$%"),
+        *(secrets.choice(alphabet) for _ in range(8)),
+    ])
 
     user = AuthUser(
         username=body.username,
-        password_hash=hash_password(secrets.token_urlsafe(24)),  # 飞书用户走扫码，本地口令随机不可用
+        password_hash=hash_password(initial_password),
         auth_source="feishu", external_id=req.external_id,
         roles=roles, person_id=body.person_id, is_active=True,
         preferences={"language": body.language},
+        password_set_at=datetime.now(),
     )
     db.add(user)
     db.flush()
@@ -450,7 +558,10 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
     req.auth_user_id = user.id
     req.note = body.note
     audit(db, "login_request", req.id, "approve", actor,
-          {"username": body.username, "roles": roles, "language": body.language})
+          {"username": body.username, "roles": roles, "language": body.language,
+           "initial_password_generated": True})
+    from app.services.secrets_store import encrypt_secret
+    user.initial_password_ciphertext = encrypt_secret(initial_password)
     if user.person_id:
         _notify(
             db, "onboarding.approved", req,
@@ -458,7 +569,7 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
             recipients=[user.person_id], link="/dashboard",
         )
     db.commit()
-    return ok({"id": user.id, "username": user.username, "roles": roles})
+    return ok({"id": user.id, "username": user.username, "roles": roles, "initial_password_available": True})
 
 
 @router.post("/onboarding/requests/{request_id}/reject")

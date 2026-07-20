@@ -2,7 +2,7 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on [03-PRD.md](03-PRD.md) (v1.0 finalized). **49 tables** in total: Support 15 (including 3 role/user-group tables + 3 department/business-domain/provisioning-rule tables, added in M2.5/M3.5), ITSM 12, Project 6, Requirement 2, Process 4, Team 10.
+> Based on [03-PRD.md](03-PRD.md) (v1.1, aligned through M44). **51 tables** in total: Support 17 (including org-governance and system-integration settings), ITSM 12, Project 6, Requirement 2, Process 4, Team 10.
 > Compared with SN-AOM's 106 tables; no pre-computed/snapshot tables at all.
 
 ## 0. Global Conventions
@@ -15,7 +15,7 @@
 
 ---
 
-## 1. Support Domain (9 tables)
+## 1. Support Domain (17 tables)
 
 ### 1.1 auth_user — login account
 
@@ -25,13 +25,22 @@
 | password_hash | VARCHAR(255) | bcrypt |
 | person_id | FK→org_member | Links to personnel master data (requester may have none) |
 | roles | JSONB | Array of roles, e.g. `["it_dev","manager"]` (one person, many roles) |
+| auth_source | VARCHAR(16) | local/ad/feishu/sms/wechat |
+| external_id | VARCHAR(128) | External authentication identity; Feishu uses open_id |
+| preferences | JSONB | language, avatar, bio, notification categories, theme, density, dashboard widgets, etc. |
 | is_active | BOOLEAN | |
 | last_login_at | TIMESTAMP | [C] |
+| password_set_at | TIMESTAMP | Last password setup |
+| initial_password_ciphertext | TEXT | Fernet ciphertext for the M44 provisioning password; cleared after change/reset |
+| initial_password_sent_at | TIMESTAMP | Last administrator-triggered initial-password email time |
+
+**M36–M37 lifecycle semantics**: account deletion uses `GlidBase.is_deleted`, disables the account, clears `person_id`, and rewrites the username to release the original value; it never deletes `org_member`. Feishu unbinding clears account `external_id` and switches the source to local without changing `person_id`.
 
 ### 1.0 department / business_domain / provision_rule (added in M3.5)
 
 - **department**: code UNIQUE, name, parent_id self-reference, dept_type (it/business/audit), external_source/external_id (reserved for Feishu/AD sync), sort, active. One person, one department; pure data.
 - **business_domain**: code UNIQUE, name, description, owner_id FK org_member (the BP owner, a field not a role), backup_owner_id, sort, active.
+- **business_domain_department**: unique domain_id FK business_domain + department_id FK department, plus include_children. It records which organization departments a domain serves; only active business departments may be linked, while historical links remain when a department is later disabled.
 - **provision_rule**: match_type (dept_type/department), match_value, default_roles JSONB, sort (lower matches first and stops), active. Takes effect only on first account provisioning.
 - **org_member changes**: drop the dept/team text columns (migrated to the department table / user groups); add name_en, department_id FK, mobile, external_source, external_id.
 - **auth_user changes**: add auth_source (local/ad/feishu/sms/wechat), external_id.
@@ -330,3 +339,16 @@ erDiagram
 | Event-driven | notification_outbox + point_entry are written by the same domain-event outlet |
 | Duplicate-proof | idea_like / knowledge_vote unique constraints |
 | Feishu reserved | org_member.feishu_user_id, outbox.channel |
+
+## 9. UI Branding Configuration (M38)
+
+`ui_branding_version` stores complete JSON configuration snapshots with `version`, `status` (`draft`/`published`), publisher and publish time. Publishing and rollback create a new immutable published version.
+
+`ui_branding_asset` stores controlled brand images with kind, path, MIME type, byte size, dimensions and uploader. Only PNG/JPEG/WebP/ICO up to 5 MB and 4096×4096 are accepted; SVG and arbitrary HTML/CSS/JS or remote fonts are intentionally unsupported.
+### Org governance settings (M42)
+
+`org_settings` is a singleton containing `digital_team_department_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. It is separate from credentials so the internal digital-team definition survives an organization-source change.
+
+### System integration settings (M44)
+
+`system_integration_config` stores global email and LDAP JSON settings. SMTP and LDAP bind passwords are Fernet-encrypted; read APIs expose only `has_secret`.

@@ -67,6 +67,9 @@ echo "==> Wait for Postgres"
 echo "==> Wait for backend (first boot runs schema create + seed)"
 "${KC[@]}" -n "$NS" rollout status deploy/itom-backend --timeout=240s || true
 
+echo "==> Wait for frontend"
+"${KC[@]}" -n "$NS" rollout status deploy/itom-frontend --timeout=180s || true
+
 # Self-heal the flaky cluster CNI: a pod that drew an unreachable Flannel IP
 # fails readiness and never joins Endpoints. Recreate such pods a few times.
 echo "==> Ensuring Ready endpoints (self-heal past flaky-CNI bad pod IPs)"
@@ -86,6 +89,19 @@ for dep in itom-backend itom-frontend; do
   done
   [ -n "$ok" ] && echo "   $svc endpoints: $eps" || echo "   !! $svc still has no Ready endpoint — check: ${KC[*]} -n $NS get pods,endpoints -l app=$dep -o wide"
 done
+
+# An endpoint alone is insufficient on this cluster: nginx can be Ready while
+# cross-node DNS/backend access is degraded. Verify the complete frontend ->
+# backend proxy path and fail the deployment if it returns anything but health.
+echo "==> Verify frontend -> backend proxy"
+front_pod="$("${KC[@]}" -n "$NS" get endpoints itom-frontend \
+  -o jsonpath='{.subsets[0].addresses[0].targetRef.name}' 2>/dev/null)"
+if [ -z "$front_pod" ] || ! "${KC[@]}" -n "$NS" exec "$front_pod" -- \
+  wget -qO- --timeout=10 http://localhost/api/health | grep -q '"status":"ok"'; then
+  echo "   !! frontend cannot proxy /api/health to backend"
+  exit 1
+fi
+echo "   frontend proxy health: OK"
 
 echo "==> Status"
 "${KC[@]}" -n "$NS" get pods,svc,ingress -o wide 2>&1 | grep -v "Unhandled Error"

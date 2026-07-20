@@ -20,7 +20,8 @@ import Access from './pages/admin/Access';
 import MasterData from './pages/admin/MasterData';
 import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
-import FeishuIntegration from './pages/admin/FeishuIntegration';
+import SystemIntegrations from './pages/admin/SystemIntegrations';
+import UiBranding from './pages/admin/UiBranding';
 import Definitions from './pages/process/Definitions';
 import Tickets from './pages/itsm/Tickets';
 import TicketDetail from './pages/itsm/TicketDetail';
@@ -133,7 +134,9 @@ export const router = createBrowserRouter([
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
       // 需求评分规则已并入需求管理标签页（2026-07-14），保留旧地址重定向
       { path: 'admin/requirement-scoring', element: <Navigate to="/requirements/scoring" replace /> },
-      { path: 'admin/feishu', element: <FeishuIntegration /> },
+      { path: 'admin/integrations', element: <SystemIntegrations /> },
+      { path: 'admin/feishu', element: <Navigate to="/admin/integrations?tab=feishu" replace /> },
+      { path: 'admin/ui-branding', element: <UiBranding /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },
 
       // 旧路由 → 新复合页对应 Tab（M3.9 前的书签/外链兼容）

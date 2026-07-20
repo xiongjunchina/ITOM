@@ -23,6 +23,8 @@ def _row(u: AuthUser) -> dict:
         "auth_source": u.auth_source,
         "is_active": u.is_active,
         "last_login_at": u.last_login_at,
+        "initial_password_available": bool(u.initial_password_ciphertext),
+        "initial_password_sent_at": u.initial_password_sent_at,
     }
 
 
@@ -87,6 +89,8 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
 
         user.password_hash = hash_password(body.password)
         user.password_set_at = datetime.now()
+        user.initial_password_ciphertext = None
+        user.initial_password_sent_at = None
         changes["password"] = "reset"
     if body.person_id is not None:
         user.person_id = body.person_id or None
@@ -96,6 +100,40 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
     audit(db, "auth_user", user.id, "update", actor, changes)
     db.commit()
     return ok(_row(user))
+
+
+@router.get("/{user_id}/initial-password")
+def reveal_initial_password(user_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_users", "edit"))):
+    user = db.get(AuthUser, user_id)
+    if not user or user.is_deleted:
+        raise AppError("NOT_FOUND", "用户不存在", 404)
+    if not user.initial_password_ciphertext:
+        raise AppError("NO_INITIAL_PASSWORD", "该用户没有可查看的初始密码")
+    from app.services.secrets_store import decrypt_secret
+    audit(db, "auth_user", user.id, "reveal_initial_password", actor, {})
+    db.commit()
+    return ok({"password": decrypt_secret(user.initial_password_ciphertext)})
+
+
+@router.post("/{user_id}/initial-password/email")
+def email_initial_password(user_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_users", "edit"))):
+    user = db.get(AuthUser, user_id)
+    if not user or user.is_deleted:
+        raise AppError("NOT_FOUND", "用户不存在", 404)
+    if not user.initial_password_ciphertext:
+        raise AppError("NO_INITIAL_PASSWORD", "该用户没有可发送的初始密码")
+    recipient = user.person.email if user.person else None
+    if not recipient:
+        raise AppError("EMAIL_REQUIRED", "关联人员未配置邮箱，无法发送初始密码")
+    from datetime import datetime
+    from app.services.email import send_initial_password_email
+    from app.services.secrets_store import decrypt_secret
+    send_initial_password_email(db, recipient, user.person.name, user.username,
+                                decrypt_secret(user.initial_password_ciphertext))
+    user.initial_password_sent_at = datetime.now()
+    audit(db, "auth_user", user.id, "email_initial_password", actor, {"recipient": recipient})
+    db.commit()
+    return ok({"sent_to": recipient, "sent_at": user.initial_password_sent_at})
 
 
 @router.delete("/{user_id}")
@@ -120,4 +158,3 @@ def delete_user(user_id: str, db: Session = Depends(get_db), actor=Depends(requi
           {"username": u.username, "person_unbound": bool(unbound_person)})
     db.commit()
     return ok({"id": u.id})
-

@@ -1,7 +1,25 @@
 """通知订阅者：事件 → 发件箱 + 站内通知。飞书通道未来在此挂接。"""
 from sqlalchemy.orm import Session
 
-from app.models import InAppNotification, NotificationOutbox
+from app.models import AuthUser, InAppNotification, NotificationOutbox
+
+
+def _category(event_type: str) -> str:
+    prefix = event_type.split(".", 1)[0]
+    if prefix in {"ticket", "incident", "change", "problem", "sla"}:
+        return "work"
+    if prefix in {"process", "task", "requirement", "project", "wbs", "milestone"}:
+        return "workflow"
+    return "system"
+
+
+def _enabled(db: Session, recipient: str, event_type: str) -> bool:
+    user = db.query(AuthUser).filter(
+        (AuthUser.person_id == recipient) | (AuthUser.id == recipient),
+        AuthUser.is_deleted.is_(False),
+    ).first()
+    prefs = ((user.preferences or {}).get("notification_preferences") or {}) if user else {}
+    return prefs.get(_category(event_type), True)
 
 
 def notify(
@@ -26,4 +44,5 @@ def notify(
         )
     )
     for person_id in recipients:
-        db.add(InAppNotification(recipient=person_id, title=title, content=content, link=link))
+        if _enabled(db, person_id, event_type):
+            db.add(InAppNotification(recipient=person_id, title=title, content=content, link=link))

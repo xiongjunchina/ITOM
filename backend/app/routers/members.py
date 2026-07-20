@@ -47,10 +47,14 @@ def list_members(
     page: int = 1,
     page_size: int = 20,
     q: str = "",
+    scope: str = "",
     db: Session = Depends(get_db),
     _: AuthUser = Depends(get_current_user),
 ):
     query = db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))
+    if scope == "it":
+        from app.services.team_scope import it_member_ids
+        query = query.filter(OrgMember.id.in_(it_member_ids(db) or {"-"}))
     if q:
         query = query.filter(OrgMember.name.ilike(f"%{q}%"))
     # 全员同步后近千人，人员下拉需一次取全：上限放宽到 2000（M36.1）
@@ -136,9 +140,12 @@ def delete_member(member_id: str, db: Session = Depends(get_db), actor=Depends(r
 
 
 def _position_row(p: Position, db: Session) -> dict:
+    from app.services.team_scope import it_member_ids
+
     onboard = (
         db.query(OrgMember)
-        .filter(OrgMember.position_id == p.id, OrgMember.status == "在岗", OrgMember.is_deleted.is_(False))
+        .filter(OrgMember.position_id == p.id, OrgMember.id.in_(it_member_ids(db) or {"-"}),
+                OrgMember.status == "在岗", OrgMember.is_deleted.is_(False))
         .count()
     )
     return {
