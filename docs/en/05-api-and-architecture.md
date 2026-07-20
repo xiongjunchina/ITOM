@@ -64,7 +64,12 @@ ITOM/
 
 ```text
 POST /api/auth/login | GET /api/auth/me
-GET/POST/PATCH /api/admin/users          # admin
+GET /api/auth/me/profile | PATCH /api/auth/me/preferences
+POST /api/auth/me/password | GET /api/auth/me/audit-logs
+GET /api/auth/me/feishu-binding/authorize-url
+POST/DELETE /api/auth/me/feishu-binding
+GET /api/auth/feishu/client-config | POST /api/auth/feishu/app-login
+GET/POST/PATCH/DELETE /api/admin/users   # admin; delete soft-deletes the account and unlinks the person
 GET/POST/PATCH /api/members              # personnel master data
 GET /api/admin/master-data?category=     # dictionary (read-only for all, writable by admin)
 GET/PUT /api/admin/workflow-config       # state machine
@@ -72,6 +77,18 @@ GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read   # in-app notifications
 POST /api/attachments (multipart) | GET /api/attachments?entity=
 ```
+
+Profile constraints: preference PATCH updates only submitted keys; theme is `light|dark|system` and density is `default|compact`. Passwords require at least eight characters with letters and digits, and an existing deliberate password requires a valid `current_password`. Feishu unbinding requires a local password; personal audit logs return only records whose actor is the current account.
+
+### 4.1a Organization Sync (M35)
+
+```text
+POST /api/admin/org-sync                 # starts in background; returns {started:true}
+POST /api/admin/org-sync {sync:true}     # blocking mode for tests/scripts
+GET /api/admin/feishu-config             # last_sync_stats.status: running|done|failed
+```
+
+A repeated trigger while running returns HTTP 409 / `SYNC_RUNNING`. The UI polls every three seconds for up to ten minutes. Completion or failure sends an in-app notification to the initiator, and the background worker uses an independent database session.
 
 ### 4.2 ITSM
 
@@ -198,3 +215,40 @@ services:
 | M4 Project | portfolios/projects/wbs/milestones/risks/costs/charter-import | project two tabs / detail 5 tabs / Gantt | PRD §6 |
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
+
+## 8.1 Business-domain Service Department API (M41)
+
+```text
+GET /api/admin/departments
+    # Reads organization departments; the UI filters active business departments and builds the tree
+GET /api/admin/business-domains
+    # Each domain includes departments[]: id/name/parent_id/active/include_children
+PUT /api/admin/business-domains/{domain_id}/departments
+    # body: { department_ids: string[], include_children: boolean }
+POST /api/admin/business-domains
+    # create body may include department_ids/include_children; owner_id/backup_owner_id must be digital-team members
+PATCH /api/admin/business-domains/{domain_id}
+    # update body may replace department_ids/include_children; owner scope is identical
+PUT /api/admin/business-domains/{domain_id}/members
+    # every service-team member must belong to the unified digital-team scope
+```
+
+The department write endpoint requires `admin_business_domains.edit`, deduplicates IDs, validates that every department exists, is active, and has type `business`, replaces the complete assignment, and writes the `set_departments` audit action. Create and update requests may submit the same department scope atomically. Owner, backup owner, and service team are all validated server-side through `it_member_ids`, preventing non-digital-team people from being written by bypassing the UI. `include_children=true` means the business scope includes every descendant, while persistence stores only explicitly selected roots so organization changes do not require mass relationship rewrites.
+
+## 9. UI Branding API (M38)
+
+```text
+GET  /api/public/ui-branding
+GET  /api/public/ui-branding/assets/{asset_id}
+GET  /api/admin/ui-branding
+PUT  /api/admin/ui-branding/draft
+POST /api/admin/ui-branding/assets?kind=
+POST /api/admin/ui-branding/publish
+GET  /api/admin/ui-branding/history
+POST /api/admin/ui-branding/rollback/{version}
+POST /api/admin/ui-branding/reset
+```
+
+Public reads need no session. Admin endpoints require `admin_ui_branding`; all writes are audited. The client merges missing data with built-in defaults so a missing or failed branding configuration can never lock users out of login.
+M42 adds `GET/PATCH /api/admin/org-settings` for the digital-team department scope and Feishu scheduled-sync policy. `DELETE /api/admin/business-domains/{id}` returns `DOMAIN_IN_USE` (409) while an active requirement references the domain. The scheduler checks due state every 15 minutes and reuses `org_sync.run_sync` for execution.
+M44: approval generates a 12-character password and stores encrypted ciphertext without sending. `GET /api/admin/users/{id}/initial-password` reveals it under authorization; `POST .../initial-password/email` sends it explicitly. Global SMTP/LDAP settings use `GET/PUT /api/admin/integrations/email|ldap`, with connection-test endpoints and masked secrets.

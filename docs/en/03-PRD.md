@@ -2,7 +2,7 @@
 
 > English translation of [../03-PRD.md](../03-PRD.md). For the authoritative version, the Chinese source prevails.
 
-> Version: v1.0 (finalized on product confirmation, 2026-07-10)
+> Version: v1.1 (2026-07-19, aligned with the M34–M37 implementation)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
 
@@ -29,7 +29,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 - ITSM Continual Service Improvement (CSI), the knowledge-review flow, the standalone CAB-review machinery, ISO 27001 security-incident fields.
 - Requirement version snapshots, multi-approver flows, elicitation sessions, three-dimension scoring.
 - Project stakeholder matrix, baseline management, quality-metrics page, full EVM entry.
-- AI Agent registration/orchestration/escalation machinery, the n8n external workflow engine (process capabilities are built in, with an event outlet reserved as a hook — see Chapter 8), and the initial Feishu integration (reserved in the architecture).
+- AI Agent registration/orchestration/escalation machinery and the n8n external workflow engine (process capabilities are built in, with an event outlet reserved as a hook — see Chapter 8). Feishu org sync, QR authentication, workplace app login, and account binding were delivered in M11/M36–M37 and are no longer excluded.
 - Data migration (starts on an empty database).
 
 ---
@@ -66,8 +66,8 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 ### 2.2a Identity & Organization (M3.5; see docs/06 for details)
 
-- **Departments**: the company org structure (one person, one department; tree-shaped; types it/business/audit), pure data with no permissions; currently maintained manually, to be switched to Feishu/AD sync before go-live (external_id reserved).
-- **Account provisioning (JIT)**: multi-authentication-source adapters (local implemented; ad/feishu/sms/wechat reserved); on successful authentication, the account + personnel profile are auto-created; **provisioning rules** (by department type or specific department → default roles) take effect only on the first login, after which roles can be freely added or removed.
+- **Departments**: the company org structure (one person, one department; tree-shaped; types it/business/audit), pure data with no permissions. Feishu is implemented as the personnel and department source of truth; local records remain available for transitional manual maintenance.
+- **Account provisioning (JIT)**: local and Feishu authentication are implemented (ad/sms/wechat reserved). A newly authenticated Feishu identity creates a pending provisioning request; an administrator links the person and sets username, roles, and language before activation. **Provisioning rules** take effect only on first provisioning, after which roles are freely managed.
 - **Feishu QR-code login + admin provisioning approval (finalized 2026-07-12 M7)**: after an employee first passes identity verification via a Feishu QR-code scan, they **do not log in immediately** — a `login_request` (pending) is recorded, and the employee remains on a transition page ("The administrator is processing your login request, please wait") polling the status; once the admin configures a system username, base roles, **default display language**, and linked person for them under "User & Group Management → Login Provisioning" and provisions the account, the employee's transition page automatically enters the system; a rejection shows the reason. Bidirectional notifications currently go through in-app + the outbox (channel=in_app), and the outbox is the future hook for Feishu push. Before Feishu credentials are ready, `/api/auth/feishu/scan` simulates the OAuth callback with the passed-in identity.
 - **Chinese-English bilingual (2026-07-12 M7)**: the system supports Chinese/English display languages, and a user can switch on their own after login (the language is stored in `auth_user.preferences.language` and applied on login); the admin sets the employee's default language during Feishu provisioning. i18n covers the application shell (navigation / top bar / login / transition page / provisioning approval / permission-module labels) and antd built-in components; the body copy of each business page is translated incrementally. The repository's design documents provide an English translation under `docs/en/`.
 - **Business domain / service line**: code / name / owner (BP) / backup owner — the owner is a field, not a role.
@@ -80,6 +80,13 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 - Performance-score visibility and adjudication: admin/cio/it_bm/it_tm (IT management roles); Position & Headcount is admin/cio only (adjustable via the permission matrix); members can see their own points ledger and the leaderboard.
 - requester (Business User) boundary (verified and hardened 2026-07-12): only Overview / Tickets (submit + track one's own) / Knowledge Base (view) / Requirements (submit + track one's own); internal modules such as Problem/Change/Incident/Project/Team/Process are forcibly 403'd at the interface layer, not merely hidden from the menu.
 - Audit: all write operations record an audit log (operator / time / entity / action / change summary); admin and is_mgr can view it.
+
+### 2.4 Account Governance and Profile Center (M36–M37)
+
+- Administrators with user-delete permission can soft-delete an account and unlink its person record without deleting personnel master data, department membership, or business history. The built-in `admin` and the current account cannot be deleted; the original username is released for later reprovisioning.
+- Browser QR OAuth and Feishu workplace JSAPI login share identity matching, first-time provisioning approval, and normal sign-in behavior.
+- The profile center exposes account source, effective roles, timestamps, and read-only linked HR data. Users can set a local password, bind or unbind Feishu safely, inspect only their own audit activity, and persist avatar, bio, language, notification-category preferences, theme, and content density. Both the Scheme C workbench and Scheme F portal bind the active preference directly to their application shells. Dark mode consistently uses three charcoal surface levels for canvas, header, and modules instead of a white shell or pure-black canvas; navigation, tabs, segmented controls, and other interaction states use matching dark colors with clearly readable contrast.
+- On approval, a 12-character strong initial password is stored as recoverable encrypted ciphertext without automatic delivery. User details hide it until an administrator clicks the eye control; email is sent only through the explicit action. Both are audited, and a password change/reset clears the ciphertext. System Integrations groups Feishu, SMTP, and AD/LDAP; LDAP supports connection testing and directory-password authentication for an existing same-name ITOM account.
 
 ---
 
@@ -94,14 +101,15 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 The state transitions of each record type are driven by state-machine configuration (adjustable by admin); illegal jumps are rejected by the backend. The default state machine for each entity appears in the corresponding chapter.
 
-### 3.3 Notifications (Feishu reserved)
+### 3.3 Notifications
 
 - Unified event outlet: events such as ticket creation/assignment/SLA-imminent/escalation, change pending approval, milestone overdue, requirement stage transition, and suggestion adopted are written to the notification outbox.
 - Initially only **in-app notifications** are implemented (top-bar bell + Dashboard alert area); later, adding a Feishu channel adapter connects it, with zero changes to business features.
+- Since M34, administrator accounts without a linked person can receive management notifications by account ID; the bell polls for updates and delivery honors the `work`, `workflow`, and `system` category preferences.
 
-### 3.4 Page Inventory (~22 pages, vs. the old system's 62)
+### 3.4 Page Inventory
 
-Login, Overview, Service Request / Incident Management / Change Management (three entry points into the same ticket domain by type, split out 2026-07-12; the detail page is shared), Service Catalog, CMDB, Problem, Vendor, Contract, Knowledge Base, Project Management (two tabs: project list / portfolio), Project Detail, Requirement List / Detail, Process Definition, Process Monitoring, Team Overview, Performance Scoring (two sub-pages: overview + scoring rules), Position & Headcount (positions + hiring needs), Training & Development, Activity Points (Campaigns + Suggestions; the former "Suggestions" renamed), Team Culture, System Management.
+Login, Overview, Profile Center (account/security/preferences/activity), Service Request / Incident Management / Change Management (three entry points into the same ticket domain by type; shared detail page), Service Catalog, CMDB, Problem, Vendor, Contract, Knowledge Base, Project Management, Project Detail, Requirement List / Detail, Process Definition, Process Monitoring, Team Overview, Performance Scoring, Position & Headcount, Training & Development, Activity Points, Team Culture, and System Management.
 
 ---
 
@@ -348,6 +356,8 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 
 ## 9. Domain Six: Team Management
 
+**Unified scope (M40)**: this module reports and displays IT team members only, never the whole-company population. Membership primarily follows `department.dept_type=it`; legacy accounts without a department are recognized through IT roles such as `cio`, `it_*`, and `is_mgr`. Business-department members and requester/auditor-only users are excluded from workload, points, performance, campaign awards, position occupancy, and team member pickers.
+
 ### 9.1 Performance Management (admin/cio) [finalized 2026-07-12 M6.1]
 
 **Performance score ≠ contribution points**: performance is the score auto-computed within an assessment period per the "position scoring scheme"; points are only one dimension of it.
@@ -407,12 +417,13 @@ Single-page rich-text management: vision, goals, code of conduct (manager/admin 
 
 Menu structure (finalized M3.9, 6 entry points):
 
-1. **Organization Management**: an "Org Structure" tab (a three-level tree company → department → person + a master-data panel on the right; a person includes HR base fields — employee number / gender / date of birth / employment type / direct supervisor / office location, designed to map to the Feishu directory; **Feishu is the Source of Truth**, so synced HR base fields are read-only locally, and only position/skills/remarks/department type are editable; a "Sync from Feishu" entry, with credentials configured before go-live) + a "Business Service Domain" tab (owner BM + service team).
+1. **Organization Management**: the Org Structure tab treats Feishu as the source of truth and lets administrators select a shared digital-team department scope after sync, optionally including descendants. That scope drives team statistics and all domain owner/member selectors. Administrators may delete a business domain only when no active requirement references it. Feishu settings independently control whether scheduled org sync is allowed and select a 1/6/12/24-hour interval.
 2. **User & Group Management**: "Users" (account / roles / auth source / provisioning default roles) + "User Groups" (technical-line resource pool: owner TM / group-granted roles / members).
 3. **Roles & Permissions**: "Role Definitions" (12 built-in, renamable + custom copies of a template) + "Pre-assignment Rules" (department → first-provisioning default roles) + "Permission Configuration" (role × 30 modules × 4 actions matrix).
 4. **Data Dictionary** (dropdown items such as business line / closure code / category + system configuration such as company name).
 5. **State Machine Configuration** (visual editing of each record type's states and transition rules, including in-use-state deletion protection).
 6. **Audit Log** (viewable by admin/is_mgr/auditor).
+7. **Interface & Branding** (admin): bilingual product identity, logos/favicon, login portal, controlled colors/themes/density/sidebar, role landing pages, announcements, and environment markers. Selected images enter a draggable, zoomable and rotatable cropper before upload: 4:1 for horizontal logos, 1:1 for square logos/favicon, and 16:9 for login backgrounds; only the confirmed crop is uploaded. The authenticated experience is role-specific: requester-only business users receive Scheme F, a modular service portal with top navigation, help search, shortcuts, and a card-based service catalog; every other role receives Scheme C, a precise high-density workbench with a compact 216px light sidebar whose first- and second-level navigation retain a coordinated light hierarchy. Sidebar width is constrained by the logo/title footprint and the longest single-line navigation label, leaving only necessary horizontal breathing room. In the expanded internal sidebar, the horizontal logo occupies its own row above the system name, and the logo, system name, and English subtitle share one centered axis; the collapsed sidebar uses the square logo. The sidebar footer does not duplicate the current user and role; account access remains in the top bar. Changes follow draft → preview → publish with version history and rollback.
 
 Also: SLA policies are maintained on the ITSM-SLA board page; the notification outbox is retained in the background.
 
@@ -444,5 +455,9 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | M4 Project | 6 | Charter import, Gantt chart, automatic health |
 | M5 Requirement | 7 | Four-stage closed loop, hand-off to problem/knowledge |
 | M6 Team + Dashboard + Process | 4, 8, 9 | Automatic point scoring and ranking, performance framework, Overview page, process monitoring |
+| M34–35 Notifications and Org Sync | 2, 3, 10 | Provisioning alerts reach admins; whole-company sync runs in background with queryable status and completion/failure notifications |
+| M36–37 Accounts and Personal Settings | 2.4, 3 | Safe account deletion, Feishu workplace login, profile center, self-service password, binding management, notification/theme/density preferences, personal activity |
+| M38 Interface & Branding | 10, 11 | Branding and login configuration, safe image assets, global appearance, role landing pages, banners/environment labels, publish history and rollback, built-in fallback |
+| M41 Role-specific Visual Redesign | 10, 11 | Scheme F service portal for requester-only users; Scheme C high-density workbench for all other roles; full-width horizontal logo above the sidebar title |
 
 **System-level overall acceptance**: all creation forms require ≤ 5 items; no page anywhere in the system "manually maintains statistics"; all six categories of point events are auto-triggered; one real business loop works end-to-end (business user submits a ticket → handled → captured as knowledge; requirement registered → analyzed → attached to a project for implementation → closed with hand-off).

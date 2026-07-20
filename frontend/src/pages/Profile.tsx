@@ -151,6 +151,9 @@ export default function Profile() {
 
   const account = data?.account;
   const person = data?.person;
+  const preferredTheme = data?.preferences.theme ?? user?.preferences?.theme ?? 'light';
+  const profileDark = preferredTheme === 'dark'
+    || (preferredTheme === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
 
   const saveExtendedPreferences = async (patch: Record<string, unknown>) => {
     await api.patch('/auth/me/preferences', patch);
@@ -416,7 +419,7 @@ export default function Profile() {
   );
 
   return (
-    <Card title={t('profile.title')} styles={{ body: { paddingTop: 8 } }}>
+    <Card className={profileDark ? 'profile-shell profile-shell--dark' : 'profile-shell'} title={t('profile.title')} styles={{ body: { paddingTop: 8 } }}>
       <Tabs
         activeKey={params.get('tab') || 'basic'}
         onChange={(k) => {

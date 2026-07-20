@@ -4,8 +4,16 @@ import pytest
 
 @pytest.fixture(scope="module")
 def ctx(client, admin_headers):
+    it_dept = client.post(
+        "/api/admin/departments",
+        json={"code": "m16_it", "name": "M16数字化团队", "dept_type": "it"},
+        headers=admin_headers,
+    ).json()["data"]["id"]
+
     def member(name):
-        return client.post("/api/members", json={"name": name}, headers=admin_headers).json()["data"]["id"]
+        return client.post(
+            "/api/members", json={"name": name, "department_id": it_dept}, headers=admin_headers,
+        ).json()["data"]["id"]
 
     bm = member("服务线负责人M16")
     pdm_leader = member("产品Leader M16")
@@ -177,4 +185,3 @@ def test_sr_flow_requester_step_assigns_submitter(client, admin_headers, ctx):
         proc = client.get(f"/api/tickets/{t['id']}", headers=admin_headers).json()["data"]["process"]
     last = next(st for st in proc["steps"] if st["seq"] == proc["current_step_seq"])
     assert last["assignee_name"] == "业务申请人M168"  # 指派提交人本人而非任意业务用户
-

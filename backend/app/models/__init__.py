@@ -34,6 +34,7 @@ from app.models.team import (
 from app.models.support import (
     Attachment,
     BusinessDomain,
+    BusinessDomainDepartment,
     BusinessDomainMember,
     Department,
     ProvisionRule,
@@ -45,6 +46,7 @@ from app.models.support import (
     MasterData,
     NotificationOutbox,
     OrgMember,
+    OrgSettings,
     Position,
     Role,
     RolePermission,
@@ -52,12 +54,16 @@ from app.models.support import (
     UserGroupMember,
     WorkflowStatus,
     WorkflowTransition,
+    UiBrandingAsset,
+    UiBrandingVersion,
+    SystemIntegrationConfig,
 )
 
 __all__ = [
     "ActivityCampaign",
     "Attachment",
     "BusinessDomain",
+    "BusinessDomainDepartment",
     "BusinessDomainMember",
     "Department",
     "DevelopmentActivity",
@@ -85,6 +91,7 @@ __all__ = [
     "Milestone",
     "NotificationOutbox",
     "OrgMember",
+    "OrgSettings",
     "PerfAdjustment",
     "PerfOverride",
     "PerfScheme",
@@ -114,4 +121,7 @@ __all__ = [
     "UserGroupMember",
     "WorkflowStatus",
     "WorkflowTransition",
+    "UiBrandingAsset",
+    "UiBrandingVersion",
+    "SystemIntegrationConfig",
 ]

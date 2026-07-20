@@ -53,6 +53,360 @@ html[data-theme='dark'] #root {
   background: #141414;
 }
 
+/* 深色主题：Tabs 胶囊不能沿用浅色底，否则会形成浅底白字。 */
+html[data-theme='dark'] .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab {
+  color: #cbd2dc;
+  background: #20242b;
+  border-color: #3a414c;
+}
+
+html[data-theme='dark'] .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn {
+  color: inherit;
+}
+
+html[data-theme='dark'] .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab:hover {
+  color: #a9c7ff;
+  background: #283141;
+  border-color: #5578b9;
+}
+
+html[data-theme='dark'] .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active {
+  color: #a9c7ff;
+  background: #182a4b;
+  border-color: #5d8df0;
+  box-shadow: 0 0 0 1px rgba(93, 141, 240, .18);
+}
+
+html[data-theme='dark'] .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #a9c7ff;
+}
+
+html[data-theme='dark'] .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab:focus-visible {
+  outline: 2px solid #8db5ff;
+  outline-offset: 2px;
+}
+
+html[data-theme='dark'] .ant-radio-button-wrapper-checked:not(.ant-radio-button-wrapper-disabled) {
+  color: #a9c7ff;
+  background: #182a4b;
+  border-color: #5d8df0;
+}
+
+/* 个人中心直接绑定当前偏好，避免主题切换瞬间依赖 document 属性而漏掉 Tabs 配色。 */
+.profile-shell--dark.ant-card {
+  background: #171b21 !important;
+  border-color: #343b46 !important;
+}
+
+.profile-shell--dark > .ant-card-head {
+  background: #1b2027 !important;
+  border-bottom-color: #343b46 !important;
+}
+
+.profile-shell--dark .ant-tabs-content-holder .ant-card {
+  background: #1b2027 !important;
+  border-color: #3a424e !important;
+}
+
+.profile-shell--dark .ant-tabs-top > .ant-tabs-nav {
+  border-bottom: 1px solid #343b46;
+}
+
+.profile-shell--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab {
+  color: #d5dbe5 !important;
+  background: #242a33 !important;
+  border-color: #4a5361 !important;
+  box-shadow: none !important;
+}
+
+.profile-shell--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn {
+  color: inherit !important;
+  text-shadow: none !important;
+}
+
+.profile-shell--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab:hover {
+  color: #c2d6ff !important;
+  background: #2d3747 !important;
+  border-color: #6887bf !important;
+}
+
+.profile-shell--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active {
+  color: #d7e4ff !important;
+  background: #24437a !important;
+  border-color: #78a4ff !important;
+}
+
+.profile-shell--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab:focus-visible {
+  outline: 2px solid #9abaff;
+  outline-offset: 2px;
+}
+
 html[data-density='compact'] .ant-layout-content {
   margin: 10px !important;
+}
+
+.login-brand-panel {
+  align-self: stretch; width: min(48vw, 680px); margin-right: 56px; padding: 72px;
+  display: flex; align-items: flex-end;
+  background: linear-gradient(145deg, #102a63, #2457d6 62%, #18a58c);
+  border-radius: 0 32px 32px 0;
+}
+
+.environment-ribbon {
+  position: fixed; right: -34px; top: 14px; z-index: 1100; width: 130px; padding: 4px 0;
+  transform: rotate(45deg); background: #d4380d; color: white; text-align: center;
+  font-size: 11px; font-weight: 700; letter-spacing: .08em;
+}
+
+@media (max-width: 900px) { .login-brand-panel { display: none; } }
+
+/* M38 企业级应用壳层：品牌区、清晰导航层级、独立顶栏与内容画布。 */
+.app-shell { min-height: 100vh; background: #f4f6f9; }
+.app-sider {
+  position: sticky !important; top: 0; height: 100vh;
+  border-right: 1px solid rgba(255,255,255,.08);
+  box-shadow: 8px 0 28px rgba(15, 23, 42, .08);
+  z-index: 10;
+}
+.app-shell--dark .app-sider { background: #071522 !important; }
+.app-shell--light .app-sider { border-right-color: #e6eaf0; box-shadow: 6px 0 24px rgba(15,23,42,.05); }
+.app-brand {
+  height: 78px; padding: 0 18px; display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid rgba(255,255,255,.09); overflow: hidden;
+}
+.app-shell--light .app-brand { border-bottom-color: #e7eaf0; }
+.app-brand__mark {
+  flex: 0 0 38px; height: 38px; display: grid; place-items: center;
+  border-radius: 10px; background: #2f66e0; color: #fff; font-weight: 800; letter-spacing: -.04em;
+  box-shadow: 0 6px 18px rgba(47,102,224,.28);
+}
+.app-brand__logo { flex: 0 0 auto; width: 38px; height: 38px; object-fit: contain; }
+.app-brand__copy { min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.app-brand__copy strong { color: #f8fafc; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-brand__copy span { margin-top: 5px; color: #6f8498; font-size: 9px; letter-spacing: .13em; }
+.app-shell--light .app-brand__copy strong { color: #172033; }
+.app-nav-caption { padding: 22px 22px 8px; color: #60768a; font-size: 10px; font-weight: 700; letter-spacing: .16em; }
+.app-menu { border-inline-end: 0 !important; background: transparent !important; }
+.app-shell--dark .app-menu .ant-menu-item,
+.app-shell--dark .app-menu .ant-menu-submenu-title { color: #a9b7c5; }
+.app-shell--dark .app-menu .ant-menu-item-selected {
+  background: #173968 !important; color: #fff !important; box-shadow: inset 3px 0 #5d91ff;
+}
+.app-shell--dark .app-menu .ant-menu-submenu-selected > .ant-menu-submenu-title { color: #fff; }
+.app-menu .ant-menu-item .anticon,
+.app-menu .ant-menu-submenu-title .anticon { font-size: 17px; }
+.app-menu .ant-menu-title-content { font-size: 13px; font-weight: 500; }
+.app-sider__footer {
+  position: absolute; left: 0; right: 0; bottom: 0; min-height: 70px; padding: 14px 18px;
+  display: flex; align-items: center; gap: 10px; border-top: 1px solid rgba(255,255,255,.09);
+  background: inherit; overflow: hidden;
+}
+.app-shell--light .app-sider__footer { border-top-color: #e7eaf0; }
+.app-sider__user { min-width: 0; display: flex; flex-direction: column; }
+.app-sider__user strong { color: #eef3f8; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.app-sider__user span { color: #70859a; font-size: 11px; text-transform: uppercase; }
+.app-shell--light .app-sider__user strong { color: #172033; }
+.app-main { min-width: 0; background: #f4f6f9 !important; }
+.app-header {
+  position: sticky; top: 0; z-index: 8; height: 72px !important; padding: 0 28px !important;
+  display: flex; align-items: center; justify-content: space-between;
+  background: rgba(255,255,255,.96) !important; border-bottom: 1px solid #e8ebf0;
+}
+.app-collapse { width: 38px !important; height: 38px !important; border: 1px solid #e5e9ef !important; color: #536071 !important; }
+.app-page-identity { display: flex; flex-direction: column; gap: 2px; }
+.app-page-identity .ant-typography { margin: 0 !important; color: #172033; font-size: 17px; line-height: 1.35; }
+.app-page-identity .ant-breadcrumb { font-size: 11px; color: #8b95a4; }
+.app-user-menu { cursor: pointer; padding: 6px 9px 6px 6px; border: 1px solid transparent; border-radius: 10px; }
+.app-user-menu:hover { background: #f5f7fa; border-color: #e7eaf0; }
+.app-content { min-width: 0; margin: 0 !important; padding: 24px 28px 36px; overflow: auto; }
+.app-content__inner { width: 100%; max-width: 1720px; margin: 0 auto; }
+.app-content .ant-card { border-color: #e4e8ee; box-shadow: 0 2px 8px rgba(15,23,42,.035); }
+.app-content .ant-card-head { min-height: 54px; border-bottom-color: #edf0f3; }
+.app-content .ant-table-wrapper { border: 1px solid #e8ebf0; border-radius: 10px; overflow: hidden; }
+
+html[data-theme='dark'] .app-main { background: #101318 !important; }
+html[data-theme='dark'] .app-header { background: rgba(24,27,32,.96) !important; border-bottom-color: #2b3038; }
+html[data-theme='dark'] .app-page-identity .ant-typography { color: #f0f2f5; }
+html[data-theme='dark'] .app-collapse { border-color: #343a43 !important; color: #c9d0da !important; }
+html[data-theme='dark'] .app-user-menu:hover { background: #242830; border-color: #343a43; }
+html[data-theme='dark'] .app-content .ant-card { border-color: #2b3038; box-shadow: none; }
+
+@media (max-width: 760px) {
+  .app-sider { position: fixed !important; }
+  .app-main { margin-left: 72px; }
+  .app-header { padding: 0 14px !important; }
+  .app-content { padding: 16px; }
+  .app-user-menu .ant-typography, .app-user-menu .anticon:last-child { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell *, .app-shell *::before, .app-shell *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+.image-crop-viewport {
+  position: relative; margin: 0 auto; overflow: hidden; touch-action: none; cursor: grab;
+  background: #eef1f5; border: 2px dashed #2457d6; border-radius: 10px; user-select: none;
+}
+.image-crop-viewport:active { cursor: grabbing; }
+.image-crop-viewport > img {
+  position: absolute; left: 50%; top: 50%; transform-origin: center; max-width: none; pointer-events: none;
+}
+.image-crop-grid {
+  position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.75);
+}
+.image-crop-grid::before, .image-crop-grid::after {
+  content: ''; position: absolute; inset: 0;
+}
+.image-crop-grid::before { border-left: 1px solid rgba(255,255,255,.7); border-right: 1px solid rgba(255,255,255,.7); left: 33.33%; right: 33.33%; }
+.image-crop-grid::after { border-top: 1px solid rgba(255,255,255,.7); border-bottom: 1px solid rgba(255,255,255,.7); top: 33.33%; bottom: 33.33%; }
+.image-crop-control { display: grid; grid-template-columns: 20px 44px 1fr; align-items: center; gap: 8px; }
+
+/* M41 / 方案 C：内部角色使用精密、高密度的运营工作台。 */
+.workbench-c { --c-line: #e3e8ef; --c-ink: #172033; --c-muted: #748196; background: #fff; }
+.workbench-c .app-sider {
+  background: #fff !important; border-right: 1px solid var(--c-line); box-shadow: none;
+}
+.workbench-c .app-brand {
+  height: 124px; padding: 16px 14px; align-items: stretch; justify-content: center;
+  flex-direction: column; gap: 8px; border-bottom: 1px solid var(--c-line); overflow: hidden;
+}
+.workbench-c .app-brand.is-collapsed { height: 72px; padding: 16px 17px; align-items: center; }
+.workbench-c .app-brand__logo {
+  display: block; width: 100%; height: 42px; flex: 0 0 42px; object-fit: contain; object-position: center;
+}
+.workbench-c .app-brand.is-collapsed .app-brand__logo { width: 38px; height: 38px; flex-basis: 38px; object-position: center; }
+.workbench-c .app-brand__mark { width: 100%; height: 42px; flex: 0 0 42px; border-radius: 6px; box-shadow: none; }
+.workbench-c .app-brand.is-collapsed .app-brand__mark { width: 38px; height: 38px; flex-basis: 38px; }
+.workbench-c .app-brand__copy { width: 100%; align-items: center; line-height: 1.15; text-align: center; }
+.workbench-c .app-brand__copy strong { color: var(--c-ink); font-size: 15px; letter-spacing: -.02em; }
+.workbench-c .app-brand__copy span { margin-top: 4px; color: #8793a5; font: 600 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; }
+.workbench-c .app-nav-caption { padding: 17px 16px 7px; color: #8b96a7; font: 700 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.workbench-c .app-menu .ant-menu-item,
+.workbench-c .app-menu .ant-menu-submenu-title { color: #5d6b80 !important; margin-inline: 8px; width: calc(100% - 16px); border-radius: 5px; }
+.workbench-c .app-menu .ant-menu-title-content { white-space: nowrap; }
+.workbench-c .app-menu .ant-menu-sub { background: #f7f9fc !important; }
+.workbench-c .app-menu .ant-menu-sub .ant-menu-item { color: #647289 !important; }
+.workbench-c .app-menu .ant-menu-sub .ant-menu-item:hover { color: #2457d6 !important; background: #eef3ff !important; }
+.workbench-c .app-menu .ant-menu-item-selected { color: #2457d6 !important; background: #edf2ff !important; box-shadow: inset 3px 0 #2b5bd7; }
+.workbench-c .app-menu .ant-menu-submenu-selected > .ant-menu-submenu-title { color: #2457d6 !important; }
+.workbench-c .app-main { background: #f7f9fc !important; }
+.workbench-c .app-header { height: 64px !important; padding: 0 22px !important; background: rgba(255,255,255,.98) !important; border-bottom: 1px solid var(--c-line); }
+.workbench-c .app-collapse { border-radius: 5px; }
+.workbench-c .app-content { padding: 16px 20px 28px; }
+.workbench-c .app-content .ant-card { border-radius: 6px; box-shadow: none; }
+.workbench-c .app-content .ant-card-head { min-height: 46px; }
+.workbench-c .app-content .ant-table-wrapper { border-radius: 5px; }
+
+/* M41 / 方案 F：仅业务用户使用模块化服务门户。 */
+.portal-f { min-height: 100vh; background: #f2f4f8; color: #182238; }
+.portal-f__header {
+  height: 72px !important; padding: 0 44px !important; display: flex; align-items: center; gap: 44px;
+  background: rgba(255,255,255,.98) !important; border-bottom: 1px solid #dfe4ed; position: sticky; top: 0; z-index: 20;
+}
+.portal-f__brand { padding: 0; border: 0; background: transparent; display: flex; align-items: center; gap: 12px; color: #172033; cursor: pointer; }
+.portal-f__brand img, .portal-f__brand span { width: 40px; height: 40px; object-fit: contain; border-radius: 10px; }
+.portal-f__brand span { display: grid; place-items: center; background: #3448ad; color: #fff; font-weight: 800; }
+.portal-f__brand strong { font-size: 20px; letter-spacing: -.04em; }
+.portal-f__nav { align-self: stretch; display: flex; align-items: stretch; gap: 4px; flex: 1; }
+.portal-f__nav button { position: relative; padding: 0 18px; border: 0; background: transparent; color: #667187; font-size: 14px; cursor: pointer; }
+.portal-f__nav button:hover, .portal-f__nav button.is-active { color: #3448ad; }
+.portal-f__nav button.is-active::after { content: ''; position: absolute; left: 18px; right: 18px; bottom: 0; height: 3px; background: #4055bd; }
+.portal-f__search { width: 38px !important; height: 38px !important; border-radius: 10px !important; background: #f5f7fa !important; }
+.portal-f__content { padding: 28px 44px 48px; background: #f2f4f8; }
+.portal-f__inner { max-width: 1500px; margin: 0 auto; }
+.service-portal__hero { min-height: 258px; padding: 38px; display: grid; grid-template-columns: minmax(0,1.5fr) minmax(420px,1fr); gap: 48px; align-items: center; color: #fff; background: #293a7c; border-radius: 18px; }
+.service-portal__hero h1.ant-typography { margin: 0 0 8px; color: #fff; font-size: clamp(28px,3vw,40px); font-weight: 500; }
+.service-portal__hero .ant-typography { color: #b9c3e6; }
+.service-portal__hero .ant-input-affix-wrapper { max-width: 680px; height: 54px; margin-top: 8px; border: 0; border-radius: 12px; box-shadow: 0 14px 32px rgba(10,20,60,.22); }
+.service-portal__actions { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+.service-portal__actions button { min-height: 168px; padding: 22px; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: 7px; color: #fff; background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.2); border-radius: 14px; cursor: pointer; text-align: left; }
+.service-portal__actions button:hover { background: rgba(255,255,255,.15); transform: translateY(-2px); }
+.service-portal__actions .anticon { margin-bottom: auto; font-size: 22px; }
+.service-portal__actions strong { font-size: 15px; }
+.service-portal__actions span { color: #b9c3e6; font-size: 12px; }
+.service-portal__section { margin-top: 28px; }
+.service-portal__heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 16px; }
+.service-portal__heading > div > span { color: #4055bd; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+.service-portal__heading h2.ant-typography { margin: 4px 0 0; font-size: 25px; font-weight: 550; }
+.service-portal__heading .ant-input-search { width: 260px; }
+.service-portal__catalogs { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+.service-portal__catalogs button { padding: 18px 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; background: #fff; border: 1px solid #dfe4ed; border-radius: 12px; color: #27324a; cursor: pointer; }
+.service-portal__catalogs button.is-active { border-color: #4055bd; box-shadow: inset 0 0 0 1px #4055bd; }
+.service-portal__catalogs button span { color: #8791a3; font-size: 12px; }
+.service-portal__items { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.service-portal__items article { min-height: 122px; padding: 20px; display: grid; grid-template-columns: 40px 1fr 32px; gap: 14px; align-items: start; background: #fff; border: 1px solid #dfe4ed; border-radius: 12px; }
+.service-portal__item-icon { width: 40px; height: 40px; display: grid; place-items: center; background: #eef1ff; color: #4055bd; border-radius: 10px; font-size: 18px; }
+.service-portal__items article p { margin: 6px 0; color: #68748a; font-size: 13px; line-height: 1.45; }
+.service-portal__items article span { color: #929bad; font-size: 11px; }
+
+/* 深色壳层直接跟随用户偏好：业务门户 F 与内部工作台 C 使用一致的深灰层级。 */
+.portal-f--dark { background: #11151b !important; color: #e7ebf2; }
+.portal-f--dark .portal-f__header {
+  background: #171c23 !important; border-bottom-color: #343c48;
+}
+.portal-f--dark .portal-f__brand { color: #f1f4f8; }
+.portal-f--dark .portal-f__nav button { color: #aeb8c7; }
+.portal-f--dark .portal-f__nav button:hover,
+.portal-f--dark .portal-f__nav button.is-active { color: #a9c7ff; }
+.portal-f--dark .portal-f__nav button.is-active::after { background: #78a4ff; }
+.portal-f--dark .portal-f__search { color: #d9e0ea !important; background: #252c36 !important; }
+.portal-f--dark .portal-f__content { background: #11151b !important; }
+.portal-f--dark .app-user-menu { color: #d9e0ea; }
+.portal-f--dark .app-user-menu .ant-typography { color: #d9e0ea; }
+.portal-f--dark .app-user-menu:hover { background: #252c36; border-color: #3c4654; }
+.portal-f--dark .service-portal__hero { background: #202f62; border: 1px solid #3b4f89; }
+.portal-f--dark .service-portal__heading h2.ant-typography { color: #edf1f6; }
+.portal-f--dark .service-portal__heading > div > span { color: #9bbcff; }
+.portal-f--dark .service-portal__catalogs button,
+.portal-f--dark .service-portal__items article {
+  color: #e5eaf1; background: #1b2028; border-color: #38414d;
+}
+.portal-f--dark .service-portal__catalogs button:hover,
+.portal-f--dark .service-portal__items article:hover { background: #222934; border-color: #53647c; }
+.portal-f--dark .service-portal__catalogs button.is-active { background: #22375e; border-color: #78a4ff; box-shadow: inset 0 0 0 1px #78a4ff; }
+.portal-f--dark .service-portal__catalogs button span,
+.portal-f--dark .service-portal__items article span { color: #9ba6b6; }
+.portal-f--dark .service-portal__items article p { color: #b5bfcd; }
+.portal-f--dark .service-portal__item-icon { color: #a9c7ff; background: #263755; }
+.portal-f--dark .ant-card { background: #1b2028; border-color: #38414d; }
+
+/* 兜底覆盖全局浅色胶囊规则，防止深色门户出现白底按钮。 */
+.portal-f--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab {
+  color: #d5dbe5 !important; background: #242a33 !important; border-color: #4a5361 !important; box-shadow: none !important;
+}
+.portal-f--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn { color: inherit !important; text-shadow: none !important; }
+.portal-f--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab:hover { color: #c2d6ff !important; background: #2d3747 !important; border-color: #6887bf !important; }
+.portal-f--dark .ant-tabs-top > .ant-tabs-nav .ant-tabs-tab.ant-tabs-tab-active { color: #d7e4ff !important; background: #24437a !important; border-color: #78a4ff !important; }
+
+.workbench-c--dark { --c-line: #343c48; --c-ink: #edf1f6; --c-muted: #a6b0bf; background: #11151b; }
+.workbench-c--dark .app-sider { background: #171c23 !important; border-right-color: #343c48; }
+.workbench-c--dark .app-brand { border-bottom-color: #343c48; }
+.workbench-c--dark .app-brand__copy strong { color: #edf1f6; }
+.workbench-c--dark .app-brand__copy span,
+.workbench-c--dark .app-nav-caption { color: #8e9aaa; }
+.workbench-c--dark .app-menu .ant-menu-item,
+.workbench-c--dark .app-menu .ant-menu-submenu-title { color: #b8c1ce !important; }
+.workbench-c--dark .app-menu .ant-menu-sub { background: #1b2129 !important; }
+.workbench-c--dark .app-menu .ant-menu-sub .ant-menu-item { color: #aeb8c7 !important; }
+.workbench-c--dark .app-menu .ant-menu-item:hover,
+.workbench-c--dark .app-menu .ant-menu-sub .ant-menu-item:hover { color: #c8d9ff !important; background: #283448 !important; }
+.workbench-c--dark .app-menu .ant-menu-item-selected { color: #d7e4ff !important; background: #24437a !important; box-shadow: inset 3px 0 #78a4ff; }
+.workbench-c--dark .app-main,
+.workbench-c--dark .app-content { background: #11151b !important; }
+.workbench-c--dark .app-header { background: #171c23 !important; border-bottom-color: #343c48; }
+.workbench-c--dark .app-content .ant-card { background: #1b2028; border-color: #38414d; }
+
+@media (max-width: 1100px) {
+  .portal-f__header { padding: 0 20px !important; gap: 18px; }
+  .portal-f__nav button { padding: 0 9px; }
+  .portal-f__content { padding: 20px; }
+  .service-portal__hero { grid-template-columns: 1fr; }
+  .service-portal__items { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 760px) {
+  .portal-f__nav, .portal-f__header .app-user-menu .ant-typography { display: none; }
+  .portal-f__header { justify-content: space-between; }
+  .service-portal__actions, .service-portal__catalogs, .service-portal__items { grid-template-columns: 1fr; }
+  .service-portal__hero { padding: 24px; }
 }

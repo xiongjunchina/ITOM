@@ -97,6 +97,7 @@ def test_oauth_login_full_chain(client, admin_headers, cfg_ready, mock_feishu, m
     # ② 扫码回调：飞书身份是已同步的张开发（ou_dev1）→ 落开通请求，进过渡页
     monkeypatch.setattr(FeishuClient, "oauth_user_info", lambda self, code: {
         "open_id": "ou_dev1", "name": "张开发", "mobile": "13800000002", "avatar_url": "http://a/x.png",
+        "email": "zhang.dev@example.com",
     })
     data = client.post("/api/auth/feishu/callback", json={"code": "code-abc", "state": state}).json()["data"]
     assert data["status"] == "pending" and data["pending_token"]

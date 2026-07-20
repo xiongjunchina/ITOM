@@ -31,6 +31,7 @@ import {
   PlusOutlined,
   ReloadOutlined,
   SyncOutlined,
+  SettingOutlined,
   TeamOutlined,
   UserAddOutlined,
   UserOutlined,
@@ -48,6 +49,7 @@ import type {
   OrgTreeData,
   OrgTreeDept,
   Position,
+  OrgSettings,
 } from '../../api/types';
 import { buildDeptTreeSelectData } from '../../utils/dept';
 import { useT } from '../../i18n';
@@ -125,6 +127,10 @@ export default function OrgArchitecture() {
 
   const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [scopeOpen, setScopeOpen] = useState(false);
+  const [orgSettings, setOrgSettings] = useState<OrgSettings | null>(null);
+  const [scopeDepartmentIds, setScopeDepartmentIds] = useState<string[]>([]);
+  const [scopeIncludeChildren, setScopeIncludeChildren] = useState(true);
 
   const [companyOpen, setCompanyOpen] = useState(false);
   const [companyForm] = Form.useForm<{ name: string }>();
@@ -144,8 +150,12 @@ export default function OrgArchitecture() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<OrgTreeData>('/admin/org-tree');
+      const [res, settings] = await Promise.all([
+        api.get<OrgTreeData>('/admin/org-tree'),
+        api.get<OrgSettings>('/admin/org-settings'),
+      ]);
       setData(res);
+      setOrgSettings(settings);
       if (!initedRef.current) {
         initedRef.current = true;
         setExpandedKeys(['company', 'unassigned', ...res.departments.map((d) => `dept:${d.id}`)]);
@@ -156,6 +166,31 @@ export default function OrgArchitecture() {
       setLoading(false);
     }
   }, []);
+
+  const openDigitalTeamScope = () => {
+    setScopeDepartmentIds(orgSettings?.digital_team_department_ids ?? []);
+    setScopeIncludeChildren(orgSettings?.digital_team_include_children ?? true);
+    setScopeOpen(true);
+  };
+
+  const saveDigitalTeamScope = async () => {
+    if (scopeDepartmentIds.length === 0) {
+      message.warning(t('admin.org.digitalTeamRequired'));
+      return;
+    }
+    setSaving(true);
+    try {
+      const settings = await api.patch<OrgSettings>('/admin/org-settings', {
+        digital_team_department_ids: scopeDepartmentIds,
+        digital_team_include_children: scopeIncludeChildren,
+      });
+      setOrgSettings(settings);
+      setScopeOpen(false);
+      message.success(t('admin.org.digitalTeamSaved'));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -717,6 +752,9 @@ export default function OrgArchitecture() {
       title={t('admin.org.title')}
       extra={
         <Space>
+          <Button icon={<SettingOutlined />} onClick={openDigitalTeamScope}>
+            {t('admin.org.digitalTeamScope')}
+          </Button>
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             {t('common.refresh')}
           </Button>
@@ -734,6 +772,32 @@ export default function OrgArchitecture() {
         </Space>
       }
     >
+      <Modal
+        title={t('admin.org.digitalTeamScope')}
+        open={scopeOpen}
+        onOk={() => void saveDigitalTeamScope()}
+        confirmLoading={saving}
+        onCancel={() => setScopeOpen(false)}
+        destroyOnClose
+      >
+        <Alert type="info" showIcon message={t('admin.org.digitalTeamHint')} style={{ marginBottom: 16 }} />
+        <TreeSelect
+          treeData={deptTreeSelectData}
+          treeCheckable
+          showCheckedStrategy={TreeSelect.SHOW_PARENT}
+          value={scopeDepartmentIds}
+          onChange={setScopeDepartmentIds}
+          showSearch
+          treeNodeFilterProp="title"
+          maxTagCount="responsive"
+          placeholder={t('admin.org.digitalTeamPlaceholder')}
+          style={{ width: '100%', marginBottom: 20 }}
+        />
+        <Space style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <span>{t('admin.org.digitalTeamChildren')}</span>
+          <Switch checked={scopeIncludeChildren} onChange={setScopeIncludeChildren} />
+        </Space>
+      </Modal>
       <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
         <div style={{ width: 320, flexShrink: 0 }}>
           <Input.Search

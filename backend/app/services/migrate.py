@@ -84,6 +84,8 @@ ENSURE_COLUMNS = {
         ("auth_source", "VARCHAR(16) NOT NULL DEFAULT 'local'"),
         ("external_id", "VARCHAR(128)"),
         ("password_set_at", "TIMESTAMP"),  # M36.2 个人安全设置
+        ("initial_password_ciphertext", "TEXT"),
+        ("initial_password_sent_at", "TIMESTAMP"),
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),

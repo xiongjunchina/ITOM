@@ -270,10 +270,12 @@ def match_scheme(member: OrgMember, schemes: list[PerfScheme]) -> PerfScheme | N
 
 
 def compute_performance(db: Session, period: str) -> dict:
+    from app.services.team_scope import it_member_ids
+
     start, end = period_range(period)
     members = (
         db.query(OrgMember)
-        .filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
+        .filter(OrgMember.id.in_(it_member_ids(db) or {"-"}), OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
         .all()
     )
     member_ids = [m.id for m in members]

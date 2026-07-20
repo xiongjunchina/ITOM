@@ -24,6 +24,7 @@ from app.services.codes import gen_code
 from app.services.permissions import has_perm
 from app.core.i18n import localize_status
 from app.services.points import award, award_by_rule, current_period, period_clause
+from app.services.team_scope import is_it_member, it_member_ids
 
 router = APIRouter(tags=["team"])
 
@@ -158,9 +159,10 @@ CAMPAIGN_STATUS_NAMES = {"draft": "草稿", "active": "上架中", "offline": "�
 
 
 def _campaign_row(c: ActivityCampaign, db: Session, detail: bool = False, person_id: str | None = None) -> dict:
+    team_ids = it_member_ids(db)
     total_awarded = (
         db.query(func.coalesce(func.sum(PointEntry.points), 0))
-        .filter(PointEntry.campaign_id == c.id, PointEntry.is_deleted.is_(False))
+        .filter(PointEntry.campaign_id == c.id, PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
         .scalar()
     )
     row = {
@@ -187,12 +189,12 @@ def _campaign_row(c: ActivityCampaign, db: Session, detail: bool = False, person
     if detail:
         entries = (
             db.query(PointEntry)
-            .filter(PointEntry.campaign_id == c.id, PointEntry.is_deleted.is_(False))
+            .filter(PointEntry.campaign_id == c.id, PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
             .order_by(PointEntry.created_at.desc())
             .limit(100)
             .all()
         )
-        names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+        names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
         task_names = {t.id: t.name for t in c.tasks}
         row["awards"] = [
             {"id": e.id, "person_name": names.get(e.person_id), "task_name": task_names.get(e.task_id),
@@ -200,7 +202,7 @@ def _campaign_row(c: ActivityCampaign, db: Session, detail: bool = False, person
             for e in entries
         ]
         board: dict[str, float] = {}
-        for e in db.query(PointEntry).filter(PointEntry.campaign_id == c.id, PointEntry.is_deleted.is_(False)):
+        for e in db.query(PointEntry).filter(PointEntry.campaign_id == c.id, PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False)):
             board[e.person_id] = board.get(e.person_id, 0) + e.points
         row["leaderboard"] = sorted(
             [{"person_name": names.get(pid), "points": pts, "performance": round(pts * c.performance_ratio, 2)}
@@ -305,6 +307,8 @@ def award_points(campaign_id: str, body: AwardIn, db: Session = Depends(get_db),
     person = db.get(OrgMember, body.person_id)
     if not person or person.is_deleted:
         raise AppError("NOT_FOUND", "人员不存在", 404)
+    if not is_it_member(db, person.id):
+        raise AppError("NOT_IT_TEAM_MEMBER", "专项活动积分仅可发放给 IT 团队成员")
     if task.max_times:
         used = (
             db.query(PointEntry)
@@ -386,15 +390,16 @@ def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(require_pe
 @router.get("/api/points/leaderboard")
 def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
     period = period or current_period()
+    team_ids = it_member_ids(db)
     rows = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False))
+        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
         .group_by(PointEntry.person_id)
         .order_by(func.sum(PointEntry.points).desc())
         .limit(20)
         .all()
     )
-    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
     return ok({
         "period": period,
         "board": [{"person_name": names.get(pid), "points": round(float(pts), 1)} for pid, pts in rows],

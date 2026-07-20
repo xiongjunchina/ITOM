@@ -51,23 +51,34 @@ def test_local_user_change_password_requires_current(client, admin_headers):
     assert _login(client, "pwd_local", "init1234").status_code == 401
 
 
-def test_feishu_user_first_set_password_then_requires_current(client, admin_headers):
-    # 模拟扫码 → 管理员开通（随机口令，password_set=False）
-    r = client.post("/api/auth/feishu/scan", json={"external_id": "ou_pwd_test", "display_name": "密码测试员"})
+def test_feishu_user_uses_initial_password_to_change(client, admin_headers):
+    r = client.post("/api/auth/feishu/scan", json={
+        "external_id": "ou_pwd_test", "display_name": "密码测试员", "email": "pwd@example.com",
+    })
     assert r.json()["success"], r.text
     reqs = client.get("/api/auth/onboarding/requests?status=pending", headers=admin_headers).json()["data"]
     req = next(x for x in reqs if x["external_id"] == "ou_pwd_test")
     r = client.post(f"/api/auth/onboarding/requests/{req['id']}/approve",
                     json={"username": "pwd_feishu", "roles": ["requester"], "language": "zh"}, headers=admin_headers)
     assert r.json()["success"], r.text
+    user_id = r.json()["data"]["id"]
+    initial_password = client.get(
+        f"/api/admin/users/{user_id}/initial-password", headers=admin_headers,
+    ).json()["data"]["password"]
     # 再扫码直登拿 token
-    r = client.post("/api/auth/feishu/scan", json={"external_id": "ou_pwd_test", "display_name": "密码测试员"})
+    r = client.post("/api/auth/feishu/scan", json={
+        "external_id": "ou_pwd_test", "display_name": "密码测试员", "email": "pwd@example.com",
+    })
     data = r.json()["data"]
     assert data["status"] == "active"
     h = {"Authorization": f"Bearer {data['token']}"}
-    assert client.get("/api/auth/me/profile", headers=h).json()["data"]["account"]["password_set"] is False
-    # 首次自设：免验当前密码
+    assert client.get("/api/auth/me/profile", headers=h).json()["data"]["account"]["password_set"] is True
+    # 开通即设置初始密码，修改时必须输入邮件中的当前密码
     r = client.post("/api/auth/me/password", json={"new_password": "feishu12"}, headers=h)
+    assert r.json()["error"]["code"] == "PASSWORD_WRONG"
+    r = client.post("/api/auth/me/password", json={
+        "current_password": initial_password, "new_password": "feishu12",
+    }, headers=h)
     assert r.json()["success"], r.text
     assert _login(client, "pwd_feishu", "feishu12").status_code == 200  # 账号密码登录已启用
     # 已自设过：再改必须验当前密码

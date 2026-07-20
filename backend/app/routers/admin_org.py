@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db import get_db
 from app.deps import get_current_user, require_perm, require_roles
-from app.models import BusinessDomain, BusinessDomainMember, Department, OrgMember, ProvisionRule
+from app.models import BusinessDomain, BusinessDomainDepartment, BusinessDomainMember, Department, OrgMember, ProvisionRule, Requirement
 from app.schemas.common import ok
 from app.services.audit import audit
 from app.services.feishu import is_enabled as feishu_enabled
@@ -39,6 +39,8 @@ class DomainIn(BaseModel):
     description: str | None = None
     owner_id: str | None = None
     backup_owner_id: str | None = None
+    department_ids: list[str] = Field(default_factory=list)
+    include_children: bool = True
     sort: int = 0
 
 
@@ -47,6 +49,8 @@ class DomainUpdate(BaseModel):
     description: str | None = None
     owner_id: str | None = None
     backup_owner_id: str | None = None
+    department_ids: list[str] | None = None
+    include_children: bool | None = None
     sort: int | None = None
     active: bool | None = None
 
@@ -144,6 +148,81 @@ class DomainMembersIn(BaseModel):
     person_ids: list[str]
 
 
+class DomainDepartmentsIn(BaseModel):
+    department_ids: list[str]
+    include_children: bool = True
+
+
+class OrgSettingsUpdate(BaseModel):
+    digital_team_department_ids: list[str] | None = None
+    digital_team_include_children: bool | None = None
+    feishu_auto_sync_enabled: bool | None = None
+    feishu_auto_sync_interval_minutes: int | None = Field(default=None, ge=15, le=10080)
+
+
+def _org_settings_payload(settings) -> dict:
+    return {
+        "digital_team_department_ids": settings.digital_team_department_ids or [],
+        "digital_team_include_children": settings.digital_team_include_children,
+        "feishu_auto_sync_enabled": settings.feishu_auto_sync_enabled,
+        "feishu_auto_sync_interval_minutes": settings.feishu_auto_sync_interval_minutes,
+        "feishu_auto_sync_last_attempt_at": settings.feishu_auto_sync_last_attempt_at,
+    }
+
+
+@router.get("/org-settings")
+def get_org_settings_api(db: Session = Depends(get_db), _=Depends(require_roles("admin"))):
+    from app.services.org_settings import get_org_settings
+    settings = get_org_settings(db)
+    db.commit()
+    return ok(_org_settings_payload(settings))
+
+
+@router.patch("/org-settings")
+def update_org_settings(body: OrgSettingsUpdate, db: Session = Depends(get_db), actor=Depends(require_roles("admin"))):
+    from app.services.org_settings import get_org_settings
+    settings = get_org_settings(db)
+    data = body.model_dump(exclude_unset=True)
+    roots = data.get("digital_team_department_ids")
+    if roots is not None:
+        roots = list(dict.fromkeys(roots))
+        valid = {row.id for row in db.query(Department).filter(
+            Department.id.in_(roots or ["-"]), Department.is_deleted.is_(False), Department.active.is_(True)
+        )}
+        if set(roots) - valid:
+            raise AppError("INVALID_DEPARTMENT", "数字化团队范围包含不存在或已停用的部门")
+        data["digital_team_department_ids"] = roots
+    for key, value in data.items():
+        setattr(settings, key, value)
+    audit(db, "org_settings", settings.id, "update", actor, {"fields": list(data)})
+    db.commit()
+    return ok(_org_settings_payload(settings))
+
+
+def _validate_it_people(db: Session, person_ids: list[str | None]):
+    from app.services.team_scope import it_member_ids
+
+    selected = {person_id for person_id in person_ids if person_id}
+    if selected - it_member_ids(db):
+        raise AppError("NOT_IT_TEAM_MEMBER", "负责人和服务团队成员只能从数字化团队中选择")
+
+
+def _replace_domain_departments(db: Session, domain_id: str, department_ids: list[str], include_children: bool):
+    unique_ids = list(dict.fromkeys(department_ids))
+    rows = db.query(Department).filter(Department.id.in_(unique_ids or ["-"]), Department.is_deleted.is_(False)).all()
+    by_id = {d.id: d for d in rows}
+    if set(unique_ids) - set(by_id):
+        raise AppError("INVALID_DEPARTMENT", "包含不存在的部门")
+    if any(not d.active or d.dept_type != "business" for d in rows):
+        raise AppError("INVALID_DEPARTMENT", "只能选择启用的业务部门")
+    db.query(BusinessDomainDepartment).filter(BusinessDomainDepartment.domain_id == domain_id).delete()
+    for department_id in unique_ids:
+        db.add(BusinessDomainDepartment(
+            domain_id=domain_id, department_id=department_id, include_children=include_children,
+        ))
+    return len(unique_ids)
+
+
 @router.get("/business-domains")
 def list_domains(db: Session = Depends(get_db), _=Depends(get_current_user)):
     rows = db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False)).order_by(BusinessDomain.sort).all()
@@ -151,6 +230,17 @@ def list_domains(db: Session = Depends(get_db), _=Depends(get_current_user)):
     members_by_domain: dict[str, list] = {}
     for dm in db.query(BusinessDomainMember).filter(BusinessDomainMember.is_deleted.is_(False)).all():
         members_by_domain.setdefault(dm.domain_id, []).append({"id": dm.person_id, "name": names.get(dm.person_id)})
+    departments = {
+        d.id: d for d in db.query(Department).filter(Department.is_deleted.is_(False)).all()
+    }
+    departments_by_domain: dict[str, list] = {}
+    for link in db.query(BusinessDomainDepartment).filter(BusinessDomainDepartment.is_deleted.is_(False)).all():
+        dept = departments.get(link.department_id)
+        if dept:
+            departments_by_domain.setdefault(link.domain_id, []).append({
+                "id": dept.id, "name": dept.name, "parent_id": dept.parent_id,
+                "active": dept.active, "include_children": link.include_children,
+            })
     return ok(
         [
             {
@@ -158,6 +248,7 @@ def list_domains(db: Session = Depends(get_db), _=Depends(get_current_user)):
                 "owner_id": d.owner_id, "owner_name": names.get(d.owner_id),
                 "backup_owner_id": d.backup_owner_id, "backup_owner_name": names.get(d.backup_owner_id),
                 "members": members_by_domain.get(d.id, []),
+                "departments": departments_by_domain.get(d.id, []),
                 "sort": d.sort, "active": d.active,
             }
             for d in rows
@@ -172,6 +263,7 @@ def set_domain_members(domain_id: str, body: DomainMembersIn, db: Session = Depe
     domain = db.get(BusinessDomain, domain_id)
     if not domain or domain.is_deleted:
         raise AppError("NOT_FOUND", "业务域不存在", 404)
+    _validate_it_people(db, body.person_ids)
     valid = {m.id for m in db.query(OrgMember).filter(OrgMember.id.in_(body.person_ids or ["-"])).all()}
     bad = set(body.person_ids) - valid
     if bad:
@@ -184,14 +276,31 @@ def set_domain_members(domain_id: str, body: DomainMembersIn, db: Session = Depe
     return ok({"id": domain.id, "count": len(body.person_ids)})
 
 
+@router.put("/business-domains/{domain_id}/departments")
+def set_domain_departments(domain_id: str, body: DomainDepartmentsIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "edit"))):
+    """从组织架构选择业务域服务的启用业务部门。"""
+    domain = db.get(BusinessDomain, domain_id)
+    if not domain or domain.is_deleted:
+        raise AppError("NOT_FOUND", "业务域不存在", 404)
+    count = _replace_domain_departments(db, domain.id, body.department_ids, body.include_children)
+    audit(db, "business_domain", domain.id, "set_departments", actor, {
+        "count": count, "include_children": body.include_children,
+    })
+    db.commit()
+    return ok({"id": domain.id, "count": count, "include_children": body.include_children})
+
+
 @router.post("/business-domains")
 def create_domain(body: DomainIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "create"))):
     if db.query(BusinessDomain).filter(BusinessDomain.code == body.code, BusinessDomain.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "业务域编码已存在")
-    domain = BusinessDomain(**body.model_dump())
+    _validate_it_people(db, [body.owner_id, body.backup_owner_id])
+    data = body.model_dump(exclude={"department_ids", "include_children"})
+    domain = BusinessDomain(**data)
     db.add(domain)
     db.flush()
-    audit(db, "business_domain", domain.id, "create", actor, {"code": body.code})
+    count = _replace_domain_departments(db, domain.id, body.department_ids, body.include_children)
+    audit(db, "business_domain", domain.id, "create", actor, {"code": body.code, "department_count": count})
     db.commit()
     return ok({"id": domain.id})
 
@@ -202,9 +311,33 @@ def update_domain(domain_id: str, body: DomainUpdate, db: Session = Depends(get_
     if not domain or domain.is_deleted:
         raise AppError("NOT_FOUND", "业务域不存在", 404)
     data = body.model_dump(exclude_unset=True)
+    _validate_it_people(db, [data.get("owner_id"), data.get("backup_owner_id")])
+    department_ids = data.pop("department_ids", None)
+    include_children = data.pop("include_children", None)
     for k, v in data.items():
         setattr(domain, k, v)
+    if department_ids is not None:
+        _replace_domain_departments(db, domain.id, department_ids, include_children if include_children is not None else True)
     audit(db, "business_domain", domain.id, "update", actor, {"fields": list(data.keys())})
+    db.commit()
+    return ok({"id": domain.id})
+
+
+@router.delete("/business-domains/{domain_id}")
+def delete_domain(domain_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "delete"))):
+    domain = db.get(BusinessDomain, domain_id)
+    if not domain or domain.is_deleted:
+        raise AppError("NOT_FOUND", "业务域不存在", 404)
+    if db.query(Requirement).filter(
+        Requirement.business_domain_id == domain.id, Requirement.is_deleted.is_(False)
+    ).first():
+        raise AppError("DOMAIN_IN_USE", "无法删除：该业务域仍被需求引用，请先迁移相关需求", 409)
+    domain.is_deleted = True
+    for row in db.query(BusinessDomainMember).filter(BusinessDomainMember.domain_id == domain.id):
+        row.is_deleted = True
+    for row in db.query(BusinessDomainDepartment).filter(BusinessDomainDepartment.domain_id == domain.id):
+        row.is_deleted = True
+    audit(db, "business_domain", domain.id, "delete", actor, {"code": domain.code})
     db.commit()
     return ok({"id": domain.id})
 
@@ -354,7 +487,7 @@ def trigger_org_sync(body: dict, db: Session = Depends(get_db), actor=Depends(re
                 cfg2 = get_config(db2)
                 cfg2.last_sync_stats = {"status": "failed", "error": str(e)[:300]}
                 notifier.notify(db2, "org_sync.failed", "org_sync", "manual", [recipient],
-                                "组织同步失败", str(e)[:200], link="/admin/feishu")
+                                "组织同步失败", str(e)[:200], link="/admin/integrations?tab=feishu")
                 db2.commit()
             except Exception:
                 db2.rollback()

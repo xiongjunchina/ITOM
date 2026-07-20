@@ -1,4 +1,5 @@
 fastapi==0.115.6
+Pillow==11.1.0
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.10
@@ -13,3 +14,5 @@ openpyxl==3.1.5
 mammoth==1.8.0
 markdown==3.7
 bleach==6.2.0
+cryptography==45.0.5
+ldap3==2.9.1

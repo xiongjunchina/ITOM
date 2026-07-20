@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import type { AuthUser, Role } from '../api/types';
 import { hasAnyRole, hasPermission } from '../stores/auth';
+import { useBrandingStore } from '../stores/branding';
 
 export interface MenuNode {
   path?: string; // 叶子节点路由
@@ -114,7 +115,8 @@ export const MENU_TREE: MenuNode[] = [
       },
       { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典', module: 'admin_master_data', roles: ['admin'] },
       { key: '/admin/workflow-config', path: '/admin/workflow-config', label: '状态机配置', module: 'admin_workflow', roles: ['admin'] },
-      { key: '/admin/feishu', path: '/admin/feishu', label: '飞书集成', module: 'admin_feishu', roles: ['admin'] },
+      { key: '/admin/integrations', path: '/admin/integrations', label: '系统集成', module: 'admin_feishu', roles: ['admin'] },
+      { key: '/admin/ui-branding', path: '/admin/ui-branding', label: '界面与品牌', module: 'admin_ui_branding', roles: ['admin'] },
       { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', module: 'admin_audit', roles: ['admin', 'is_mgr'] },
     ],
   },
@@ -145,20 +147,36 @@ export function filterMenu(nodes: MenuNode[], user: AuthUser | null): MenuNode[]
     .filter((n) => !n.children || n.children.length > 0);
 }
 
+/** 仅持业务用户角色的账号进入 F 服务门户；混合角色仍使用内部工作台。 */
+export function isRequesterOnly(user: AuthUser | null): boolean {
+  return !!user?.roles.includes('requester') && !user.roles.some((role) => role !== 'requester');
+}
+
 /**
  * 登录/首页落点：菜单序第一个有权限的页面（M19）。
  * 总览被关掉的用户（如业务用户）落到其可见的第一项（服务请求），而不是硬闯 /dashboard。
  */
 export function firstAccessiblePath(user: AuthUser | null): string {
+  const rolePaths = useBrandingStore.getState().current?.config.roles;
+  const preferred = user?.roles.includes('requester') ? rolePaths?.requester_landing
+    : user?.roles.includes('it_op_leader') ? rolePaths?.noc_landing
+    : user?.roles.some((r) => ['cio','it_bm','it_tm','it_pdm_leader','it_dev_leader'].includes(r)) ? rolePaths?.manager_landing
+    : user?.roles.includes('it_ops') ? rolePaths?.operator_landing
+    : undefined;
+  const allowedPaths = new Set<string>();
   const first = (nodes: MenuNode[]): string | null => {
     for (const n of nodes) {
-      if (n.path) return n.path;
+      if (n.path) { allowedPaths.add(n.path); return n.path; }
       const p = n.children ? first(n.children) : null;
       if (p) return p;
     }
     return null;
   };
-  return first(filterMenu(MENU_TREE, user)) ?? '/dashboard';
+  const filtered = filterMenu(MENU_TREE, user);
+  const fallback = first(filtered) ?? '/dashboard';
+  const collect = (nodes: MenuNode[]) => nodes.forEach((n) => { if (n.path) allowedPaths.add(n.path); if (n.children) collect(n.children); });
+  collect(filtered);
+  return preferred && allowedPaths.has(preferred) ? preferred : fallback;
 }
 
 /** path → 面包屑菜单 key 链（如 /itsm/tickets → ['itsm','/itsm/tickets']），由调用方经 t('menu.'+key) 翻译 */

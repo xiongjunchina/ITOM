@@ -66,8 +66,10 @@ vi .env   # 必改：DB_PASSWORD、JWT_SECRET、ADMIN_INIT_PASSWORD
 # 2) 构建并启动（Nginx 8180 端口，可在 docker-compose.yml 调整映射）
 docker compose up -d --build
 
-# 3) 首次登录 admin/<ADMIN_INIT_PASSWORD> → 系统管理→飞书集成 配置组织同步与扫码登录
+# 3) 首次登录 admin/<ADMIN_INIT_PASSWORD> → 系统管理→系统集成 配置飞书、邮件与 AD/LDAP
 ```
+
+邮件服务器与 AD/LDAP 均在“系统管理→系统集成”维护，敏感密码加密入库，不再依赖部署环境变量。
 - **升级发布**：`git pull && docker compose up -d --build backend frontend`——启动时自动执行增量迁移与幂等种子，无需手工 SQL；数据库容器不重建。
 - **备份**：`docker compose exec db pg_dump -U aom new_aom > backup_$(date +%F).sql`；恢复用 `psql -U aom new_aom < backup.sql`（先停 backend）。
 - **数据卷**：PostgreSQL 数据在 compose 卷中，`docker compose down` 不加 `-v` 即保留。
@@ -98,18 +100,19 @@ deploy/          docker-compose、Nginx、备份
 - **权限三层**：① 功能矩阵（`role_permission` 表，模块 × 动作 view/create/edit/delete，`require_perm` 守卫，admin 隐式全权）；② 数据范围（业务代码内置，如 requester 仅见自己的工单/需求）；③ 流程权限（状态机 `allowed_roles` + 流程步骤 `default_role`）。
 - **流程驱动状态（M23–M31 定稿）**：六类单据（服务请求/事件/变更/问题/需求/项目）状态由流程编排自动同步（首步完成→处理中打首响 SLA、末步→已解决、流程走完→自动关闭）；处理人只操作「完成此步骤」，手动状态按钮按白名单收敛（SR/事件=挂起恢复、问题=已知错误、变更=审批链、需求=无、强关仅 admin）；列表页「当前节点」列标识「待我处理」并一键进详情。
 - **关闭策略**：服务请求/需求/项目登记人可主动关闭（理由必填≥5 字、审计留痕）；事件/变更/问题必须流程闭环；强制关闭仅系统管理员。
-- **矩阵式组织**：横向业务域（服务线，owner=BM）× 纵向用户组（资源池，组授予角色）；一人多角色；admin 不可经组/规则授予。
-- **飞书为人员主数据 SoT**：`org_sync` 幂等应用组织快照（外部赢、消失→离职），本地仅可编辑岗位/技能/备注/部门类型；同步范围可配置（部门 open_department_id 列表或 0=全公司，M32）。
+- **矩阵式组织**：横向业务域（服务线，新建时可从组织架构选择服务部门并覆盖下级部门；负责人、备份负责人和服务团队取自管理员配置的“数字化团队部门范围”）× 纵向用户组（资源池，组授予角色）；一人多角色；admin 不可经组/规则授予。无需求引用的业务域可由管理员删除。
+- **飞书为人员主数据 SoT**：`org_sync` 幂等应用组织快照（外部赢、消失→离职），本地仅可编辑岗位/技能/备注/部门类型；同步范围可配置（部门 open_department_id 列表或 0=全公司，M32），管理员可独立启停自动同步并选择每 1/6/12/24 小时执行。
 - **示例数据**：`GlidBase.is_example`（列表置顶、后端只读）；默认不种，`SEED_EXAMPLES=1` 开启（测试用）。
 - **考核周期**：季度制 `YYYY-Q1/Q2/Q3`，第四季度执行全年考核 `YYYY-All`（统计范围为本年度全年）。
 - **双语**：语言存 `auth_user.preferences.language`（zh/en）；登录即应用，用户可自行切换；飞书开通时由管理员设默认语言。
-- **飞书扫码登录 + 开通审批**：员工扫码通过身份校验后不立即登录，落 `login_request`（pending）；管理员配置用户名/角色/默认语言/关联人员并开通后，员工过渡页轮询到 approved 自动进入系统；通知走站内 + 发件箱。
+- **飞书扫码登录 + 开通审批**：管理员批准时生成 12 位高强度初始密码并加密保存，但不自动发信。管理员可在用户详情点击闭眼图标按需查看，或点击“邮件发送”手工投递；查看与发送均审计，用户改密/管理员重置后密文立即清除。
 
 ### 分支与协作
 - `main`：稳定分支，受保护——只接受 Pull Request 合入，禁止直推（本地 pre-push 钩子拦截；紧急放行 `ALLOW_MAIN_PUSH=1 git push`）。
 - `develop`：日常开发集成分支；功能开发从 `develop` 拉 `feature/<名称>` 分支，完成后 PR 合回。
 - 首次 clone 后启用钩子：`git config core.hooksPath scripts/git-hooks`。
-- 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误。
+- 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误；按改动影响同步更新 `README.md`、`docs/03–06` 及对应英文译本。
+- **交付完成定义**：代码实现、测试与受影响说明文档必须相互一致；功能、接口、数据模型、配置、部署、权限或用户流程发生变化但文档未同步时，不得视为完整交付。仓库级执行规则见 [`AGENTS.md`](AGENTS.md)。
 
 ### 里程碑
 M1 骨架+RBAC → M2 工单+SLA+流程引擎 → M2.5 自配置 → M3 CMDB/问题/供应商/合同/知识 → M3.5–3.10 身份治理/权限矩阵/组织树/飞书 SoT/批量导入 → M4 项目 → M5 需求 → M6 团队（活动积分/人效/培训/文化/流程监控/Dashboard）→ M7 双语 i18n + 飞书扫码登录开通审批 → M9 甘特图 → M10 需求六维评分+四象限 → M11 飞书组织同步+真实扫码 OAuth → M12–15 项目管理实战打磨（行内操作/章程结构化/级联删除/流程版本管理）→ M16 需求路由闭环（评审→方案评估→转开发/转项目→验收自动闭环）→ M17 导航二级菜单+权限模块按页拆分 → M18–25 流程权限体系（任务处理人守卫/待办通知/流程完成自动闭环/状态-流程双向同步/操作权跟随节点处理人/未指派认领）→ M26–28 交互与关闭策略定稿（原路返回/登记人关单+理由审计/强关仅 admin）→ M29 SLA 优先级定义（ITIL 初稿可编辑）+ 问题管理专业线流程 → M30–31 状态按钮白名单+列表「待我处理」列 → M32 飞书同步范围可配置（多部门/全公司）→ M33 用户调试版流程与权限固化为出厂默认 → M34–35 通知直达+异步全员组织同步 → M36–36.2 账号治理、飞书免登与个人中心 → **M37 个人设置（通知偏好、个人操作记录、飞书绑定管理、明暗主题与内容密度）**。
@@ -173,8 +176,10 @@ vi .env   # must change: DB_PASSWORD, JWT_SECRET, ADMIN_INIT_PASSWORD
 # 2) Build & start (Nginx on port 8180; adjust the mapping in docker-compose.yml)
 docker compose up -d --build
 
-# 3) First login admin/<ADMIN_INIT_PASSWORD> → System Admin → Feishu Integration
+# 3) First login admin/<ADMIN_INIT_PASSWORD> → System Admin → System Integrations
 ```
+
+Email and AD/LDAP settings are managed in System Admin → System Integrations; secrets are encrypted in the database rather than deployment environment variables.
 - **Upgrade**: `git pull && docker compose up -d --build backend frontend` — incremental migration and
   idempotent seeding run automatically at startup; the db container is untouched.
 - **Backup**: `docker compose exec db pg_dump -U aom new_aom > backup_$(date +%F).sql`; restore with
@@ -208,18 +213,19 @@ deploy/          docker-compose, Nginx, backups
 - **Three permission layers**: (1) functional matrix (`role_permission` table, module × action view/create/edit/delete, guarded by `require_perm`; `admin` is implicitly all-powerful); (2) data scope (baked into business code, e.g. a `requester` only sees their own tickets/requirements); (3) process permissions (state-machine `allowed_roles` + process-step `default_role`).
 - **Process-driven status (finalized M23–M31)**: for all six flow-bound entities, ticket status is synced automatically by process orchestration (first step done → processing with first-response SLA, last step → resolved, flow complete → auto-closed). Operators only click "complete this step"; manual status buttons are reduced to a whitelist (SR/incident = pause/resume, problem = known-error, change = approval chain, requirement = none, force close = admin only). List pages show a "current step" column flagging "my turn" with a jump into the detail page.
 - **Closure policy**: submitters may close their own service requests / requirements / projects (reason ≥5 chars, audited); incidents/changes/problems must complete the flow; force close is admin-only.
-- **Matrix organization**: horizontal business domains (service lines, owner = BM) × vertical user groups (resource pools that grant roles); one person holds many roles; `admin` can never be granted via groups or provisioning rules.
-- **Feishu is the Source of Truth for people master data**: `org_sync` idempotently applies an org snapshot (external wins, missing → offboarded/inactive); locally only position/skills/remarks/dept-type are editable. The sync scope is configurable (a list of department open_department_ids, or 0 = whole company, M32).
+- **Matrix organization**: horizontal business domains (served departments are selected from Org Structure with optional descendant coverage; owner, backup owner, and service-team selectors use the administrator-defined digital-team department scope) × vertical user groups. Administrators may delete domains that have no requirement references.
+- **Feishu is the Source of Truth for people master data**: `org_sync` idempotently applies an org snapshot (external wins, missing → offboarded/inactive); locally only position/skills/remarks/dept-type are editable. Besides the remote sync scope, administrators can enable/disable scheduled sync and choose a 1/6/12/24-hour interval.
 - **Example data**: `GlidBase.is_example` (pinned to the top of lists, read-only on the backend); not seeded by default, enable with `SEED_EXAMPLES=1` (used by tests).
 - **Assessment period**: quarterly `YYYY-Q1/Q2/Q3`; Q4 runs the full-year assessment `YYYY-All` (statistics cover the whole calendar year).
 - **Bilingual**: language is stored in `auth_user.preferences.language` (zh/en); applied on login and switchable by the user; the admin sets the default during Feishu provisioning.
-- **Feishu QR sign-in + provisioning approval**: after an employee passes Feishu identity verification they are NOT logged in immediately; a `login_request` (pending) is recorded. Once an admin configures the username/roles/default language/linked person and approves, the employee's waiting page polls until `approved` and enters the system automatically. Notifications go through in-app + outbox.
+- **Feishu QR sign-in + provisioning approval**: approval generates a 12-character strong initial password and stores only encrypted recoverable ciphertext without sending it. An administrator may reveal it with the eye control or manually email it from user details; both actions are audited and the ciphertext is cleared after a change/reset.
 
 ### Branching & collaboration
 - `main`: stable, protected — merged via Pull Request only; direct pushes are blocked by a local pre-push hook (override with `ALLOW_MAIN_PUSH=1 git push` in emergencies).
 - `develop`: day-to-day integration branch; cut `feature/<name>` branches from it and PR back.
 - After cloning, enable the hooks once: `git config core.hooksPath scripts/git-hooks`.
-- Pre-commit checklist: backend `pytest -q` all green, frontend `npm run build` with zero errors.
+- Pre-commit checklist: backend `pytest -q` all green, frontend `npm run build` with zero errors, and affected sections in `README.md`, `docs/03–06`, and their English mirrors updated.
+- **Definition of done**: implementation, tests, and affected documentation must agree. A behavior, API, data-model, configuration, deployment, permission, or workflow change without synchronized docs is not a complete delivery. See [`AGENTS.md`](AGENTS.md).
 
 ### Milestones
 M1 skeleton+RBAC → M2 tickets+SLA+process engine → M2.5 self-configuration → M3 CMDB/problems/vendors/contracts/knowledge → M3.5–3.10 identity governance / permission matrix / org tree / Feishu SoT / bulk import → M4 projects → M5 requirements → M6 team → M7 bilingual i18n + Feishu QR sign-in with provisioning approval → M9 Gantt → M10 six-dimension requirement scoring + quadrants → M11 Feishu org sync + real QR OAuth → M12–15 project-management polish → M16 requirement routing loop → M17 second-level nav + per-page permissions → M18–35 workflow governance, interaction policy, Feishu sync and notifications → M36–36.2 account governance, Feishu free login and profile center → **M37 personal settings (notification preferences, personal activity, Feishu identity linking, theme and content density)**.

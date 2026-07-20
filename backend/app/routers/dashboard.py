@@ -152,17 +152,19 @@ def _team_section(db: Session) -> dict:
     from app.models import DevelopmentActivity, HiringNeed, PointEntry, OrgMember
     from app.services.points import current_period, period_clause
     from sqlalchemy import func as _f
+    from app.services.team_scope import it_member_ids
 
     period = current_period()
+    team_ids = it_member_ids(db)
     board = (
         db.query(PointEntry.person_id, _f.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False))
+        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
         .group_by(PointEntry.person_id)
         .order_by(_f.sum(PointEntry.points).desc())
         .limit(5)
         .all()
     )
-    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
     month_start = date.today().replace(day=1)
     trainings = (
         db.query(DevelopmentActivity)

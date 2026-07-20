@@ -19,11 +19,13 @@ import {
   Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
+import { CustomerServiceOutlined, DeleteOutlined, EditOutlined, KeyOutlined, PlusOutlined, ReadOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
 import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
+import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
@@ -50,7 +52,9 @@ interface ItemFormValues {
 }
 
 export default function CatalogPage() {
+  const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
+  const requesterPortal = isRequesterOnly(user);
   const canManage = hasAnyRole(user, ['admin', 'cio']);
   const canDelete = hasPermission(user, 'catalog', 'delete'); // M21：默认矩阵仅 admin
   const t = useT();
@@ -280,6 +284,59 @@ export default function CatalogPage() {
         ]
       : []),
   ];
+
+  if (requesterPortal) {
+    const visibleItems = items.filter((item) => item.status === '上架');
+    return (
+      <div className="service-portal">
+        <section className="service-portal__hero">
+          <div>
+            <Typography.Title level={1}>你好，今天需要什么帮助？</Typography.Title>
+            <Typography.Paragraph>搜索服务与知识，或从常用入口快速开始。</Typography.Paragraph>
+            <Input
+              size="large"
+              allowClear
+              prefix={<SearchOutlined />}
+              placeholder="例如：VPN 无法连接、申请软件权限……"
+              defaultValue={q}
+              onPressEnter={(event) => setQ(event.currentTarget.value)}
+            />
+          </div>
+          <div className="service-portal__actions">
+            <button onClick={() => navigate('/itsm/tickets')}><CustomerServiceOutlined /><strong>提交工单</strong><span>故障与服务请求</span></button>
+            <button onClick={() => navigate('/itsm/tickets')}><KeyOutlined /><strong>申请权限</strong><span>账号与系统权限</span></button>
+            <button onClick={() => navigate('/itsm/knowledge')}><ReadOutlined /><strong>查询知识</strong><span>自助解决问题</span></button>
+          </div>
+        </section>
+        <section className="service-portal__section">
+          <div className="service-portal__heading">
+            <div><span>服务目录</span><Typography.Title level={2}>选择你需要的服务</Typography.Title></div>
+            <Input.Search allowClear placeholder="筛选服务" onSearch={setQ} />
+          </div>
+          <div className="service-portal__catalogs">
+            <button className={selectedCatalog === null ? 'is-active' : ''} onClick={() => setSelectedCatalog(null)}>
+              <strong>全部服务</strong><span>{items.length} 个可用服务</span>
+            </button>
+            {catalogs.filter((c) => c.status === '上架').map((catalog) => (
+              <button key={catalog.id} className={selectedCatalog === catalog.id ? 'is-active' : ''} onClick={() => setSelectedCatalog(catalog.id)}>
+                <strong>{catalog.name}</strong><span>{catalog.item_count} 个服务</span>
+              </button>
+            ))}
+          </div>
+          <div className="service-portal__items">
+            {visibleItems.map((item) => (
+              <article key={item.id}>
+                <div className="service-portal__item-icon"><CustomerServiceOutlined /></div>
+                <div><strong>{item.name}</strong><p>{item.description || item.service_type || '标准 IT 服务'}</p><span>{item.owner_name || 'IT 服务台'} · SLA {item.sla_response_hours ?? '-'}h</span></div>
+                <Button type="text" shape="circle" icon={<RightOutlined />} />
+              </article>
+            ))}
+            {!itemLoading && visibleItems.length === 0 && <Empty description="没有匹配的服务" />}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <Row gutter={16}>

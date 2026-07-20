@@ -14,7 +14,7 @@ import {
   Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined } from '@ant-design/icons';
+import { EyeInvisibleOutlined, EyeOutlined, MailOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import type { AdminUser, Member, Role, RoleDef, UserGroup } from '../../api/types';
@@ -48,6 +48,9 @@ export default function Users() {
   const [resetTarget, setResetTarget] = useState<AdminUser | null>(null);
   const [resetForm] = Form.useForm<{ password: string }>();
   const [resetting, setResetting] = useState(false);
+  const [revealedPassword, setRevealedPassword] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [sendingPassword, setSendingPassword] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,6 +135,7 @@ export default function Users() {
 
   const openEdit = (record: AdminUser) => {
     setEditing(record);
+    setRevealedPassword(null);
     form.setFieldsValue({
       username: record.username,
       roles: record.roles,
@@ -141,6 +145,21 @@ export default function Users() {
         : [],
     });
     setModalOpen(true);
+  };
+
+  const revealInitialPassword = async () => {
+    if (!editing) return;
+    if (revealedPassword) { setRevealedPassword(null); return; }
+    setRevealing(true);
+    try { const r = await api.get<{ password: string }>(`/admin/users/${editing.id}/initial-password`); setRevealedPassword(r.password); }
+    finally { setRevealing(false); }
+  };
+
+  const sendInitialPassword = async () => {
+    if (!editing) return;
+    setSendingPassword(true);
+    try { const r = await api.post<{ sent_to: string }>(`/admin/users/${editing.id}/initial-password/email`); message.success(`初始密码已发送至 ${r.sent_to}`); void load(); }
+    finally { setSendingPassword(false); }
   };
 
   const handleSave = async () => {
@@ -397,6 +416,22 @@ export default function Users() {
               }))}
             />
           </Form.Item>
+          {editing?.initial_password_available && (
+            <Form.Item label="初始密码" extra="查看和发送操作都会记录审计日志">
+              <Space.Compact style={{ width: '100%' }}>
+                <Input readOnly value={revealedPassword ?? '••••••••••••'} />
+                <Button
+                  aria-label={revealedPassword ? '隐藏初始密码' : '查看初始密码'}
+                  icon={revealedPassword ? <EyeOutlined /> : <EyeInvisibleOutlined />}
+                  loading={revealing}
+                  onClick={() => void revealInitialPassword()}
+                />
+                <Button icon={<MailOutlined />} loading={sendingPassword} onClick={() => void sendInitialPassword()}>
+                  邮件发送
+                </Button>
+              </Space.Compact>
+            </Form.Item>
+          )}
           <Form.Item noStyle shouldUpdate={(prev, cur) => prev.person_id !== cur.person_id}>
             {({ getFieldValue }) => (
               <Form.Item

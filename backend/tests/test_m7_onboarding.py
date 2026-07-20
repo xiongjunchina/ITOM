@@ -8,7 +8,9 @@ def member(client, admin_headers):
 
 
 def scan(client, external_id="fs_zhangsan", name="张三"):
-    return client.post("/api/auth/feishu/scan", json={"external_id": external_id, "display_name": name}).json()["data"]
+    return client.post("/api/auth/feishu/scan", json={
+        "external_id": external_id, "display_name": name, "email": f"{external_id}@example.com",
+    }).json()["data"]
 
 
 # ---------- 扫码 → 待处理 ----------

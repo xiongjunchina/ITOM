@@ -46,7 +46,7 @@ spec:
         - name: harbor-isa
       containers:
         - name: backend
-          image: core.harbor.domain/sn/itom-backend:87b8f90b
+          image: core.harbor.domain/sn/itom-backend:36604a3a
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 6800

@@ -22,6 +22,11 @@ def test_unauthorized_without_token(client):
 
 
 def test_position_and_member_crud(client, admin_headers):
+    dept_id = client.post(
+        "/api/admin/departments",
+        json={"code": "m1_it", "name": "M1 信息技术部", "dept_type": "it"},
+        headers=admin_headers,
+    ).json()["data"]["id"]
     resp = client.post(
         "/api/positions", json={"name": "运维工程师", "duties": "系统运维", "headcount": 2}, headers=admin_headers
     )
@@ -29,7 +34,7 @@ def test_position_and_member_crud(client, admin_headers):
 
     resp = client.post(
         "/api/members",
-        json={"name": "张三", "position_id": pos_id, "skills": ["linux", "k8s"]},
+        json={"name": "张三", "department_id": dept_id, "position_id": pos_id, "skills": ["linux", "k8s"]},
         headers=admin_headers,
     )
     assert resp.json()["data"]["position_name"] == "运维工程师"

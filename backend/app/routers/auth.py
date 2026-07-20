@@ -36,7 +36,13 @@ def _user_payload(db: Session, user: AuthUser) -> dict:
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
     user = db.query(AuthUser).filter(AuthUser.username == body.username, AuthUser.is_deleted.is_(False)).first()
-    if not user or not verify_password(body.password, user.password_hash):
+    valid = bool(user and verify_password(body.password, user.password_hash))
+    if user and not valid:
+        from app.services.ldap_auth import authenticate_ldap
+        valid = authenticate_ldap(db, body.username, body.password)
+        if valid:
+            user.auth_source = "ad"
+    if not user or not valid:
         raise AppError("LOGIN_FAILED", "用户名或密码错误", 401)
     if not user.is_active:
         raise AppError("LOGIN_FAILED", "账号已禁用", 401)
@@ -227,6 +233,8 @@ def change_my_password(body: ChangePasswordIn, user: AuthUser = Depends(get_curr
 
     user.password_hash = hash_password(body.new_password)
     user.password_set_at = datetime.now()
+    user.initial_password_ciphertext = None
+    user.initial_password_sent_at = None
     _audit(db, "auth_user", user.id, "change_password", user, {})
     db.commit()
     return ok({"password_set": True})
@@ -499,7 +507,7 @@ def pending_count(db: Session = Depends(get_db), _=Depends(require_perm("admin_u
 
 @router.post("/onboarding/requests/{request_id}/approve")
 def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("admin_users", "create"))):
-    """开通：为员工创建飞书账号（用户名/角色/默认语言），标记请求已处理并通知员工。"""
+    """开通：生成随机初始密码并邮件送达；发送失败则事务回滚。"""
     from app.services.rbac import valid_role_codes
 
     req = db.get(LoginRequest, request_id)
@@ -524,13 +532,23 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
         raise AppError("NOT_FOUND", "关联人员不存在", 404)
 
     import secrets
+    import string
+
+    person = db.get(OrgMember, body.person_id) if body.person_id else None
+    alphabet = string.ascii_letters + string.digits + "!@#$%"
+    initial_password = "".join([
+        secrets.choice(string.ascii_uppercase), secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits), secrets.choice("!@#$%"),
+        *(secrets.choice(alphabet) for _ in range(8)),
+    ])
 
     user = AuthUser(
         username=body.username,
-        password_hash=hash_password(secrets.token_urlsafe(24)),  # 飞书用户走扫码，本地口令随机不可用
+        password_hash=hash_password(initial_password),
         auth_source="feishu", external_id=req.external_id,
         roles=roles, person_id=body.person_id, is_active=True,
         preferences={"language": body.language},
+        password_set_at=datetime.now(),
     )
     db.add(user)
     db.flush()
@@ -540,7 +558,10 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
     req.auth_user_id = user.id
     req.note = body.note
     audit(db, "login_request", req.id, "approve", actor,
-          {"username": body.username, "roles": roles, "language": body.language})
+          {"username": body.username, "roles": roles, "language": body.language,
+           "initial_password_generated": True})
+    from app.services.secrets_store import encrypt_secret
+    user.initial_password_ciphertext = encrypt_secret(initial_password)
     if user.person_id:
         _notify(
             db, "onboarding.approved", req,
@@ -548,7 +569,7 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
             recipients=[user.person_id], link="/dashboard",
         )
     db.commit()
-    return ok({"id": user.id, "username": user.username, "roles": roles})
+    return ok({"id": user.id, "username": user.username, "roles": roles, "initial_password_available": True})
 
 
 @router.post("/onboarding/requests/{request_id}/reject")

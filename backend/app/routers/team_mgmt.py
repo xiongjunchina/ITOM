@@ -28,6 +28,7 @@ from app.models import (
 from app.schemas.common import ok
 from app.services.audit import audit
 from app.services.points import award_by_rule, current_period, period_clause
+from app.services.team_scope import is_it_member, it_member_ids
 
 router = APIRouter(tags=["team"])
 
@@ -63,6 +64,7 @@ class HiringIn(BaseModel):
 
 @router.get("/api/trainings")
 def list_trainings(db: Session = Depends(get_db), _=Depends(require_perm("activities", "view"))):
+    team_ids = it_member_ids(db)
     rows = (
         db.query(DevelopmentActivity)
         .filter(DevelopmentActivity.is_deleted.is_(False))
@@ -70,7 +72,7 @@ def list_trainings(db: Session = Depends(get_db), _=Depends(require_perm("activi
         .limit(200)
         .all()
     )
-    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
     return ok([
         {"id": r.id, "activity_type": r.activity_type, "topic": r.topic,
          "activity_date": r.activity_date, "host_id": r.host_id, "host_name": names.get(r.host_id),
@@ -84,6 +86,10 @@ def list_trainings(db: Session = Depends(get_db), _=Depends(require_perm("activi
 def create_training(body: TrainingIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("activities", "create"))):
     if body.activity_type not in ACTIVITY_TYPES:
         raise AppError("INVALID_TYPE", f"活动类型须为 {'/'.join(ACTIVITY_TYPES)}")
+    people = set(body.participant_ids or []) | ({body.host_id} if body.host_id else set())
+    outside = people - it_member_ids(db)
+    if outside:
+        raise AppError("NOT_IT_TEAM_MEMBER", "培训发展仅可选择 IT 团队成员")
     row = DevelopmentActivity(**body.model_dump())
     db.add(row)
     db.flush()
@@ -163,7 +169,7 @@ def update_hiring(hiring_id: str, body: HiringIn, db: Session = Depends(get_db),
 # ---------- 团队总览 ----------
 
 def _workload(db: Session) -> list[dict]:
-    members = db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗").all()
+    members = db.query(OrgMember).filter(OrgMember.id.in_(it_member_ids(db) or {"-"}), OrgMember.is_deleted.is_(False), OrgMember.status == "在岗").all()
     open_tickets: dict[str, int] = {}
     for (assignee,) in db.query(Ticket.assignee).filter(
         Ticket.assignee.isnot(None), Ticket.is_deleted.is_(False), Ticket.is_example.is_(False),
@@ -191,15 +197,16 @@ def _workload(db: Session) -> list[dict]:
 @router.get("/api/team/overview")
 def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_overview", "view"))):
     period = current_period()
+    team_ids = it_member_ids(db)
     board = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False))
+        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
         .group_by(PointEntry.person_id)
         .order_by(func.sum(PointEntry.points).desc())
         .limit(10)
         .all()
     )
-    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
     month_start = date.today().replace(day=1)
     trainings_month = (
         db.query(DevelopmentActivity)
@@ -217,7 +224,7 @@ def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_ov
         "points_board": [{"person_name": names.get(pid), "points": round(float(pts), 1)} for pid, pts in board],
         "trainings_month": trainings_month,
         "active_campaigns": active_campaigns,
-        "onboard_count": db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗").count(),
+        "onboard_count": len(team_ids),
         "open_hirings": db.query(HiringNeed).filter(
             HiringNeed.is_deleted.is_(False), HiringNeed.status.in_(["待招聘", "面试中"])
         ).count(),

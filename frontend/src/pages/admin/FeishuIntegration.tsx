@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Divider, Input, Space, Spin, Switch, Tag, Typography, message } from 'antd';
+import { Alert, Button, Card, Divider, Input, Select, Space, Spin, Switch, Tag, Typography, message } from 'antd';
 import { ApiOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { runOrgSyncAndWait } from '../../utils/orgSync';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
-import type { FeishuConfig, FeishuSyncStats } from '../../api/types';
+import type { FeishuConfig, FeishuSyncStats, OrgSettings } from '../../api/types';
 
 const DEFAULT_API_BASE = 'https://open.feishu.cn';
 
@@ -43,6 +43,8 @@ export default function FeishuIntegration() {
   const [appSecret, setAppSecret] = useState('');
   const [syncScope, setSyncScope] = useState('');
   const [enabled, setEnabled] = useState(false);
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+  const [autoSyncInterval, setAutoSyncInterval] = useState(1440);
 
   // 需在飞书开放平台登记的重定向 URL（动态取当前站点）
   const redirectUri = window.location.origin + '/login/feishu-callback';
@@ -50,12 +52,17 @@ export default function FeishuIntegration() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const c = await api.get<FeishuConfig>('/admin/feishu-config');
+      const [c, settings] = await Promise.all([
+        api.get<FeishuConfig>('/admin/feishu-config'),
+        api.get<OrgSettings>('/admin/org-settings'),
+      ]);
       setConfig(c);
       setApiBase(c.api_base || DEFAULT_API_BASE);
       setAppId(c.app_id ?? '');
       setSyncScope(c.sync_scope ?? '');
       setEnabled(!!c.enabled);
+      setAutoSyncEnabled(settings.feishu_auto_sync_enabled);
+      setAutoSyncInterval(settings.feishu_auto_sync_interval_minutes);
       setAppSecret(''); // 密钥不回显，输入框留空
     } catch {
       // 已统一提示
@@ -80,6 +87,10 @@ export default function FeishuIntegration() {
       const secret = appSecret.trim();
       if (secret) body.app_secret = secret; // 留空不传 = 不修改已存密钥
       await api.put('/admin/feishu-config', body);
+      await api.patch('/admin/org-settings', {
+        feishu_auto_sync_enabled: autoSyncEnabled,
+        feishu_auto_sync_interval_minutes: autoSyncInterval,
+      });
       message.success(t('feishu.saved'));
       void load();
     } catch {
@@ -194,6 +205,24 @@ export default function FeishuIntegration() {
           <Switch checked={enabled} disabled={disabled} onChange={setEnabled} />
           <Typography.Text>{t('feishu.enabled')}</Typography.Text>
         </Space>
+        <Space>
+          <Switch checked={autoSyncEnabled} disabled={disabled || !enabled} onChange={setAutoSyncEnabled} />
+          <Typography.Text>{t('feishu.autoSync')}</Typography.Text>
+        </Space>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <Typography.Text>{t('feishu.syncFrequency')}</Typography.Text>
+          <Select
+            value={autoSyncInterval}
+            disabled={disabled || !autoSyncEnabled || !enabled}
+            onChange={setAutoSyncInterval}
+            options={[
+              { value: 60, label: t('feishu.everyHour') },
+              { value: 360, label: t('feishu.every6Hours') },
+              { value: 720, label: t('feishu.every12Hours') },
+              { value: 1440, label: t('feishu.everyDay') },
+            ]}
+          />
+        </div>
       </Space>
 
       <Divider />
