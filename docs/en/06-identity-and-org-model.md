@@ -72,10 +72,13 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 | Organizational concept | System carrier |
 | --- | --- |
 | Horizontal · service line (business domain) | `business_domain`: owner/backup owner (digital team only) + `business_domain_member` service team (digital team only) + `business_domain_department` service scope (selected during creation, optionally including descendants) |
+| Operational person-selector scope | Project/requirement/ticket/problem/service-item/CI/contract/user-group/account-linking dropdowns load `GET /api/members?scope=it`; after the digital-team scope is configured, write APIs re-check it to prevent company-wide people from being submitted by bypassing the UI |
 | Vertical · technical line (resource pool: a TM centrally manages personnel in a technical direction) | `user_group`: owner = TM (field) + roles group-granted roles (e.g. the development resource pool grants it_dev) + members |
 | Professional identity | Roles: it_pdm/it_pm/it_dev/it_ops/is_mgr/it_bp + custom additions (data governance, AI, etc.) |
 | Management layer | cio (IT Head) / it_bm / it_tm, three built-in roles (manager was removed on 2026-07-11) |
 | One person, many roles | Guaranteed by the iron rule; permissions are the union of the held roles' matrices |
+
+Performance review does not treat `auth_user` roles as the evaluator assignment. Each period creates a `performance_role_assignment` snapshot with the person's business/professional role, business-domain or professional-pool scope, evaluator, and `review_mode`. A business-line lead proposes only business-role scores in scope; a professional-line lead proposes only professional-role scores in scope. Platform roles default to `review_mode=cio_direct` and are scored directly by the CIO. No leader may self-score; the CIO finalizes leaders' own scores.
 
 The built-in roles are finalized at **12**: admin, cio, it_bm, it_tm, it_pdm, it_pm, it_dev, it_ops, is_mgr, it_bp, auditor, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
 
@@ -87,6 +90,9 @@ The built-in roles are finalized at **12**: admin, cio, it_bm, it_tm, it_pdm, it
   1. Function matrix: page visibility and create/edit/delete toggles (this section).
   2. Data scope: e.g. requester sees only their own tickets, and a knowledge draft is visible only to its author — built into the business code, not in the matrix.
   3. Process permissions: state-machine transition allowed_roles, process-step default_role — managed on the state-machine-config / process-definition pages.
+- **Performance modules**: use separate modules for `performance_result` (result view), `performance_review` (staged review), `performance_external` (external raw input), and `performance_admin` (rules/period/publication). The function matrix controls page/actions; `performance_role_assignment.review_scope` then restricts business-domain, professional-pool, and editable line scope.
+- **Performance visibility**: business/professional leads see reference scores and proposal fields only in their scope; the CIO sees all internal details and performs final review; evaluated employees have only `performance_result.view`, and the endpoint returns published final results only.
+- **Performance field authority**: leads cannot edit raw team-contribution points, external raw facts, or the other line's components. Platform roles and leaders' own scores are entered directly by the CIO. Locked external facts are corrected by a new version only.
 - **Custom roles**: on creation, **copy** the matrix of the selected template role (base_role) as the initial value, then edit independently; base_role also retains the "process-reference inheritance matching" semantics (when a transition rule specifies it_ops, a custom role inheriting it_ops also matches).
 - The default matrix is coded in `services/permissions.py` (DEFAULT_MATRIX), seeded only on first startup, after which the in-database configuration is authoritative.
 
@@ -119,6 +125,7 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 | **CC party** (I) | `process_step.cc_roles` (list: role codes / group:<group-code>) | Notified only | Sends an in-app notification when the node activates (event `process.step_cc`, later synced to Feishu by the channel adapter); **produces no task, does not block the process**; automatically excludes anyone who is also the handler |
 
 - Configuration validation: a CC key must be a valid role or user group, otherwise INVALID_STEPS.
+- `process_step.node_type` makes the node semantics explicit: `processing` is an execution node completed from the flow diagram with a processing note; `approval` is an approval node that the handler can approve/reject from the detail-page actions, or approve through the diagram's “Complete step” action. Approval comments are optional; rejection reasons are mandatory and retained in the task audit trail, and the process instance becomes `rejected` (the problem-confirmation node keeps its specialized “return to reporter for more information” rule).
 - The process-definition page shows a **process diagram** for each process (node cards: step name + handler in blue + CC in gray + autonomy level/SLA), with live preview in the editor.
 - The record-detail process bar also shows the CC parties.
 - Seed example: the four steps of the change-management process CC it_tm / it_bm / is_mgr+it_bm / cio respectively.

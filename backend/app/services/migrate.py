@@ -44,6 +44,18 @@ ENSURE_COLUMNS = {
         ("level", "VARCHAR(8) NOT NULL DEFAULT '中级'"),
         ("qualification", "TEXT"),
     ],
+    "position": [
+        ("position_code", "VARCHAR(32)"),
+        ("position_family", "VARCHAR(32)"),
+        ("service_domains", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("primary_roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("level_framework", "VARCHAR(64)"),
+        ("location_scope", "VARCHAR(128)"),
+        ("skills", "TEXT"),
+        ("contractor_allowed", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT '启用'"),
+        ("sort", "INTEGER NOT NULL DEFAULT 0"),
+    ],
     "requirement_scoring_config": [
         ("effort_threshold", "DOUBLE PRECISION"),
         ("review_assignees", "JSONB"),
@@ -93,6 +105,24 @@ ENSURE_COLUMNS = {
     ],
     "process_step": [
         ("cc_roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("node_type", "VARCHAR(16) NOT NULL DEFAULT 'processing'"),
+    ],
+    "point_rule": [
+        ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),
+        ("contribution_dimension", "VARCHAR(48)"),
+        ("target_points", "DOUBLE PRECISION"),
+    ],
+    "point_entry": [
+        ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),
+        ("contribution_dimension", "VARCHAR(48)"),
+    ],
+    "performance_role_assignment": [
+        ("evaluator_weights", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+    ],
+    "performance_score_component": [
+        ("manager_scores", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("manager_reasons", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("manager_evidence_refs", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
     ],
     "knowledge_article": [
         ("content_format", "VARCHAR(8) NOT NULL DEFAULT 'markdown'"),
@@ -153,6 +183,60 @@ def fix_project_flow_pmo(db: Session):
     )).rowcount
     if n:
         logger.info("project_flow 收尾复盘 default_role -> it_pmo (%d rows)", n)
+    db.commit()
+
+
+def fix_pmo_performance_review_mode(db: Session):
+    """M77：IT PMO 自身由 CIO 直评，存量未发布周期同步该规则。
+
+    已发布/锁定周期属于历史快照，不改写；下一次重算会按新的角色档案生成
+    CIO 直评快照。存量未发布 assignment 清除普通评审人的范围，避免旧配置
+    继续把 PMO 暴露给专业线负责人初评。
+    """
+    profile = db.execute(text(
+        "UPDATE performance_role_profile "
+        "SET review_mode='cio_direct' "
+        "WHERE role_code='it_pmo' AND is_deleted=false AND review_mode <> 'cio_direct'"
+    ))
+    assignments = db.execute(text(
+        "UPDATE performance_role_assignment a "
+        "SET review_mode='cio_direct', evaluator_ids='[]'::jsonb, "
+        "    review_scope=COALESCE(a.review_scope, '{}'::jsonb) - 'evaluator_ids' "
+        "FROM performance_period p "
+        "WHERE a.period_id=p.id AND a.role_code='it_pmo' AND a.is_deleted=false "
+        "  AND p.is_deleted=false AND p.status NOT IN ('published', 'locked') "
+        "  AND a.review_mode <> 'cio_direct'"
+    ))
+    if profile.rowcount or assignments.rowcount:
+        logger.info(
+            "M77：IT PMO 改为 CIO 直评（profile=%d, assignments=%d）",
+            profile.rowcount, assignments.rowcount,
+        )
+    db.commit()
+
+
+def fix_process_node_types_m75(db: Session):
+    """M75：为六条内置流程补齐审批/处理节点语义。"""
+    approval_steps = {
+        "incident_flow": ("受理定级", "解决与用户确认"),
+        "sr_flow": ("用户确认关闭",),
+        "change_flow": ("风险评估", "变更审批"),
+        "problem_flow": ("问题确认", "解决确认与关闭"),
+        "project_flow": ("立项启动", "收尾复盘"),
+        "requirement_flow": ("需求评审（业务域负责人）", "方案评估与路径判定", "验收与闭环"),
+    }
+    changed = 0
+    for code, names in approval_steps.items():
+        for name in names:
+            result = db.execute(text(
+                "UPDATE process_step ps SET node_type='approval' "
+                "FROM process_definition pd "
+                "WHERE ps.definition_id=pd.id AND pd.code LIKE :code "
+                "AND ps.name=:name AND ps.is_deleted=false"
+            ), {"code": f"{code}%", "name": name})
+            changed += result.rowcount or 0
+    if changed:
+        logger.info("M75：内置流程审批节点补齐 %d 个", changed)
     db.commit()
 
 
@@ -486,6 +570,54 @@ def backfill_password_set_m362(db: Session):
     db.commit()
 
 
+def grant_cio_position_delete(db: Session):
+    """岗位编制由 CIO 与系统管理员共同维护（补齐存量权限矩阵）。"""
+    result = db.execute(text(
+        "UPDATE role_permission "
+        "SET actions = CASE "
+        "WHEN actions @> '[\"delete\"]'::jsonb THEN actions "
+        "ELSE actions || '[\"delete\"]'::jsonb END "
+        "WHERE role_code='cio' AND module='positions' AND is_deleted=false"
+    ))
+    if result.rowcount:
+        logger.info("岗位编制：已为 CIO 补齐删除权限 (%d rows)", result.rowcount)
+    db.commit()
+
+
+def grant_cio_external_input_delete(db: Session):
+    """外部绩效原数据支持修订/删除，补齐 CIO 存量权限矩阵。"""
+    result = db.execute(text(
+        "UPDATE role_permission "
+        "SET actions = CASE "
+        "WHEN actions @> '[\"delete\"]'::jsonb THEN actions "
+        "ELSE actions || '[\"delete\"]'::jsonb END "
+        "WHERE role_code='cio' AND module='performance_external' AND is_deleted=false"
+    ))
+    if result.rowcount:
+        logger.info("人效外部原数据：已为 CIO 补齐删除权限 (%d rows)", result.rowcount)
+    db.commit()
+
+
+def backfill_wbs_progress_hierarchy(db: Session):
+    """M76：将存量 WBS 父级完成度统一回算为直接子项平均值。
+
+    新规则只允许显式 100% 触发向下级联，历史数据中父级可能仍保存着旧的手工比例；
+    启动时幂等回填一次，避免旧项目在首次编辑前展示不一致的父子进度。
+    """
+    from app.models import WbsTask
+    from app.services.projects import recalculate_wbs_hierarchy
+
+    tasks = db.query(WbsTask).filter(WbsTask.is_deleted.is_(False)).all()
+    by_project: dict[str, list[WbsTask]] = {}
+    for task in tasks:
+        by_project.setdefault(task.project_id, []).append(task)
+
+    changed = sum(len(recalculate_wbs_hierarchy(project_tasks)) for project_tasks in by_project.values())
+    if changed:
+        logger.info("M76：回算存量 WBS 父级完成度 %d 行", changed)
+        db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -494,8 +626,12 @@ def migrate_m35_org(db: Session):
     widen_department_sort_m341(db)
     ensure_columns(db)
     backfill_password_set_m362(db)
+    grant_cio_position_delete(db)
+    grant_cio_external_input_delete(db)
+    backfill_wbs_progress_hierarchy(db)
     drop_columns(db)
     fix_project_flow_pmo(db)
+    fix_pmo_performance_review_mode(db)
     rebuild_requirement_flow_m16(db)
     fix_solution_review_roles_m163(db)
     fix_acceptance_step_role_m165(db)
@@ -505,6 +641,7 @@ def migrate_m35_org(db: Session):
     close_completed_process_tickets_m23(db)
     sync_process_status_m24(db)
     rebuild_problem_flow_m29(db)
+    fix_process_node_types_m75(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

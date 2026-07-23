@@ -63,7 +63,7 @@ class WbsTask(GlidBase):
     end_date: Mapped[date] = mapped_column(Date, comment="计划结束")
     actual_start: Mapped[date | None] = mapped_column(Date, comment="实际开始")
     actual_end: Mapped[date | None] = mapped_column(Date, comment="实际结束")
-    progress: Mapped[int] = mapped_column(Integer, default=0, comment="完成度% 三档 0/50/100")
+    progress: Mapped[int] = mapped_column(Integer, default=0, comment="完成度%，0-100 的整数")
     # 进度偏差(天)=实际结束-计划结束、状态=据完成度与计划结束日判定，均在序列化时计算，不落库
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     remarks: Mapped[str | None] = mapped_column(Text, comment="备注")

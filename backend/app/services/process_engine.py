@@ -163,6 +163,16 @@ def _requester_person(db: Session, entity_type: str, entity_id: str) -> str | No
 
         r = db.get(Requirement, entity_id)
         uid = r.requester if r else None
+    elif entity_type == "project":
+        from app.models import Project
+
+        project = db.get(Project, entity_id)
+        return project.pm if project else None
+    elif entity_type == "problem":
+        from app.models import Problem
+
+        problem = db.get(Problem, entity_id)
+        uid = problem.reporter if problem else None
     if not uid:
         return None
     u = db.get(AuthUser, uid)
@@ -188,6 +198,14 @@ def _notify_assignee(db: Session, instance: ProcessInstance, step: ProcessStep, 
 
 def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):
     now = datetime.now()
+    # 项目流程中的 IT PM 节点必须跟随项目主数据指定的项目经理，不能从所有
+    # it_pm 角色持有人中任取一人。这样章程导入/手工创建、后续推进与流程回退
+    # 使用同一责任人；非 IT PM 节点（如 it_pmo 收尾复盘）仍按节点角色解析。
+    if instance.entity_type == "project":
+        from app.models import Project
+
+        project = db.get(Project, instance.entity_id)
+        preferred = project.pm if project and step.default_role == "it_pm" else None
     if step.default_role == "requester":
         # 「用户确认」类步骤：指派该单据的提交人本人，而非任意业务用户
         assignee = _requester_person(db, instance.entity_type, instance.entity_id) or _resolve_assignee(db, step, preferred)
@@ -249,6 +267,67 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     else:
         instance.status = "completed"
         instance.completed_at = datetime.now()
+    return instance
+
+
+def approve_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") -> ProcessInstance:
+    """审批节点同意：审批节点专用入口，理由可选，复用正常完成推进。"""
+    task = db.get(ProcessTask, task_id)
+    if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    if task.step.node_type != "approval":
+        raise AppError("NOT_APPROVAL_STEP", "当前节点不是审批节点")
+    instance = db.get(ProcessInstance, task.instance_id)
+    if instance.entity_type == "ticket_change":
+        from app.models import Ticket
+        from app.services.tickets import do_transition
+
+        ticket = db.get(Ticket, instance.entity_id)
+        if ticket and ticket.status == "new":
+            do_transition(db, ticket, "pending_approval", {}, actor, system=True)
+        elif ticket and ticket.status == "pending_approval":
+            do_transition(db, ticket, "approved", {"approval_comment": comment}, actor, system=True)
+    return complete_task(db, task_id, actor, comment)
+
+
+def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> ProcessInstance:
+    """审批节点驳回：终止当前流程实例并保留驳回理由。"""
+    task = db.get(ProcessTask, task_id)
+    if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    if task.status != "待处理":
+        raise AppError("TASK_DONE", "该任务已处理")
+    if task.step.node_type != "approval":
+        raise AppError("NOT_APPROVAL_STEP", "当前节点不是审批节点")
+    if len(reason.strip()) < 5:
+        raise AppError("REASON_REQUIRED", "驳回理由至少 5 个字")
+    instance = db.get(ProcessInstance, task.instance_id)
+    now = datetime.now()
+    task.status = "已驳回"
+    task.completed_at = now
+    task.comment = f"[驳回] {reason.strip()}"
+    # 变更单已有明确的「已拒绝」终态；其他实体保留业务状态，由流程实例状态表达驳回结果。
+    if instance.entity_type == "ticket_change":
+        from app.services.tickets import do_transition
+        from app.models import Ticket
+
+        ticket = db.get(Ticket, instance.entity_id)
+        if ticket and ticket.status not in ("closed", "rejected"):
+            if ticket.status == "new":
+                do_transition(db, ticket, "pending_approval", {}, actor, system=True)
+            do_transition(db, ticket, "rejected", {"approval_comment": reason.strip()}, actor, system=True)
+    instance.status = "rejected"
+    instance.completed_at = now
+    requester = _requester_person(db, instance.entity_type, instance.entity_id)
+    if requester:
+        from app.events import notifier
+
+        link = ENTITY_LINKS.get(instance.entity_type, "").format(id=instance.entity_id)
+        notifier.notify(
+            db, "process.rejected", instance.entity_type, instance.entity_id, [requester],
+            f"流程被驳回：{instance.definition.name}·{task.step.name}",
+            content=f"驳回理由：{reason.strip()}", link=link,
+        )
     return instance
 
 
@@ -491,6 +570,7 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
                 "seq": s.seq,
                 "name": s.name,
                 "description": s.description,
+                "node_type": s.node_type or "processing",
                 "default_role": s.default_role,
                 "cc_roles": s.cc_roles or [],
                 "autonomy_level": s.autonomy_level,

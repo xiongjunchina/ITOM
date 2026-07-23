@@ -6,13 +6,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, CiRelationship, OrgMember, Ticket, Vendor
 from app.schemas.common import ok, paginate
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(tags=["itsm"])
 
@@ -86,6 +87,8 @@ def list_cis(
 
 @router.post("/api/cis")
 def create_ci(body: CiCreate, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "create"))):
+    require_it_member_if_configured(db, body.owner, "配置项负责人")
+    require_it_member_if_configured(db, body.business_owner, "配置项业务负责人")
     ci = Ci(**body.model_dump(), ci_code=gen_code(db, Ci, "ci_code", "CI"))
     db.add(ci)
     db.flush()
@@ -101,6 +104,10 @@ def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=D
         raise AppError("NOT_FOUND", "配置项不存在", 404)
     ensure_not_example(ci)
     data = body.model_dump(exclude_unset=True)
+    if "owner" in data:
+        require_it_member_if_configured(db, data["owner"], "配置项负责人")
+    if "business_owner" in data:
+        require_it_member_if_configured(db, data["business_owner"], "配置项业务负责人")
     for k, v in data.items():
         setattr(ci, k, v)
     audit(db, "ci", ci.id, "update", actor, {"fields": list(data.keys())})
@@ -191,7 +198,7 @@ def delete_ci(ci_id: str, db: Session = Depends(get_db), actor=Depends(require_p
     ci = db.get(Ci, ci_id)
     if not ci or ci.is_deleted:
         raise AppError("NOT_FOUND", "配置项不存在", 404)
-    ensure_not_example(ci)
+    ensure_example_delete_allowed(ci, db, actor)
     ci.is_deleted = True
     relations = 0
     for rel in db.query(CiRelationship).filter(

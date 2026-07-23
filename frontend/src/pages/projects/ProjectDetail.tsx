@@ -19,7 +19,6 @@ import {
   Spin,
   Statistic,
   Switch,
-  Table,
   Tabs,
   Tag,
   Tooltip,
@@ -28,6 +27,7 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import {
   ArrowLeftOutlined,
   DownloadOutlined,
@@ -46,6 +46,8 @@ import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
 import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import CompleteStepModal from '../../components/CompleteStepModal';
+import ProcessActionButtons from '../../components/ProcessActionButtons';
+import StickyTable from '../../components/StickyTable';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
 import ReasonModal from './ReasonModal';
@@ -74,9 +76,6 @@ const WBS_TAG_COLORS: Record<WbsStatus, string> = {
   已延期: 'error',
 };
 
-/** 完成度可选值（后端校验仅 0/50/100） */
-const PROGRESS_OPTIONS = [0, 50, 100];
-
 /** 进度偏差(天)着色单元：null→'-'，>0 红「+N」，<0 绿，0 灰 */
 function renderDeviation(v: number | null | undefined): React.ReactNode {
   if (v == null) return '-';
@@ -88,6 +87,99 @@ function renderDeviation(v: number | null | undefined): React.ReactNode {
 /** 状态 Tag（后端已算好，直接展示） */
 function WbsStatusTag({ status, label }: { status: WbsStatus; label: string }): JSX.Element {
   return <Tag color={WBS_TAG_COLORS[status] ?? 'default'}>{label}</Tag>;
+}
+
+const WBS_PROGRESS_PRESETS = [0, 50, 100] as const;
+
+/** WBS 完成度：提供常用预设，同时允许录入 0–100 的任意整数。 */
+function WbsProgressEditor({
+  value,
+  onChange,
+  customLabel,
+  aggregateLabel,
+  cascadeLabel,
+  hasChildren = false,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  customLabel: string;
+  aggregateLabel: string;
+  cascadeLabel: string;
+  hasChildren?: boolean;
+}): JSX.Element {
+  if (hasChildren) {
+    return (
+      <Select
+        size="small"
+        value="aggregate"
+        style={{ width: 142 }}
+        options={[
+          { value: 'aggregate', label: `${value}% · ${aggregateLabel}` },
+          { value: '100', label: cascadeLabel },
+        ]}
+        aria-label="父级完成度"
+        onChange={(next: string) => {
+          if (next === '100') onChange(100);
+        }}
+      />
+    );
+  }
+
+  const isPreset = WBS_PROGRESS_PRESETS.includes(value as (typeof WBS_PROGRESS_PRESETS)[number]);
+  const [customValue, setCustomValue] = useState(value);
+  const [customMode, setCustomMode] = useState(!isPreset);
+
+  useEffect(() => {
+    setCustomValue(value);
+    setCustomMode(!WBS_PROGRESS_PRESETS.includes(value as (typeof WBS_PROGRESS_PRESETS)[number]));
+  }, [value]);
+
+  const mode = customMode ? 'custom' : String(value);
+  return (
+    <Space size={4} wrap={false}>
+      <Select
+        size="small"
+        value={mode}
+        style={{ width: 76 }}
+        options={[
+          ...WBS_PROGRESS_PRESETS.map((p) => ({ value: String(p), label: `${p}%` })),
+          { value: 'custom', label: customLabel },
+        ]}
+        aria-label="完成度预设"
+        onChange={(next: string) => {
+          if (next === 'custom') {
+            setCustomValue(value);
+            setCustomMode(true);
+            return;
+          }
+          const parsed = Number(next);
+          if (Number.isInteger(parsed)) {
+            setCustomMode(false);
+            onChange(Math.min(100, Math.max(0, parsed)));
+          }
+        }}
+      />
+      {mode === 'custom' && (
+        <InputNumber
+          size="small"
+          value={customValue}
+          style={{ width: 78 }}
+          min={0}
+          max={100}
+          precision={0}
+          formatter={(next) => `${next ?? ''}%`}
+          parser={(next) => Number((next ?? '').replace('%', ''))}
+          aria-label="自定义完成度"
+          onChange={(next) => {
+            if (next == null || !Number.isInteger(Number(next))) return;
+            const normalized = Math.min(100, Math.max(0, Number(next)));
+            setCustomValue(normalized);
+            onChange(normalized);
+          }}
+        />
+      )}
+    </Space>
+  );
 }
 
 function formatSize(size: number): string {
@@ -236,7 +328,7 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     api
-      .getList<Member>('/members', { page: 1, page_size: 2000 })
+      .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
   }, []);
@@ -244,8 +336,11 @@ export default function ProjectDetail() {
   const canEdit = detail?.can_edit ?? false;
   /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/最新动态/附件上传） */
   const isExample = detail?.is_example === true;
+  const isAdmin = !!user?.permissions?.['*'];
+  const canDeleteExamples = isExample && isAdmin;
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   const isFinal = detail?.status === 'closed' || detail?.status === 'cancelled';
+  const currentProcessStep = detail?.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
   const memberOptions = useMemo(
     () =>
       members.map((m) => ({
@@ -803,11 +898,12 @@ export default function ProjectDetail() {
       width: 110,
       render: (v: number, r) =>
         canChangeProgress(r) ? (
-          <Select
-            size="small"
+          <WbsProgressEditor
             value={v}
-            style={{ width: 84 }}
-            options={PROGRESS_OPTIONS.map((p) => ({ value: p, label: `${p}%` }))}
+            customLabel={t('proj.wbs.progressCustom')}
+            aggregateLabel={t('proj.wbs.progressAggregate')}
+            cascadeLabel={t('proj.wbs.progressCascade')}
+            hasChildren={Boolean(r.children?.length)}
             onChange={(p) => void changeTaskProgress(r, p)}
           />
         ) : (
@@ -827,7 +923,7 @@ export default function ProjectDetail() {
       ellipsis: true,
       render: (v: string | null) => (v ? <Tooltip title={v}>{v}</Tooltip> : '-'),
     },
-    ...(canEdit
+    ...(canEdit || canDeleteExamples
       ? [
           {
             title: t('common.actions'),
@@ -836,17 +932,23 @@ export default function ProjectDetail() {
             fixed: 'right' as const,
             render: (_: unknown, r: WbsNode) => (
               <Space size={0}>
-                <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
-                  {t('common.edit')}
-                </Button>
-                <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
-                  {t('proj.addSubtask')}
-                </Button>
-                <Popconfirm title={t('proj.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
-                  <Button type="link" size="small" danger>
-                    {t('common.delete')}
-                  </Button>
-                </Popconfirm>
+                {!isExample && canEdit && (
+                  <>
+                    <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
+                      {t('common.edit')}
+                    </Button>
+                    <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
+                      {t('proj.addSubtask')}
+                    </Button>
+                  </>
+                )}
+                {(!isExample && canEdit) || canDeleteExamples ? (
+                  <Popconfirm title={t('proj.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
+                    <Button type="link" size="small" danger>
+                      {t('common.delete')}
+                    </Button>
+                  </Popconfirm>
+                ) : null}
               </Space>
             ),
           } as ColumnsType<WbsNode>[number],
@@ -887,7 +989,7 @@ export default function ProjectDetail() {
       <Card title={t('proj.mtTitle')} size="small">
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
           <Alert type="info" showIcon message={t('proj.mtAlert')} />
-          <Table<MilestoneTrackingRow>
+          <StickyTable<MilestoneTrackingRow>
             size="small"
             rowKey="id"
             columns={mtColumns}
@@ -911,7 +1013,7 @@ export default function ProjectDetail() {
           )
         }
       >
-        <Table<WbsNode>
+        <StickyTable<WbsNode>
           size="small"
           rowKey="id"
           columns={wbsColumns}
@@ -919,6 +1021,10 @@ export default function ProjectDetail() {
           pagination={false}
           sticky
           scroll={{ x: 'max-content' }}
+          freezeColumns={3}
+          resizable
+          rowResizable
+          storageKey={`project-wbs-layout:${id}`}
           expandable={{
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: setExpandedKeys,
@@ -934,19 +1040,20 @@ export default function ProjectDetail() {
     { title: t('proj.cost.col.date'), dataIndex: 'entry_date', width: 130, onCell: () => ({ className: 'cell-nowrap' }) },
     { title: t('proj.cost.col.amountWan'), dataIndex: 'amount_10k', width: 130 },
     { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
-    ...(canEdit
+    ...(canEdit || canDeleteExamples
       ? [
           {
             title: t('common.actions'),
             key: 'action',
             width: 80,
-            render: (_: unknown, r: CostEntry) => (
-              <Popconfirm title={t('proj.confirmDeleteCost')} onConfirm={() => void deleteCost(r)}>
-                <Button type="link" size="small" danger>
-                  {t('common.delete')}
-                </Button>
-              </Popconfirm>
-            ),
+            render: (_: unknown, r: CostEntry) =>
+              (!isExample && canEdit) || canDeleteExamples ? (
+                <Popconfirm title={t('proj.confirmDeleteCost')} onConfirm={() => void deleteCost(r)}>
+                  <Button type="link" size="small" danger>
+                    {t('common.delete')}
+                  </Button>
+                </Popconfirm>
+              ) : null,
           } as ColumnsType<CostEntry>[number],
         ]
       : []),
@@ -1233,6 +1340,11 @@ export default function ProjectDetail() {
               ))}
             </Space>
           )}
+          <ProcessActionButtons
+            step={currentProcessStep}
+            disabled={isExample}
+            onDone={() => void loadDetail()}
+          />
         </Space>
       </Card>
 

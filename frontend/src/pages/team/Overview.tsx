@@ -1,8 +1,9 @@
 import { periodLabel } from '../../utils/period';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Button, Card, Col, Row, Statistic, Table, Tag, Typography } from 'antd';
+import { Button, Card, Col, Row, Statistic, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { FundOutlined, SettingOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -129,6 +130,7 @@ export default function Overview() {
               loading={loading}
               columns={workloadColumns}
               dataSource={workload}
+              standardToolbar={{ exportFileName: '团队工作负载', searchPlaceholder: '搜索员工或工作负载' }}
               pagination={false}
               locale={{ emptyText: t('team.overview.workload.empty') }}
             />
@@ -155,6 +157,7 @@ export default function Overview() {
               loading={loading}
               columns={boardColumns}
               dataSource={data?.points_board ?? []}
+              standardToolbar={{ exportFileName: '团队积分排行榜', searchPlaceholder: '搜索员工或积分' }}
               pagination={false}
               locale={{ emptyText: t('team.overview.board.empty') }}
             />

@@ -12,6 +12,7 @@ export interface FlowDiagramStep {
   default_role?: string | null;
   cc_roles?: string[] | null;
   autonomy_level?: string | null;
+  node_type?: 'processing' | 'approval' | null;
   sla_hours?: number | null;
   /** 步骤说明（如实现交付节点的两条路径说明），有则在节点内灰字展示 */
   description?: string | null;
@@ -96,6 +97,7 @@ export default function FlowDiagram({ steps, roleLabel, currentSeq, onCompleteSt
                   <Typography.Text strong style={{ fontSize: 13 }}>
                     {s.name || t('comp.flow.unnamed')}
                   </Typography.Text>
+                  {s.node_type === 'approval' && <Tag color="gold">{t('comp.flow.approval')}</Tag>}
                 </div>
                 {/* 处理人 */}
                 <div style={{ marginTop: 6 }}>

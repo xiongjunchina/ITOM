@@ -29,6 +29,19 @@ def test_configured_digital_team_department_is_authoritative(client, admin_heade
     members = client.get("/api/members?scope=it&page_size=2000", headers=admin_headers).json()["data"]
     assert included_id in {row["id"] for row in members}
 
+    # 配置统一口径后，项目经理也必须来自同一数字化团队范围（不能只靠前端下拉过滤）。
+    rejected = client.post("/api/projects", headers=admin_headers, json={
+        "name": "M42非法项目经理", "pm": excluded_id,
+        "planned_start": "2026-07-01", "planned_end": "2026-07-31",
+    })
+    assert rejected.status_code == 400
+    assert rejected.json()["error"]["code"] == "NOT_IT_TEAM_MEMBER"
+    accepted = client.post("/api/projects", headers=admin_headers, json={
+        "name": "M42数字化项目经理", "pm": included_id,
+        "planned_start": "2026-07-01", "planned_end": "2026-07-31",
+    })
+    assert accepted.status_code == 200, accepted.text
+
 
 def test_domain_delete_is_available_and_protects_references(client, admin_headers):
     created = client.post("/api/admin/business-domains", headers=admin_headers, json={

@@ -10,7 +10,8 @@ import Dashboard from './pages/Dashboard';
 import Positions from './pages/team/Positions';
 import Overview from './pages/team/Overview';
 import Performance from './pages/team/Performance';
-import Activities from './pages/team/Activities';
+import { ReviewDetailPage } from './pages/team/BplusPerformance';
+import LearningGrowthPage from './pages/team/LearningGrowthPage';
 import ActivityPoints from './pages/team/ActivityPoints';
 import Charter from './pages/team/Charter';
 import Monitor from './pages/process/Monitor';
@@ -41,6 +42,7 @@ import RequirementScoring from './pages/admin/RequirementScoring';
 import ProjectDetail from './pages/projects/ProjectDetail';
 import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
+import UserManual from './pages/UserManual';
 
 /** M19 首页落点：菜单序第一个有权限的页面（业务用户关掉总览后落到服务请求） */
 function HomeRedirect() {
@@ -81,6 +83,7 @@ export const router = createBrowserRouter([
     element: <MainLayout />,
     children: [
       { index: true, element: <HomeRedirect /> },
+      { path: 'user-manual', element: <UserManual /> },
       { path: 'dashboard', element: <DashboardGate /> },
       { path: 'profile', element: <Profile /> },
 
@@ -121,8 +124,11 @@ export const router = createBrowserRouter([
       // 团队管理（M6 交付）
       { path: 'team/overview', element: <Overview /> },
       { path: 'team/performance', element: <Performance /> },
+      { path: 'team/performance/review/:personId', element: <ReviewDetailPage /> },
       { path: 'team/positions', element: <Positions /> },
-      { path: 'team/activities', element: <Activities /> },
+      // 学习成长复合页：保留旧培训地址，兼容历史书签并定位到培训提升标签页。
+      { path: 'team/activities', element: <Navigate to="/team/learning-growth?tab=training" replace /> },
+      { path: 'team/learning-growth', element: <LearningGrowthPage /> },
       { path: 'team/ideas', element: <ActivityPoints /> },
       { path: 'team/charter', element: <Charter /> },
 

@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.schemas.common import ok
 from app.services.audit import audit
+from app.services.team_scope import require_it_member_if_configured, require_it_members
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -197,6 +198,7 @@ def create_group(body: GroupCreate, db: Session = Depends(get_db), actor=Depends
     if db.query(UserGroup).filter(UserGroup.code == body.code, UserGroup.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "用户组代码已存在")
     _check_group_roles(db, body.roles)
+    require_it_member_if_configured(db, body.owner_id, "用户组负责人")
     group = UserGroup(**body.model_dump())
     db.add(group)
     db.flush()
@@ -213,6 +215,8 @@ def update_group(group_id: str, body: GroupUpdate, db: Session = Depends(get_db)
     data = body.model_dump(exclude_unset=True)
     if data.get("roles") is not None:
         _check_group_roles(db, data["roles"])
+    if "owner_id" in data:
+        require_it_member_if_configured(db, data["owner_id"], "用户组负责人")
     for k, v in data.items():
         setattr(group, k, v)
     audit(db, "user_group", group.id, "update", actor, data)
@@ -229,6 +233,7 @@ def set_group_members(group_id: str, body: GroupMembersIn, db: Session = Depends
     bad = set(body.person_ids) - valid
     if bad:
         raise AppError("INVALID_MEMBER", "包含不存在的人员")
+    require_it_members(db, body.person_ids, "用户组成员")
     db.query(UserGroupMember).filter(UserGroupMember.group_id == group.id).delete()
     for pid in body.person_ids:
         db.add(UserGroupMember(group_id=group.id, person_id=pid))

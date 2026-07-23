@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events import notifier
@@ -28,7 +28,8 @@ from app.services.audit import audit
 from app.services.charter import parse_charter
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
-from app.services.projects import compute_metrics, rebuild_wbs_codes
+from app.services.projects import apply_wbs_progress, compute_metrics, recalculate_wbs_hierarchy, rebuild_wbs_codes
+from app.services.team_scope import digital_team_scope_configured, is_it_member, require_it_member_if_configured
 from app.services.workflow import allowed_targets, status_names
 from app.services.workflow import transition as wf_transition
 
@@ -110,7 +111,7 @@ class WbsUpdate(BaseModel):
     predecessor_ids: list[str] | None = None
     actual_start: date | None = None
     actual_end: date | None = None
-    progress: int | None = Field(default=None)  # 完成度% 0/50/100
+    progress: int | None = Field(default=None, ge=0, le=100)  # 完成度% 0-100
 
 
 class MilestoneIn(BaseModel):
@@ -171,6 +172,7 @@ def list_portfolios(db: Session = Depends(get_db), _=Depends(require_perm("proje
 def create_portfolio(body: PortfolioIn, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "create"))):
     if db.query(Portfolio).filter(Portfolio.name == body.name, Portfolio.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "组合名称已存在")
+    require_it_member_if_configured(db, body.owner_id, "项目组合负责人")
     row = Portfolio(**body.model_dump())
     db.add(row)
     db.flush()
@@ -185,6 +187,7 @@ def update_portfolio(portfolio_id: str, body: PortfolioIn, db: Session = Depends
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "组合不存在", 404)
     ensure_not_example(row)
+    require_it_member_if_configured(db, body.owner_id, "项目组合负责人")
     for k, v in body.model_dump().items():
         setattr(row, k, v)
     audit(db, "portfolio", row.id, "update", actor, {"name": body.name})
@@ -198,7 +201,7 @@ def delete_portfolio(portfolio_id: str, db: Session = Depends(get_db), actor=Dep
     row = db.get(Portfolio, portfolio_id)
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "组合不存在", 404)
-    ensure_not_example(row)
+    ensure_example_delete_allowed(row, db, actor)
     unlinked = 0
     for p in db.query(Project).filter(Project.portfolio_id == row.id, Project.is_deleted.is_(False)):
         p.portfolio_id = None
@@ -301,6 +304,7 @@ def _create_project(db: Session, data: dict, actor: AuthUser) -> Project:
         raise AppError("INVALID_DATES", "计划结束不能早于计划开始")
     if not db.get(OrgMember, data["pm"]):
         raise AppError("NOT_FOUND", "项目经理不存在", 404)
+    require_it_member_if_configured(db, data["pm"], "项目经理")
     if data.get("service_item_id") and not db.get(ServiceItem, data["service_item_id"]):
         raise AppError("NOT_FOUND", "关联服务项不存在", 404)
     project = Project(**data, project_code=gen_code(db, Project, "project_code", "PJ"), status="planning")
@@ -381,6 +385,8 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     if p.status in ("closed", "cancelled"):
         raise AppError("PROJECT_FINAL", "终态项目不可编辑")
     data = body.model_dump(exclude_unset=True)
+    if data.get("pm"):
+        require_it_member_if_configured(db, data["pm"], "项目经理")
     for k, v in data.items():
         setattr(p, k, v)
     if p.planned_end < p.planned_start:
@@ -400,7 +406,7 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
     p = db.get(Project, project_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
-    ensure_not_example(p)
+    ensure_example_delete_allowed(p, db, actor)
     from app.models import Attachment, PointEntry, ProcessInstance, ProcessTask, Requirement
 
     stats = {"wbs": 0, "milestones": 0, "costs": 0, "risks": 0, "attachments": 0,
@@ -528,9 +534,12 @@ async def charter_parse(file: UploadFile, db: Session = Depends(get_db), actor=D
     pm_name = result["fields"].get("pm_name")
     if pm_name:
         member = db.query(OrgMember).filter(OrgMember.name == pm_name, OrgMember.is_deleted.is_(False)).first()
-        result["fields"]["pm"] = member.id if member else None
+        pm_in_scope = bool(member and (not digital_team_scope_configured(db) or is_it_member(db, member.id)))
+        result["fields"]["pm"] = member.id if pm_in_scope else None
         if not member:
             result["warnings"].append(f"项目经理「{pm_name}」不是系统中的人员，请手工选择")
+        elif not pm_in_scope:
+            result["warnings"].append(f"项目经理「{pm_name}」不属于数字化团队，请手工选择数字化团队成员")
     return ok(result)
 
 
@@ -570,6 +579,12 @@ def charter_create(body: CharterCreateIn, db: Session = Depends(get_db), actor=D
                     mitigation=r.get("mitigation")))
         created["risks"] += 1
     db.flush()
+    imported_tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
+        .all()
+    )
+    recalculate_wbs_hierarchy(imported_tasks)
     rebuild_wbs_codes(db, project.id)  # 按树规范化 WBS编号（前置引用为 id，不受影响）
     audit(db, "project", project.id, "charter_import", actor, created)
     db.commit()
@@ -590,7 +605,7 @@ def _wbs_row(t: WbsTask, names: dict, codes: dict | None = None) -> dict:
         "start_date": t.start_date, "end_date": t.end_date,
         "actual_start": t.actual_start, "actual_end": t.actual_end,
         "schedule_deviation": wbs_deviation(t.actual_end, t.end_date),  # 进度偏差(天)，计算
-        "progress": t.progress or 0,  # 完成度% 0/50/100
+        "progress": t.progress or 0,  # 完成度% 0-100
         "status": wbs_status(t.progress or 0, t.end_date),  # 状态，计算（含已延期）
         "completed_at": t.completed_at, "remarks": t.remarks, "description": t.description,
         "predecessor_ids": t.predecessor_ids or [],
@@ -598,6 +613,20 @@ def _wbs_row(t: WbsTask, names: dict, codes: dict | None = None) -> dict:
         "predecessor_codes": [codes[pid] for pid in (t.predecessor_ids or []) if codes and pid in codes] if codes else [],
         "sort": t.sort,
     }
+
+
+def _record_wbs_completion(db: Session, task: WbsTask, project: Project):
+    """为达到 100% 的任务补齐完成时间及一次性完成事件。"""
+    if (task.progress or 0) < 100 or task.completed_at:
+        return
+    task.completed_at = datetime.now()
+    done_date = task.actual_end or task.completed_at.date()
+    on_time = done_date <= task.end_date
+    publish(db, "wbs.completed", "project", task.project_id, {"task_id": task.id, "on_time": on_time})
+    if task.is_milestone and not project.is_example:
+        from app.services.points import award_by_rule
+
+        award_by_rule(db, "milestone_achieved", project.pm, task.id, f"里程碑达成 {task.name[:30]}")
 
 
 @router.get("/api/projects/{project_id}/wbs")
@@ -619,6 +648,7 @@ def create_wbs(project_id: str, body: WbsIn, db: Session = Depends(get_db), acto
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_not_example(p)
+    require_it_member_if_configured(db, body.assignee, "项目任务负责人")
     if body.end_date < body.start_date:
         raise AppError("INVALID_DATES", "结束日期不能早于开始日期")
     if body.parent_task_id:
@@ -629,8 +659,21 @@ def create_wbs(project_id: str, body: WbsIn, db: Session = Depends(get_db), acto
                    sort=db.query(WbsTask).filter(WbsTask.project_id == project_id).count())
     db.add(task)
     db.flush()
+    progress_changed: list[WbsTask] = []
+    if task.parent_task_id:
+        all_tasks = (
+            db.query(WbsTask)
+            .filter(WbsTask.project_id == project_id, WbsTask.is_deleted.is_(False))
+            .all()
+        )
+        progress_changed = recalculate_wbs_hierarchy(all_tasks)
+        for item in progress_changed:
+            _record_wbs_completion(db, item, p)
     rebuild_wbs_codes(db, project_id)
-    audit(db, "wbs_task", task.id, "create", actor, {"name": body.name})
+    summary = {"name": body.name}
+    if progress_changed:
+        summary["progress_updated_task_ids"] = [item.id for item in progress_changed]
+    audit(db, "wbs_task", task.id, "create", actor, summary)
     if task.assignee != actor.person_id:
         notifier.notify(db, "wbs.assigned", "project", project_id, [task.assignee],
                         f"新任务指派：{p.name} / {task.name}", link=f"/projects/{project_id}")
@@ -644,32 +687,37 @@ def update_wbs(task_id: str, body: WbsUpdate, db: Session = Depends(get_db), use
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    ensure_not_example(db.get(Project, task.project_id))
+    project = db.get(Project, task.project_id)
+    ensure_not_example(project)
     data = body.model_dump(exclude_unset=True)
     # 数据范围规则：任务负责人可更新自己任务的完成度/实际起止；其余字段需 projects.edit
     is_assignee = user.person_id and task.assignee == user.person_id
     if not has_perm(db, user, "projects", "edit"):
         if not (is_assignee and set(data) <= {"progress", "actual_start", "actual_end"}):
             raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的完成度；其他修改需项目编辑权限", 403)
-    if "progress" in data and data["progress"] not in (0, 50, 100):
-        raise AppError("INVALID_STATUS", "完成度%须为 0/50/100 三档")
+    requested_progress = data.pop("progress", None)
+    progress_changed: list[WbsTask] = []
+    if requested_progress is not None:
+        all_tasks = (
+            db.query(WbsTask)
+            .filter(WbsTask.project_id == task.project_id, WbsTask.is_deleted.is_(False))
+            .all()
+        )
+        progress_changed = apply_wbs_progress(all_tasks, task, requested_progress)
     for k, v in data.items():
         setattr(task, k, v)
     if task.end_date < task.start_date:
         raise AppError("INVALID_DATES", "结束日期不能早于开始日期")
-    # 完成度达 100 → 记完成时间并派按期积分；里程碑另奖项目经理
-    if (task.progress or 0) >= 100 and not task.completed_at:
-        task.completed_at = datetime.now()
-        done_date = task.actual_end or task.completed_at.date()
-        on_time = done_date <= task.end_date
-        publish(db, "wbs.completed", "project", task.project_id, {"task_id": task.id, "on_time": on_time})
-        if task.is_milestone:
-            proj = db.get(Project, task.project_id)
-            if proj and not proj.is_example:
-                from app.services.points import award_by_rule
-
-                award_by_rule(db, "milestone_achieved", proj.pm, task.id, f"里程碑达成 {task.name[:30]}")
-    audit(db, "wbs_task", task.id, "update", user, {"fields": list(data.keys())})
+    # 完成度达 100 → 记完成时间并派按期积分；级联/回算的任务也逐一补齐完成事件。
+    completion_candidates = {item.id: item for item in progress_changed}
+    if requested_progress is not None:
+        completion_candidates[task.id] = task
+    for item in completion_candidates.values():
+        _record_wbs_completion(db, item, project)
+    summary = {"fields": [*data.keys(), *(["progress"] if requested_progress is not None else [])]}
+    if progress_changed:
+        summary["progress_updated_task_ids"] = [item.id for item in progress_changed]
+    audit(db, "wbs_task", task.id, "update", user, summary)
     db.commit()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     return ok(_wbs_row(task, names))
@@ -680,12 +728,27 @@ def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(requir
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    ensure_not_example(db.get(Project, task.project_id))
+    project = db.get(Project, task.project_id)
+    ensure_example_delete_allowed(project, db, actor)
     if db.query(WbsTask).filter(WbsTask.parent_task_id == task.id, WbsTask.is_deleted.is_(False)).first():
         raise AppError("HAS_CHILDREN", "请先删除子任务")
+    parent_task_id = task.parent_task_id
     task.is_deleted = True
+    progress_changed: list[WbsTask] = []
+    if parent_task_id:
+        all_tasks = (
+            db.query(WbsTask)
+            .filter(WbsTask.project_id == task.project_id, WbsTask.is_deleted.is_(False))
+            .all()
+        )
+        progress_changed = recalculate_wbs_hierarchy(all_tasks)
+        for item in progress_changed:
+            _record_wbs_completion(db, item, project)
     rebuild_wbs_codes(db, task.project_id)
-    audit(db, "wbs_task", task.id, "delete", actor, {"name": task.name})
+    summary = {"name": task.name}
+    if progress_changed:
+        summary["progress_updated_task_ids"] = [item.id for item in progress_changed]
+    audit(db, "wbs_task", task.id, "delete", actor, summary)
     db.commit()
     return ok({"id": task.id})
 
@@ -768,7 +831,7 @@ def delete_milestone(milestone_id: str, db: Session = Depends(get_db), actor=Dep
     m = db.get(Milestone, milestone_id)
     if not m or m.is_deleted:
         raise AppError("NOT_FOUND", "里程碑不存在", 404)
-    ensure_not_example(db.get(Project, m.project_id))
+    ensure_example_delete_allowed(db.get(Project, m.project_id), db, actor)
     m.is_deleted = True
     audit(db, "milestone", m.id, "delete", actor, {"name": m.name})
     db.commit()
@@ -850,7 +913,7 @@ def delete_cost(cost_id: str, db: Session = Depends(get_db), actor=Depends(requi
     c = db.get(CostEntry, cost_id)
     if not c or c.is_deleted:
         raise AppError("NOT_FOUND", "成本记录不存在", 404)
-    ensure_not_example(db.get(Project, c.project_id))
+    ensure_example_delete_allowed(db.get(Project, c.project_id), db, actor)
     c.is_deleted = True
     audit(db, "cost_entry", c.id, "delete", actor, {"amount_10k": c.amount_10k})
     db.commit()
@@ -877,7 +940,7 @@ PROGRESS_SHEETS = [
         Col("end_date", "计划结束", required=True, kind="date"),
         Col("actual_start", "实际开始", kind="date", hint="执行阶段填写"),
         Col("actual_end", "实际结束", kind="date", hint="执行阶段填写，用于算进度偏差"),
-        Col("progress", "完成度%(0/50/100)", hint="三档法：未开始0/进行中50/已完成100"),
+        Col("progress", "完成度%(0-100)", hint="填写 0-100 的整数百分比；未填写按 0 处理"),
         Col("remarks", "备注"),
     ]),
 ]
@@ -923,6 +986,12 @@ async def import_progress(project_id: str, file: UploadFile, db: Session = Depen
     created = {"wbs": count, "milestones": sum(1 for r in wbs_rows if str(r.get("is_milestone") or "").strip() in ("是", "Y", "yes", "true", "1"))}
 
     db.flush()
+    imported_tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
+        .all()
+    )
+    recalculate_wbs_hierarchy(imported_tasks)
     rebuild_wbs_codes(db, project.id)
     audit(db, "project", project.id, "import_progress", actor, {**created, "failed": len(errors)})
     db.commit()

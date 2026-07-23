@@ -43,7 +43,7 @@ ITOM/
 │   └── tests/
 ├── frontend/
 │   └── src/{api, components, pages, router.tsx, stores}
-├── deploy/                # docker-compose.yml、Dockerfile×2、nginx.conf、K8s 清单(预留)
+├── deploy/                # docker-compose.yml、Dockerfile×2、nginx.conf、IDC K8s 清单与发布脚本
 └── docs/                  # 本系列设计文档
 ```
 
@@ -97,7 +97,7 @@ POST /api/tickets/{id}/satisfaction      # requester 评价
 POST /api/tickets/{id}/escalate-problem  # 一键升级为问题
 POST /api/tickets/{id}/to-knowledge      # 一键沉淀知识(草稿)
 GET/POST/PATCH /api/problems | POST /api/problems/{id}/transition
-GET/POST/PATCH /api/catalogs | /api/service-items
+GET/POST/PATCH /api/catalogs | /api/service-items。目录列表返回 `item_count` 及按状态拆分的 `published_item_count`、`unpublished_item_count`；服务项 GET 支持 `catalog_id`、`q`（编号/名称/类型/服务对象/负责人关键字）、`status`（上架/下架，未传表示全部）、`sort_by` 与 `sort_dir` 参数，列表页据此实现筛选和排序。
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # 影响分析(上下游+关联工单)
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # 实时达成率
@@ -137,15 +137,31 @@ POST /api/process-tasks/{id}/complete | /reassign
 
 ```text
 GET /api/team/overview                   # 负载/积分Top/培训数/招聘进度聚合
-GET/POST/PATCH /api/positions | /api/hiring-needs
-GET/POST /api/activities                 # 培训活动
+GET/POST/PATCH /api/positions | /api/hiring-needs；岗位与招聘需求另提供 `GET /api/positions/template`、`GET /api/positions/export`、`POST /api/positions/import`，以及对应的 `/api/hiring-needs/template`、`GET /api/hiring-needs/export`、`POST /api/hiring-needs/import` Excel 闭环。
+GET/POST /api/trainings                  # 培训提升活动
 GET/PUT /api/team-charter
 GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
-GET/POST/PATCH /api/admin/point-rules
+GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
+    # 员工维护本期学习成长目标；完成比例按同周期目标等权平均折算 learning_growth 积分并写入 point_entry
+GET/PATCH /api/point-rules
 POST /api/points/adjust                  # 管理员手工调分(必填 remark)
-GET/POST/PATCH /api/admin/performance-rules
-GET /api/performance/scores?period= | POST /api/performance/recompute
+GET/POST/PATCH /api/admin/performance/role-profiles
+PUT /api/admin/performance/role-profiles/{id}/dimensions
+GET/PUT /api/admin/performance/assignments?period=YYYY-Qn
+GET /api/admin/performance/reviews?period=YYYY-Qn
+PUT /api/admin/performance/reviews/{assignment_id}/components/{dimension_code}
+GET/POST/PATCH /api/admin/performance/external-inputs
+GET /api/admin/performance/metric-definitions
+GET /api/admin/performance/external-inputs?period=YYYY-Qn
+POST /api/admin/performance/{period}/recompute
+POST /api/admin/performance/{period}/submit-manager-review
+POST /api/admin/performance/{period}/submit-cio-review
+POST /api/admin/performance/{period}/publish
+POST /api/admin/performance/{period}/unlock
+GET /api/my/performance?period=YYYY-Qn
+GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
+GET/PUT /api/admin/performance/contribution-rules # CIO/管理员配置团队贡献权重、目标及满意度组合比例
 ```
 
 ### 4.7 Dashboard
@@ -178,6 +194,8 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | knowledge.voted | 被点有用 | →积分(作者) |
 | activity.registered | 培训登记 | →积分(主讲/组织/参与分别计) |
 | idea.submitted / liked / adopted | 建言 | →积分、adopted→通知(提出人) |
+| performance.review_submitted | 负责人初评/CIO终审提交 | →通知(下一评审阶段)、→审计 |
+| performance.published / unlocked | 绩效发布/生成新版本 | →通知(被评价者)、→审计 |
 
 定时任务（后端内置 scheduler，每 15 分钟）：SLA 临期扫描、合同到期扫描、里程碑逾期扫描、合同状态推进。
 
@@ -185,9 +203,12 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 
 1. **状态机**：`services/workflow.py` 统一入口 `transition(entity, to, fields, actor)` —— 查 workflow_transition 校验角色与合法性 → 校验该转换的必填阶段字段 → 更新 + 打点 → 发事件 → 写审计。所有单据共用。
 2. **积分引擎幂等**：point_entry 建 UNIQUE(event_type, source_entity_type, source_entity_id, person)，同一单据同一事件不重复计分（重开再解决不二次得分）。
-3. **计算列维护**：wbs_task/cost_entry/milestone 写操作后，service 层重算所属 project 的 progress_pct/actual_cost/health_status 写回（同事务）。
+3. **计算列维护**：wbs_task/cost_entry/milestone 写操作后，service 层重算所属 project 的 progress_pct/actual_cost/health_status 写回（同事务）。WBS `progress` 接受 0-100 的整数百分比；流程步骤通过 `node_type=processing|approval` 区分处理/审批语义。审批任务可调用 `POST /api/process-tasks/{id}/approve`（理由可选）或 `POST /api/process-tasks/{id}/reject`（理由必填），完成入口仍支持流程图中的“完成此步骤”。
 4. **章程导入两步**：解析接口只返回草稿 JSON + warnings（不落库）；前端展示确认页，用户修正后调创建接口落库。解析失败回退手工表单。
 5. **SLA 计时**：挂起时累计 paused_minutes，达成判定 = (resolved_at − submitted_at − paused) ≤ 目标。
+6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。
+7. **外部原数据与发布隔离**：外部业务满意度先写入 `performance_external_input`，完成提交/核验/锁定后才参与折算；`performance_score_component` 保存系统参考分、阶段建议分和生效分，`/api/my/performance` 只返回已发布快照。
+8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。
 
 ## 7. 部署架构
 
@@ -195,12 +216,12 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 # deploy/docker-compose.yml 形态
 services:
   db:        postgres:16  (volume + 每日 pg_dump 到宿主机备份目录)
-  backend:   uvicorn, 依赖 db, 启动时 alembic upgrade + seed(幂等)
+  backend:   uvicorn, 依赖 db, 启动时 alembic upgrade + seed(幂等)；`SEED_INITIAL_CONFIG=1` 时在全新数据库初始化六条流程定义以及已验证的登录页/Logo 品牌配置，已有品牌草稿或发布版本不会覆盖
   frontend:  nginx 托管构建产物, /api 反代 backend
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
-- 单机 Docker Compose 起步；`deploy/k8s/` 预留 SN IDC 集群清单（后续按需）。
+- IDC Kubernetes 是当前唯一交付与验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布；发布后通过外部域名健康检查和实际页面验证。Docker Compose 仅保留为本地临时排障环境。
 - 日志：结构化 JSON 到 stdout（docker logs 可查）。
 
 ## 8. 里程碑映射（开发顺序）
@@ -212,7 +233,7 @@ services:
 | M3 ITSM 余下 | problems/cis/vendors/contracts/knowledge | 对应 5 页 | PRD §5.2/5.4/5.6/5.7 |
 | M4 项目 | portfolios/projects/wbs/milestones/risks/costs/charter-import | 项目两标签页/详情 5 tab/甘特 | PRD §6 |
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
-| M6 团队+总览 | points/ideas/activities/positions/performance/dashboard/流程监控 | 团队 6 页/总览/流程监控 | PRD §4/8/9 |
+| M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 
 ## 8.1 业务域服务部门 API（M41）
 
@@ -234,6 +255,8 @@ PUT /api/admin/business-domains/{domain_id}/members
 部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。负责人、备份负责人和服务团队在服务端统一通过 `it_member_ids` 校验，不允许全公司其他人员绕过前端写入。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。
 
 M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队部门范围和飞书自动同步策略；新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
+
+人员选择器统一约定：涉及业务负责人、项目经理/任务负责人、需求负责人/评审人/开发负责人、工单/问题/服务项/配置项/合同负责人、用户组负责人/成员及账号关联人员的前端下拉，统一调用 `GET /api/members?scope=it`。管理员配置数字化团队根部门后，相关写接口也通过 `require_it_member_if_configured`（批量成员使用同等校验）复核；未配置范围时兼容历史数据，但不改变 `scope=it` 的返回口径。
 
 ## 9. UI 品牌配置 API（M38）
 

@@ -23,6 +23,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
       ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-admin123}
       UPLOAD_DIR: /data/uploads
+      SEED_INITIAL_CONFIG: ${SEED_INITIAL_CONFIG:-1}
       TZ: Asia/Shanghai
     volumes:
       - uploads:/data/uploads

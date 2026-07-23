@@ -11,7 +11,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   TreeSelect,
   message,
@@ -21,6 +20,7 @@ import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import type { BusinessDomain, Department, Member } from '../../api/types';
 import { useT } from '../../i18n';
+import Table from '../../components/SortableTable';
 
 interface DomainForm {
   code: string;
@@ -314,6 +314,7 @@ export default function BusinessDomains() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '业务服务域', searchPlaceholder: '搜索编码、名称、负责人或部门' }}
         pagination={false}
       />
 

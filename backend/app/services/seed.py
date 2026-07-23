@@ -86,8 +86,16 @@ def run_seed(db: Session):
         ("training_attend", "参与培训", 3),
     ]
     for code, name, points in POINT_RULES:
-        if not db.query(PointRule).filter(PointRule.code == code).first():
-            db.add(PointRule(code=code, name=name, points=points))
+        rule = db.query(PointRule).filter(PointRule.code == code).first()
+        if not rule:
+            rule = PointRule(code=code, name=name, points=points)
+            db.add(rule)
+        if code in {"ticket_resolved", "ticket_sla_met", "ticket_satisfaction", "wbs_done_on_time",
+                    "milestone_achieved", "requirement_task_done", "requirement_closed"}:
+            rule.contribution_bucket = "role_result"
+            rule.contribution_dimension = None
+        else:
+            rule.contribution_bucket = "team_contribution"
     if not db.query(AuthUser).filter(AuthUser.username == "admin").first():
         db.add(
             AuthUser(
@@ -150,4 +158,120 @@ def run_seed_perf(db):
             {"code": "activity_points", "weight": 15},
         ],
     ))
+    db.commit()
+
+
+BPLUS_ROLE_PROFILES = [
+    ("it_bm", "IT 业务线负责人", "business", "manager_review", [
+        ("domain_demand_outcome", "业务需求结果", 40, "domain_demand_outcome"),
+        ("internal_external_satisfaction", "内外部满意度", 30, "internal_external_satisfaction"),
+        ("business_project_health", "业务域项目结果", 30, "project_manager_delivery"),
+    ]),
+    ("it_bp", "IT 业务合作伙伴", "business", "manager_review", [
+        ("requirement_review_timeliness", "需求评审与验收", 40, "requirement_owner_delivery"),
+        ("domain_demand_outcome", "业务需求结果", 30, "domain_demand_outcome"),
+        ("internal_external_satisfaction", "内外部满意度", 30, "internal_external_satisfaction"),
+    ]),
+    ("it_tm", "IT 专业线负责人", "professional", "cio_direct", [
+        ("team_delivery_outcome", "团队交付结果", 40, "team_delivery_outcome"),
+        ("team_service_outcome", "团队服务结果", 30, "team_service_outcome"),
+        ("professional_governance", "专业治理与培养", 30, "manual"),
+    ]),
+    ("it_pdm_leader", "IT 产品负责人", "professional", "cio_direct", [
+        ("team_delivery_outcome", "团队交付结果", 45, "team_delivery_outcome"),
+        ("domain_satisfaction", "业务满意度", 25, "domain_satisfaction"),
+        ("professional_governance", "产品治理", 30, "manual"),
+    ]),
+    ("it_pdm", "IT 产品经理", "professional", "manager_review", [
+        ("requirement_owner_delivery", "需求负责人交付", 45, "requirement_owner_delivery"),
+        ("domain_satisfaction", "业务满意度", 30, "domain_satisfaction"),
+        ("project_delivery", "关联项目交付", 25, "project_delivery"),
+    ]),
+    # PMO 自身由 CIO 直评；PMO 对 it_pm 资源池成员的初评范围由用户组 owner 形成。
+    ("it_pmo", "IT PMO", "professional", "cio_direct", [
+        ("process_task_timeliness", "流程治理及时性", 40, "process_task_timeliness"),
+        ("project_manager_delivery", "项目治理结果", 35, "project_manager_delivery"),
+        ("requirement_delivery", "需求/项目闭环", 25, "requirement_delivery"),
+    ]),
+    ("it_pm", "IT 项目经理", "professional", "manager_review", [
+        ("project_manager_delivery", "项目经理交付", 55, "project_manager_delivery"),
+        ("project_delivery", "项目任务与里程碑", 25, "project_delivery"),
+        ("requirement_delivery", "关联需求闭环", 20, "requirement_delivery"),
+    ]),
+    ("it_dev_leader", "IT 开发负责人", "professional", "cio_direct", [
+        ("team_delivery_outcome", "团队交付结果", 45, "team_delivery_outcome"),
+        ("team_service_outcome", "团队质量结果", 25, "team_service_outcome"),
+        ("professional_governance", "工程治理与培养", 30, "manual"),
+    ]),
+    ("it_dev", "IT 开发", "professional", "manager_review", [
+        ("requirement_delivery", "需求交付", 45, "requirement_delivery"),
+        ("project_delivery", "项目交付", 45, "project_delivery"),
+        ("change_quality", "变更质量", 10, "change_compliance"),
+    ]),
+    ("it_op_leader", "IT 运维负责人", "professional", "cio_direct", [
+        ("team_service_outcome", "团队服务结果", 50, "team_service_outcome"),
+        ("change_compliance", "变更治理", 25, "change_compliance"),
+        ("professional_governance", "运维治理与培养", 25, "manual"),
+    ]),
+    ("it_ops", "IT 运维", "professional", "manager_review", [
+        ("ticket_service", "服务工单", 60, "ticket_service"),
+        ("change_compliance", "变更合规", 30, "change_compliance"),
+        ("domain_satisfaction", "业务满意度", 10, "domain_satisfaction"),
+    ]),
+    ("is_mgr", "信息安全与平台服务", "platform", "cio_direct", [
+        ("security_governance", "信息安全治理", 40, "manual"),
+        ("security_incident", "安全事件与风险", 30, "manual"),
+        ("internal_external_satisfaction", "内部客户满意度", 30, "internal_external_satisfaction"),
+    ]),
+    ("data_governance", "数据治理/数据平台", "platform", "cio_direct", [
+        ("data_quality_standard", "数据质量与标准", 40, "manual"),
+        ("data_delivery", "数据交付", 30, "manual"),
+        ("data_value", "数据价值", 30, "manual"),
+    ]),
+    ("ai", "AI 技术/智能化", "platform", "cio_direct", [
+        ("ai_scenario_value", "AI 场景价值", 35, "manual"),
+        ("ai_quality_security", "应用质量与安全", 35, "manual"),
+        ("ai_delivery_adoption", "交付与采用", 30, "manual"),
+    ]),
+    ("architecture", "架构与平台服务", "platform", "cio_direct", [
+        ("architecture_governance", "架构治理", 40, "manual"),
+        ("platform_delivery", "平台能力与交付", 30, "manual"),
+        ("internal_external_satisfaction", "内部客户满意度", 30, "internal_external_satisfaction"),
+    ]),
+]
+
+
+def run_seed_perf_bplus(db: Session):
+    """矩阵角色档案和维度种子：仅补齐缺失，不覆盖 CIO 已调整的规则。"""
+    from app.models import PerformanceContributionConfig, PerformanceRoleDimension, PerformanceRoleProfile
+    from app.services.perf_bplus import TEAM_TARGETS, TEAM_WEIGHTS
+
+    if not db.query(PerformanceContributionConfig).filter(PerformanceContributionConfig.is_deleted.is_(False)).first():
+        db.add(PerformanceContributionConfig(
+            weights=dict(TEAM_WEIGHTS), targets=dict(TEAM_TARGETS),
+            internal_satisfaction_weight=50, external_satisfaction_weight=50,
+        ))
+
+    for code, name, line_type, review_mode, dimensions in BPLUS_ROLE_PROFILES:
+        profile = db.query(PerformanceRoleProfile).filter(PerformanceRoleProfile.role_code == code).first()
+        if not profile:
+            profile = PerformanceRoleProfile(
+                role_code=code, name=name, line_type=line_type, review_mode=review_mode,
+                description=f"矩阵角色评分档案：{name}", active=True,
+            )
+            db.add(profile)
+            db.flush()
+        elif profile.description and profile.description.startswith("B+ 矩阵角色评分档案："):
+            # 清理早期种子写入的旧产品名，但不覆盖管理员后来编辑的其他描述。
+            profile.description = profile.description.replace("B+ 矩阵角色评分档案：", "矩阵角色评分档案：", 1)
+        for sort, (dimension_code, dimension_name, weight, metric) in enumerate(dimensions):
+            dimension = db.query(PerformanceRoleDimension).filter(
+                PerformanceRoleDimension.profile_id == profile.id,
+                PerformanceRoleDimension.dimension_code == dimension_code,
+            ).first()
+            if not dimension:
+                db.add(PerformanceRoleDimension(
+                    profile_id=profile.id, dimension_code=dimension_code, name=dimension_name,
+                    weight=weight, source_config={"metric": metric}, sort=sort, active=True,
+                ))
     db.commit()

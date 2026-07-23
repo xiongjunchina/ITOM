@@ -9,12 +9,12 @@ import {
   Modal,
   Space,
   Spin,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { SaveOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import type { PermAction, PermissionModule, RoleDef, RolePermissionEntry } from '../../api/types';
@@ -391,6 +391,7 @@ export default function Permissions() {
               loading={gridLoading}
               columns={columns}
               dataSource={rows}
+              standardToolbar={{ exportFileName: '角色权限矩阵', searchPlaceholder: '搜索权限编码、名称或模块' }}
               pagination={false}
             />
           ) : (

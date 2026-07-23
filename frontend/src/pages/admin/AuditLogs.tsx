@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Card, Input, Table, Tag } from 'antd';
+import { Card, Input, Tag } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import type { AuditLog } from '../../api/types';
+import Table from '../../components/SortableTable';
 
 const ACTION_COLORS: Record<string, string> = {
   create: 'green',
@@ -82,6 +83,7 @@ export default function AuditLogs() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '审计日志', showSearch: false, showFilter: false }}
         pagination={{
           current: page,
           pageSize,

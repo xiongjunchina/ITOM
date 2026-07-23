@@ -15,11 +15,11 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tooltip,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { DownloadOutlined, ImportOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -211,7 +211,7 @@ function ProjectList() {
     setCreateOpen(true);
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -329,7 +329,7 @@ function ProjectList() {
         <PendingStepCell pending={(r as ProjectRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/projects/${r.id}`)} />
       ),
     },
-    ...(canEdit
+    ...(canEdit || canDelete
       ? [
           {
             title: t('common.actions'),
@@ -337,7 +337,7 @@ function ProjectList() {
             width: 236,
             fixed: 'right' as const,
             render: (_: unknown, r: ProjectRow) => {
-              if (r.is_example) return null;
+              if (r.is_example && !isAdmin) return null;
               const st = r.status;
               const isFinal = st === 'closed' || st === 'cancelled';
               const linkBtn = (
@@ -363,11 +363,11 @@ function ProjectList() {
               };
               return (
                 <span style={{ whiteSpace: 'nowrap' }}>
-                  {linkBtn(t('common.edit'), !isFinal, () => void openRowEdit(r), t('proj.editFinalTooltip'))}
-                  {linkBtn(t('proj.op.pause'), st === 'active', () => runTransition(r, 'paused', t('proj.op.pause')), t('proj.op.onlyActive'))}
-                  {(isAdmin || r.pm === user?.person_id) &&
+                  {!r.is_example && canEdit && linkBtn(t('common.edit'), !isFinal, () => void openRowEdit(r), t('proj.editFinalTooltip'))}
+                  {!r.is_example && canEdit && linkBtn(t('proj.op.pause'), st === 'active', () => runTransition(r, 'paused', t('proj.op.pause')), t('proj.op.onlyActive'))}
+                  {!r.is_example && canEdit && (isAdmin || r.pm === user?.person_id) &&
                     linkBtn(t('proj.op.close'), ['active', 'paused', 'completed'].includes(st), () => runTransition(r, 'closed', t('proj.op.close')), t('proj.op.closeDisabled'))}
-                  {linkBtn(t('proj.op.restart'), ['paused', 'closed', 'completed'].includes(st), () => runTransition(r, 'active', t('proj.op.restart')), t('proj.op.restartDisabled'))}
+                  {!r.is_example && canEdit && linkBtn(t('proj.op.restart'), ['paused', 'closed', 'completed'].includes(st), () => runTransition(r, 'active', t('proj.op.restart')), t('proj.op.restartDisabled'))}
                   {canDelete && linkBtn(t('common.delete'), true, () => runDelete(r), '', true)}
                 </span>
               );
@@ -451,6 +451,7 @@ function ProjectList() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '项目清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 'max-content' }}
         pagination={{
@@ -607,6 +608,8 @@ function PortfolioPane() {
   const canCreate = useProjectPerm('create');
   const canEdit = useProjectPerm('edit');
   const canDelete = useProjectPerm('delete'); // M21：默认矩阵仅 admin
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = !!user?.permissions?.['*'];
 
   const [items, setItems] = useState<Portfolio[]>([]);
   const [loading, setLoading] = useState(false);
@@ -648,7 +651,7 @@ function PortfolioPane() {
     setModalOpen(true);
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -711,7 +714,7 @@ function PortfolioPane() {
             key: 'action',
             width: 120,
             render: (_: unknown, r: Portfolio) =>
-              r.is_example ? null : (
+              r.is_example && !isAdmin ? null : (
                 <Space size={8}>
                   {canEdit && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openModal(r)}>

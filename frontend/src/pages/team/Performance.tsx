@@ -17,13 +17,13 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import {
   DeleteOutlined,
   EditFilled,
@@ -45,6 +45,8 @@ import type {
   PerformanceRow,
   Position,
 } from '../../api/types';
+import { ExternalInputWorkbench, MyPerformanceResult, ReviewWorkbench } from './BplusPerformance';
+import PerformanceRulesWorkbench from './PerformanceRulesWorkbench';
 
 const GRAY = 'rgba(0, 0, 0, 0.25)';
 
@@ -65,6 +67,8 @@ function PerfOverview() {
   const [data, setData] = useState<PerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(20);
 
   const user = useAuthStore((s) => s.user);
   // 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示）
@@ -361,9 +365,20 @@ function PerfOverview() {
         loading={loading}
         columns={columns}
         dataSource={data?.rows ?? []}
+        standardToolbar={{ exportFileName: '人效评分结果', searchPlaceholder: '搜索员工、角色或评分状态' }}
         sticky
         scroll={{ x: 810 + dimensions.length * 110 + (canEdit ? 90 : 0) }}
-        pagination={{ pageSize: 20, showTotal: (n) => t('team.totalPeople', { n }) }}
+        pagination={{
+          current: tablePage,
+          pageSize: tablePageSize,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50, 100],
+          showTotal: (n) => t('team.totalPeople', { n }),
+          onChange: (page, pageSize) => {
+            setTablePage(page);
+            setTablePageSize(pageSize);
+          },
+        }}
       />
 
       <Drawer
@@ -472,7 +487,8 @@ interface SchemeFormValues {
   dimensions?: { code?: string; weight?: number }[];
 }
 
-function PerfSchemes() {
+/** 旧版岗位计分方案保留作数据兼容，不再挂载到“计分规则”页面；页面使用角色规则工作台。 */
+export function PerfSchemes() {
   const t = useT();
   const [items, setItems] = useState<PerfScheme[]>([]);
   const [loading, setLoading] = useState(true);
@@ -687,6 +703,7 @@ function PerfSchemes() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '计分方案', searchPlaceholder: '搜索方案名称、适用岗位或说明' }}
         sticky
         scroll={{ x: 900 }}
         pagination={false}
@@ -827,7 +844,10 @@ export default function Performance() {
     <PermTabs
       tabs={[
         { key: 'overview', label: t('team.performance.tabOverview'), modules: ['performance'], children: <PerfOverview /> },
-        { key: 'schemes', label: t('team.performance.schemesTitle'), modules: ['performance'], children: <PerfSchemes /> },
+        { key: 'schemes', label: t('team.performance.schemesTitle'), modules: ['performance_admin'], children: <PerformanceRulesWorkbench /> },
+        { key: 'bplus-review', label: '分级评审', modules: ['performance_review'], children: <ReviewWorkbench /> },
+        { key: 'external-input', label: '外部原数据', modules: ['performance_external'], children: <ExternalInputWorkbench /> },
+        { key: 'my-result', label: '我的最终结果', modules: ['performance_result'], children: <MyPerformanceResult /> },
       ]}
     />
   );

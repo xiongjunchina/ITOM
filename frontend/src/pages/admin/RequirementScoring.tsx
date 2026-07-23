@@ -85,7 +85,7 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
   // 方案评估指派人员下拉（只读用户也需名字回显）
   useEffect(() => {
     api
-      .getList<Member>('/members', { page: 1, page_size: 2000 })
+      .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
   }, []);

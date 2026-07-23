@@ -11,7 +11,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Popconfirm,
   Radio,
   Tabs,
@@ -21,6 +20,7 @@ import {
   message,
 } from 'antd';
 import { UserOutlined } from '@ant-design/icons';
+import Table from '../components/SortableTable';
 import dayjs from 'dayjs';
 import { api } from '../api/client';
 import type { PersonalAuditLog, ProfileData } from '../api/types';
@@ -69,6 +69,8 @@ export default function Profile() {
   const [savingPwd, setSavingPwd] = useState(false);
   const [auditRows, setAuditRows] = useState<PersonalAuditLog[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditPageSize, setAuditPageSize] = useState(20);
 
   const load = useCallback(async () => {
     try {
@@ -366,7 +368,20 @@ export default function Profile() {
   const auditTab = (
     <Card title={t('profile.auditTitle')}>
       <Table<PersonalAuditLog>
-        rowKey="id" loading={auditLoading} dataSource={auditRows} pagination={{ pageSize: 20 }}
+        rowKey="id"
+        loading={auditLoading}
+        dataSource={auditRows}
+        pagination={{
+          current: auditPage,
+          pageSize: auditPageSize,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50, 100],
+          showTotal: (n) => t('profile.auditTotal', { n }),
+          onChange: (page, pageSize) => {
+            setAuditPage(page);
+            setAuditPageSize(pageSize);
+          },
+        }}
         columns={[
           { title: t('profile.auditTime'), dataIndex: 'created_at', render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm') },
           { title: t('profile.auditAction'), dataIndex: 'action' },

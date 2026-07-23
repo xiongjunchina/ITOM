@@ -3,10 +3,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import asc, desc, func, or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import OrgMember, ServiceCatalog, ServiceItem, SlaPolicy, Ticket
@@ -20,6 +20,7 @@ from app.schemas.itsm import (
 )
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(tags=["itsm"])
 
@@ -35,12 +36,25 @@ def list_catalogs(db: Session = Depends(get_db), _=Depends(require_perm("catalog
         .group_by(ServiceItem.catalog_id)
         .all()
     )
+    item_status_counts = {
+        (catalog_id, status): count
+        for catalog_id, status, count in db.query(
+            ServiceItem.catalog_id,
+            ServiceItem.status,
+            func.count(ServiceItem.id),
+        )
+        .filter(ServiceItem.is_deleted.is_(False))
+        .group_by(ServiceItem.catalog_id, ServiceItem.status)
+        .all()
+    }
     return ok(
         [
             {
                 "id": c.id, "code": c.code, "name": c.name, "tier": c.tier, "is_example": c.is_example,
                 "description": c.description, "sort": c.sort, "status": c.status,
                 "item_count": item_counts.get(c.id, 0),
+                "published_item_count": item_status_counts.get((c.id, "上架"), 0),
+                "unpublished_item_count": item_status_counts.get((c.id, "下架"), 0),
             }
             for c in rows
         ],
@@ -78,12 +92,17 @@ def delete_catalog(catalog_id: str, db: Session = Depends(get_db), actor=Depends
     catalog = db.get(ServiceCatalog, catalog_id)
     if not catalog or catalog.is_deleted:
         raise AppError("NOT_FOUND", "目录不存在", 404)
-    ensure_not_example(catalog)
-    live = db.query(ServiceItem).filter(ServiceItem.catalog_id == catalog.id, ServiceItem.is_deleted.is_(False)).count()
-    if live > 0:
-        raise AppError("CATALOG_IN_USE", f"该目录下还有 {live} 个服务项，请先删除或迁移服务项")
+    ensure_example_delete_allowed(catalog, db, actor)
+    live_items = db.query(ServiceItem).filter(ServiceItem.catalog_id == catalog.id, ServiceItem.is_deleted.is_(False)).all()
+    if live_items:
+        # 示例目录可由系统管理员连同其示例服务项一起清理；真实目录继续受引用保护。
+        if catalog.is_example and all(item.is_example for item in live_items):
+            for item in live_items:
+                item.is_deleted = True
+        else:
+            raise AppError("CATALOG_IN_USE", f"该目录下还有 {len(live_items)} 个服务项，请先删除或迁移服务项")
     catalog.is_deleted = True
-    audit(db, "service_catalog", catalog.id, "delete", actor, {"code": catalog.code, "name": catalog.name})
+    audit(db, "service_catalog", catalog.id, "delete", actor, {"code": catalog.code, "name": catalog.name, "items_deleted": len(live_items) if catalog.is_example else 0})
     db.commit()
     return ok({"id": catalog.id})
 
@@ -103,13 +122,49 @@ def _item_row(i: ServiceItem, db: Session) -> dict:
 
 
 @router.get("/api/service-items")
-def list_items(catalog_id: str = "", q: str = "", db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_items(
+    catalog_id: str = "",
+    q: str = "",
+    status: str = "",
+    sort_by: str = "",
+    sort_dir: str = "ascend",
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """服务项列表。
+
+    搜索、状态筛选和排序都在查询层完成，避免前端只对当前分页数据做筛选，
+    也保证服务目录页与工单/项目等引用服务项的页面使用同一套数据口径。
+    """
     query = db.query(ServiceItem).filter(ServiceItem.is_deleted.is_(False))
     if catalog_id:
         query = query.filter(ServiceItem.catalog_id == catalog_id)
     if q:
-        query = query.filter(ServiceItem.name.ilike(f"%{q}%"))
-    rows = query.order_by(ServiceItem.is_example.desc(), ServiceItem.created_at).all()
+        keyword = f"%{q.strip()}%"
+        query = query.outerjoin(OrgMember, ServiceItem.owner == OrgMember.id).filter(
+            or_(
+                ServiceItem.item_code.ilike(keyword),
+                ServiceItem.name.ilike(keyword),
+                ServiceItem.service_type.ilike(keyword),
+                ServiceItem.target_audience.ilike(keyword),
+                OrgMember.name.ilike(keyword),
+            )
+        )
+    if status in {"上架", "下架"}:
+        query = query.filter(ServiceItem.status == status)
+    sort_columns = {
+        "item_code": ServiceItem.item_code,
+        "name": ServiceItem.name,
+        "service_type": ServiceItem.service_type,
+        "status": ServiceItem.status,
+        "created_at": ServiceItem.created_at,
+    }
+    sort_column = sort_columns.get(sort_by)
+    if sort_column is not None:
+        ordering = desc(sort_column) if sort_dir == "descend" else asc(sort_column)
+        rows = query.order_by(ServiceItem.is_example.desc(), ordering, ServiceItem.created_at).all()
+    else:
+        rows = query.order_by(ServiceItem.is_example.desc(), ServiceItem.created_at).all()
     return ok([_item_row(i, db) for i in rows], total=len(rows))
 
 
@@ -117,6 +172,7 @@ def list_items(catalog_id: str = "", q: str = "", db: Session = Depends(get_db),
 def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "create"))):
     if not db.get(ServiceCatalog, body.catalog_id):
         raise AppError("NOT_FOUND", "目录不存在", 404)
+    require_it_member_if_configured(db, body.owner, "服务项负责人")
     item = ServiceItem(**body.model_dump(), item_code=gen_code(db, ServiceItem, "item_code", "SI"))
     db.add(item)
     db.flush()
@@ -132,6 +188,8 @@ def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get
         raise AppError("NOT_FOUND", "服务项不存在", 404)
     ensure_not_example(item)
     data = body.model_dump(exclude_unset=True)
+    if "owner" in data:
+        require_it_member_if_configured(db, data["owner"], "服务项负责人")
     for k, v in data.items():
         setattr(item, k, v)
     audit(db, "service_item", item.id, "update", actor, {"fields": list(data.keys())})
@@ -145,14 +203,29 @@ def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(requi
     item = db.get(ServiceItem, item_id)
     if not item or item.is_deleted:
         raise AppError("NOT_FOUND", "服务项不存在", 404)
-    ensure_not_example(item)
-    from app.models import Ticket
+    ensure_example_delete_allowed(item, db, actor)
+    from app.models import ProcessInstance, ProcessTask, Ticket
 
-    used = db.query(Ticket).filter(Ticket.service_item_id == item.id, Ticket.is_deleted.is_(False)).count()
-    if used > 0:
-        raise AppError("ITEM_IN_USE", f"该服务项已被 {used} 张工单引用，不可删除；如不再提供请改为「下架」")
+    live_tickets = db.query(Ticket).filter(Ticket.service_item_id == item.id, Ticket.is_deleted.is_(False)).all()
+    if live_tickets:
+        # 示例服务项可以由管理员连同其示例工单清理；真实工单引用仍禁止删除。
+        if item.is_example and all(ticket.is_example for ticket in live_tickets):
+            ticket_ids = {ticket.id for ticket in live_tickets}
+            for ticket in live_tickets:
+                ticket.is_deleted = True
+            instances = db.query(ProcessInstance).filter(
+                ProcessInstance.entity_type == "ticket",
+                ProcessInstance.entity_id.in_(ticket_ids),
+                ProcessInstance.is_deleted.is_(False),
+            ).all()
+            for instance in instances:
+                instance.is_deleted = True
+                for task in db.query(ProcessTask).filter(ProcessTask.instance_id == instance.id, ProcessTask.is_deleted.is_(False)):
+                    task.is_deleted = True
+        else:
+            raise AppError("ITEM_IN_USE", f"该服务项已被 {len(live_tickets)} 张工单引用，不可删除；如不再提供请改为「下架」")
     item.is_deleted = True
-    audit(db, "service_item", item.id, "delete", actor, {"code": item.item_code, "name": item.name})
+    audit(db, "service_item", item.id, "delete", actor, {"code": item.item_code, "name": item.name, "tickets_deleted": len(live_tickets) if item.is_example else 0})
     db.commit()
     return ok({"id": item.id})
 

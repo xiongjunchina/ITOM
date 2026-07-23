@@ -281,7 +281,8 @@ def test_progress_template_and_import(client, ctx):
     assert by_name["接口开发"]["parent_task_id"] == by_name["方案设计"]["id"]  # 层级由 WBS编号 建立
     assert by_name["方案设计"]["predecessor_ids"] == [by_name["需求调研"]["id"]]  # 前置按编号
     assert "." in by_name["接口开发"]["wbs_code"]  # 子任务层级编码
-    assert by_name["需求调研"]["progress"] == 100 and by_name["方案设计"]["progress"] == 50
+    # 有子项的父级完成度按子项汇总，接口开发未填写完成度（0%），所以方案设计回算为 0%。
+    assert by_name["需求调研"]["progress"] == 100 and by_name["方案设计"]["progress"] == 0
     # 里程碑跟踪派生
     track = client.get(f"/api/projects/{pid}/milestone-tracking", headers=ctx["pm"]).json()["data"]
     assert [t["name"] for t in track] == ["一期上线"]

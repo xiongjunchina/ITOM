@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.core.rbac import REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
@@ -13,6 +13,7 @@ from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, Ticket
 from app.services import process_engine
 from app.services import tickets as svc
 from app.services.audit import audit
+from app.services.team_scope import require_it_member_if_configured
 from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
 
 router = APIRouter(prefix="/api/tickets", tags=["itsm"])
@@ -110,6 +111,7 @@ def list_tickets(
 @router.post("")
 def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     _require_type_perm(db, user, body.ticket_type, "create")  # M17.2：按工单类型鉴权
+    require_it_member_if_configured(db, body.assignee, "工单受理人")
     ticket = svc.create_ticket(db, body.model_dump(exclude_none=True), user)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
     return ok(_row(ticket, db, names))
@@ -184,6 +186,8 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
     if t.status in ("closed", "rejected"):
         raise AppError("TICKET_FINAL", "终态工单不可编辑")
     data = body.model_dump(exclude_unset=True)
+    if "assignee" in data:
+        require_it_member_if_configured(db, data["assignee"], "工单受理人")
     reassigned = "assignee" in data and data["assignee"] != t.assignee
     for k, v in data.items():
         setattr(t, k, v)
@@ -261,7 +265,7 @@ def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser 
     """删除工单（M20，软删）：按类型模块 delete 权限（默认仅 admin）；级联软删流程实例与任务。"""
     t = _get_ticket(db, ticket_id, user)
     _require_type_perm(db, user, t.ticket_type, "delete")
-    ensure_not_example(t)
+    ensure_example_delete_allowed(t, db, user)
     from app.models import ProcessInstance, ProcessTask
 
     t.is_deleted = True

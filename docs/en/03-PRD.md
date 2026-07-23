@@ -36,7 +36,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 ## 2. Users & Permissions
 
-### 2.1 Roles (v1.0 initial definition; the latest finalized version is in 2.1a: 12 built-in roles, with manager removed)
+### 2.1 Roles (v1.0 initial definition; the latest finalized version is 16 built-in roles)
 
 | Role | Description | Typical user |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 ### 2.1a Matrix-Organization Roles (M3.6, added 2026-07-11; see docs/06 §6 / §7 for details)
 
-- The built-in roles are finalized at **13**: adding `cio` (IT Head), `it_bm` (IT Business-line Manager — the horizontal service line), `it_tm` (IT Technical-line Manager — the vertical resource pool), and `it_pmo` (IT Project Management Office — project governance / closing-retrospective host, added in M12, 2026-07-14); `manager` has been removed (2026-07-11, no reason to exist). The preset processes are reconfigured to align with ITIL (docs/06 §9): change approval = cio/it_tm, risk assessment = is_mgr, retrospective = it_tm, service-request user confirmation = it_bp. **Built-in role names/descriptions are editable** (code / inheritance / deletion are locked).
+- The built-in roles are finalized at **16**: `admin`, `cio`, `it_bm`, `it_tm`, `it_pdm`, `it_pdm_leader`, `it_pm`, `it_pmo`, `it_dev`, `it_dev_leader`, `it_ops`, `it_op_leader`, `is_mgr`, `it_bp`, `auditor`, and `requester`. Built-in role codes are locked; names and descriptions remain editable.
 - **Function permission matrix**: 30 modules × 4 actions (view / create / edit / delete) configured per role (System Management → Permission Configuration page); admin has implicit full authority and is not configurable; a custom role copies its template role's matrix on creation. Three-layer permission division: the function matrix governs page toggles, data-scope rules are built into the code, and process permissions live on the state-machine / process-definition pages.
 - Business domain = horizontal service line: owner (BM) + service-team members; user group = vertical technical-line resource pool: owner (TM) + group-granted roles.
 
@@ -86,6 +86,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 - Administrators with user-delete permission can soft-delete an account and unlink its person record without deleting personnel master data, department membership, or business history. The built-in `admin` and the current account cannot be deleted; the original username is released for later reprovisioning.
 - Browser QR OAuth and Feishu workplace JSAPI login share identity matching, first-time provisioning approval, and normal sign-in behavior.
 - The profile center exposes account source, effective roles, timestamps, and read-only linked HR data. Users can set a local password, bind or unbind Feishu safely, inspect only their own audit activity, and persist avatar, bio, language, notification-category preferences, theme, and content density. Both the Scheme C workbench and Scheme F portal bind the active preference directly to their application shells. Dark mode consistently uses three charcoal surface levels for canvas, header, and modules instead of a white shell or pure-black canvas; navigation, tabs, segmented controls, and other interaction states use matching dark colors with clearly readable contrast.
+- The signed-in application header exposes a “User Manual” entry immediately to the left of the language switcher. Every signed-in role can use search, product categories, popular/recent guides, and article TOCs to read the current system overview, module logic, procedures, role boundaries, and troubleshooting notes; it is maintained alongside `docs/en/user-operation-manual.md`.
 - On approval, a 12-character strong initial password is stored as recoverable encrypted ciphertext without automatic delivery. User details hide it until an administrator clicks the eye control; email is sent only through the explicit action. Both are audited, and a password change/reset clears the ciphertext. System Integrations groups Feishu, SMTP, and AD/LDAP; LDAP supports connection testing and directory-password authentication for an existing same-name ITOM account.
 
 ---
@@ -109,7 +110,7 @@ The state transitions of each record type are driven by state-machine configurat
 
 ### 3.4 Page Inventory
 
-Login, Overview, Profile Center (account/security/preferences/activity), Service Request / Incident Management / Change Management (three entry points into the same ticket domain by type; shared detail page), Service Catalog, CMDB, Problem, Vendor, Contract, Knowledge Base, Project Management, Project Detail, Requirement List / Detail, Process Definition, Process Monitoring, Team Overview, Performance Scoring, Position & Headcount, Training & Development, Activity Points, Team Culture, and System Management.
+Login, Overview, Profile Center (account/security/preferences/activity), Service Request / Incident Management / Change Management (three entry points into the same ticket domain by type; shared detail page), Service Catalog, CMDB, Problem, Vendor, Contract, Knowledge Base, Project Management, Project Detail, Requirement List / Detail, Process Definition, Process Monitoring, Team Overview, Performance Scoring, Position & Headcount, Learning & Growth (with **Training Development** and **Learning Tasks** tabs), Activity Points, Team Culture, and System Management.
 
 ---
 
@@ -125,7 +126,10 @@ Login, Overview, Profile Center (account/security/preferences/activity), Service
 
 | Panel | Metrics | Click behavior |
 | --- | --- | --- |
-| Service | Open ticket count (distribution by priority), this month's SLA attainment rate, change success rate, problem closure rate | Jump to the ticket/problem list (with filters) |
+| Service Request | Open count, P1–P4 priority distribution, resolved this month, SLA attainment rate | Jump to the service-request list (with filters) |
+| Change | Open count, P1–P4 priority distribution, pending approval, implementing, success rate | Jump to the change list (with filters) |
+| Incident | In-progress count, P1–P4 priority distribution, SLA warnings, resolved this month | Jump to the incident list (with filters) |
+| Problem | In-progress count, P1–P4 priority distribution, known errors, closure rate | Jump to the problem list (with filters) |
 | Project | Active project count, health distribution (green/yellow/red), overdue milestone count, budget execution rate | Jump to the project list |
 | Requirement | Four-stage requirement counts (Registered / Analyzed / Implemented / Closed), this month's average delivery lead time | Jump to the requirement list |
 | Team | Top-5 member workload, Top-5 growth-points ranking, this month's training sessions, hiring progress | Jump to Team Management |
@@ -200,6 +204,9 @@ Two-tier structure: **Catalog** (category, Gold/Silver/Bronze tiering) → **Ser
 
 - Service item fields (10): name ✔, owning catalog ✔, service type, owner, description, SLA response deadline (hours), SLA resolution deadline (hours), target audience, status (automatic), code (automatic).
 - A service item's annual ticket volume is displayed as a live statistic, not entered.
+- Admin/CIO can publish or unpublish catalogs and service items directly from the list using up/down actions. Unpublishing does not delete history; unpublished items are hidden from the requester service portal.
+- The service-item list supports keyword search, publish-status filtering (all/published/unpublished), clickable column sorting, and back/forward navigation between catalogs. The catalog list also shows each catalog's published and unpublished service-item counts. All system tables use the same clickable-header sorting interaction.
+- **Unified table interaction standard**: every table that presents business records must provide keyword search, core-field/value filtering, and clickable sortable headers. Editable master data with a batch-write contract (service catalogs/items, CMDB, vendors, contracts, requirements, position definitions, hiring needs, and WBS) provides an Excel template, row-level import feedback, and safe re-import. Other system configuration and transaction records remain detail-form maintained; read-only audit, runtime-process, and calculated-result tables provide current-result export but do not accept imports that could overwrite computed values.
 - Maintenance permission is controlled by the permission matrix (default cio/admin); everyone can browse (as a reference entry point for submitting tickets).
 
 ### 5.4 CMDB Configuration Management
@@ -251,6 +258,8 @@ Automatic: code, status, actual start-end (stamped on state transitions), progre
 
 State machine: `Planning → In Progress → Completed → Closed`; can move from In Progress to "On Hold / Cancelled".
 
+Recovery transitions (M12): Closed → In Progress (restart, optionally rewind to a selected workflow step and clear the actual end date), Completed → In Progress (reopen), and Cancelled → Planning (replan). The project key-node workflow is task-driven, and completing the current step requires a phase-completion note of at least five characters. “Project Initiation” and “Execution Monitoring” always remain assigned to the project manager selected on the project record, including after a workflow rewind; they must not select an arbitrary holder of the `it_pm` role. “Closing Review” is assigned by the `it_pmo` role.
+
 ### 6.2 Project Detail: 5 Tabs
 
 | Tab | Content |
@@ -264,7 +273,9 @@ State machine: `Planning → In Progress → Completed → Closed`; can move fro
 ### 6.3 WBS Tasks
 
 - 4 required on creation: task name, assignee, start/end date; optional: description, deliverable, predecessor tasks.
-- The WBS hierarchy code is auto-generated (by tree position); a status update drives progress (Not started 0% / In progress 50% / Done 100%).
+- The WBS hierarchy code is auto-generated (by tree position); completion provides 0%/50%/100% presets and accepts a custom integer from 0–100, while status is derived from completion and planned end date (0% not started, 100% done, otherwise in progress/overdue). Explicitly setting any parent to 100% cascades 100% to all descendants; changing a child recomputes each ancestor as the arithmetic average of its direct children; overall project progress is duration-weighted over leaf tasks only to avoid double-counting parents.
+- The wide WBS table provides an Excel-style freeze pane: the header remains visible during vertical scrolling and the first three columns remain visible during horizontal scrolling. One sticky bottom horizontal scrollbar remains available. Users can drag header separators to resize columns and row edges to resize rows; the layout is saved per project in the current browser.
+- Every table that exceeds the content width provides one sticky bottom horizontal scrollbar; the active table's scrollbar remains usable when the user reaches the table bottom or the table body leaves the viewport, and only one active-table scrollbar is shown per viewport. Table headers remain visible during page scrolling. The WBS table additionally freezes the first three columns.
 - Completing a task on time produces a point event.
 
 ### 6.4 Milestones
@@ -340,7 +351,7 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 
 **Positioning**: provide configurable step-based processes and autonomy-level annotations for tickets/changes/requirements/projects, without heavy machinery.
 
-- Three-layer model: **Process Definition** (with steps: name / sequence / default role / L1–L4 autonomy level / SLA deadline) → **Process Instance** (triggered by a record) → **Process Task** (a step instance, assigned to a person).
+- Three-layer model: **Process Definition** (with steps: name / sequence / node type [processing/approval] / default role / CC roles / L1–L4 autonomy level / SLA deadline) → **Process Instance** (triggered by a record) → **Process Task** (a step instance, assigned to a person). Approval nodes expose top-right approve (optional comment) and reject (required reason); processing nodes advance via “Complete step”.
 - Autonomy levels: L1 fully automatic / L2 system suggests, human confirms / L3 human acts, system assists / L4 purely manual. Used for process-monitoring display and later performance analysis; it does not control execution.
 - Initially 6–8 built-in processes: incident handling, service-request delivery, change approval & implementation, problem analysis, requirement delivery, project key milestones.
 - Assignment rules: assigned by each step's default position role (e.g. requirement registration / business alignment → it_bp, requirement analysis → it_pdm, project milestone → it_pm, change implementation → it_ops, development task → it_dev, change risk assessment → is_mgr); reassignable within an instance, with no external dependency.
@@ -358,17 +369,25 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 
 **Unified scope (M40)**: this module reports and displays IT team members only, never the whole-company population. Membership primarily follows `department.dept_type=it`; legacy accounts without a department are recognized through IT roles such as `cio`, `it_*`, and `is_mgr`. Business-department members and requester/auditor-only users are excluded from workload, points, performance, campaign awards, position occupancy, and team member pickers.
 
-### 9.1 Performance Management (admin/cio) [finalized 2026-07-12 M6.1]
+### 9.1 Performance Management (staged review)
 
-**Performance score ≠ contribution points**: performance is the score auto-computed within an assessment period per the "position scoring scheme"; points are only one dimension of it.
-- **Assessment period (finalized 2026-07-12 as a quarterly system)**: Q1, Q2, Q3 are assessed individually per quarter (YYYY-Q1/Q2/Q3); the fourth quarter does not run a single-quarter assessment — October–December enters the **full-year assessment** YYYY-All. For the full-year assessment, all data is scoped to the whole year (points are aggregated across all periods of the year, each tagged). Example: the 2025 assessment periods are 2025-Q1, 2025-Q2, 2025-Q3, 2025-All.
+Performance is role-based for the matrix organization, not position-only. Business-line role weights plus professional-line role weights equal 80%; team contribution is fixed at 20%. Each role is independently scored out of 100. Business-line leads/BPs score business roles, professional-line leads score product/project/development/operations roles, and the CIO scores professional-line leads and platform roles. The CIO is not included in this regular score.
 
-- **Scoring scheme (perf_scheme, fully user-customizable)**: each scheme = applicable positions (multi-select) + a list of dimensions × weights. Exact position match takes priority; unmatched positions fall through to the single global "default fallback scheme." One position may not hit two enabled schemes.
-- **Dimension library (each dimension yields a normalized score of 0–100)**: Service Tickets (SLA attainment × 60% + satisfaction × 40%), Operations Compliance — Change (ratio of normally-closed-after-approval), Project Delivery (WBS on-time completion rate), Requirement Delivery (requirement-task on-time completion rate), Business-domain Satisfaction (the average ticket satisfaction of everyone in one's domain — a shared metric), Knowledge Contribution (publish × 20 + marked helpful × 5, capped at 100), Activity Points (period points / team maximum × 100).
-- **Scoring**: total = Σ(dimension score × weight) ÷ Σ(effective weights); a dimension with no data is excluded and auto-normalized; a public dimension (knowledge/points) with no contribution scores 0. The dimension definitions are the v1 default implementation; the page shows the definition notes and will be adjusted once the official definitions are confirmed.
-- Two sub-pages: **Overview** (a full-roster score table with dynamic dimension columns) + **Scoring Rules** (scheme CRUD: position binding, dimension-weight editing, default fallback, enable toggle).
-- **Adjudication and bonus/penalty (2026-07-12 M6.2)**: the dimension scores computed by the system per its definitions are only an **initial reference value**; management roles (admin/cio/it_bm/it_tm) can adjudicate and override per person per dimension (with a clear-and-restore option that reverts to the system value, keeping an audit trail); additionally there are two manual dimensions, **bonus items / penalty items** — bonuses for special contributions within the assessment period and penalties for violations, with a mandatory description shown on the Overview. Total = Σ(adjudicated dimension score × weight) ÷ Σ(effective weights) + bonuses − penalties.
-- Typical configuration examples: the operations track = mainly Service Tickets + Change Compliance; the R&D / product track = mainly Requirement/Project Delivery + Business-domain Satisfaction; Knowledge/Points are public dimensions. The seed provides three reference templates (default fallback / operations track / R&D-product track), all editable and deletable.
+Business-line leads may adjust only business-role components in their assigned scope; professional-line leads may adjust only professional-role components in their assigned pool. No evaluator may self-score, edit the other line, edit raw team-contribution points, or edit external raw facts. The CIO sees all system reference scores and manager proposals, performs final review, may adjust every score, and directly scores leaders and platform dimensions.
+
+The lifecycle is `draft → auto_scored → external_input → manager_review → cio_review → published → locked`. System reference scores, manager proposals, CIO decisions, and effective scores are stored separately. Unlocking a published period creates a new version rather than silently overwriting the published snapshot.
+
+Business satisfaction and other facts unavailable in the system are entered, verified, locked, and versioned on a dedicated external-input page, with evaluator, raw score, scale, normalized score, reason, and evidence. External business satisfaction is stored separately from internal ITSM satisfaction. Before publication, only scoped reviewers and the CIO see review details; evaluated employees see only their published final result.
+
+The existing quarterly periods remain `YYYY-Q1`, `YYYY-Q2`, `YYYY-Q3`, and annual `YYYY-All`. Role assignments, weights, evaluators, rules, and published results are snapshotted and auditable. Bonus and penalty remain separate adjustments.
+
+Team contribution uses six dimensions: special activities, learning and growth, training/knowledge sharing, suggestions/process improvement, knowledge assets/retrospectives, and cross-team support. It is a 100-point score that contributes a fixed 20%.
+
+Facts already used for role-result metrics, such as ticket SLA, change compliance, requirement delivery, project milestones, and process governance, are classified as `role_result` and are not counted again in team contribution. Only `team_contribution` events enter the fixed 20% bucket.
+
+The detailed role profiles, evaluator rules, learning-task model, APIs, and acceptance criteria are defined in [IT Team Role Performance PRD](08-it-team-role-performance-prd.md).
+The current “Performance → Scoring Rules” UI is the matrix-role profile design: it shows per-role dimension weights, system/external/manual collection modes, and the employee-period matrix of business/professional role weight (80%) plus team contribution (20%). The legacy `perf_scheme` API remains only for historical compatibility and is not the primary UI design.
+- The “Performance → Staged Review” overview is aggregated to one row per employee. Selecting “Score details” opens an employee-level detail page with all role weights, dimensions, system reference scores, manager proposals, CIO final/adjusted scores, effective scores, and adjustment reasons, subject to permission scope.
 
 ### 9.2 Growth Points
 
@@ -393,8 +412,11 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 
 
 - Personnel master data: name ✔, department, position (linked to the position definition), team grouping, status (active/departed), hire date, skill tags.
-- Position definition: position name ✔, division-of-duties description, headcount; the page shows a "headcount vs. active" gap overview.
-- Hiring need: position ✔, headcount ✔, status (To Recruit / Interviewing / Onboarded / Cancelled), progress note.
+- Position definition: position name ✔, stable position code, family, service domains, primary roles, level framework, location, key skills, contractor boundary, status, responsibilities and formal headcount; the page shows real-time formal headcount vs. active vs. gap.
+- Formal headcount counts only active formal IT-team members; contractors/interns are excluded. The local `position_id` assignment is preserved when Feishu organization data is synchronized.
+- Hiring need: position ✔, level (senior/mid/junior), headcount ✔, qualification ✔, status (To Recruit / Interviewing / Onboarded / Cancelled), progress note; one position can have multiple level/batch needs.
+- Both pages support Excel export, template download and batch import. Exported files include a field-hint row and can be edited and re-imported; imports support create/update matching and return row-level errors with audit logging. Recoverable invalid column widths are cleaned automatically; other corrupt files, over-length fields, code/name conflicts, and codes belonging to deleted positions are surfaced as readable row-level results instead of an HTTP 500.
+- By default, `admin` and `cio` can edit and delete position definitions and hiring needs. Both lists provide inline row editing with save/cancel and delete actions; a position still referenced by people or hiring needs cannot be deleted until the references are handled.
 
 ### 9.4 Training & Development
 
@@ -417,13 +439,13 @@ Single-page rich-text management: vision, goals, code of conduct (manager/admin 
 
 Menu structure (finalized M3.9, 6 entry points):
 
-1. **Organization Management**: the Org Structure tab treats Feishu as the source of truth and lets administrators select a shared digital-team department scope after sync, optionally including descendants. That scope drives team statistics and all domain owner/member selectors. Administrators may delete a business domain only when no active requirement references it. Feishu settings independently control whether scheduled org sync is allowed and select a 1/6/12/24-hour interval.
+1. **Organization Management**: the Org Structure tab treats Feishu as the source of truth and lets administrators select a shared digital-team department scope after sync, optionally including descendants. That scope drives team statistics and every operational person selector: project managers/task owners, requirement owners/reviewers/development owners, ticket/problem/service-item/CI/contract owners, and user-group owners/members. The UI loads these options with `scope=it`; once a scope is configured, the backend validates assignments as well, so client-side filtering is not the only guard. Administrators may delete a business domain only when no active requirement references it. Feishu settings independently control whether scheduled org sync is allowed and select a 1/6/12/24-hour interval.
 2. **User & Group Management**: "Users" (account / roles / auth source / provisioning default roles) + "User Groups" (technical-line resource pool: owner TM / group-granted roles / members).
-3. **Roles & Permissions**: "Role Definitions" (12 built-in, renamable + custom copies of a template) + "Pre-assignment Rules" (department → first-provisioning default roles) + "Permission Configuration" (role × 30 modules × 4 actions matrix).
+3. **Roles & Permissions**: "Role Definitions" (16 built-in, renamable + custom copies of a template) + "Pre-assignment Rules" (department → first-provisioning default roles) + "Permission Configuration" (role × 30 modules × 4 actions matrix).
 4. **Data Dictionary** (dropdown items such as business line / closure code / category + system configuration such as company name).
 5. **State Machine Configuration** (visual editing of each record type's states and transition rules, including in-use-state deletion protection).
 6. **Audit Log** (viewable by admin/is_mgr/auditor).
-7. **Interface & Branding** (admin): bilingual product identity, logos/favicon, login portal, controlled colors/themes/density/sidebar, role landing pages, announcements, and environment markers. Selected images enter a draggable, zoomable and rotatable cropper before upload: 4:1 for horizontal logos, 1:1 for square logos/favicon, and 16:9 for login backgrounds; only the confirmed crop is uploaded. The authenticated experience is role-specific: requester-only business users receive Scheme F, a modular service portal with top navigation, help search, shortcuts, and a card-based service catalog; every other role receives Scheme C, a precise high-density workbench with a compact 216px light sidebar whose first- and second-level navigation retain a coordinated light hierarchy. Sidebar width is constrained by the logo/title footprint and the longest single-line navigation label, leaving only necessary horizontal breathing room. In the expanded internal sidebar, the horizontal logo occupies its own row above the system name, and the logo, system name, and English subtitle share one centered axis; the collapsed sidebar uses the square logo. The sidebar footer does not duplicate the current user and role; account access remains in the top bar. Changes follow draft → preview → publish with version history and rollback.
+7. **Interface & Branding** (admin): bilingual product identity, logos/favicon, login portal, controlled colors/themes/density/sidebar, role landing pages, announcements, and environment markers. Selected images enter a draggable, zoomable and rotatable cropper before upload: 4:1 for horizontal logos, 1:1 for square logos/favicon, and 16:9 for login backgrounds; only the confirmed crop is uploaded. The authenticated experience is role-specific: requester-only business users receive Scheme F, a modular service portal with top navigation, help search, shortcuts, and a card-based service catalog; every other role receives Scheme C, a precise high-density workbench with a compact 216px light sidebar whose first- and second-level navigation retain a coordinated light hierarchy. Sidebar width is constrained by the logo/title footprint and the longest single-line navigation label, leaving only necessary horizontal breathing room. In the expanded internal sidebar, the horizontal logo occupies its own row above the system name, and the logo, system name, and English subtitle share one centered axis; the collapsed sidebar uses the square logo. The expanded sidebar menu area scrolls independently when open items exceed the viewport, while the brand area and top account access remain visible. The sidebar footer does not duplicate the current user and role; account access remains in the top bar. Changes follow draft → preview → publish with version history and rollback.
 
 Also: SLA policies are maintained on the ITSM-SLA board page; the notification outbox is retained in the background.
 
@@ -436,7 +458,7 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | Item | Requirement |
 | --- | --- |
 | Tech stack | Backend FastAPI + SQLAlchemy + PostgreSQL; frontend React + Ant Design; single repository |
-| Deployment | Runs on a single machine with Docker Compose (backend/frontend/DB, three containers); K8s manifests reserved |
+| Deployment | IDC Kubernetes is the sole delivery and acceptance environment; release uses `push-images.sh` + `k8s-deploy.sh`; Docker Compose is temporary local troubleshooting only |
 | Performance | List pages ≤ 1s; Dashboard ≤ 2s; sized for 100k tickets over 5 years |
 | Security | Hashed password storage, JWT sessions, interface-level RBAC, immutable audit logs |
 | API convention | Unified response `{success, data, total, page}`; RESTful; OpenAPI docs auto-generated |

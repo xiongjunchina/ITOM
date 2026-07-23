@@ -2,6 +2,7 @@
 
 from sqlalchemy.orm import Session
 
+from app.core.errors import AppError
 from app.models import AuthUser, Department, OrgMember, Role, UserGroup, UserGroupMember
 from app.services.org_settings import expand_department_ids, get_org_settings
 
@@ -59,3 +60,30 @@ def it_member_ids(db: Session, active_only: bool = True) -> set[str]:
 
 def is_it_member(db: Session, person_id: str | None) -> bool:
     return bool(person_id and person_id in it_member_ids(db))
+
+
+def digital_team_scope_configured(db: Session) -> bool:
+    """是否已由管理员配置数字化团队根部门。"""
+    return bool(get_org_settings(db).digital_team_department_ids)
+
+
+def require_it_member_if_configured(db: Session, person_id: str | None, label: str = "人员") -> None:
+    """配置了统一口径后强制校验；未配置时兼容历史数据录入流程。"""
+    if not person_id:
+        return
+    if digital_team_scope_configured(db) and not is_it_member(db, person_id):
+        raise AppError("NOT_IT_TEAM_MEMBER", f"{label}只能选择数字化团队成员")
+
+
+def require_it_member(db: Session, person_id: str | None, label: str = "人员") -> None:
+    """校验业务负责人/处理人等人员选择必须落在数字化团队范围内。"""
+    if not is_it_member(db, person_id):
+        raise AppError("NOT_IT_TEAM_MEMBER", f"{label}只能选择数字化团队成员")
+
+
+def require_it_members(db: Session, person_ids: list[str] | set[str], label: str = "人员") -> None:
+    """批量校验人员选择，避免仅依赖前端 scope 参数。"""
+    allowed = it_member_ids(db)
+    invalid = {person_id for person_id in person_ids if person_id} - allowed
+    if invalid:
+        raise AppError("NOT_IT_TEAM_MEMBER", f"{label}只能选择数字化团队成员")

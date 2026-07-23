@@ -10,9 +10,19 @@ from app.db import GlidBase, JsonCol
 class Position(GlidBase):
     __tablename__ = "position"
 
+    position_code: Mapped[str | None] = mapped_column(String(32), index=True, comment="岗位编码")
     name: Mapped[str] = mapped_column(String(64))
+    position_family: Mapped[str | None] = mapped_column(String(32), comment="岗位族/序列")
     duties: Mapped[str | None] = mapped_column(Text, comment="分工职责")
     headcount: Mapped[int] = mapped_column(Integer, default=0, comment="编制数")
+    service_domains: Mapped[list | None] = mapped_column(JsonCol, default=list, comment="服务业务域名称列表")
+    primary_roles: Mapped[list | None] = mapped_column(JsonCol, default=list, comment="主责角色 code 列表")
+    level_framework: Mapped[str | None] = mapped_column(String(64), comment="职级/能力框架")
+    location_scope: Mapped[str | None] = mapped_column(String(128), comment="办公地点范围")
+    skills: Mapped[str | None] = mapped_column(Text, comment="关键技能，分号分隔")
+    contractor_allowed: Mapped[bool] = mapped_column(Boolean, default=False, comment="是否允许外包/合同制")
+    status: Mapped[str] = mapped_column(String(16), default="启用", comment="启用/停用")
+    sort: Mapped[int] = mapped_column(Integer, default=0, comment="展示顺序")
 
 
 class Department(GlidBase):

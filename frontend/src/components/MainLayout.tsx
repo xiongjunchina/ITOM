@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Avatar, Button, Breadcrumb, Dropdown, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
-import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined } from '@ant-design/icons';
+import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, BookOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import { useAuthStore } from '../stores/auth';
@@ -44,6 +44,7 @@ export default function MainLayout() {
   }, [token]);
 
   const menuItems = useMemo(() => toAntdItems(filterMenu(MENU_TREE, user), lang), [user, lang]);
+  const selectedMenuPath = location.pathname.startsWith('/team/performance/review/') ? '/team/performance' : location.pathname;
   const requesterPortal = isRequesterOnly(user);
   const portalItems = useMemo(() => {
     const visible = filterMenu(MENU_TREE, user);
@@ -51,10 +52,7 @@ export default function MainLayout() {
     return leaves.slice(0, 6);
   }, [user]);
 
-  const openKey = useMemo(() => {
-    const seg = location.pathname.split('/')[1];
-    return seg && ['itsm', 'process', 'team', 'admin'].includes(seg) ? [seg] : [];
-  }, [location.pathname]);
+  const openKey = useMemo(() => breadcrumbOf(location.pathname).slice(0, -1), [location.pathname]);
   const [openKeys, setOpenKeys] = useState<string[]>(openKey);
   useEffect(() => {
     setOpenKeys((prev) => Array.from(new Set([...prev, ...openKey])));
@@ -138,6 +136,9 @@ export default function MainLayout() {
           </nav>
           <Space size={12}>
             <Button className="portal-f__search" type="text" icon={<SearchOutlined />} aria-label="搜索" />
+            <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
+              {t('header.manual')}
+            </Button>
             <LangSwitch />
             <NotificationBell />
             {userControl}
@@ -165,7 +166,7 @@ export default function MainLayout() {
           theme="light"
           mode="inline"
           items={menuItems}
-          selectedKeys={[location.pathname]}
+          selectedKeys={[selectedMenuPath]}
           openKeys={collapsed ? undefined : openKeys}
           onOpenChange={(keys) => setOpenKeys(keys)}
           onClick={({ key }) => navigate(key)}
@@ -181,6 +182,9 @@ export default function MainLayout() {
             </div>
           </Space>
           <Space size="middle">
+            <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
+              {t('header.manual')}
+            </Button>
             <LangSwitch />
             <NotificationBell />
             {userControl}

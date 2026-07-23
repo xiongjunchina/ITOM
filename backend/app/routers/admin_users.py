@@ -9,6 +9,7 @@ from app.models import AuthUser
 from app.schemas.common import ok, paginate
 from app.schemas.support import UserCreate, UserUpdate
 from app.services.audit import audit
+from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin"])
 
@@ -48,6 +49,7 @@ def list_users(page: int = 1, page_size: int = 20, q: str = "", db: Session = De
 @router.post("")
 def create_user(body: UserCreate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_users", "create"))):
     _check_roles(db, body.roles)
+    require_it_member_if_configured(db, body.person_id, "账号关联人员")
     if db.query(AuthUser).filter(AuthUser.username == body.username).first():
         raise AppError("USERNAME_TAKEN", "用户名已存在")
     roles = body.roles
@@ -93,6 +95,7 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
         user.initial_password_sent_at = None
         changes["password"] = "reset"
     if body.person_id is not None:
+        require_it_member_if_configured(db, body.person_id or None, "账号关联人员")
         user.person_id = body.person_id or None
     if body.is_active is not None:
         changes["is_active"] = body.is_active

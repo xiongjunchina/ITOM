@@ -45,7 +45,7 @@ ITOM/
 │   └── tests/
 ├── frontend/
 │   └── src/{api, components, pages, router.tsx, stores}
-├── deploy/                # docker-compose.yml, Dockerfile×2, nginx.conf, K8s manifests (reserved)
+├── deploy/                # docker-compose.yml, Dockerfile×2, nginx.conf, IDC K8s manifests and release scripts
 └── docs/                  # this design-document series
 ```
 
@@ -99,7 +99,7 @@ POST /api/tickets/{id}/satisfaction      # requester rating
 POST /api/tickets/{id}/escalate-problem  # one-click escalation to a problem
 POST /api/tickets/{id}/to-knowledge      # one-click knowledge capture (draft)
 GET/POST/PATCH /api/problems | POST /api/problems/{id}/transition
-GET/POST/PATCH /api/catalogs | /api/service-items
+GET/POST/PATCH /api/catalogs | /api/service-items. The catalog list returns `item_count` plus `published_item_count` and `unpublished_item_count`; the service-item GET endpoint accepts `catalog_id`, `q` (code/name/type/audience/owner keyword), `status` (published/unpublished; omitted means all), `sort_by`, and `sort_dir` for list filtering and sorting.
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # impact analysis (upstream/downstream + linked tickets)
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # live attainment rate
@@ -139,15 +139,28 @@ POST /api/process-tasks/{id}/complete | /reassign
 
 ```text
 GET /api/team/overview                   # load / points Top / training count / hiring progress aggregation
-GET/POST/PATCH /api/positions | /api/hiring-needs
-GET/POST /api/activities                 # training activities
+GET/POST/PATCH /api/positions | /api/hiring-needs; Excel template/export/import endpoints are also available at `/api/positions/{template,export,import}` and `/api/hiring-needs/{template,export,import}`.
+GET/POST /api/trainings                  # training activities
 GET/PUT /api/team-charter
 GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
-GET/POST/PATCH /api/admin/point-rules
+GET/PATCH /api/point-rules
 POST /api/points/adjust                  # admin manual point adjustment (remark required)
-GET/POST/PATCH /api/admin/performance-rules
-GET /api/performance/scores?period= | POST /api/performance/recompute
+GET/POST/PATCH /api/admin/performance/role-profiles
+PUT /api/admin/performance/role-profiles/{id}/dimensions
+GET/PUT /api/admin/performance/assignments?period=YYYY-Qn
+GET /api/admin/performance/reviews?period=YYYY-Qn
+PUT /api/admin/performance/reviews/{assignment_id}/components/{dimension_code}
+GET/POST/PATCH /api/admin/performance/external-inputs
+GET /api/admin/performance/external-inputs?period=YYYY-Qn
+POST /api/admin/performance/{period}/recompute
+POST /api/admin/performance/{period}/submit-manager-review
+POST /api/admin/performance/{period}/submit-cio-review
+POST /api/admin/performance/{period}/publish
+POST /api/admin/performance/{period}/unlock
+GET /api/my/performance?period=YYYY-Qn
+GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
+GET/PUT /api/admin/performance/contribution-rules # CIO/admin team-contribution rules and satisfaction ratio
 ```
 
 ### 4.7 Dashboard
@@ -180,6 +193,8 @@ Events are published by the service layer within the transaction; `→points` me
 | knowledge.voted | Marked helpful | →points (author) |
 | activity.registered | Training registered | →points (presenter/organizer/participant scored separately) |
 | idea.submitted / liked / adopted | Suggestion | →points; adopted→notify (submitter) |
+| performance.review_submitted | Manager/CIO review submitted | →notify (next stage), →audit |
+| performance.published / unlocked | Performance published/new version created | →notify (evaluated employee), →audit |
 
 Scheduled tasks (a backend-built-in scheduler, every 15 minutes): SLA-imminent scan, contract-expiry scan, milestone-overdue scan, contract-status advancement.
 
@@ -187,9 +202,12 @@ Scheduled tasks (a backend-built-in scheduler, every 15 minutes): SLA-imminent s
 
 1. **State machine**: `services/workflow.py` single entry point `transition(entity, to, fields, actor)` — look up workflow_transition to validate role and legality → validate the required staged fields for that transition → update + stamp → publish the event → write the audit. Shared by all records.
 2. **Point-engine idempotency**: point_entry has UNIQUE(event_type, source_entity_type, source_entity_id, person), so the same record + same event does not score twice (reopening and re-resolving does not double-score).
-3. **Computed-column maintenance**: after a wbs_task/cost_entry/milestone write, the service layer recomputes the owning project's progress_pct/actual_cost/health_status and writes them back (same transaction).
+3. **Computed-column maintenance**: after a wbs_task/cost_entry/milestone write, the service layer recomputes the owning project's progress_pct/actual_cost/health_status and writes them back (same transaction). WBS `progress` accepts an integer percentage from 0–100. Process steps use `node_type=processing|approval` to distinguish handling and approval semantics. Approval tasks expose `POST /api/process-tasks/{id}/approve` (optional comment) and `POST /api/process-tasks/{id}/reject` (required reason); the flow-diagram complete-step entry remains supported.
 4. **Two-step charter import**: the parse endpoint only returns a draft JSON + warnings (no persistence); the front end shows a confirmation page, and after the user corrects it, the create endpoint persists it. A parse failure falls back to the manual form.
 5. **SLA timing**: on-hold time accumulates into paused_minutes; the attainment check = (resolved_at − submitted_at − paused) ≤ target.
+6. **Matrix-role performance review**: the system first generates reference scores from ITSM, requirements, projects, processes, and points events. Business-line leads can write only business-role proposals; professional-line leads can write only professional-role proposals; platform roles and leaders' own scores are entered directly by the CIO. The backend enforces `performance_role_assignment.review_scope`; UI hiding is not an authorization boundary.
+7. **External-input and publication isolation**: external business satisfaction is stored in `performance_external_input` and must be submitted, verified, and locked before it affects scoring. `performance_score_component` keeps reference, stage proposal, and effective values separately. `/api/my/performance` returns published snapshots only.
+8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again.
 
 ## 7. Deployment Architecture
 
@@ -197,12 +215,12 @@ Scheduled tasks (a backend-built-in scheduler, every 15 minutes): SLA-imminent s
 # deploy/docker-compose.yml form
 services:
   db:        postgres:16  (volume + daily pg_dump to a host backup directory)
-  backend:   uvicorn, depends on db, runs alembic upgrade + seed (idempotent) on startup
+  backend:   uvicorn, depends on db, runs alembic upgrade + seed (idempotent) on startup; with `SEED_INITIAL_CONFIG=1`, a fresh database also receives the six workflows and the verified login/Logo branding, while existing branding drafts/releases are preserved
   frontend:  nginx serving the build output, /api reverse-proxied to the backend
 ```
 
 - Environment variables: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_INIT_PASSWORD`, `TZ=Asia/Shanghai`.
-- Starts on single-machine Docker Compose; `deploy/k8s/` reserves the SN IDC cluster manifests (later, on demand).
+- IDC Kubernetes is the sole delivery and acceptance environment: run `deploy/k8s/push-images.sh` followed by `deploy/k8s/k8s-deploy.sh`, then verify the external health endpoint and user-visible pages. Docker Compose is retained only for temporary local troubleshooting.
 - Logging: structured JSON to stdout (viewable via docker logs).
 
 ## 8. Milestone Mapping (development order)
@@ -251,4 +269,6 @@ POST /api/admin/ui-branding/reset
 
 Public reads need no session. Admin endpoints require `admin_ui_branding`; all writes are audited. The client merges missing data with built-in defaults so a missing or failed branding configuration can never lock users out of login.
 M42 adds `GET/PATCH /api/admin/org-settings` for the digital-team department scope and Feishu scheduled-sync policy. `DELETE /api/admin/business-domains/{id}` returns `DOMAIN_IN_USE` (409) while an active requirement references the domain. The scheduler checks due state every 15 minutes and reuses `org_sync.run_sync` for execution.
+
+Person-selector contract: operational owner/assignee/reviewer/project-manager, service-item/CI/contract owner, user-group owner/member, and account-linking dropdowns load `GET /api/members?scope=it`. Once administrators configure the digital-team roots, corresponding write APIs re-check the same scope with `require_it_member_if_configured` (including batch group members); before configuration, legacy records remain writable for compatibility while `scope=it` keeps its existing filtered semantics.
 M44: approval generates a 12-character password and stores encrypted ciphertext without sending. `GET /api/admin/users/{id}/initial-password` reveals it under authorization; `POST .../initial-password/email` sends it explicitly. Global SMTP/LDAP settings use `GET/PUT /api/admin/integrations/email|ldap`, with connection-test endpoints and masked secrets.

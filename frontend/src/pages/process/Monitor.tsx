@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Select, Space, Table, Tag, Typography } from 'antd';
+import { Button, Card, Select, Space, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
@@ -127,6 +128,7 @@ export default function Monitor() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '流程实例监控', searchPlaceholder: '搜索流程、当前节点或处理人' }}
         sticky
         scroll={{ x: 1200 }}
         pagination={{

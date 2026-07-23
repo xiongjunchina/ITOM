@@ -51,13 +51,19 @@ spec:
             - name: pgdata
               mountPath: /var/lib/postgresql/data
           readinessProbe:
-            exec: { command: ["sh", "-c", "pg_isready -U aom -d new_aom"] }
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "aom", "-d", "new_aom", "-t", "3"]
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
-            exec: { command: ["sh", "-c", "pg_isready -U aom -d new_aom"] }
+            exec:
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "aom", "-d", "new_aom", "-t", "3"]
             initialDelaySeconds: 30
             periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { cpu: "1", memory: "1Gi" }

@@ -7,11 +7,11 @@ import {
   Popconfirm,
   Select,
   Switch,
-  Table,
   TreeSelect,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, SaveOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { DEPT_TYPE_LABELS, PROVISION_MATCH_LABELS } from '../../api/types';
@@ -252,6 +252,7 @@ export default function ProvisionRules() {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        standardToolbar={{ exportFileName: '自动开通规则', searchPlaceholder: '搜索匹配类型、匹配值或角色' }}
         pagination={false}
       />
       <Button

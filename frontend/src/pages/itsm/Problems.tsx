@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Badge, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
+import { Badge, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
@@ -38,6 +39,7 @@ export default function Problems() {
   const et = useEnums();
   const user = useAuthStore((s) => s.user);
   const canDelete = hasPermission(user, 'problems', 'delete'); // M21：默认矩阵仅 admin
+  const isAdmin = !!user?.permissions?.['*'];
   const [items, setItems] = useState<ProblemRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -90,7 +92,7 @@ export default function Problems() {
     }
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -179,7 +181,7 @@ export default function Problems() {
             width: 70,
             fixed: 'right' as const,
             render: (_: unknown, r: ProblemRow) =>
-              r.is_example ? null : (
+              r.is_example && !isAdmin ? null : (
                 <Popconfirm
                   title={t('common.deleteConfirm')}
                   onConfirm={async () => {
@@ -249,6 +251,7 @@ export default function Problems() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '问题清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 1100 }}
         pagination={{

@@ -63,14 +63,34 @@ class MemberUpdate(BaseModel):
 
 class PositionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
+    position_code: str | None = Field(default=None, max_length=32)
+    position_family: str | None = Field(default=None, max_length=32)
     duties: str | None = None
     headcount: int = 0
+    service_domains: list[str] = []
+    primary_roles: list[str] = []
+    level_framework: str | None = Field(default=None, max_length=64)
+    location_scope: str | None = Field(default=None, max_length=128)
+    skills: str | None = None
+    contractor_allowed: bool = False
+    status: str = Field(default="启用", pattern="^(启用|停用)$")
+    sort: int = 0
 
 
 class PositionUpdate(BaseModel):
     name: str | None = None
+    position_code: str | None = Field(default=None, max_length=32)
+    position_family: str | None = Field(default=None, max_length=32)
     duties: str | None = None
     headcount: int | None = None
+    service_domains: list[str] | None = None
+    primary_roles: list[str] | None = None
+    level_framework: str | None = Field(default=None, max_length=64)
+    location_scope: str | None = Field(default=None, max_length=128)
+    skills: str | None = None
+    contractor_allowed: bool | None = None
+    status: str | None = Field(default=None, pattern="^(启用|停用)$")
+    sort: int | None = None
 
 
 class MasterDataCreate(BaseModel):

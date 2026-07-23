@@ -31,6 +31,97 @@ def task_weight(t: WbsTask) -> int:
     return max((t.end_date - t.start_date).days + 1, 1)
 
 
+def leaf_wbs_tasks(tasks: list[WbsTask]) -> list[WbsTask]:
+    """返回当前项目的末级 WBS 任务。
+
+    父级完成度是子项汇总值，项目整体进度只统计末级任务，避免父子任务被重复计权。
+    """
+    active_ids = {t.id for t in tasks}
+    parent_ids = {t.parent_task_id for t in tasks if t.parent_task_id in active_ids}
+    return [t for t in tasks if t.id not in parent_ids]
+
+
+def apply_wbs_progress(tasks: list[WbsTask], task: WbsTask, progress: int) -> list[WbsTask]:
+    """应用 WBS 层级进度规则并返回实际被更新的任务。
+
+    - 显式将任一任务设为 100% 时，所有后代任务同步为 100%；
+    - 有子项的父级除显式 100% 外始终保持汇总值，不能被手工写入一个与子项不一致的比例；
+    - 末级任务的其它进度只更新当前任务；
+    - 修改子项后，父级按直接子项完成度的算术平均值递归回算。
+
+    调用方负责在同一事务中持久化并处理完成事件。所有任务必须属于同一项目且已过滤删除项。
+    """
+    by_id = {t.id: t for t in tasks}
+    children: dict[str | None, list[WbsTask]] = {}
+    for item in tasks:
+        children.setdefault(item.parent_task_id, []).append(item)
+
+    changed: list[WbsTask] = []
+
+    def set_progress(item: WbsTask, value: int):
+        value = max(0, min(100, int(value)))
+        if (item.progress or 0) != value:
+            item.progress = value
+            changed.append(item)
+
+    direct_children = children.get(task.id, [])
+    if direct_children and progress < 100:
+        # 父级是派生值：即便其它客户端直接调用接口，也不能写入脱离子项的比例。
+        progress = int(sum((child.progress or 0) for child in direct_children) / len(direct_children) + 0.5)
+    set_progress(task, progress)
+
+    # 只有用户显式操作的目标任务为 100% 时才向下级联；父级被自动回算为 100% 不会反向覆盖兄弟节点。
+    if progress >= 100:
+        stack = list(children.get(task.id, []))
+        while stack:
+            child = stack.pop()
+            set_progress(child, 100)
+            stack.extend(children.get(child.id, []))
+
+    # 从目标的父级开始向上回算。使用常规四舍五入，避免 Python banker rounding 造成 12.5→12。
+    parent_id = task.parent_task_id
+    while parent_id:
+        parent = by_id.get(parent_id)
+        direct_children = children.get(parent_id, [])
+        if not parent or not direct_children:
+            break
+        average = int(sum((child.progress or 0) for child in direct_children) / len(direct_children) + 0.5)
+        set_progress(parent, average)
+        parent_id = parent.parent_task_id
+
+    return changed
+
+
+def recalculate_wbs_hierarchy(tasks: list[WbsTask]) -> list[WbsTask]:
+    """按当前子项值回算所有父级，供新增/删除/导入和存量迁移使用。"""
+    by_id = {task.id: task for task in tasks}
+    children: dict[str, list[WbsTask]] = {}
+    for task in tasks:
+        if task.parent_task_id in by_id:
+            children.setdefault(task.parent_task_id, []).append(task)
+
+    changed: list[WbsTask] = []
+    visited: set[str] = set()
+
+    def roll(task: WbsTask):
+        if task.id in visited:
+            return
+        visited.add(task.id)
+        direct = children.get(task.id, [])
+        for child in direct:
+            roll(child)
+        if not direct:
+            return
+        average = int(sum((child.progress or 0) for child in direct) / len(direct) + 0.5)
+        if (task.progress or 0) != average:
+            task.progress = average
+            changed.append(task)
+
+    for task in tasks:
+        roll(task)
+    return changed
+
+
 def _coerce_date(v) -> date | None:
     if not v:
         return None
@@ -53,6 +144,7 @@ def create_wbs_by_code(db: Session, project: Project, rows: list[dict], *, defau
     from datetime import datetime
 
     from app.models import OrgMember, WbsTask
+    from app.services.team_scope import digital_team_scope_configured, is_it_member
 
     members = {m.name: m.id for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")}
     errors: list[str] = []
@@ -70,6 +162,9 @@ def create_wbs_by_code(db: Session, project: Project, rows: list[dict], *, defau
         if not assignee:
             errors.append(f"任务「{name}」的责任人「{r.get('assignee_name') or ''}」不是在岗人员")
             continue
+        if digital_team_scope_configured(db) and not is_it_member(db, assignee):
+            errors.append(f"任务「{name}」的责任人不属于数字化团队，已跳过")
+            continue
         start, end = _coerce_date(r.get("start_date")), _coerce_date(r.get("end_date"))
         if not start or not end:
             errors.append(f"任务「{name}」缺计划开始/结束日期")
@@ -82,7 +177,7 @@ def create_wbs_by_code(db: Session, project: Project, rows: list[dict], *, defau
             prog = int(r.get("progress") or 0)
         except (TypeError, ValueError):
             prog = 0
-        prog = prog if prog in (0, 50, 100) else 0
+        prog = max(0, min(100, prog))
         task = WbsTask(
             project_id=project.id, wbs_code=code, stage=r.get("stage"), name=name,
             wbs_dict=r.get("wbs_dict"), deliverable=r.get("deliverable"), assignee=assignee, is_milestone=ms,
@@ -112,16 +207,18 @@ def create_wbs_by_code(db: Session, project: Project, rows: list[dict], *, defau
 
 
 def compute_progress(tasks: list[WbsTask]) -> float | None:
-    """进度 = 任务完成度按工期加权（PRD：状态映射 0/50/100）。"""
+    """进度 = 末级任务完成度按工期加权（父级仅为子项汇总，不重复计权）。"""
+    tasks = leaf_wbs_tasks(tasks)
     if not tasks:
         return None
     total = sum(task_weight(t) for t in tasks)
-    earned = sum(task_weight(t) * ((t.progress or 0) / 100) for t in tasks)  # 完成度% 三档 0/50/100
+    earned = sum(task_weight(t) * ((t.progress or 0) / 100) for t in tasks)
     return round(earned / total * 100, 1)
 
 
 def compute_planned_progress(tasks: list[WbsTask], today: date | None = None) -> float | None:
-    """计划进度：按日期应完成的加权比例（SPI 分母）。"""
+    """计划进度：末级任务按日期应完成的加权比例（SPI 分母）。"""
+    tasks = leaf_wbs_tasks(tasks)
     if not tasks:
         return None
     today = today or date.today()
@@ -149,6 +246,7 @@ def compute_metrics(db: Session, project: Project) -> dict:
         c.amount_10k for c in db.query(CostEntry).filter(CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False))
     )
 
+    progress_tasks = leaf_wbs_tasks(tasks)
     progress = compute_progress(tasks)
     planned = compute_planned_progress(tasks)
     spi = round(progress / planned, 2) if progress is not None and planned else None
@@ -179,8 +277,9 @@ def compute_metrics(db: Session, project: Project) -> dict:
         "health": health,
         "actual_cost_10k": round(actual_cost, 2),
         "budget_usage": budget_usage,
-        "task_total": len(tasks),
-        "task_done": sum(1 for t in tasks if (t.progress or 0) >= 100),
+        # 父级是汇总行，任务数量/完成数量与项目进度保持同一末级口径。
+        "task_total": len(progress_tasks),
+        "task_done": sum(1 for t in progress_tasks if (t.progress or 0) >= 100),
         "milestone_total": len(milestone_tasks),
         "milestone_overdue": len(overdue_milestones),
         "open_risks": sum(1 for r in risks if r.status == "开放"),

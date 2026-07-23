@@ -8,12 +8,12 @@ import {
   Modal,
   Select,
   Space,
-  Table,
   Tag,
   TreeSelect,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -242,6 +242,7 @@ export default function Members() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '人员主数据', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 'max-content' }}
         pagination={{

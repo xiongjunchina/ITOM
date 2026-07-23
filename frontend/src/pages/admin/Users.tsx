@@ -8,12 +8,12 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   message,
   Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { EyeInvisibleOutlined, EyeOutlined, MailOutlined, PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
@@ -85,7 +85,7 @@ export default function Users() {
 
   useEffect(() => {
     api
-      .getList<Member>('/members', { page: 1, page_size: 2000 })
+      .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
     api
@@ -352,6 +352,7 @@ export default function Users() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '用户与组管理', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 'max-content' }}
         pagination={{

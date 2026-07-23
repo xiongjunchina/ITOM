@@ -587,12 +587,6 @@ export default function OrgArchitecture() {
         >
           <Descriptions.Item label={t('admin.org.companyName')}>{data.company.name}</Descriptions.Item>
         </Descriptions>
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginTop: 12 }}
-          message={t('admin.org.feishuNotice')}
-        />
       </>
     );
   };
@@ -845,12 +839,6 @@ export default function OrgArchitecture() {
         onCancel={() => setCompanyOpen(false)}
         destroyOnClose
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message={t('admin.org.feishuNotice')}
-        />
         <Form form={companyForm} layout="vertical" preserve={false}>
           <Form.Item
             name="name"

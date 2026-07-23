@@ -5,13 +5,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, Contract, OrgMember, Vendor
 from app.schemas.common import ok, paginate
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(tags=["itsm"])
 
@@ -126,12 +127,16 @@ def delete_vendor(vendor_id: str, db: Session = Depends(get_db), actor=Depends(r
     vendor = db.get(Vendor, vendor_id)
     if not vendor or vendor.is_deleted:
         raise AppError("NOT_FOUND", "供应商不存在", 404)
-    ensure_not_example(vendor)
-    live = db.query(Contract).filter(Contract.vendor_id == vendor.id, Contract.is_deleted.is_(False)).count()
-    if live > 0:
-        raise AppError("VENDOR_IN_USE", f"该供应商名下还有 {live} 份合同，请先删除或转移合同")
+    ensure_example_delete_allowed(vendor, db, actor)
+    live_contracts = db.query(Contract).filter(Contract.vendor_id == vendor.id, Contract.is_deleted.is_(False)).all()
+    if live_contracts:
+        if vendor.is_example and all(contract.is_example for contract in live_contracts):
+            for contract in live_contracts:
+                contract.is_deleted = True
+        else:
+            raise AppError("VENDOR_IN_USE", f"该供应商名下还有 {len(live_contracts)} 份合同，请先删除或转移合同")
     vendor.is_deleted = True
-    audit(db, "vendor", vendor.id, "delete", actor, {"code": vendor.code, "name": vendor.name})
+    audit(db, "vendor", vendor.id, "delete", actor, {"code": vendor.code, "name": vendor.name, "contracts_deleted": len(live_contracts) if vendor.is_example else 0})
     db.commit()
     return ok({"id": vendor.id})
 
@@ -153,6 +158,7 @@ def create_contract(body: ContractCreate, db: Session = Depends(get_db), actor=D
         raise AppError("INVALID_DATES", "结束日期必须晚于开始日期")
     if not db.get(Vendor, body.vendor_id):
         raise AppError("NOT_FOUND", "供应商不存在", 404)
+    require_it_member_if_configured(db, body.owner, "合同负责人")
     contract = Contract(**body.model_dump(), code=gen_code(db, Contract, "code", "CT"))
     db.add(contract)
     db.flush()
@@ -168,6 +174,8 @@ def update_contract(contract_id: str, body: ContractUpdate, db: Session = Depend
         raise AppError("NOT_FOUND", "合同不存在", 404)
     ensure_not_example(contract)
     data = body.model_dump(exclude_unset=True)
+    if "owner" in data:
+        require_it_member_if_configured(db, data["owner"], "合同负责人")
     if "end_date" in data and data["end_date"] != contract.end_date:
         contract.expiry_warned = False  # 续签后重置预警
     for k, v in data.items():
@@ -183,7 +191,7 @@ def delete_contract(contract_id: str, db: Session = Depends(get_db), actor=Depen
     contract = db.get(Contract, contract_id)
     if not contract or contract.is_deleted:
         raise AppError("NOT_FOUND", "合同不存在", 404)
-    ensure_not_example(contract)
+    ensure_example_delete_allowed(contract, db, actor)
     contract.is_deleted = True
     audit(db, "contract", contract.id, "delete", actor, {"code": contract.code, "name": contract.name})
     db.commit()

@@ -9,12 +9,12 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
+import Table from '../../components/SortableTable';
 import { api } from '../../api/client';
 import type { Member, RoleDef, UserGroup } from '../../api/types';
 import { useT } from '../../i18n';
@@ -63,7 +63,7 @@ export default function Groups() {
 
   useEffect(() => {
     api
-      .getList<Member>('/members', { page: 1, page_size: 2000 })
+      .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
     api
@@ -264,6 +264,7 @@ export default function Groups() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '用户组', searchPlaceholder: '搜索组编码、名称、负责人或角色' }}
         pagination={false}
       />
 

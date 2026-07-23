@@ -78,9 +78,18 @@ export const MENU_TREE: MenuNode[] = [
     roles: STAFF,
     children: [
       { key: '/team/overview', path: '/team/overview', label: '团队总览', module: 'team_overview' },
-      { key: '/team/performance', path: '/team/performance', label: '人效评分', module: 'performance', roles: ['admin', 'cio'] },
+      {
+        key: '/team/performance', path: '/team/performance', label: '人效评分',
+        modules: ['performance', 'performance_review', 'performance_external', 'performance_result'], roles: STAFF,
+      },
       { key: '/team/positions', path: '/team/positions', label: '岗位编制', module: 'positions', roles: ['admin', 'cio'] },
-      { key: '/team/activities', path: '/team/activities', label: '培训发展', module: 'activities' },
+      {
+        key: '/team/learning-growth',
+        path: '/team/learning-growth',
+        label: '学习成长',
+        modules: ['activities', 'learning_growth'],
+        roles: STAFF,
+      },
       { key: '/team/ideas', path: '/team/ideas', label: '活动积分', module: 'ideas' },
       { key: '/team/charter', path: '/team/charter', label: '团队文化', module: 'charter' },
     ],
@@ -181,11 +190,16 @@ export function firstAccessiblePath(user: AuthUser | null): string {
 
 /** path → 面包屑菜单 key 链（如 /itsm/tickets → ['itsm','/itsm/tickets']），由调用方经 t('menu.'+key) 翻译 */
 export function breadcrumbOf(pathname: string): string[] {
-  for (const node of MENU_TREE) {
-    if (node.path === pathname) return [node.key];
-    for (const child of node.children ?? []) {
-      if (child.path === pathname) return [node.key, child.key];
+  if (pathname.startsWith('/team/performance/review/')) return ['team', '/team/performance'];
+  const find = (nodes: MenuNode[], parents: string[]): string[] => {
+    for (const node of nodes) {
+      if (node.path === pathname) return [...parents, node.key];
+      if (node.children) {
+        const result = find(node.children, [...parents, node.key]);
+        if (result.length > 0) return result;
+      }
     }
-  }
-  return [];
+    return [];
+  };
+  return find(MENU_TREE, []);
 }

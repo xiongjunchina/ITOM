@@ -10,12 +10,12 @@ import {
   Segmented,
   Select,
   Space,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import type { Lang } from '../../i18n/store';
@@ -76,7 +76,7 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
       .then((res) => setRoles(res.items.filter((r) => r.code !== 'admin')))
       .catch(() => undefined);
     api
-      .getList<Member>('/members', { page_size: 2000 })
+      .getList<Member>('/members', { page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
   }, []);
@@ -234,6 +234,7 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        standardToolbar={{ exportFileName: '登录开通申请', searchPlaceholder: '搜索申请人、邮箱或状态' }}
         pagination={false}
         locale={{
           emptyText:

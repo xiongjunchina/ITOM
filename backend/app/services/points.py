@@ -40,10 +40,13 @@ def award(
     period: str | None = None,
     note: str | None = None,
     created_by: str | None = None,
+    contribution_bucket: str = "team_contribution",
+    contribution_dimension: str | None = None,
 ) -> PointEntry:
     entry = PointEntry(
         person_id=person_id, points=points, source_type=source_type, source_ref=source_ref,
         campaign_id=campaign_id, task_id=task_id, period=period or current_period(),
+        contribution_bucket=contribution_bucket, contribution_dimension=contribution_dimension,
         note=note, created_by=created_by,
     )
     db.add(entry)
@@ -59,7 +62,11 @@ def award_by_rule(db: Session, rule_code: str, person_id: str | None, source_ref
         return
     if not db.get(OrgMember, person_id):
         return
-    award(db, person_id, rule.points, rule_code, source_ref=source_ref, note=note or rule.name)
+    award(
+        db, person_id, rule.points, rule_code, source_ref=source_ref, note=note or rule.name,
+        contribution_bucket=rule.contribution_bucket or "team_contribution",
+        contribution_dimension=rule.contribution_dimension,
+    )
 
 
 def _person_of_user(db: Session, user_id: str | None) -> str | None:

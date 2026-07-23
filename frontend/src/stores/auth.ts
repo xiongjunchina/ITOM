@@ -48,6 +48,7 @@ export function hasAnyRole(user: AuthUser | null, roles?: Role[]): boolean {
  * 仅当 user.permissions 存在时有意义；存量会话缺失 permissions 时调用方应回退角色逻辑。
  */
 export function hasPermission(user: AuthUser | null, module: string, action = 'view'): boolean {
+  if (user?.roles.includes('admin')) return true;
   const perms = user?.permissions;
   if (!perms) return false;
   if (perms['*']) return true;

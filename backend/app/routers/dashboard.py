@@ -29,7 +29,16 @@ def _service_section(db: Session) -> tuple[dict, list]:
     changes_ok = [t for t in changes_done if t.status == "closed" and t.closure_code != "cancelled"]
     change_rate = round(len(changes_ok) / len(changes_done) * 100, 1) if changes_done else None
 
-    open_by_priority = {p: sum(1 for t in open_tickets if t.priority == p) for p in ("P1", "P2", "P3", "P4")}
+    priority_levels = ("P1", "P2", "P3", "P4")
+
+    def _priority_counts(items):
+        """Return the open workload split by ITSM priority for a single module."""
+        return {p: sum(1 for item in items if item.priority == p) for p in priority_levels}
+
+    open_service_requests = [t for t in open_tickets if t.ticket_type == "service_request"]
+    open_changes = [t for t in open_tickets if t.ticket_type == "change"]
+    open_incidents = [t for t in open_tickets if t.ticket_type == "incident"]
+    open_by_priority = _priority_counts(open_tickets)
 
     by_type = {
         "service_request_open": sum(1 for t in open_tickets if t.ticket_type == "service_request"),
@@ -54,22 +63,27 @@ def _service_section(db: Session) -> tuple[dict, list]:
     itsm_blocks = {
         "service_request": {
             "open": by_type["service_request_open"],
+            "open_by_priority": _priority_counts(open_service_requests),
             "month_resolved": _month_resolved("service_request"),
             "sla_rate": _sla_rate("service_request"),
         },
         "change": {
+            "open": len(open_changes),
+            "open_by_priority": _priority_counts(open_changes),
             "pending_approval": by_type["change_pending_approval"],
             "implementing": by_type["change_implementing"],
             "success_rate": change_rate,
         },
         "incident": {
             "open": by_type["incident_open"],
+            "open_by_priority": _priority_counts(open_incidents),
             "sla_warned": sum(1 for t in open_tickets if t.ticket_type == "incident" and t.sla_warned),
             "month_resolved": _month_resolved("incident"),
             "sla_rate": _sla_rate("incident"),
         },
         "problem": {
             "open": sum(1 for p in problems if p.status not in ("closed",)),
+            "open_by_priority": _priority_counts([p for p in problems if p.status not in ("closed",)]),
             "known_errors": sum(1 for p in problems if p.status == "known_error"),
             "close_rate": problem_close_rate,
         },

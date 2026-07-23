@@ -530,6 +530,8 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
         roles = default_roles_for(db, person.department_id if person else None)
     if body.person_id and not db.get(OrgMember, body.person_id):
         raise AppError("NOT_FOUND", "关联人员不存在", 404)
+    from app.services.team_scope import require_it_member_if_configured
+    require_it_member_if_configured(db, body.person_id, "账号关联人员")
 
     import secrets
     import string

@@ -11,13 +11,13 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   Tooltip,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -70,7 +70,7 @@ export default function ActiveTaskList() {
     try {
       const [reqs, members] = await Promise.all([
         api.getList<RequirementRow>('/requirements', { status: 'implementing', page: 1, page_size: 200 }),
-        api.getList<Member>('/members', { page: 1, page_size: 2000 }),
+        api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }),
       ]);
       setReqOptions(
         reqs.items
@@ -132,7 +132,7 @@ export default function ActiveTaskList() {
     setEditing(row);
     if (memberOptions.length === 0) {
       try {
-        const members = await api.getList<Member>('/members', { page: 1, page_size: 2000 });
+        const members = await api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' });
         setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
       } catch {
         // 已统一提示
@@ -406,6 +406,7 @@ export default function ActiveTaskList() {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        standardToolbar={{ exportFileName: '需求活动任务', searchPlaceholder: '搜索需求、任务、负责人或状态' }}
         sticky
         scroll={{ x: 1460 }}
         pagination={false}

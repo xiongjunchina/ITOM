@@ -9,11 +9,11 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ALL_ROLES } from '../../api/types';
@@ -177,6 +177,7 @@ export default function Roles() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '角色定义', searchPlaceholder: '搜索角色编码、名称或说明' }}
         pagination={false}
       />
 

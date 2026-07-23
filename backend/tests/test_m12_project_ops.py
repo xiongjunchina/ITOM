@@ -67,6 +67,11 @@ def test_restart_with_process_rewind(client, admin_headers, ctx):
         r = client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "阶段完成，材料齐备"},
                         headers=admin_headers)
         assert r.json()["success"], r.text
+        if cur["seq"] == 1:
+            # 项目经理是项目字段，不要求该人员另有 it_pm 账号角色；执行监控必须继续由同一 PM 负责。
+            advanced = _detail(client, admin_headers, pid)
+            monitoring = next(s for s in advanced["process"]["steps"] if s["seq"] == 2)
+            assert monitoring["assignee"] == ctx["pm"]
     d = _detail(client, admin_headers, pid)
     assert d["process"]["current_step_seq"] == 3  # 收尾复盘
 
@@ -82,6 +87,7 @@ def test_restart_with_process_rewind(client, admin_headers, ctx):
     step2 = next(s for s in proc["steps"] if s["seq"] == 2)
     step3 = next(s for s in proc["steps"] if s["seq"] == 3)
     assert step2["task_status"] == "待处理" and step2["task_id"]  # 回退后重新生成任务
+    assert step2["assignee"] == ctx["pm"]  # 回退到 IT PM 节点仍绑定项目主数据中的 PM
     assert step3["task_status"] == "未开始"  # 收尾复盘作废回未开始
     step1 = next(s for s in proc["steps"] if s["seq"] == 1)
     assert step1["task_status"] == "已完成"  # 之前的立项启动保留
@@ -179,4 +185,3 @@ def test_edit_process_steps_after_project_delete(client, admin_headers, ctx):
     steps[1]["name"] = "执行监控"
     r = client.patch(f"/api/admin/process-definitions/{flow['id']}", json={"steps": steps}, headers=admin_headers)
     assert r.json()["success"], r.text
-

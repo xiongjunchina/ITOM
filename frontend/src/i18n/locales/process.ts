@@ -35,6 +35,7 @@ export const zh: Dict = {
 
   // 流程定义：锁定步骤只读表列
   'proc.col.name': '名称',
+  'proc.col.nodeType': '节点类型',
   'proc.col.defaultAssign': '默认指派',
   'proc.col.cc': '知会人',
   'proc.col.autonomy': '自治级别',
@@ -68,6 +69,9 @@ export const zh: Dict = {
   'proc.stepDef': '步骤定义',
   'proc.stepNameRequired': '步骤名称必填',
   'proc.stepNamePlaceholder': '步骤名称',
+  'proc.node.processing': '处理节点',
+  'proc.node.approval': '审批节点',
+  'proc.node.placeholder': '节点类型',
   'proc.defaultAssignPlaceholder': '默认指派（角色/组）',
   'proc.required': '必选',
   'proc.autonomyPlaceholder': '自治级别',
@@ -125,6 +129,7 @@ export const en: Dict = {
 
   // Process definitions: locked step table columns
   'proc.col.name': 'Name',
+  'proc.col.nodeType': 'Node Type',
   'proc.col.defaultAssign': 'Default Assignee',
   'proc.col.cc': 'CC',
   'proc.col.autonomy': 'Autonomy',
@@ -158,6 +163,9 @@ export const en: Dict = {
   'proc.stepDef': 'Step Definition',
   'proc.stepNameRequired': 'Step name is required',
   'proc.stepNamePlaceholder': 'Step name',
+  'proc.node.processing': 'Processing',
+  'proc.node.approval': 'Approval',
+  'proc.node.placeholder': 'Node type',
   'proc.defaultAssignPlaceholder': 'Default assignee (role/group)',
   'proc.required': 'Required',
   'proc.autonomyPlaceholder': 'Autonomy',

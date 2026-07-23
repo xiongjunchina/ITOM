@@ -50,7 +50,7 @@ def test_sr_flow_complete_auto_closes(client, ctx):
 
 
 def test_incomplete_process_does_not_touch_status(client, ctx):
-    """流程未走完：状态机保持原状（不提前闭环）。"""
+    """流程未走完：处理节点不改状态，审批节点同意后进入已批准但不提前闭环。"""
     t = client.post("/api/tickets", json={
         "title": "变更未完待续-M23", "ticket_type": "change", "priority": "P3",
         "description": "d", "service_item_id": ctx["item"],
@@ -58,4 +58,4 @@ def test_incomplete_process_does_not_touch_status(client, ctx):
     }, headers=ctx["admin"]).json()["data"]
     _walk_process(client, ctx["admin"], t["id"], steps_to_complete=2)
     final = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]
-    assert final["status"] == "new"  # 未动状态机
+    assert final["status"] == "pending_approval"  # 风险评估同意后进入正式变更审批，尚未闭环

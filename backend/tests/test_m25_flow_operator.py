@@ -139,6 +139,40 @@ def test_unassigned_task_claimable_by_default_role(client, ctx):
     assert r.json()["success"], r.text
 
 
+def test_change_approval_node_supports_optional_approve_and_reject_reason(client, ctx):
+    """审批节点可用专用同意入口（理由可选），驳回入口必须留痕并终止流程。"""
+    t = client.post("/api/tickets", json={
+        "title": "M75变更审批语义", "ticket_type": "change", "priority": "P3",
+        "description": "d", "service_item_id": ctx["item"],
+        "change_type": "标准", "risk_level": "低",
+    }, headers=ctx["admin"]).json()["data"]
+
+    # 变更登记是处理节点，完成后进入风险评估审批节点。
+    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
+    assert cur["node_type"] == "processing"
+    client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "登记完成"}, headers=ctx["admin"])
+    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
+    assert cur["name"] == "风险评估" and cur["node_type"] == "approval"
+
+    # 审批同意理由可选。
+    r = client.post(f"/api/process-tasks/{cur['task_id']}/approve", json={}, headers=ctx["admin"])
+    assert r.json()["success"], r.text
+    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
+    assert cur["name"] == "变更审批" and cur["node_type"] == "approval"
+
+    # 驳回理由必填；成功后实例为 rejected，且变更单同步到已拒绝。
+    bad = client.post(f"/api/process-tasks/{cur['task_id']}/reject", json={"reason": "否"}, headers=ctx["admin"])
+    assert bad.status_code == 422
+    r = client.post(f"/api/process-tasks/{cur['task_id']}/reject", json={"reason": "风险不可接受，退回修改"}, headers=ctx["admin"])
+    assert r.json()["success"], r.text
+    detail = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]
+    assert detail["status"] == "rejected"
+    assert detail["process"]["status"] == "rejected"
+
+
 def test_requirement_transition_follows_flow_operator(client, ctx):
     """需求单同规则：评审节点在业务域负责人手里 → 其他人手动流转 403。"""
     domain = client.get("/api/admin/business-domains", headers=ctx["admin"]).json()["data"][0]["id"]

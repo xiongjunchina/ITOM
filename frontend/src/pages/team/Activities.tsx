@@ -9,12 +9,12 @@ import {
   Input,
   Select,
   Space,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -41,7 +41,7 @@ interface TrainingFormValues {
   remarks?: string;
 }
 
-/** 培训发展：内部交叉培训 / 外部技术交流 / 新技术研究 登记（登记即自动计分） */
+/** 培训提升：内部交叉培训 / 外部技术交流 / 新技术研究登记（登记即自动计分） */
 export default function Activities() {
   const t = useT();
   const et = useEnums();
@@ -50,6 +50,8 @@ export default function Activities() {
 
   const [items, setItems] = useState<TrainingRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(20);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -186,9 +188,20 @@ export default function Activities() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '培训提升记录', searchPlaceholder: '搜索主题、类型、主持人或参与人' }}
         sticky
         scroll={{ x: 1200 }}
-        pagination={{ pageSize: 20, showTotal: (n) => t('team.total', { n }) }}
+        pagination={{
+          current: tablePage,
+          pageSize: tablePageSize,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50, 100],
+          showTotal: (n) => t('team.total', { n }),
+          onChange: (page, pageSize) => {
+            setTablePage(page);
+            setTablePageSize(pageSize);
+          },
+        }}
       />
 
       <Drawer

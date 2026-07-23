@@ -5,7 +5,6 @@ import { Button, Card, Col, Empty, List, Row, Space, Spin, Statistic, Tag, Typog
 import {
   AlertOutlined,
   BugOutlined,
-  CustomerServiceOutlined,
   FileDoneOutlined,
   FileTextOutlined,
   ProjectOutlined,
@@ -30,7 +29,6 @@ const WIDGET_KEYS = [
   'itsm_change',
   'itsm_incident',
   'itsm_problem',
-  'service_overview',
   'project',
   'requirement',
   'team',
@@ -45,7 +43,6 @@ const WIDGET_ICONS: Record<WidgetKey, ReactNode> = {
   itsm_change: <RetweetOutlined style={{ color: '#722ed1' }} />,
   itsm_incident: <ThunderboltOutlined style={{ color: '#fa541c' }} />,
   itsm_problem: <BugOutlined style={{ color: '#faad14' }} />,
-  service_overview: <CustomerServiceOutlined style={{ color: '#1677ff' }} />,
   project: <ProjectOutlined style={{ color: '#2f54eb' }} />,
   requirement: <FileTextOutlined style={{ color: '#eb2f96' }} />,
   team: <TeamOutlined style={{ color: '#52c41a' }} />,
@@ -58,7 +55,6 @@ const WIDGET_PERMS: Record<WidgetKey, string[]> = {
   itsm_change: ['ticket_change'],
   itsm_incident: ['ticket_incident'],
   itsm_problem: ['problems'],
-  service_overview: ['ticket_sr', 'ticket_incident', 'ticket_change'],
   project: ['projects'],
   requirement: ['requirements'],
   team: ['team_overview'],
@@ -111,6 +107,17 @@ function SubStat({ label, value, color }: { label: string; value: ReactNode; col
       <div style={{ fontSize: 12, color: GRAY }}>{label}</div>
       <div style={{ fontSize: 16, fontWeight: 600, color }}>{value}</div>
     </div>
+  );
+}
+
+/** 各 ITSM 独立面板共享的未关闭工单优先级分布。 */
+function PrioritySummary({ counts }: { counts?: { P1: number; P2: number; P3: number; P4: number } }) {
+  if (!counts) return null;
+  return (
+    <Typography.Text style={{ display: 'block', marginTop: 6, fontSize: 12 }}>
+      <span style={{ color: '#cf1322', fontWeight: 600 }}>P1 {counts.P1} · P2 {counts.P2}</span>
+      <span style={{ color: GRAY }}> · P3 {counts.P3} · P4 {counts.P4}</span>
+    </Typography.Text>
   );
 }
 
@@ -218,6 +225,7 @@ export default function Dashboard() {
           extra={<Link to="/itsm/tickets">{t('dash.view')}</Link>}
         >
           <Statistic title={t('dash.sr.open')} value={sr?.open ?? 0} />
+          <PrioritySummary counts={sr?.open_by_priority} />
           <div style={SUB_ROW_STYLE}>
             <SubStat label={t('dash.sr.monthResolved')} value={sr?.month_resolved ?? 0} />
             <SubStat label={t('dash.sr.slaRate')} value={pct(sr?.sla_rate)} />
@@ -238,7 +246,9 @@ export default function Dashboard() {
             value={ch?.pending_approval ?? 0}
             valueStyle={(ch?.pending_approval ?? 0) > 0 ? { color: '#fa8c16' } : undefined}
           />
+          <PrioritySummary counts={ch?.open_by_priority} />
           <div style={SUB_ROW_STYLE}>
+            <SubStat label={t('dash.change.open')} value={ch?.open ?? 0} />
             <SubStat label={t('dash.change.implementing')} value={ch?.implementing ?? 0} />
             <SubStat label={t('dash.change.successRate')} value={pct(ch?.success_rate)} />
           </div>
@@ -252,12 +262,13 @@ export default function Dashboard() {
           widget={widgetOf('itsm_incident')}
           dragProps={board.dragProps('itsm_incident')}
           extra={<Link to="/itsm/incidents">{t('dash.view')}</Link>}
-        >
+          >
           <Statistic
             title={t('dash.incident.open')}
             value={inc?.open ?? 0}
             valueStyle={(inc?.open ?? 0) > 0 ? { color: '#ff4d4f' } : undefined}
           />
+          <PrioritySummary counts={inc?.open_by_priority} />
           <div style={SUB_ROW_STYLE}>
             <SubStat
               label={t('dash.incident.slaWarn')}
@@ -285,44 +296,11 @@ export default function Dashboard() {
           extra={<Link to="/itsm/problems">{t('dash.view')}</Link>}
         >
           <Statistic title={t('dash.problem.open')} value={pb?.open ?? 0} />
+          <PrioritySummary counts={pb?.open_by_priority} />
           <div style={SUB_ROW_STYLE}>
             <SubStat label={t('dash.problem.knownErrors')} value={pb?.known_errors ?? 0} />
             <SubStat label={t('dash.problem.closeRate')} value={pct(pb?.close_rate)} />
           </div>
-        </BlockCard>
-      </Col>
-    ),
-
-    service_overview: () => (
-      <Col key="service_overview" xs={24} lg={8}>
-        <BlockCard
-          widget={widgetOf('service_overview')}
-          dragProps={board.dragProps('service_overview')}
-          extra={<Link to="/itsm/sla">{t('dash.view')}</Link>}
-        >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Statistic title={t('dash.service.openTickets')} value={service?.open_tickets ?? 0} />
-              {service?.open_by_priority && (
-                <Typography.Text style={{ fontSize: 12 }}>
-                  <span style={{ color: '#cf1322', fontWeight: 600 }}>
-                    P1 {service.open_by_priority.P1} · P2 {service.open_by_priority.P2}
-                  </span>
-                  <span style={{ color: GRAY }}>
-                    {' '}
-                    · P3 {service.open_by_priority.P3} · P4 {service.open_by_priority.P4}
-                  </span>
-                </Typography.Text>
-              )}
-            </Col>
-            <Col span={12}>
-              <Statistic
-                title={t('dash.service.slaRate')}
-                value={service?.sla_rate ?? '-'}
-                suffix={service?.sla_rate == null ? undefined : '%'}
-              />
-            </Col>
-          </Row>
         </BlockCard>
       </Col>
     ),

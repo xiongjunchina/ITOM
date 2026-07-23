@@ -137,10 +137,12 @@ def test_dashboard_itsm_blocks(client, admin_headers):
     d = client.get("/api/dashboard", headers=admin_headers).json()["data"]
     blocks = d["service"]["itsm_blocks"]
     assert set(blocks) == {"service_request", "change", "incident", "problem"}
-    assert {"open", "month_resolved", "sla_rate"} <= set(blocks["service_request"])
-    assert {"pending_approval", "implementing", "success_rate"} <= set(blocks["change"])
-    assert {"open", "sla_warned", "month_resolved"} <= set(blocks["incident"])
-    assert {"open", "known_errors", "close_rate"} <= set(blocks["problem"])
+    assert {"open", "open_by_priority", "month_resolved", "sla_rate"} <= set(blocks["service_request"])
+    assert {"open", "open_by_priority", "pending_approval", "implementing", "success_rate"} <= set(blocks["change"])
+    assert {"open", "open_by_priority", "sla_warned", "month_resolved"} <= set(blocks["incident"])
+    assert {"open", "open_by_priority", "known_errors", "close_rate"} <= set(blocks["problem"])
+    for block in blocks.values():
+        assert set(block["open_by_priority"]) == {"P1", "P2", "P3", "P4"}
 
 
 # ---------- requester 数据范围核查（④） ----------

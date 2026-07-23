@@ -10,13 +10,13 @@ import {
   Space,
   Statistic,
   Switch,
-  Table,
   Tabs,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { SaveOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';

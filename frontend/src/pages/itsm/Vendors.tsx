@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table, Tag, message } from 'antd';
+import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
@@ -26,6 +27,7 @@ export default function Vendors() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, ['it_ops', 'cio', 'admin']);
   const canDelete = hasPermission(user, 'vendors', 'delete'); // M21：默认矩阵仅 admin
+  const isAdmin = !!user?.permissions?.['*'];
   const t = useT();
   const et = useEnums();
 
@@ -154,7 +156,7 @@ export default function Vendors() {
             key: 'actions',
             width: 110,
             render: (_: unknown, r: Vendor) =>
-              r.is_example ? null : (
+              r.is_example && !isAdmin ? null : (
                 <Space size={8}>
                   {canWrite && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openEdit(r)}>
@@ -220,6 +222,7 @@ export default function Vendors() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '供应商清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 'max-content' }}
         pagination={{

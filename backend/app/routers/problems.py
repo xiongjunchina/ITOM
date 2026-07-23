@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events.bus import publish
@@ -15,6 +15,7 @@ from app.schemas.common import ok, paginate
 from app.services import process_engine
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services.team_scope import require_it_member_if_configured
 from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
 from app.services.workflow import transition as wf_transition
 
@@ -122,6 +123,7 @@ def list_problems(
 
 @router.post("/api/problems")
 def create_problem(body: ProblemCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "create"))):
+    require_it_member_if_configured(db, body.owner, "问题负责人")
     problem = _create_problem(db, body.model_dump(), user)
     db.commit()
     return ok(_row(problem, db, status_names(db, "problem")))
@@ -177,6 +179,8 @@ def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(g
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_not_example(p)
     data = body.model_dump(exclude_unset=True)
+    if "owner" in data:
+        require_it_member_if_configured(db, data["owner"], "问题负责人")
     root_cause_filled = data.get("root_cause") and not p.root_cause
     for k, v in data.items():
         setattr(p, k, v)
@@ -193,7 +197,7 @@ def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
-    ensure_not_example(p)
+    ensure_example_delete_allowed(p, db, actor)
     from app.models import ProcessInstance, ProcessTask, Ticket
 
     p.is_deleted = True
@@ -201,6 +205,8 @@ def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends
     for t in db.query(Ticket).filter(Ticket.problem_id == p.id, Ticket.is_deleted.is_(False)):
         t.problem_id = None
         unlinked += 1
+    for link in db.query(ProblemTicket).filter(ProblemTicket.problem_id == p.id, ProblemTicket.is_deleted.is_(False)):
+        link.is_deleted = True
     for inst in db.query(ProcessInstance).filter(
         ProcessInstance.entity_type == "problem",
         ProcessInstance.entity_id == p.id,
@@ -237,6 +243,7 @@ def confirm_problem(problem_id: str, body: ConfirmIn, db: Session = Depends(get_
     handler = db.get(OrgMember, body.handler_id)
     if not handler or handler.is_deleted:
         raise AppError("NOT_FOUND", "处理人不存在", 404)
+    require_it_member_if_configured(db, body.handler_id, "问题处理人")
     process_engine.complete_task(db, task.id, user, "确认问题属实，转根因分析")
     nxt = process_engine.current_pending_task(db, "problem", p.id)
     if nxt:

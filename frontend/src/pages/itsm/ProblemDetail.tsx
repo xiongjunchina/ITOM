@@ -12,18 +12,19 @@ import {
   Space,
   Spin,
   Steps,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { ArrowLeftOutlined, LinkOutlined } from '@ant-design/icons';
 import { useGoBack } from '../../utils/nav';
 import { canHandleTask, useAuthStore } from '../../stores/auth';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
+import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
   AllowedTransition,
   LinkedTicketBrief,
@@ -39,7 +40,8 @@ import { problemStatusBadge } from './Problems';
 
 const fmt = (v?: string | null) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-');
 
-function stepStatus(s: ProcessStep): 'finish' | 'process' | 'wait' {
+function stepStatus(s: ProcessStep): 'finish' | 'process' | 'wait' | 'error' {
+  if (s.task_status === '已驳回') return 'error';
   if (s.task_status === '已完成') return 'finish';
   if (s.task_status === '待处理') return 'process';
   return 'wait';
@@ -176,7 +178,7 @@ export default function ProblemDetail() {
 
   const loadMembers = () => {
     if (members.length === 0) {
-      api.getList<Member>('/members', { page: 1, page_size: 2000 }).then((res) => setMembers(res.items)).catch(() => undefined);
+      api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }).then((res) => setMembers(res.items)).catch(() => undefined);
     }
   };
 
@@ -251,6 +253,7 @@ export default function ProblemDetail() {
   /** 示例数据只读：隐藏关联工单/完成步骤等残余写入口（allowed_transitions 后端已置空） */
   const isExample = detail.is_example === true;
   const process = detail.process;
+  const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);
 
   const linkedColumns: ColumnsType<LinkedTicketBrief> = [
     {
@@ -280,6 +283,11 @@ export default function ProblemDetail() {
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
           </Space>
           <Space wrap>
+            <ProcessActionButtons
+              step={currentProcessStep}
+              disabled={isExample || !!detail.can_confirm}
+              onDone={() => void load()}
+            />
             {detail.can_confirm && (
               <>
                 <Button
@@ -321,7 +329,12 @@ export default function ProblemDetail() {
               0,
             )}
             items={process.steps.map((s) => ({
-              title: s.name,
+              title: (
+                <Space size={4}>
+                  <span>{s.name}</span>
+                  {s.node_type === 'approval' && <Tag color="gold">{t('comp.flow.approval')}</Tag>}
+                </Space>
+              ),
               status: stepStatus(s),
               description: (
                 <Space direction="vertical" size={0}>

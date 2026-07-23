@@ -23,7 +23,7 @@ export default function CompleteStepModal({
 
   const submit = async () => {
     if (!step?.task_id) return;
-    if (comment.trim().length < 5) {
+    if (step.node_type !== 'approval' && comment.trim().length < 5) {
       message.warning(t('comp.flow.commentRequired'));
       return;
     }
@@ -58,7 +58,7 @@ export default function CompleteStepModal({
         rows={3}
         value={comment}
         onChange={(e) => setComment(e.target.value)}
-        placeholder={t('comp.flow.commentPlaceholder')}
+        placeholder={step?.node_type === 'approval' ? t('comp.flow.approveCommentOptional') : t('comp.flow.commentPlaceholder')}
         maxLength={500}
       />
     </Modal>

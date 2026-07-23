@@ -10,12 +10,12 @@ import {
   Popconfirm,
   Select,
   Space,
-  Table,
   Tag,
   Tooltip,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, ReloadOutlined, WarningOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -40,6 +40,7 @@ export default function Contracts() {
   const user = useAuthStore((s) => s.user);
   const canWrite = hasAnyRole(user, ['it_ops', 'cio', 'admin']);
   const canDelete = hasPermission(user, 'contracts', 'delete'); // M21：默认矩阵仅 admin
+  const isAdmin = !!user?.permissions?.['*'];
   const t = useT();
   const et = useEnums();
 
@@ -91,7 +92,7 @@ export default function Contracts() {
   const ensureMembers = () => {
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -210,7 +211,7 @@ export default function Contracts() {
             key: 'actions',
             width: 110,
             render: (_: unknown, r: Contract) =>
-              r.is_example ? null : (
+              r.is_example && !isAdmin ? null : (
                 <Space size={8}>
                   {canWrite && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openEdit(r)}>
@@ -289,6 +290,7 @@ export default function Contracts() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '合同清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 'max-content' }}
         pagination={{

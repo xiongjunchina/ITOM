@@ -153,6 +153,21 @@ def set_idea_status(idea_id: str, body: IdeaStatusIn, db: Session = Depends(get_
     return ok({"id": idea.id, "status": idea.status})
 
 
+@router.delete("/api/ideas/{idea_id}")
+def delete_idea(idea_id: str, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("ideas", "delete"))):
+    """删除建言（软删）；示例建言仅允许系统管理员明确清理。"""
+    idea = db.get(Idea, idea_id)
+    if not idea or idea.is_deleted:
+        raise AppError("NOT_FOUND", "建言不存在", 404)
+    ensure_example_delete_allowed(idea, db, actor)
+    for like in db.query(IdeaLike).filter(IdeaLike.idea_id == idea.id, IdeaLike.is_deleted.is_(False)):
+        like.is_deleted = True
+    idea.is_deleted = True
+    audit(db, "idea", idea.id, "delete", actor, {"code": idea.idea_code, "title": idea.title})
+    db.commit()
+    return ok({"id": idea.id})
+
+
 # ---------- 专项活动 ----------
 
 CAMPAIGN_STATUS_NAMES = {"draft": "草稿", "active": "上架中", "offline": "已下架"}
@@ -278,6 +293,27 @@ def update_campaign(campaign_id: str, body: CampaignIn, db: Session = Depends(ge
     db.commit()
     db.refresh(c)
     return ok(_campaign_row(c, db))
+
+
+@router.delete("/api/campaigns/{campaign_id}")
+def delete_campaign(campaign_id: str, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("ideas", "delete"))):
+    """删除专项活动（软删其任务与积分台账）；示例仅允许系统管理员删除。"""
+    c = db.get(ActivityCampaign, campaign_id)
+    if not c or c.is_deleted:
+        raise AppError("NOT_FOUND", "活动不存在", 404)
+    ensure_example_delete_allowed(c, db, actor)
+    task_count = 0
+    for task in db.query(CampaignTask).filter(CampaignTask.campaign_id == c.id, CampaignTask.is_deleted.is_(False)):
+        task.is_deleted = True
+        task_count += 1
+    award_count = 0
+    for entry in db.query(PointEntry).filter(PointEntry.campaign_id == c.id, PointEntry.is_deleted.is_(False)):
+        entry.is_deleted = True
+        award_count += 1
+    c.is_deleted = True
+    audit(db, "activity_campaign", c.id, "delete", actor, {"name": c.name, "tasks_deleted": task_count, "awards_deleted": award_count})
+    db.commit()
+    return ok({"id": c.id, "tasks_deleted": task_count, "awards_deleted": award_count})
 
 
 @router.post("/api/campaigns/{campaign_id}/status")

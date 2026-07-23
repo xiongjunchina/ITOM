@@ -42,6 +42,7 @@ PostgreSQL 16（容器 db，卷持久化）
 cd deploy && docker compose up --build
 # 前端 http://localhost:8180   API 文档 http://localhost:8180/api/docs
 # 初始管理员 admin / 密码见 deploy 环境变量 ADMIN_INIT_PASSWORD（默认 admin123）
+# 全新数据库默认 SEED_INITIAL_CONFIG=1：自动初始化六条流程定义及当前登录页/Logo；已有品牌配置不会覆盖
 ```
 
 ### 本地开发
@@ -58,6 +59,8 @@ npm run build                          # tsc --noEmit + vite build（提交前�
 ```
 
 ### 生产部署
+
+> 当前唯一交付与验收环境为 IDC Kubernetes 集群。后续功能与问题修复必须在自动化测试通过后发布到 IDC，并以集群中的健康检查和实际功能验证作为完成标准；本地 Docker 不再作为默认调试或验收环境。
 ```bash
 # 1) 准备环境变量（首次）
 cd deploy && cp .env.example .env
@@ -91,7 +94,7 @@ frontend/src/
   i18n/          自研轻量双语（store 语言状态 / dict 字典 / index useT / AppRoot locale）
   stores/        Zustand（auth）
   api/           axios 客户端（统一 envelope 解包）+ types
-docs/            中文设计文档（01-06）；docs/en/ 为英文译本
+docs/            中文设计文档（01-09）；docs/en/ 为英文译本
 deploy/          docker-compose、Nginx、备份
 ```
 
@@ -99,11 +102,17 @@ deploy/          docker-compose、Nginx、备份
 - **统一响应包**：`{success, data, total?, page?, error?}`；错误经 `AppError(code, message, status)` 返回中文提示。
 - **权限三层**：① 功能矩阵（`role_permission` 表，模块 × 动作 view/create/edit/delete，`require_perm` 守卫，admin 隐式全权）；② 数据范围（业务代码内置，如 requester 仅见自己的工单/需求）；③ 流程权限（状态机 `allowed_roles` + 流程步骤 `default_role`）。
 - **流程驱动状态（M23–M31 定稿）**：六类单据（服务请求/事件/变更/问题/需求/项目）状态由流程编排自动同步（首步完成→处理中打首响 SLA、末步→已解决、流程走完→自动关闭）；处理人只操作「完成此步骤」，手动状态按钮按白名单收敛（SR/事件=挂起恢复、问题=已知错误、变更=审批链、需求=无、强关仅 admin）；列表页「当前节点」列标识「待我处理」并一键进详情。
+- **流程节点语义**：每个节点可配置为处理节点或审批节点，并分别配置处理人与知会人。审批节点支持详情右上角“同意/驳回”或流程图“完成此步骤”同意；同意理由可选，驳回理由必填并留痕。WBS 任务完成度支持管理员/负责人直接录入 0–100% 整数；显式将父项设为 100% 会向下级联，子项修改后父项按直接子项平均值递归回算，项目进度仅按末级任务工期加权汇总。
+- **全局表格交互**：所有超出内容区宽度的表格统一提供一条底部悬浮横向滚动条，页面纵向滚动时表头保持悬浮；WBS 额外支持前三列冻结。
+- **列表分页**：分页器的页大小为受控状态，统一支持 10/20/50/100 条；服务项等前端本地分页表格切换页大小不会被固定默认值覆盖，服务端分页列表同步传递 `page_size`。
+- **WBS 表格交互**：WBS 宽表支持 Excel 式冻结窗格（表头 + 左侧前三列）、底部悬浮横向滚动条、列宽与行高拖拽调整；完成度提供 0%/50%/100% 预设并支持自定义 0–100% 整数；父子任务进度自动级联/汇总；布局按项目保存在当前浏览器。
 - **关闭策略**：服务请求/需求/项目登记人可主动关闭（理由必填≥5 字、审计留痕）；事件/变更/问题必须流程闭环；强制关闭仅系统管理员。
-- **矩阵式组织**：横向业务域（服务线，新建时可从组织架构选择服务部门并覆盖下级部门；负责人、备份负责人和服务团队取自管理员配置的“数字化团队部门范围”）× 纵向用户组（资源池，组授予角色）；一人多角色；admin 不可经组/规则授予。无需求引用的业务域可由管理员删除。
+- **矩阵式组织**：横向业务域（服务线，新建时可从组织架构选择服务部门并覆盖下级部门；负责人、备份负责人和服务团队取自管理员配置的“数字化团队部门范围”）× 纵向用户组（资源池，组授予角色）；一人多角色；admin 不可经组/规则授予。所有业务人员下拉选择统一使用数字化团队范围（项目/需求/工单/问题/服务项/配置项/合同/用户组等），通过 `/api/members?scope=it` 加载，并由后端在已配置范围后复核。无需求引用的业务域可由管理员删除。
 - **飞书为人员主数据 SoT**：`org_sync` 幂等应用组织快照（外部赢、消失→离职），本地仅可编辑岗位/技能/备注/部门类型；同步范围可配置（部门 open_department_id 列表或 0=全公司，M32），管理员可独立启停自动同步并选择每 1/6/12/24 小时执行。
-- **示例数据**：`GlidBase.is_example`（列表置顶、后端只读）；默认不种，`SEED_EXAMPLES=1` 开启（测试用）。
+- **示例数据**：`GlidBase.is_example`（列表置顶）；编辑、状态流转和业务操作仍只读，系统管理员可在列表页明确删除示例记录；默认不种，`SEED_EXAMPLES=1` 开启（测试用）。
 - **考核周期**：季度制 `YYYY-Q1/Q2/Q3`，第四季度执行全年考核 `YYYY-All`（统计范围为本年度全年）。
+- **帮助中心式用户操作手册**：右上角语言切换按钮左侧提供“操作手册”入口，采用搜索优先、按产品分类、热门/最近文档、文章内目录和相关文档的帮助中心结构；内容覆盖系统总体介绍、通用列表规则、全部业务/管理模块的运作逻辑、操作步骤、角色边界和常见问题。中文权威版本为 `docs/用户操作手册.md`，英文译本为 `docs/en/user-operation-manual.md`。
+- **矩阵角色人效评分**：矩阵角色贡献 80% + 团队贡献 20%，支持 ITSM/需求/项目/流程自动取数、负责人分级初评、CIO 终审、外部原数据录入和发布后个人结果隔离；同一角色可配置多名评审人及独立权重，评审结果按权重汇总。外部满意度仅按业务服务域录入，外部指标采用白名单校验；团队贡献维度、目标积分及内外部满意度比例由 CIO/管理员配置，并在考核周期生成规则快照。
 - **双语**：语言存 `auth_user.preferences.language`（zh/en）；登录即应用，用户可自行切换；飞书开通时由管理员设默认语言。
 - **飞书扫码登录 + 开通审批**：管理员批准时生成 12 位高强度初始密码并加密保存，但不自动发信。管理员可在用户详情点击闭眼图标按需查看，或点击“邮件发送”手工投递；查看与发送均审计，用户改密/管理员重置后密文立即清除。
 
@@ -116,7 +125,7 @@ deploy/          docker-compose、Nginx、备份
 
 ### 里程碑
 M1 骨架+RBAC → M2 工单+SLA+流程引擎 → M2.5 自配置 → M3 CMDB/问题/供应商/合同/知识 → M3.5–3.10 身份治理/权限矩阵/组织树/飞书 SoT/批量导入 → M4 项目 → M5 需求 → M6 团队（活动积分/人效/培训/文化/流程监控/Dashboard）→ M7 双语 i18n + 飞书扫码登录开通审批 → M9 甘特图 → M10 需求六维评分+四象限 → M11 飞书组织同步+真实扫码 OAuth → M12–15 项目管理实战打磨（行内操作/章程结构化/级联删除/流程版本管理）→ M16 需求路由闭环（评审→方案评估→转开发/转项目→验收自动闭环）→ M17 导航二级菜单+权限模块按页拆分 → M18–25 流程权限体系（任务处理人守卫/待办通知/流程完成自动闭环/状态-流程双向同步/操作权跟随节点处理人/未指派认领）→ M26–28 交互与关闭策略定稿（原路返回/登记人关单+理由审计/强关仅 admin）→ M29 SLA 优先级定义（ITIL 初稿可编辑）+ 问题管理专业线流程 → M30–31 状态按钮白名单+列表「待我处理」列 → M32 飞书同步范围可配置（多部门/全公司）→ M33 用户调试版流程与权限固化为出厂默认 → M34–35 通知直达+异步全员组织同步 → M36–36.2 账号治理、飞书免登与个人中心 → **M37 个人设置（通知偏好、个人操作记录、飞书绑定管理、明暗主题与内容密度）**。
-验收基准为 `docs/03-PRD.md` 对应章节 + 各里程碑提交说明；实现细节以代码与测试（206 例）为准。
+验收基准为 `docs/03-PRD.md` 对应章节 + 各里程碑提交说明；实现细节以代码与测试（240 例）为准。
 
 ---
 
@@ -152,6 +161,7 @@ process-step operator; one Feishu app credential drives both org sync and QR sig
 cd deploy && docker compose up --build
 # Web  http://localhost:8180   API docs http://localhost:8180/api/docs
 # Bootstrap admin: admin / password from the deploy env var ADMIN_INIT_PASSWORD (default admin123)
+# Fresh databases default to SEED_INITIAL_CONFIG=1, which initializes the six workflows and the verified login/Logo branding; existing branding is never overwritten.
 ```
 
 ### Local development
@@ -168,6 +178,8 @@ npm run build                          # tsc --noEmit + vite build (must be 0 er
 ```
 
 ### Production deployment
+
+> The IDC Kubernetes cluster is now the sole delivery and acceptance environment. After automated checks pass, every feature or fix must be deployed and verified in IDC; local Docker is no longer the default development or acceptance target.
 ```bash
 # 1) Prepare env vars (first time)
 cd deploy && cp .env.example .env
@@ -204,7 +216,7 @@ frontend/src/
   i18n/          In-house lightweight bilingual (store = language state / dict / index useT / AppRoot locale)
   stores/        Zustand (auth)
   api/           axios client (unwraps the response envelope) + types
-docs/            Chinese design docs (01-06); docs/en/ holds the English translations
+docs/            Chinese design docs (01-09); docs/en/ holds the English translations
 deploy/          docker-compose, Nginx, backups
 ```
 
@@ -212,11 +224,16 @@ deploy/          docker-compose, Nginx, backups
 - **Response envelope**: `{success, data, total?, page?, error?}`; errors are raised as `AppError(code, message, status)`.
 - **Three permission layers**: (1) functional matrix (`role_permission` table, module × action view/create/edit/delete, guarded by `require_perm`; `admin` is implicitly all-powerful); (2) data scope (baked into business code, e.g. a `requester` only sees their own tickets/requirements); (3) process permissions (state-machine `allowed_roles` + process-step `default_role`).
 - **Process-driven status (finalized M23–M31)**: for all six flow-bound entities, ticket status is synced automatically by process orchestration (first step done → processing with first-response SLA, last step → resolved, flow complete → auto-closed). Operators only click "complete this step"; manual status buttons are reduced to a whitelist (SR/incident = pause/resume, problem = known-error, change = approval chain, requirement = none, force close = admin only). List pages show a "current step" column flagging "my turn" with a jump into the detail page.
+- **Process-node semantics**: each node can be configured as processing or approval with separate handler and CC parties. Approval nodes support approve/reject from the detail-page actions or approve through the flow diagram; approval comments are optional, rejection reasons are mandatory and retained. WBS task completion accepts an integer percentage from 0–100; explicitly setting a parent to 100% cascades to all descendants, child changes roll up as direct-child averages, and project progress is duration-weighted over leaf tasks only.
+- **Global table interaction**: every table wider than the content area exposes one sticky bottom horizontal scrollbar and keeps its header visible during vertical page scrolling; the WBS table additionally freezes the first three columns.
+- **List pagination**: page-size selectors are controlled state everywhere and consistently support 10/20/50/100 rows; local-paginated tables such as Service Items no longer reset a selected size to a hard-coded default, while server-paginated lists pass the selected `page_size` to the API.
+- **WBS table interaction**: the wide WBS table provides an Excel-style freeze pane (header plus the first three columns), one sticky bottom horizontal scrollbar, draggable column widths and row heights; completion offers 0%/50%/100% presets plus a custom integer from 0–100%; parent/child progress cascades and rolls up automatically; layout is saved per project in the current browser.
 - **Closure policy**: submitters may close their own service requests / requirements / projects (reason ≥5 chars, audited); incidents/changes/problems must complete the flow; force close is admin-only.
-- **Matrix organization**: horizontal business domains (served departments are selected from Org Structure with optional descendant coverage; owner, backup owner, and service-team selectors use the administrator-defined digital-team department scope) × vertical user groups. Administrators may delete domains that have no requirement references.
+- **Matrix organization**: horizontal business domains (served departments are selected from Org Structure with optional descendant coverage; owner, backup owner, and service-team selectors use the administrator-defined digital-team department scope) × vertical user groups. All operational person selectors (projects, requirements, tickets, problems, service items, CIs, contracts, groups, and account linking) load `GET /api/members?scope=it`, with server-side revalidation after the scope is configured. Administrators may delete domains that have no requirement references.
 - **Feishu is the Source of Truth for people master data**: `org_sync` idempotently applies an org snapshot (external wins, missing → offboarded/inactive); locally only position/skills/remarks/dept-type are editable. Besides the remote sync scope, administrators can enable/disable scheduled sync and choose a 1/6/12/24-hour interval.
-- **Example data**: `GlidBase.is_example` (pinned to the top of lists, read-only on the backend); not seeded by default, enable with `SEED_EXAMPLES=1` (used by tests).
+- **Example data**: `GlidBase.is_example` (pinned to the top of lists); editing, workflow transitions, and business actions remain read-only, while administrators can explicitly delete examples from list pages; not seeded by default, enable with `SEED_EXAMPLES=1` (used by tests).
 - **Assessment period**: quarterly `YYYY-Q1/Q2/Q3`; Q4 runs the full-year assessment `YYYY-All` (statistics cover the whole calendar year).
+- **Help-center user manual**: the signed-in header places a “User Manual” entry immediately to the left of the language switcher. It uses search-first navigation, product categories, popular/recent guides, article TOCs, and related documents while covering the system overview, all module procedures, role boundaries, and troubleshooting. The authoritative Chinese version is `docs/用户操作手册.md` and the English mirror is `docs/en/user-operation-manual.md`.
 - **Bilingual**: language is stored in `auth_user.preferences.language` (zh/en); applied on login and switchable by the user; the admin sets the default during Feishu provisioning.
 - **Feishu QR sign-in + provisioning approval**: approval generates a 12-character strong initial password and stores only encrypted recoverable ciphertext without sending it. An administrator may reveal it with the eye control or manually email it from user details; both actions are audited and the ciphertext is cleared after a change/reset.
 
@@ -229,4 +246,4 @@ deploy/          docker-compose, Nginx, backups
 
 ### Milestones
 M1 skeleton+RBAC → M2 tickets+SLA+process engine → M2.5 self-configuration → M3 CMDB/problems/vendors/contracts/knowledge → M3.5–3.10 identity governance / permission matrix / org tree / Feishu SoT / bulk import → M4 projects → M5 requirements → M6 team → M7 bilingual i18n + Feishu QR sign-in with provisioning approval → M9 Gantt → M10 six-dimension requirement scoring + quadrants → M11 Feishu org sync + real QR OAuth → M12–15 project-management polish → M16 requirement routing loop → M17 second-level nav + per-page permissions → M18–35 workflow governance, interaction policy, Feishu sync and notifications → M36–36.2 account governance, Feishu free login and profile center → **M37 personal settings (notification preferences, personal activity, Feishu identity linking, theme and content density)**.
-Acceptance baseline: the matching section of `docs/03-PRD.md` plus each milestone's commit message; code and the 206-case test suite are the source of truth.
+Acceptance baseline: the matching section of `docs/03-PRD.md` plus each milestone's commit message; code and the 240-case test suite are the source of truth.

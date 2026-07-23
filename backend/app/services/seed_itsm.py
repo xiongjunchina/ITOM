@@ -185,9 +185,9 @@ PROCESS_DEFS = [
         "code": "incident_flow", "name": "事件处理流程", "entity_type": "ticket",
         "trigger": {"ticket_type": "incident"},
         "steps": [
-            ("受理定级", IT_OP_LEADER, "L3", 0.5),
+            ("受理定级", IT_OP_LEADER, "L3", 0.5, [], None, "approval"),
             ("诊断与处理", IT_OPS, "L3", None),
-            ("解决与用户确认", IT_OPS, "L3", None),
+            ("解决与用户确认", IT_OPS, "L3", None, [], None, "approval"),
             ("关闭复盘", IT_OP_LEADER, "L2", 24),
         ],
     },
@@ -198,7 +198,7 @@ PROCESS_DEFS = [
         "steps": [
             ("受理确认", IT_OPS, "L2", 4),
             ("实施交付", IT_OPS, "L3", None),
-            ("用户确认关闭", "requester", "L3", 24),
+            ("用户确认关闭", "requester", "L3", 24, [], None, "approval"),
         ],
     },
     {
@@ -207,8 +207,8 @@ PROCESS_DEFS = [
         "trigger": {"ticket_type": "change"},
         "steps": [
             ("变更登记", IT_OPS, "L3", None),
-            ("风险评估", IS_MGR, "L3", 8, [IT_TM]),
-            ("变更审批", CIO, "L3", 24, [IT_BM]),
+            ("风险评估", IS_MGR, "L3", 8, [IT_TM], None, "approval"),
+            ("变更审批", CIO, "L3", 24, [IT_BM], None, "approval"),
             ("实施与验证", IT_OPS, "L3", None, [IS_MGR, IT_BM]),
             ("变更复盘(PIR)", IT_OP_LEADER, "L2", 48, [CIO]),
         ],
@@ -219,19 +219,19 @@ PROCESS_DEFS = [
         "code": "problem_flow", "name": "问题分析流程", "entity_type": "problem",
         "trigger": None,
         "steps": [
-            ("问题确认", None, "L3", 24, [], "按问题所属专业线自动指派对应负责人；不属实可驳回退回提单人（必填理由）"),
+            ("问题确认", None, "L3", 24, [], "按问题所属专业线自动指派对应负责人；不属实可驳回退回提单人（必填理由）", "approval"),
             ("根因分析", None, "L3", None, [], "确认属实时由专业线负责人指定处理人"),
             ("解决与验证", None, "L3", None, [], "延续根因分析处理人"),
-            ("解决确认与关闭", None, "L2", 24, [], "专业线负责人确认已解决并登记关闭说明，完成后问题自动关闭"),
+            ("解决确认与关闭", None, "L2", 24, [], "专业线负责人确认已解决并登记关闭说明，完成后问题自动关闭", "approval"),
         ],
     },
     {
         "code": "project_flow", "name": "项目关键节点流程", "entity_type": "project",
         "trigger": None,
         "steps": [
-            ("立项启动", IT_PM, "L3", 72, [CIO, IT_BM]),
+            ("立项启动", IT_PM, "L3", 72, [CIO, IT_BM], None, "approval"),
             ("执行监控", IT_PM, "L3", None, []),
-            ("收尾复盘", IT_PMO, "L2", 72, [CIO, IT_TM]),
+            ("收尾复盘", IT_PMO, "L2", 72, [CIO, IT_TM], None, "approval"),
         ],
     },
     {
@@ -240,11 +240,11 @@ PROCESS_DEFS = [
         "code": "requirement_flow", "name": "需求交付流程", "entity_type": "requirement",
         "trigger": None,
         "steps": [
-            ("需求评审（业务域负责人）", IT_BM, "L3", 48, [IT_PDM]),
-            ("方案评估与路径判定", IT_PDM_LEADER, "L3", 72, [IT_DEV_LEADER]),
+            ("需求评审（业务域负责人）", IT_BM, "L3", 48, [IT_PDM], None, "approval"),
+            ("方案评估与路径判定", IT_PDM_LEADER, "L3", 72, [IT_DEV_LEADER], None, "approval"),
             ("实现交付（转开发实现 / 转项目管理）", IT_DEV_LEADER, "L3", None, [],
              "两种路径由方案评估判定并自动指派：转开发实现→开发负责人（任务清单排期交付）；转项目管理→项目经理（项目立项交付，验收关闭后回传）"),
-            ("验收与闭环", IT_BM, "L3", 48),
+            ("验收与闭环", IT_BM, "L3", 48, [], None, "approval"),
         ],
     },
 ]
@@ -280,8 +280,9 @@ def run_seed_itsm(db: Session):
                 name, role, level, sla_hours = step[:4]
                 cc = list(step[4]) if len(step) > 4 else []
                 desc = step[5] if len(step) > 5 else None
+                node_type = step[6] if len(step) > 6 else "processing"
                 db.add(ProcessStep(definition_id=definition.id, seq=seq, name=name, default_role=role,
-                                   cc_roles=cc, autonomy_level=level, sla_hours=sla_hours, description=desc))
+                                   node_type=node_type, cc_roles=cc, autonomy_level=level, sla_hours=sla_hours, description=desc))
     # 示例目录/服务项：让系统开箱可报单，用户可改名或补充
     if not db.query(ServiceCatalog).first():
         catalog = ServiceCatalog(code="SC-INIT-0001", name="通用 IT 服务", tier="silver", description="初始目录，可编辑", sort=1)

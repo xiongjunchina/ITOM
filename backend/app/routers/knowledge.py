@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events.bus import publish
@@ -136,7 +136,7 @@ def delete_article(article_id: str, db: Session = Depends(get_db), actor=Depends
     a = db.get(KnowledgeArticle, article_id)
     if not a or a.is_deleted:
         raise AppError("NOT_FOUND", "文章不存在", 404)
-    ensure_not_example(a)
+    ensure_example_delete_allowed(a, db, actor)
     a.is_deleted = True
     audit(db, "knowledge_article", a.id, "delete", actor, {"code": a.article_code, "title": a.title})
     db.commit()

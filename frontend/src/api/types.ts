@@ -7,7 +7,7 @@ export interface Envelope<T = unknown> {
   error?: { code: string; message: string };
 }
 
-/** 系统角色（13 个内置角色，矩阵式 IT 组织） */
+/** 系统角色（16 个内置角色，矩阵式 IT 组织） */
 export type Role =
   | 'admin'
   | 'cio'
@@ -209,9 +209,22 @@ export interface Member {
 /** 岗位 */
 export interface Position {
   id: string;
+  position_code?: string | null;
   name: string;
+  position_family?: string | null;
   duties?: string | null;
   headcount?: number | null;
+  service_domains?: string[];
+  primary_roles?: string[];
+  level_framework?: string | null;
+  location_scope?: string | null;
+  skills?: string | null;
+  contractor_allowed?: boolean;
+  status?: string;
+  sort?: number;
+  onboard?: number;
+  formal_onboard?: number;
+  gap?: number;
 }
 
 /** 数据字典条目 */
@@ -246,11 +259,18 @@ export interface NotificationItem {
 }
 
 /** 总览看板：ITSM 四板块（服务工单/变更/事件/问题）独立卡片数据 */
+export interface DashboardPriorityCounts {
+  P1: number;
+  P2: number;
+  P3: number;
+  P4: number;
+}
+
 export interface ItsmBlocks {
-  service_request: { open: number; month_resolved: number; sla_rate: number | null };
-  change: { pending_approval: number; implementing: number; success_rate: number | null };
-  incident: { open: number; sla_warned: number; month_resolved: number; sla_rate: number | null };
-  problem: { open: number; known_errors: number; close_rate: number | null };
+  service_request: { open: number; open_by_priority: DashboardPriorityCounts; month_resolved: number; sla_rate: number | null };
+  change: { open: number; open_by_priority: DashboardPriorityCounts; pending_approval: number; implementing: number; success_rate: number | null };
+  incident: { open: number; open_by_priority: DashboardPriorityCounts; sla_warned: number; month_resolved: number; sla_rate: number | null };
+  problem: { open: number; open_by_priority: DashboardPriorityCounts; known_errors: number; close_rate: number | null };
 }
 
 /** 总览看板 */
@@ -352,12 +372,13 @@ export interface AllowedTransition {
 export interface ProcessStep {
   seq: number;
   name: string;
+  node_type?: ProcessNodeType | null;
   default_role?: string | null;
   /** 知会人（角色 code 或 "group:组码"）：步骤激活时仅收站内通知，不产生任务 */
   cc_roles?: string[];
   autonomy_level?: string | null;
   task_id: string | null;
-  task_status: '未开始' | '待处理' | '已完成';
+  task_status: '未开始' | '待处理' | '已完成' | '已驳回';
   /** 处理人 person id：与当前用户 person_id 比对决定「完成此步骤」可见性（M18） */
   assignee?: string | null;
   assignee_name?: string | null;
@@ -412,7 +433,7 @@ export interface TicketDetail extends TicketRow {
 
 // ============ M2.5 自配置：角色 / 用户组 ============
 
-/** 角色定义（13 个内置角色 + 自定义角色） */
+/** 角色定义（16 个内置角色 + 自定义角色） */
 export interface RoleDef {
   id: string;
   code: string;
@@ -594,6 +615,7 @@ export interface WorkflowConfig {
 // ============ M2.5 自配置：流程定义 ============
 
 export type AutonomyLevel = 'L1' | 'L2' | 'L3' | 'L4';
+export type ProcessNodeType = 'processing' | 'approval';
 
 export const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
   L1: 'L1 全自动',
@@ -606,6 +628,7 @@ export const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
 export interface ProcessStepDef {
   seq: number;
   name: string;
+  node_type: ProcessNodeType;
   default_role?: string | null;
   /** 知会人列表（与 default_role 同一词表）：步骤激活时仅通知、不产生任务、不阻塞 */
   cc_roles?: string[];
@@ -655,6 +678,8 @@ export interface Catalog {
   sort?: number | null;
   status: '上架' | '下架';
   item_count: number;
+  published_item_count?: number;
+  unpublished_item_count?: number;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
 }
@@ -1075,7 +1100,7 @@ export interface WbsTask {
   actual_end: string | null;
   /** 进度偏差(天)=实际结束−计划结束；null 未知，>0 延期，<0 提前 */
   schedule_deviation: number | null;
-  /** 完成度 %（仅 0/50/100） */
+  /** 完成度 %（0-100 的整数） */
   progress: number;
   /** 后端计算的状态 */
   status: WbsStatus;
@@ -1508,6 +1533,7 @@ export const POINT_SOURCE_LABELS: Record<string, string> = {
   training_host: '主讲培训',
   training_attend: '参与培训',
   campaign_award: '专项活动',
+  learning_growth: '学习成长',
 };
 
 /** 积分流水条目 */
@@ -1540,6 +1566,22 @@ export interface PointRule {
   name: string;
   points: number;
   active: boolean;
+}
+
+/** 学习成长目标（GET/POST/PATCH /team/learning-growth）。 */
+export interface LearningGrowthGoal {
+  id: string;
+  period: string;
+  person_id: string;
+  person_name: string;
+  goal: string;
+  target_description: string | null;
+  progress: number;
+  points: number;
+  evidence: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /** 建言状态 */
@@ -1670,6 +1712,7 @@ export interface HiringNeedRow {
   id: string;
   position_id: string;
   position_name: string | null;
+  position_code?: string | null;
   /** 级别：高级/中级/初级 */
   level: string;
   headcount: number;
@@ -1772,6 +1815,174 @@ export interface PerformanceData {
   dimensions: PerfDimension[];
   /** 计分公式说明 */
   note: string;
+}
+
+/** 矩阵角色评分内部评审数据（仅授权评审人可见） */
+export interface BplusDimensionScore {
+  code: string;
+  name: string;
+  weight: number;
+  system_score: number | null;
+  business_manager_score: number | null;
+  professional_manager_score: number | null;
+  cio_score: number | null;
+  manager_scores: Record<string, number>;
+  manager_reasons: Record<string, string>;
+  manager_evidence_refs: Record<string, string[]>;
+  effective_score: number | null;
+  reason: string | null;
+  evidence_refs: string[];
+}
+
+export interface BplusRoleScore {
+  assignment_id: string;
+  role_code: string;
+  role_name: string;
+  line_type: 'business' | 'professional' | 'platform';
+  role_weight: number;
+  review_mode: string;
+  review_scope: Record<string, unknown>;
+  evaluator_ids: string[];
+  evaluator_weights: Record<string, number>;
+  role_score: number | null;
+  dimensions: BplusDimensionScore[];
+}
+
+export interface BplusPerformanceRow {
+  person_id: string;
+  person_name: string;
+  role_status?: string;
+  roles: BplusRoleScore[];
+  business_contribution: number;
+  professional_contribution: number;
+  team_contribution_score: number;
+  team_contribution_dimensions: Record<string, number>;
+  regular_score: number;
+  bonus: number;
+  penalty: number;
+  published_score: number;
+  adjustments: PerfAdjustment[];
+}
+
+export interface BplusPerformanceData {
+  period: string;
+  version: number;
+  status: string;
+  rows: BplusPerformanceRow[];
+  review_details?: boolean;
+}
+
+/** 单个员工的完整评审详情（GET /admin/performance/reviews/person/{person_id}）。 */
+export interface BplusPersonPerformanceData {
+  period: string;
+  version: number;
+  status: string;
+  row: BplusPerformanceRow;
+  review_details?: boolean;
+}
+
+export interface PerformanceExternalInput {
+  id: string;
+  period: string;
+  metric_code: string;
+  target_type: string;
+  target_id: string;
+  target_name?: string | null;
+  evaluator_name: string;
+  evaluator_department: string | null;
+  raw_score: number;
+  raw_scale: number;
+  normalized_score: number | null;
+  comment: string | null;
+  evidence_refs: string[];
+  status: string;
+  version: number;
+  created_at: string;
+}
+
+/** 矩阵角色档案与维度规则（GET /admin/performance/role-profiles）。 */
+export interface PerformanceRoleDimensionDefinition {
+  id: string;
+  dimension_code: string;
+  name: string;
+  weight: number;
+  metric: string;
+  evidence_required: boolean;
+  sort: number;
+  active: boolean;
+}
+
+export interface PerformanceRoleProfileDefinition {
+  id: string;
+  role_code: string;
+  name: string;
+  line_type: 'business' | 'professional' | 'platform';
+  review_mode: 'manager_review' | 'cio_direct';
+  description: string | null;
+  active: boolean;
+  dimensions: PerformanceRoleDimensionDefinition[];
+}
+
+/** 绩效指标定义（GET /admin/performance/metric-definitions）。 */
+export interface PerformanceMetricDefinition {
+  metric_code: string;
+  name: string;
+  source_type: 'system' | 'external' | 'derived' | 'manual';
+  collection_mode: 'auto' | 'external_input' | 'derived' | 'manual_review';
+  description: string;
+  input_allowed?: boolean;
+  references: {
+    role_code: string;
+    role_name: string;
+    dimension_code: string;
+    dimension_name: string;
+    weight: number;
+  }[];
+}
+
+/** 周期内员工角色权重矩阵（GET /admin/performance/assignments）。 */
+export interface PerformanceAssignmentMatrix {
+  period: string;
+  version: number;
+  status: string;
+  assignments: {
+    assignment_id: string;
+    person_id: string;
+    person_name: string;
+    role_code: string;
+    role_name: string;
+    line_type: 'business' | 'professional' | 'platform';
+    role_weight: number;
+    evaluator_ids: string[];
+    evaluator_weights: Record<string, number>;
+    review_scope: Record<string, unknown>;
+    review_mode: string;
+  }[];
+}
+
+export interface PerformanceContributionConfig {
+  id?: string;
+  weights: Record<string, number>;
+  targets: Record<string, number>;
+  internal_satisfaction_weight: number;
+  external_satisfaction_weight: number;
+}
+
+export interface MyPerformanceData {
+  period: string;
+  version?: number;
+  status: string;
+  published: boolean;
+  result: {
+    business_role_score: number | null;
+    professional_role_score: number | null;
+    team_contribution_score: number;
+    regular_score: number | null;
+    bonus: number;
+    penalty: number;
+    published_score: number | null;
+    roles: { role_code: string; role_name: string; role_score: number | null; role_weight: number }[];
+  } | null;
 }
 
 /** 流程实例（监控行） */

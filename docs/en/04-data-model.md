@@ -48,7 +48,7 @@
 
 ### 1.1a role — role registry [cfg] (added 2026-07-10)
 
-code UNIQUE, name, description, base_role (the built-in role code that a custom role inherits; empty for built-ins), is_builtin. The 9 built-in roles are seeded and read-only; custom roles inherit API permissions via base_role and can be referenced by workflow_transition.allowed_roles and process_step.default_role.
+code UNIQUE, name, description, base_role (the built-in role code that a custom role inherits; empty for built-ins), is_builtin. The 16 built-in roles are seeded and their codes are read-only; custom roles inherit API permissions via base_role and can be referenced by workflow_transition.allowed_roles and process_step.default_role.
 
 ### 1.1b user_group / user_group_member — user groups (added 2026-07-10)
 
@@ -201,7 +201,7 @@ code [C], name, owner FK, year, description, status.
 
 ### 3.3 wbs_task — WBS task
 
-project_id FK, parent_task_id FK self-reference, wbs_code [C] (generated from tree position), task_name, assignee FK, start_date, end_date, status, description, deliverable, predecessors JSONB (array of task ids), progress_pct [C] (status-mapped 0/50/100), sort.
+project_id FK, parent_task_id FK self-reference, wbs_code [C] (generated from tree position), task_name, assignee FK, start_date, end_date, status, description, deliverable, predecessors JSONB (array of task ids), progress_pct (integer 0–100%; project roll-up is duration-weighted), sort.
 
 ### 3.4 milestone — milestone
 
@@ -245,7 +245,7 @@ code, name, entity_type (linked record type), trigger_condition JSONB (e.g. `{"t
 
 ### 5.2 process_step — process step [cfg]
 
-definition_id FK, seq, name, default_role (it_bp/it_pdm/it_pm/it_dev/it_ops/is_mgr/manager), autonomy_level (L1-L4), sla_hours, description.
+definition_id FK, seq, name, node_type (processing / approval), default_role, cc_roles (notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
 
 ### 5.3 process_instance — process instance
 
@@ -261,11 +261,11 @@ instance_id FK, step_id FK, assignee FK (resolved from default role, reassignabl
 
 ### 6.1 position — position definition
 
-name, duties TEXT (division of duties), headcount INT (headcount number). Gap = headcount − active members [C].
+position_code, name, position_family, service_domains JSONB, primary_roles JSONB, level_framework, location_scope, skills, duties TEXT, headcount INT (formal target), contractor_allowed, status, sort. Formal active count and gap are computed; gap = headcount − formal active count, excluding contractors/interns.
 
 ### 6.2 hiring_need — hiring need
 
-position_id FK, count, status (To Recruit / Interviewing / Onboarded / Cancelled), progress_note, closed_at.
+position_id FK, level (senior/mid/junior), count, qualification, status (To Recruit / Interviewing / Onboarded / Cancelled), progress_note, closed_at. One position can have multiple needs by level or batch.
 
 ### 6.3 development_activity — training activity
 
@@ -285,19 +285,43 @@ idea_id + person, UNIQUE composite.
 
 ### 6.7 point_rule — point rule [cfg]
 
-rule_code, name, event_type (UNIQUE, see the event list in doc 05), points INT (may be negative), active, description.
+rule_code, name, event_type (UNIQUE, see the event list in doc 05), points INT (may be negative), contribution_bucket (`role_result` / `team_contribution`), contribution_dimension, target_scope JSONB, active, description. A source event belongs to one bucket only.
 
 ### 6.8 point_entry — points ledger (append-only)
 
-person FK, event_type, points, rule_id FK, source_entity_type, source_entity_id, earned_at, remark, created_by (records the operator on a manual point adjustment and requires a remark). Indexes: (person, earned_at), event_type. The leaderboard / personal detail / monthly trends are all aggregated live from this.
+person FK, event_type, points, rule_id FK, contribution_bucket, contribution_dimension, period, source_entity_type, source_entity_id, earned_at, remark, created_by, idempotency_key. Indexes: (person, period), (person, earned_at), event_type. The ledger is append-only and powers live aggregation without rewriting published results.
 
-### 6.9 performance_rule — performance rule [cfg]
+### 6.9 performance_period — performance period [computed]
 
-name, dimension, source_config JSONB (data source and formula, defined by product later), weight, period_type (month/quarter), active.
+period_code (for example `2026-Q3`), version, status (draft/auto_scored/external_input/manager_review/cio_review/published/locked), rule_snapshot JSONB, role_snapshot JSONB, published_at, locked_at, created_by, updated_by.
 
-### 6.10 performance_score — performance-score result
+### 6.10 performance_role_profile / performance_role_dimension — role scoring profile [cfg]
 
-person FK, period (e.g. 2026-07), dimension, score, detail JSONB (traceable computation details), computed_at. **Can be recomputed and overwritten anytime per the rules** (a result snapshot, not manual data; historical periods are retained for export).
+Profile: role_code, name, line_type (business/professional/platform), review_mode (manager_review/cio_direct), description, active. Dimension: profile_id FK, dimension_code, name, weight, source_config JSONB, evidence_required, sort, active. Enabled dimensions must total 100%.
+
+### 6.11 performance_role_assignment — period role snapshot [computed]
+
+period_id FK, person FK, `role_code` (the implementation snapshot identifier), line_type, business_domain_id/professional_group_id, role_weight, evaluator_ids JSONB, `evaluator_weights` JSONB (sum 100), review_scope JSONB, review_mode, snapshot_detail JSONB. Published periods are not edited in place.
+
+### 6.12 performance_external_input — external raw fact [input]
+
+period_id FK, metric_code, target_type, target_id, evaluator_name, evaluator_department, raw_score, raw_scale, normalized_score [computed], comment, evidence_refs JSONB, inputter_id, status (draft/submitted/verified/locked), version, locked_at. External business satisfaction is separate from internal ITSM satisfaction; locked facts are corrected through a new version.
+
+### 6.13 performance_score_component — score component [computed]
+
+period_id FK, assignment_id FK, dimension_code, system_score [computed], business_manager_score, professional_manager_score, cio_score, `manager_scores` JSONB, `manager_reasons` JSONB, `manager_evidence_refs` JSONB, effective_score [computed], reason, evidence_refs JSONB, updated_at. Reviewer scores are stored independently and aggregated by the snapshot weights; reference, stage proposal, and effective values remain separate.
+
+### 6.13a performance_contribution_config — team contribution rules [cfg]
+
+Singleton configuration containing `weights` JSONB, `targets` JSONB, internal/external satisfaction weights, and `updated_by`. CIO/system administrators update it through `/api/admin/performance/contribution-rules`; recompute snapshots the values into `performance_period.rule_snapshot` so published periods remain reproducible.
+
+### 6.14 performance_review_action — review action [audit]
+
+period_id FK, assignment_id FK, actor_id, stage, action, before_value JSONB, after_value JSONB, reason, evidence_refs JSONB, created_at. Append-only for review, submission, return, publication, unlock, and version creation.
+
+### 6.15 performance_score — published performance result [computed]
+
+period_id FK, person FK, version, business_role_score, professional_role_score, team_contribution_score, regular_score, bonus, penalty, published_score, detail JSONB, published_at. Only published snapshots are exposed by `/api/my/performance`.
 
 ---
 

@@ -13,3 +13,18 @@ Required checks before declaring work complete:
 5. Keep documentation changes in the same commit or pull request as the implementation and tests.
 
 The delivery definition of done is: **implementation + tests + affected documentation are mutually consistent**.
+
+## Deployment and verification environment
+
+The IDC Kubernetes cluster is the sole delivery and acceptance environment. Do not deploy or validate changes with the local Docker environment unless the user explicitly asks for a temporary local investigation.
+
+For every user-visible fix or feature, the default completion flow is:
+
+1. Implement the code and synchronize affected Chinese and English documentation.
+2. Run the relevant automated tests and production frontend build locally.
+3. Build and publish the backend/frontend images required by `deploy/k8s`.
+4. Deploy to the IDC Kubernetes cluster with the repository deployment scripts.
+5. Verify rollout status, pod/service health, the frontend-to-backend `/api/health` path, and the changed user workflow in the IDC environment.
+6. Treat the work as delivered only after IDC verification succeeds; report any infrastructure blocker explicitly.
+
+Do not treat a successful local build, test run, or local Docker deployment as final acceptance.

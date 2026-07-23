@@ -1,12 +1,14 @@
 """团队管理（M6）：培训发展 / 团队文化 / 招聘需求 / 团队总览 / 人效评分框架。"""
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError
+from app.core.errors import AppError, ensure_example_delete_allowed
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import (
@@ -133,13 +135,115 @@ def put_charter(body: CharterIn, db: Session = Depends(get_db), user: AuthUser =
 @router.get("/api/hiring-needs")
 def list_hiring(db: Session = Depends(get_db), _=Depends(require_perm("positions", "view"))):
     rows = db.query(HiringNeed).filter(HiringNeed.is_deleted.is_(False)).order_by(HiringNeed.created_at.desc()).all()
-    positions = {p.id: p.name for p in db.query(Position).filter(Position.is_deleted.is_(False))}
+    positions = {p.id: p for p in db.query(Position).filter(Position.is_deleted.is_(False))}
     return ok([
-        {"id": r.id, "position_id": r.position_id, "position_name": positions.get(r.position_id),
+        {"id": r.id, "position_id": r.position_id, "position_name": positions.get(r.position_id).name if positions.get(r.position_id) else None,
+         "position_code": positions.get(r.position_id).position_code if positions.get(r.position_id) else None,
          "level": r.level, "qualification": r.qualification,
          "headcount": r.headcount, "status": r.status, "progress_note": r.progress_note}
         for r in rows
     ], total=len(rows))
+
+
+def _hiring_sheet():
+    from app.services.excel_io import Col, Sheet
+
+    return Sheet("招聘需求", [
+        Col("hiring_id", "需求ID", hint="导出数据中存在；填写时留空表示新建，填写已有 ID 表示更新", max_length=26),
+        Col("position_code", "岗位编码", hint="优先按岗位编码匹配；也可只填岗位名称", max_length=32),
+        Col("position_name", "岗位名称", hint="岗位编码为空时按名称精确匹配", max_length=64),
+        Col("level", "级别", required=True, enum=["高级", "中级", "初级"], max_length=8),
+        Col("headcount", "招聘人数", required=True, kind="int"),
+        Col("qualification", "任职资格", required=True, hint="至少 5 个字符"),
+        Col("status", "状态", enum=["待招聘", "面试中", "已到岗", "已取消"], max_length=16),
+        Col("progress_note", "进度备注", max_length=200),
+    ])
+
+
+def _hiring_xlsx_response(content: bytes, filename: str) -> Response:
+    from urllib.parse import quote
+
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=template.xlsx; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.get("/api/hiring-needs/template")
+def hiring_template(_: AuthUser = Depends(require_perm("positions", "create"))):
+    from app.services.excel_io import build_template
+
+    return _hiring_xlsx_response(build_template([_hiring_sheet()]), "招聘需求导入模板.xlsx")
+
+
+@router.get("/api/hiring-needs/export")
+def export_hiring(db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("positions", "view"))):
+    from app.services.excel_io import build_export
+
+    positions = {p.id: p for p in db.query(Position).filter(Position.is_deleted.is_(False))}
+    rows = []
+    for r in db.query(HiringNeed).filter(HiringNeed.is_deleted.is_(False)).order_by(HiringNeed.created_at.desc()).all():
+        p = positions.get(r.position_id)
+        rows.append({
+            "hiring_id": r.id, "position_code": p.position_code if p else None, "position_name": p.name if p else None,
+            "level": r.level, "headcount": r.headcount, "qualification": r.qualification,
+            "status": r.status, "progress_note": r.progress_note,
+        })
+    return _hiring_xlsx_response(build_export(_hiring_sheet(), rows), "招聘需求.xlsx")
+
+
+@router.post("/api/hiring-needs/import")
+async def import_hiring(file: UploadFile, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("positions", "create"))):
+    from app.services.excel_io import parse_sheet
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise AppError("FILE_TOO_LARGE", "导入文件不能超过 5MB")
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise AppError("INVALID_FORMAT", "请上传 .xlsx 文件（使用系统导出的模板）")
+    rows, errors = parse_sheet(content, _hiring_sheet())
+    positions = db.query(Position).filter(Position.is_deleted.is_(False)).all()
+    by_code = {p.position_code: p for p in positions if p.position_code}
+    by_name = {p.name: p for p in positions}
+    created = updated = 0
+    for row in rows:
+        rownum = row.pop("_row")
+        position = by_code.get((row.get("position_code") or "").strip()) or by_name.get((row.get("position_name") or "").strip())
+        if not position:
+            errors.append({"row": rownum, "error": "岗位编码或岗位名称不存在，请先在岗位定义中维护"})
+            continue
+        qualification = (row.get("qualification") or "").strip()
+        if len(qualification) < 5:
+            errors.append({"row": rownum, "error": "任职资格至少填写 5 个字符"})
+            continue
+        row["status"] = row.get("status") or "待招聘"
+        existing = None
+        hiring_id = (row.get("hiring_id") or "").strip()
+        if hiring_id:
+            existing = db.get(HiringNeed, hiring_id)
+            if existing and existing.is_deleted:
+                existing = None
+        if existing is None:
+            existing = HiringNeed(position_id=position.id)
+            db.add(existing)
+            created += 1
+        else:
+            updated += 1
+        existing.position_id = position.id
+        existing.level = row["level"]
+        existing.headcount = row["headcount"]
+        existing.qualification = qualification
+        existing.status = row["status"]
+        existing.progress_note = row.get("progress_note")
+    try:
+        db.flush()
+        audit(db, "hiring_need", "bulk", "import", actor, {"created": created, "updated": updated, "failed": len(errors)})
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise AppError("IMPORT_FAILED", "招聘需求导入失败，请检查岗位、字段长度和数据库约束后重试") from exc
+    return ok({"created": created, "updated": updated, "failed": errors})
 
 
 @router.post("/api/hiring-needs")
@@ -162,6 +266,18 @@ def update_hiring(hiring_id: str, body: HiringIn, db: Session = Depends(get_db),
     for k, v in body.model_dump().items():
         setattr(row, k, v)
     audit(db, "hiring_need", row.id, "update", user, {"status": body.status})
+    db.commit()
+    return ok({"id": row.id})
+
+
+@router.delete("/api/hiring-needs/{hiring_id}")
+def delete_hiring(hiring_id: str, db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("positions", "delete"))):
+    row = db.get(HiringNeed, hiring_id)
+    if not row or row.is_deleted:
+        raise AppError("NOT_FOUND", "招聘需求不存在", 404)
+    ensure_example_delete_allowed(row, db, actor)
+    row.is_deleted = True
+    audit(db, "hiring_need", row.id, "delete", actor, {"position_id": row.position_id, "headcount": row.headcount})
     db.commit()
     return ok({"id": row.id})
 

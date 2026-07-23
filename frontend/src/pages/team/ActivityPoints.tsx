@@ -21,12 +21,12 @@ import {
   Spin,
   Statistic,
   Switch,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import {
   LikeFilled,
   LikeOutlined,
@@ -167,6 +167,9 @@ function CampaignsTab() {
   const t = useT();
   const et = useEnums();
   const canManage = useIdeasPerm('edit');
+  const user = useAuthStore((s) => s.user);
+  const canDelete = hasPermission(user, 'ideas', 'delete');
+  const isAdmin = !!user?.permissions?.['*'];
 
   const taskColumns: ColumnsType<CampaignTaskRow> = [
     { title: t('team.campaign.col.taskName'), dataIndex: 'name', width: 180 },
@@ -428,8 +431,10 @@ function CampaignsTab() {
                   }
                   extra={<Tag color={CAMPAIGN_STATUS_COLORS[c.status as CampaignStatus] ?? 'default'}>{c.status_name}</Tag>}
                   actions={
-                    canManage && !c.is_example
+                    canManage || canDelete
                       ? [
+                          ...(canManage && !c.is_example
+                            ? [
                           <Button
                             key="edit"
                             type="link"
@@ -444,6 +449,26 @@ function CampaignsTab() {
                           <span key="status" onClick={(e) => e.stopPropagation()}>
                             {statusActions(c)}
                           </span>,
+                              ]
+                            : []),
+                          ...(canDelete && (!c.is_example || isAdmin)
+                            ? [
+                                <Popconfirm
+                                  key="delete"
+                                  title={t('common.deleteConfirm')}
+                                  onConfirm={async (e) => {
+                                    e?.stopPropagation();
+                                    await api.delete(`/campaigns/${c.id}`);
+                                    message.success(t('common.deleted'));
+                                    void load();
+                                  }}
+                                >
+                                  <Button type="link" size="small" danger onClick={(e) => e.stopPropagation()}>
+                                    {t('common.delete')}
+                                  </Button>
+                                </Popconfirm>,
+                              ]
+                            : []),
                         ]
                       : undefined
                   }
@@ -784,9 +809,14 @@ function IdeasTab() {
   const t = useT();
   const canCreate = useIdeasPerm('create');
   const canManage = useIdeasPerm('edit');
+  const user = useAuthStore((s) => s.user);
+  const canDelete = hasPermission(user, 'ideas', 'delete');
+  const isAdmin = !!user?.permissions?.['*'];
 
   const [items, setItems] = useState<IdeaRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(10);
 
   // 提交建言
   const [createOpen, setCreateOpen] = useState(false);
@@ -944,17 +974,17 @@ function IdeasTab() {
           </Button>
         ),
     },
-    ...(canManage
+    ...(canManage || canDelete
       ? [
           {
             title: t('common.actions'),
             key: 'actions',
             width: 150,
             render: (_: unknown, r: IdeaRow) => {
-              if (r.is_example) return null;
+              if (r.is_example && !isAdmin) return null;
               return (
                 <Space size={0}>
-                  {r.status === 'submitted' && (
+                  {!r.is_example && canManage && r.status === 'submitted' && (
                     <>
                       <Popconfirm title={t('team.idea.adoptConfirm')} onConfirm={() => void setIdeaStatus(r, 'adopted').catch(() => undefined)}>
                         <Button type="link" size="small">
@@ -973,10 +1003,24 @@ function IdeasTab() {
                       </Button>
                     </>
                   )}
-                  {r.status === 'adopted' && (
+                  {!r.is_example && canManage && r.status === 'adopted' && (
                     <Popconfirm title={t('team.idea.implementConfirm')} onConfirm={() => void setIdeaStatus(r, 'implemented').catch(() => undefined)}>
                       <Button type="link" size="small">
                         {t('team.idea.implemented')}
+                      </Button>
+                    </Popconfirm>
+                  )}
+                  {canDelete && (!r.is_example || isAdmin) && (
+                    <Popconfirm
+                      title={t('common.deleteConfirm')}
+                      onConfirm={async () => {
+                        await api.delete(`/ideas/${r.id}`);
+                        message.success(t('common.deleted'));
+                        void load();
+                      }}
+                    >
+                      <Button type="link" size="small" danger>
+                        {t('common.delete')}
                       </Button>
                     </Popconfirm>
                   )}
@@ -1054,7 +1098,18 @@ function IdeasTab() {
             loading={loading}
             columns={columns}
             dataSource={items}
-            pagination={{ pageSize: 10, showTotal: (n) => t('team.total', { n }) }}
+            standardToolbar={{ exportFileName: '建言献策', searchPlaceholder: '搜索标题、提交人、状态或内容' }}
+            pagination={{
+              current: tablePage,
+              pageSize: tablePageSize,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50, 100],
+              showTotal: (n) => t('team.total', { n }),
+              onChange: (page, pageSize) => {
+                setTablePage(page);
+                setTablePageSize(pageSize);
+              },
+            }}
             expandable={{
               expandedRowRender: (r) => (
                 <Space direction="vertical" size={8} style={{ display: 'flex' }}>

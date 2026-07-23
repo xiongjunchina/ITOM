@@ -12,15 +12,29 @@ import {
   Row,
   Select,
   Space,
-  Table,
   Tag,
+  Tooltip,
   Typography,
   message,
   Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useNavigate } from 'react-router-dom';
-import { CustomerServiceOutlined, DeleteOutlined, EditOutlined, KeyOutlined, PlusOutlined, ReadOutlined, RightOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  ArrowDownOutlined,
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
+  ArrowUpOutlined,
+  CustomerServiceOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  FilterOutlined,
+  KeyOutlined,
+  PlusOutlined,
+  ReadOutlined,
+  RightOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
 import ImportButtons from '../../components/ImportButtons';
@@ -30,6 +44,7 @@ import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
 import { TIER_COLORS, TIER_LABELS } from '../../api/types';
+import SortableTable from '../../components/SortableTable';
 
 interface CatalogFormValues {
   name: string;
@@ -57,16 +72,22 @@ export default function CatalogPage() {
   const requesterPortal = isRequesterOnly(user);
   const canManage = hasAnyRole(user, ['admin', 'cio']);
   const canDelete = hasPermission(user, 'catalog', 'delete'); // M21：默认矩阵仅 admin
+  const isAdmin = !!user?.permissions?.['*'];
   const t = useT();
   const et = useEnums();
 
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
   const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null);
+  const [catalogHistory, setCatalogHistory] = useState<Array<string | null>>([null]);
+  const [catalogHistoryIndex, setCatalogHistoryIndex] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
   const [items, setItems] = useState<ServiceItem[]>([]);
   const [itemLoading, setItemLoading] = useState(false);
+  const [itemPage, setItemPage] = useState(1);
+  const [itemPageSize, setItemPageSize] = useState(20);
   const [q, setQ] = useState('');
+  const [itemStatus, setItemStatus] = useState<'全部' | '上架' | '下架'>('全部');
 
   const [members, setMembers] = useState<Member[]>([]);
 
@@ -100,6 +121,7 @@ export default function CatalogPage() {
       const res = await api.getList<ServiceItem>('/service-items', {
         catalog_id: selectedCatalog ?? undefined,
         q: q || undefined,
+        status: itemStatus === '全部' ? undefined : itemStatus,
       });
       setItems(res.items);
     } catch {
@@ -107,7 +129,7 @@ export default function CatalogPage() {
     } finally {
       setItemLoading(false);
     }
-  }, [selectedCatalog, q]);
+  }, [selectedCatalog, q, itemStatus]);
 
   useEffect(() => {
     void loadCatalogs();
@@ -118,13 +140,63 @@ export default function CatalogPage() {
   }, [loadItems]);
 
   useEffect(() => {
+    setItemPage(1);
+  }, [selectedCatalog, q, itemStatus]);
+
+  useEffect(() => {
     if (canManage) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
   }, [canManage]);
+
+  const selectCatalog = (catalogId: string | null) => {
+    if (catalogId === selectedCatalog) return;
+    const nextHistory = catalogHistory.slice(0, catalogHistoryIndex + 1);
+    nextHistory.push(catalogId);
+    setCatalogHistory(nextHistory);
+    setCatalogHistoryIndex(nextHistory.length - 1);
+    setSelectedCatalog(catalogId);
+  };
+
+  const goCatalogBack = () => {
+    if (catalogHistoryIndex === 0) return;
+    const nextIndex = catalogHistoryIndex - 1;
+    setCatalogHistoryIndex(nextIndex);
+    setSelectedCatalog(catalogHistory[nextIndex]);
+  };
+
+  const goCatalogForward = () => {
+    if (catalogHistoryIndex >= catalogHistory.length - 1) return;
+    const nextIndex = catalogHistoryIndex + 1;
+    setCatalogHistoryIndex(nextIndex);
+    setSelectedCatalog(catalogHistory[nextIndex]);
+  };
+
+  const setCatalogStatus = async (catalog: Catalog, status: Catalog['status']) => {
+    if (catalog.status === status) return;
+    try {
+      await api.patch(`/catalogs/${catalog.id}`, { status });
+      message.success(status === '上架' ? '服务目录已上架' : '服务目录已下架');
+      void loadCatalogs();
+    } catch {
+      // 已统一提示
+    }
+  };
+
+  const updateItemStatus = async (item: ServiceItem, status: ServiceItem['status']) => {
+    if (item.status === status) return;
+    try {
+      await api.patch(`/service-items/${item.id}`, { status });
+      message.success(status === '上架' ? '服务项已上架' : '服务项已下架');
+      void loadItems();
+      void loadCatalogs();
+    } catch {
+      // 已统一提示
+    }
+  };
 
   // ---- 目录增改 ----
   const openCatalogCreate = () => {
@@ -255,9 +327,35 @@ export default function CatalogPage() {
             title: t('common.actions'),
             key: 'action',
             width: 110,
-            render: (_: unknown, record: ServiceItem) =>
-              record.is_example ? null : (
+              render: (_: unknown, record: ServiceItem) =>
+              record.is_example && !isAdmin ? null : (
                 <Space size={8}>
+                  {canManage && (
+                    <>
+                      <Tooltip title="上架">
+                        <Button
+                          type="link"
+                          size="small"
+                          aria-label={`上架服务项 ${record.name}`}
+                          disabled={record.status === '上架' || record.is_example}
+                          icon={<ArrowUpOutlined />}
+                          style={{ padding: 0 }}
+                          onClick={() => void updateItemStatus(record, '上架')}
+                        />
+                      </Tooltip>
+                      <Tooltip title="下架">
+                        <Button
+                          type="link"
+                          size="small"
+                          aria-label={`下架服务项 ${record.name}`}
+                          disabled={record.status === '下架' || record.is_example}
+                          icon={<ArrowDownOutlined />}
+                          style={{ padding: 0 }}
+                          onClick={() => void updateItemStatus(record, '下架')}
+                        />
+                      </Tooltip>
+                    </>
+                  )}
                   {canManage && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openItemEdit(record)}>
                       {t('common.edit')}
@@ -314,11 +412,11 @@ export default function CatalogPage() {
             <Input.Search allowClear placeholder="筛选服务" onSearch={setQ} />
           </div>
           <div className="service-portal__catalogs">
-            <button className={selectedCatalog === null ? 'is-active' : ''} onClick={() => setSelectedCatalog(null)}>
+              <button className={selectedCatalog === null ? 'is-active' : ''} onClick={() => selectCatalog(null)}>
               <strong>全部服务</strong><span>{items.length} 个可用服务</span>
             </button>
             {catalogs.filter((c) => c.status === '上架').map((catalog) => (
-              <button key={catalog.id} className={selectedCatalog === catalog.id ? 'is-active' : ''} onClick={() => setSelectedCatalog(catalog.id)}>
+              <button key={catalog.id} className={selectedCatalog === catalog.id ? 'is-active' : ''} onClick={() => selectCatalog(catalog.id)}>
                 <strong>{catalog.name}</strong><span>{catalog.item_count} 个服务</span>
               </button>
             ))}
@@ -356,7 +454,7 @@ export default function CatalogPage() {
             <Card
               size="small"
               hoverable
-              onClick={() => setSelectedCatalog(null)}
+              onClick={() => selectCatalog(null)}
               style={selectedCatalog === null ? { borderColor: '#1677ff' } : undefined}
             >
               <Typography.Text strong>{t('itsm.catalog.allItems')}</Typography.Text>
@@ -366,7 +464,7 @@ export default function CatalogPage() {
                 key={c.id}
                 size="small"
                 hoverable
-                onClick={() => setSelectedCatalog(c.id)}
+                onClick={() => selectCatalog(c.id)}
                 style={selectedCatalog === c.id ? { borderColor: '#1677ff' } : undefined}
               >
                 <Space style={{ width: '100%', justifyContent: 'space-between' }}>
@@ -380,9 +478,43 @@ export default function CatalogPage() {
                       {c.code} · {t('itsm.catalog.itemCount', { n: c.item_count })}
                       {' · '}
                       <Badge status={c.status === '上架' ? 'success' : 'default'} text={et.catalogStatus(c.status)} />
+                      {' · '}
+                      <Typography.Text type="secondary">
+                        上架中 {c.published_item_count ?? 0} · 已下架 {c.unpublished_item_count ?? 0}
+                      </Typography.Text>
                     </Typography.Text>
                   </Space>
                   <Space size={0}>
+                    {canManage && !c.is_example && (
+                      <>
+                        <Tooltip title="上架">
+                          <Button
+                            type="text"
+                            size="small"
+                            aria-label={`上架服务目录 ${c.name}`}
+                            disabled={c.status === '上架'}
+                            icon={<ArrowUpOutlined />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void setCatalogStatus(c, '上架');
+                            }}
+                          />
+                        </Tooltip>
+                        <Tooltip title="下架">
+                          <Button
+                            type="text"
+                            size="small"
+                            aria-label={`下架服务目录 ${c.name}`}
+                            disabled={c.status === '下架'}
+                            icon={<ArrowDownOutlined />}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void setCatalogStatus(c, '下架');
+                            }}
+                          />
+                        </Tooltip>
+                      </>
+                    )}
                     {canManage && !c.is_example && (
                       <Button
                         type="text"
@@ -394,7 +526,7 @@ export default function CatalogPage() {
                         }}
                       />
                     )}
-                    {canDelete && !c.is_example && (
+                    {canDelete && (!c.is_example || isAdmin) && (
                       <Popconfirm
                         title={t('common.deleteConfirm')}
                         onConfirm={async () => {
@@ -418,14 +550,52 @@ export default function CatalogPage() {
 
       <Col xs={24} md={16} lg={17} xl={18}>
         <Card
-          title={t('itsm.catalog.itemsTitle')}
+          title={
+            <Space size={8}>
+              <Typography.Text strong>{t('itsm.catalog.itemsTitle')}</Typography.Text>
+              <Tooltip title="返回上一个服务目录">
+                <Button
+                  type="text"
+                  size="small"
+                  aria-label="返回上一个服务目录"
+                  icon={<ArrowLeftOutlined />}
+                  disabled={catalogHistoryIndex === 0}
+                  onClick={goCatalogBack}
+                />
+              </Tooltip>
+              <Tooltip title="前进到下一个服务目录">
+                <Button
+                  type="text"
+                  size="small"
+                  aria-label="前进到下一个服务目录"
+                  icon={<ArrowRightOutlined />}
+                  disabled={catalogHistoryIndex >= catalogHistory.length - 1}
+                  onClick={goCatalogForward}
+                />
+              </Tooltip>
+            </Space>
+          }
           extra={
             <Space>
               <Input.Search
                 placeholder={t('itsm.catalog.searchItem')}
                 allowClear
                 style={{ width: 200 }}
+                value={q}
+                onChange={(event) => setQ(event.target.value)}
                 onSearch={setQ}
+              />
+              <Select
+                placeholder="筛选状态"
+                prefix={<FilterOutlined />}
+                style={{ width: 132 }}
+                value={itemStatus}
+                onChange={(value) => setItemStatus((value as '全部' | '上架' | '下架') || '全部')}
+                options={[
+                  { value: '全部', label: '全部' },
+                  { value: '上架', label: '上架中' },
+                  { value: '下架', label: '已下架' },
+                ]}
               />
               {canManage && (
                 <>
@@ -445,14 +615,24 @@ export default function CatalogPage() {
             </Space>
           }
         >
-          <Table<ServiceItem>
+          <SortableTable<ServiceItem>
             rowKey="id"
             loading={itemLoading}
             columns={columns}
             dataSource={items}
             sticky
             scroll={{ x: 'max-content' }}
-            pagination={{ pageSize: 20, showTotal: (n) => t('itsm.total', { n }) }}
+            pagination={{
+              current: itemPage,
+              pageSize: itemPageSize,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50, 100],
+              showTotal: (n) => t('itsm.total', { n }),
+              onChange: (page, pageSize) => {
+                setItemPage(page);
+                setItemPageSize(pageSize);
+              },
+            }}
           />
         </Card>
       </Col>

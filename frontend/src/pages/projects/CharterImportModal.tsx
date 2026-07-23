@@ -13,13 +13,13 @@ import {
   Space,
   Spin,
   Steps,
-  Table,
   Tag,
   Typography,
   Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { FileWordOutlined, InboxOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -110,7 +110,7 @@ export default function CharterImportModal({ open, onClose }: CharterImportModal
     }
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }

@@ -17,12 +17,12 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tag,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import {
   AppstoreOutlined,
   DownloadOutlined,
@@ -137,6 +137,7 @@ export default function Requirements() {
   const canCreate = useReqPerm('create');
   const user = useAuthStore((s) => s.user);
   const canDelete = hasPermission(user, 'requirements', 'delete'); // M21：默认矩阵仅 admin
+  const isAdmin = !!user?.permissions?.['*'];
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [view, setView] = useState<'board' | 'table'>('table');
@@ -344,7 +345,7 @@ export default function Requirements() {
             width: 70,
             fixed: 'right' as const,
             render: (_: unknown, r: RequirementRow) =>
-              r.is_example ? null : (
+              r.is_example && !isAdmin ? null : (
                 <Popconfirm
                   title={t('common.deleteConfirm')}
                   onConfirm={async () => {

@@ -14,12 +14,12 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tag,
   Typography,
   message,
   Popconfirm} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
@@ -35,6 +35,7 @@ import {
 import type {
   AutonomyLevel,
   ProcessDefinition,
+  ProcessNodeType,
   ProcessStepDef,
   TicketType,
   WorkflowEntityType,
@@ -50,6 +51,7 @@ type DrawerMode = 'create' | 'edit' | 'new-version';
 
 interface StepFormRow {
   name: string;
+  node_type: ProcessNodeType;
   default_role?: string | null;
   cc_roles?: string[];
   autonomy_level: AutonomyLevel;
@@ -85,6 +87,10 @@ export default function Definitions() {
     value: k,
     label: et.autonomy(k),
   }));
+  const nodeTypeOptions = [
+    { value: 'processing' as const, label: t('proc.node.processing') },
+    { value: 'approval' as const, label: t('proc.node.approval') },
+  ];
 
   const [items, setItems] = useState<ProcessDefinition[]>([]);
   const [loading, setLoading] = useState(false);
@@ -128,6 +134,7 @@ export default function Definitions() {
       .map((s, i) => ({
         seq: i + 1,
         name: (s.name ?? '').trim(),
+        node_type: s.node_type ?? 'processing',
         default_role: s.default_role ?? null,
         cc_roles: s.cc_roles ?? [],
         autonomy_level: s.autonomy_level,
@@ -153,6 +160,7 @@ export default function Definitions() {
         description: record.description ?? undefined,
         steps: record.steps.map((s) => ({
           name: s.name,
+          node_type: s.node_type ?? 'processing',
           default_role: s.default_role ?? undefined,
           cc_roles: s.cc_roles ?? [],
           autonomy_level: s.autonomy_level,
@@ -164,7 +172,7 @@ export default function Definitions() {
       form.setFieldsValue({
         entity_type: 'ticket',
         trigger_json: '',
-        steps: [{ name: '', autonomy_level: 'L4', cc_roles: [] }],
+        steps: [{ name: '', node_type: 'processing', autonomy_level: 'L4', cc_roles: [] }],
       });
     }
     setDrawerOpen(true);
@@ -197,6 +205,7 @@ export default function Definitions() {
     const steps = (values.steps ?? []).map((s, i) => ({
       seq: i + 1,
       name: s.name,
+      node_type: s.node_type ?? 'processing',
       default_role: s.default_role ?? null,
       cc_roles: s.cc_roles ?? [],
       autonomy_level: s.autonomy_level,
@@ -271,6 +280,12 @@ export default function Definitions() {
   const lockedStepColumns: ColumnsType<ProcessStepDef> = [
     { title: '#', dataIndex: 'seq', width: 50 },
     { title: t('proc.col.name'), dataIndex: 'name' },
+    {
+      title: t('proc.col.nodeType'),
+      dataIndex: 'node_type',
+      width: 120,
+      render: (v: ProcessNodeType) => t(v === 'approval' ? 'proc.node.approval' : 'proc.node.processing'),
+    },
     {
       title: t('proc.col.defaultAssign'),
       dataIndex: 'default_role',
@@ -575,7 +590,7 @@ export default function Definitions() {
                       </Col>
                       <Col flex="auto">
                         <Row gutter={8}>
-                          <Col span={7}>
+                          <Col span={5}>
                             <Form.Item
                               name={[field.name, 'name']}
                               rules={[{ required: true, message: t('proc.stepNameRequired') }]}
@@ -584,7 +599,16 @@ export default function Definitions() {
                               <Input placeholder={t('proc.stepNamePlaceholder')} maxLength={50} />
                             </Form.Item>
                           </Col>
-                          <Col span={7}>
+                          <Col span={5}>
+                            <Form.Item
+                              name={[field.name, 'node_type']}
+                              rules={[{ required: true, message: t('proc.required') }]}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Select placeholder={t('proc.node.placeholder')} options={nodeTypeOptions} />
+                            </Form.Item>
+                          </Col>
+                          <Col span={6}>
                             <Form.Item
                               name={[field.name, 'default_role']}
                               style={{ marginBottom: 8 }}
@@ -598,7 +622,7 @@ export default function Definitions() {
                               />
                             </Form.Item>
                           </Col>
-                          <Col span={6}>
+                          <Col span={5}>
                             <Form.Item
                               name={[field.name, 'autonomy_level']}
                               rules={[{ required: true, message: t('proc.required') }]}
@@ -607,7 +631,7 @@ export default function Definitions() {
                               <Select placeholder={t('proc.autonomyPlaceholder')} options={autonomyOptions} />
                             </Form.Item>
                           </Col>
-                          <Col span={4}>
+                          <Col span={3}>
                             <Form.Item
                               name={[field.name, 'sla_hours']}
                               style={{ marginBottom: 8 }}
@@ -678,7 +702,7 @@ export default function Definitions() {
                     type="dashed"
                     block
                     icon={<PlusOutlined />}
-                    onClick={() => add({ name: '', autonomy_level: 'L4', cc_roles: [] })}
+                    onClick={() => add({ name: '', node_type: 'processing', autonomy_level: 'L4', cc_roles: [] })}
                   >
                     {t('proc.addStep')}
                   </Button>

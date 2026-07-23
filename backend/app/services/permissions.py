@@ -37,8 +37,13 @@ MODULES = [
     ("process_monitor", "流程监控", "流程中心"),
     ("team_overview", "团队总览", "团队管理"),
     ("performance", "人效评分", "团队管理"),
+    ("performance_result", "人效最终结果", "团队管理"),
+    ("performance_review", "人效分级评审", "团队管理"),
+    ("performance_external", "人效外部原数据", "团队管理"),
+    ("performance_admin", "人效周期与规则", "团队管理"),
     ("positions", "岗位编制", "团队管理"),
     ("activities", "培训发展", "团队管理"),
+    ("learning_growth", "学习成长", "团队管理"),
     ("ideas", "活动积分", "团队管理"),
     ("charter", "团队文化", "团队管理"),
     # 顺序按左侧导航「系统管理」二级页：组织管理 / 用户与组管理 / 角色与权限 / 数据字典 / 状态机 / 需求评分 / 审计
@@ -88,8 +93,8 @@ _BUSINESS_VIEW = [
 def _staff_base() -> dict[str, str]:
     matrix = {m: "v" for m in _BUSINESS_VIEW}
     matrix.update({"ticket_sr": "vce", "ticket_incident": "vce", "ticket_change": "vce",
-                   "knowledge": "vce", "requirements": "vc",
-                   "activities": "vc", "ideas": "vc"})
+                   "knowledge": "vce", "requirements": "vc", "performance_result": "v",
+    "activities": "vc", "learning_growth": "vced", "ideas": "vc"})
     return matrix
 
 
@@ -111,29 +116,30 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_dev": _staff_base(),
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
     "it_pdm": _merge(_staff_base(), {"requirements": "e"}),
-    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v"}),
-    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v"}),
+    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v", "performance_review": "vce"}),
+    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v", "performance_review": "vce"}),
     "it_pm": _merge(_staff_base(), {"projects": "ce"}),
-    "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v"}),
+    "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
     "it_op_leader": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce",
-                                           "contracts": "ce", "sla": "e", "process_monitor": "v"}),
+                                           "contracts": "ce", "sla": "e", "process_monitor": "v", "performance_review": "vce"}),
     "is_mgr": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "admin_audit": "v"}),
     # 矩阵式组织三角色（docs/06 §七）——默认值是起点，全部可在权限配置页调整
     "cio": _merge(_staff_base(), {
         "catalog": "ce", "cmdb": "ce", "problems": "ce", "vendors": "ce", "contracts": "ce",
-        "projects": "ce", "requirements": "e", "positions": "vce", "activities": "e",
+        "projects": "ce", "requirements": "e", "positions": "vced", "activities": "e",
         "ideas": "e", "charter": "e", "sla": "e",
-        "performance": "vce", "process_definitions": "v", "process_monitor": "v",
+        "performance": "vce", "performance_review": "vce", "performance_external": "vced",
+        "performance_admin": "vce", "process_definitions": "v", "process_monitor": "v",
         "admin_business_domains": "vce", "admin_members": "vced", "admin_audit": "v",
     }),
     "it_bm": _merge(_staff_base(), {
         "requirements": "e", "projects": "ce", "admin_business_domains": "v",
-        "performance": "vce", "process_monitor": "v",
+        "performance": "vce", "performance_review": "vce", "process_monitor": "v",
     }),
     "it_tm": _merge(_staff_base(), {
-        "activities": "e", "charter": "e", "performance": "vce",
-        "ideas": "e", "process_monitor": "v", "admin_members": "vce",
+        "activities": "e", "charter": "e", "performance": "vce", "performance_review": "vce",
+        "learning_growth": "vced", "ideas": "e", "process_monitor": "v", "admin_members": "vce",
     }),
 }
 
@@ -147,12 +153,11 @@ def flags_to_actions(flags: str) -> list[str]:
 def seed_permissions(db: Session):
     """按角色写入默认矩阵：仅当该角色一行都没有时补种（幂等；新内置角色自动获得默认
     矩阵，已被管理员调整过的角色不受影响）。"""
-    seeded = {r.role_code for r in db.query(RolePermission.role_code).distinct()}
     for role_code, modules in DEFAULT_MATRIX.items():
-        if role_code in seeded:
-            continue
+        existing = {r.module for r in db.query(RolePermission).filter(RolePermission.role_code == role_code)}
         for module, flags in modules.items():
-            db.add(RolePermission(role_code=role_code, module=module, actions=flags_to_actions(flags)))
+            if module not in existing:
+                db.add(RolePermission(role_code=role_code, module=module, actions=flags_to_actions(flags)))
     db.commit()
 
 

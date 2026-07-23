@@ -9,7 +9,7 @@
 # Usage:  ./push-images.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-TAG=36604a3a
+TAG=pmo-cio-20260723-120000-linux-amd64
 REG=core.harbor.domain
 
 command -v skopeo >/dev/null || { echo "!! skopeo not found (brew install skopeo)"; exit 1; }

@@ -14,11 +14,11 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -161,7 +161,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -210,7 +210,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const loadMembers = () => {
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -343,7 +343,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
             width: 150,
             fixed: 'right' as const,
             render: (_: unknown, r: TicketRow) =>
-              r.is_example ? null : (
+              r.is_example && !isAdmin ? null : (
                 <Space size={8}>
                   {canEdit && r.status !== 'closed' && r.status !== 'rejected' && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openEdit(r)}>
@@ -440,6 +440,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         loading={loading}
         columns={columns}
         dataSource={items}
+        standardToolbar={{ exportFileName: '工单清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 1300 }}
         pagination={{

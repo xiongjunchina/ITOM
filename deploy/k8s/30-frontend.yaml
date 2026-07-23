@@ -36,7 +36,7 @@ spec:
         - name: harbor-isa
       containers:
         - name: nginx
-          image: core.harbor.domain/sn/itom-frontend:36604a3a
+          image: core.harbor.domain/sn/itom-frontend:pmo-cio-20260723-120000-linux-amd64
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80

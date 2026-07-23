@@ -27,6 +27,7 @@ class ProcessStep(GlidBase):
     definition_id: Mapped[str] = mapped_column(ForeignKey("process_definition.id"))
     seq: Mapped[int] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(128))
+    node_type: Mapped[str] = mapped_column(String(16), default="processing", comment="processing/approval")
     default_role: Mapped[str | None] = mapped_column(String(32), comment="处理人：角色码或 group:组码（产生任务，阻塞流程）")
     cc_roles: Mapped[list | None] = mapped_column(JsonCol, default=list, comment="知会人：角色码/group:组码列表（仅通知，不阻塞）")
     autonomy_level: Mapped[str] = mapped_column(String(4), default="L4", comment="L1-L4")

@@ -12,7 +12,6 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Tag,
   TreeSelect,
   message,
@@ -24,6 +23,7 @@ import { DEPT_TYPE_COLORS, DEPT_TYPE_LABELS } from '../../api/types';
 import type { Department, DeptType } from '../../api/types';
 import { buildDeptTree, buildDeptTreeSelectData } from '../../utils/dept';
 import { useT } from '../../i18n';
+import Table from '../../components/SortableTable';
 import { useEnums } from '../../i18n/enums';
 
 interface DeptForm {
@@ -222,6 +222,7 @@ export default function Departments() {
         loading={loading}
         columns={columns}
         dataSource={treeRows}
+        standardToolbar={{ exportFileName: '组织架构部门', searchPlaceholder: '搜索部门编码、名称或类型' }}
         pagination={false}
         expandable={{
           expandedRowKeys: [...expandedKeys],

@@ -21,6 +21,7 @@ import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
+import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useGoBack } from '../../utils/nav';
@@ -53,7 +54,8 @@ function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning
   return 'processing';
 }
 
-function stepStatus(s: ProcessStep): 'finish' | 'process' | 'wait' {
+function stepStatus(s: ProcessStep): 'finish' | 'process' | 'wait' | 'error' {
+  if (s.task_status === '已驳回') return 'error';
   if (s.task_status === '已完成') return 'finish';
   if (s.task_status === '待处理') return 'process';
   return 'wait';
@@ -122,7 +124,7 @@ export default function TicketDetail() {
   const loadMembers = () => {
     if (members.length === 0) {
       api
-        .getList<Member>('/members', { page: 1, page_size: 2000 })
+        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
         .then((res) => setMembers(res.items))
         .catch(() => undefined);
     }
@@ -282,6 +284,7 @@ export default function TicketDetail() {
   const isSubmitter = !!user && !!detail.submitter && detail.submitter === user.id;
   const canRate = !isExample && detail.status === 'closed' && isSubmitter && detail.satisfaction == null;
   const process = detail.process;
+  const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);
   // M3：非 requester（拥有任一内部角色）可升级为问题
   const isStaff = !!user && user.roles.some((r) => r !== 'requester');
   const canEscalate = !isExample && isStaff && detail.status !== 'new' && detail.status !== 'closed';
@@ -307,6 +310,11 @@ export default function TicketDetail() {
             </Tag>
           </Space>
           <Space wrap>
+            <ProcessActionButtons
+              step={currentProcessStep}
+              disabled={isExample}
+              onDone={() => void load()}
+            />
             {canEscalate && (
               <Button loading={escalating} onClick={() => void escalateProblem()}>
                 {t('itsm.ticket.escalate')}
@@ -351,7 +359,12 @@ export default function TicketDetail() {
               0,
             )}
             items={process.steps.map((s) => ({
-              title: s.name,
+              title: (
+                <Space size={4}>
+                  <span>{s.name}</span>
+                  {s.node_type === 'approval' && <Tag color="gold">{t('comp.flow.approval')}</Tag>}
+                </Space>
+              ),
               status: stepStatus(s),
               description: (
                 <Space direction="vertical" size={0}>

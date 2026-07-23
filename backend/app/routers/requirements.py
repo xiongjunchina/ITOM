@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.core.errors import AppError, ensure_not_example
+from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.core.rbac import ADMIN, IT_PDM, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
@@ -31,6 +31,7 @@ from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
 from app.services.rbac import effective_roles
+from app.services.team_scope import require_it_member_if_configured
 from app.services.workflow import allowed_targets, closure_path, restrict_terminal_targets, require_terminal_transition_admin, status_names
 from app.services.workflow import transition as wf_transition
 
@@ -626,7 +627,7 @@ def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor
     r = db.get(Requirement, requirement_id)
     if not r or r.is_deleted:
         raise AppError("NOT_FOUND", "需求不存在", 404)
-    ensure_not_example(r)
+    ensure_example_delete_allowed(r, db, actor)
     from app.models import ProcessInstance, ProcessTask, RequirementTask
 
     r.is_deleted = True
@@ -721,6 +722,7 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
         owner = body.fields.get("owner") or r.owner
         if not owner:
             raise AppError("STAGE_FIELD_REQUIRED", "进入实现前需完成分析：负责人必填")
+        require_it_member_if_configured(db, owner, "需求负责人")
     if body.to == "closed":
         criteria = r.acceptance_criteria or []
         if criteria and not all(c.get("checked") for c in criteria):
@@ -872,6 +874,7 @@ def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depen
     pm = db.get(OrgMember, body.pm_id)
     if not pm or pm.is_deleted:
         raise AppError("NOT_FOUND", "项目经理不存在", 404)
+    require_it_member_if_configured(db, body.pm_id, "项目经理")
     r.owner = pm.id
     wf_transition(db, r, "requirement", "implementing", {}, user)
     if not r.implementing_at:
@@ -910,6 +913,7 @@ def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_d
     owner = db.get(OrgMember, body.owner_id)
     if not owner or owner.is_deleted:
         raise AppError("NOT_FOUND", "开发负责人不存在", 404)
+    require_it_member_if_configured(db, body.owner_id, "开发负责人")
     r.owner = owner.id
     wf_transition(db, r, "requirement", "implementing", {}, user)
     if not r.implementing_at:
@@ -1023,6 +1027,8 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
         raise AppError("NOT_FOUND", "任务不存在", 404)
     ensure_not_example(db.get(Requirement, task.requirement_id))
     data = body.model_dump(exclude_unset=True)
+    if data.get("assignee"):
+        require_it_member_if_configured(db, data["assignee"], "需求任务负责人")
     is_assignee = user.person_id and task.assignee == user.person_id
     from app.services.permissions import has_perm as _hp
 
@@ -1051,7 +1057,7 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = De
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    ensure_not_example(db.get(Requirement, task.requirement_id))
+    ensure_example_delete_allowed(db.get(Requirement, task.requirement_id), db, user)
     task.is_deleted = True
     audit(db, "requirement_task", task.id, "delete", user, {"name": task.name})
     db.commit()

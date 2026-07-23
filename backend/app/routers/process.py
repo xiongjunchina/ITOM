@@ -1,5 +1,6 @@
 """流程任务操作 + 流程定义自配置管理（admin）。"""
 import re
+from typing import Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -20,6 +21,10 @@ class CompleteIn(BaseModel):
     comment: str = ""
 
 
+class RejectIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+
 class ReassignIn(BaseModel):
     assignee: str
 
@@ -27,6 +32,7 @@ class ReassignIn(BaseModel):
 class StepIn(BaseModel):
     seq: int
     name: str = Field(min_length=1, max_length=128)
+    node_type: Literal["processing", "approval"] = "processing"
     default_role: str | None = None
     cc_roles: list[str] = []
     autonomy_level: str = "L4"
@@ -64,28 +70,21 @@ def _require_task_operator(db: Session, user: AuthUser, task_id: str) -> None:
         raise AppError("FORBIDDEN", "仅该任务的当前处理人可执行此操作", 403)
 
 
-@router.post("/api/process-tasks/{task_id}/complete")
-def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_operator(db, user, task_id)
-    instance = process_engine.complete_task(db, task_id, user, body.comment)
-    audit(db, "process_task", task_id, "complete", user, {"comment": body.comment})
+def _after_task_advanced(db: Session, instance: ProcessInstance, user: AuthUser) -> None:
+    """完成/审批同意共用的实体编排回调。"""
     if instance.entity_type == "requirement":
-        # M16.5：需求流程编排——验收步骤指派业务域负责人 / 流程完成自动闭环需求
         from app.routers.requirements import on_process_advanced
 
         on_process_advanced(db, instance.entity_id, user)
     elif instance.entity_type in ("ticket", "ticket_change"):
-        # M23/M31：工单流程编排——中间态自动同步（SR/事件），流程完成自动闭环
         from app.services.tickets import on_ticket_advanced
 
         on_ticket_advanced(db, instance.entity_id, user)
     elif instance.entity_type == "problem":
-        # M24/M29：问题流程编排（步骤延续/负责人指派/状态同步；完成→自动闭环）
         from app.routers.problems import on_problem_advanced
 
         on_problem_advanced(db, instance.entity_id, user)
     elif instance.entity_type == "project" and instance.status == "completed":
-        # M24：项目流程走完 → 不自动关（关闭需理由，M14.1），通知 PM 确认收尾
         from app.models import Project
 
         p = db.get(Project, instance.entity_id)
@@ -98,6 +97,42 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
                 content="关键节点流程已全部完成，请确认项目是否收尾关闭（关闭需填写理由）。",
                 link=f"/projects/{p.id}",
             )
+
+
+@router.post("/api/process-tasks/{task_id}/complete")
+def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    _require_task_operator(db, user, task_id)
+    # 审批节点的流程图入口与右上角“同意”语义完全一致：
+    # 变更审批等状态机联动必须走 approve_task，不能只把任务标成已完成。
+    task = db.get(ProcessTask, task_id)
+    instance = (
+        process_engine.approve_task(db, task_id, user, body.comment)
+        if task and task.step and task.step.node_type == "approval"
+        else process_engine.complete_task(db, task_id, user, body.comment)
+    )
+    audit(db, "process_task", task_id, "complete", user, {"comment": body.comment})
+    _after_task_advanced(db, instance, user)
+    db.commit()
+    return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
+
+
+@router.post("/api/process-tasks/{task_id}/approve")
+def approve(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """审批节点右上角「同意」按钮；审批理由可选。"""
+    _require_task_operator(db, user, task_id)
+    instance = process_engine.approve_task(db, task_id, user, body.comment)
+    audit(db, "process_task", task_id, "approve", user, {"comment": body.comment})
+    _after_task_advanced(db, instance, user)
+    db.commit()
+    return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
+
+
+@router.post("/api/process-tasks/{task_id}/reject")
+def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """审批节点右上角「驳回」按钮；驳回理由必填并保留在流程任务记录。"""
+    _require_task_operator(db, user, task_id)
+    instance = process_engine.reject_task(db, task_id, user, body.reason)
+    audit(db, "process_task", task_id, "reject", user, {"reason": body.reason})
     db.commit()
     return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
 
@@ -124,7 +159,7 @@ def _def_row(d: ProcessDefinition, db: Session) -> dict:
         "instance_count": instance_count,
         "steps_locked": instance_count > 0,
         "steps": [
-            {"seq": s.seq, "name": s.name, "default_role": s.default_role, "cc_roles": s.cc_roles or [],
+            {"seq": s.seq, "name": s.name, "node_type": s.node_type or "processing", "default_role": s.default_role, "cc_roles": s.cc_roles or [],
              "autonomy_level": s.autonomy_level, "sla_hours": s.sla_hours, "description": s.description}
             for s in d.steps if not s.is_deleted
         ],
@@ -280,7 +315,7 @@ def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_d
     if not old or old.is_deleted:
         raise AppError("NOT_FOUND", "流程定义不存在", 404)
     steps = body.steps if body.steps is not None else [
-        StepIn(seq=s.seq, name=s.name, default_role=s.default_role, cc_roles=s.cc_roles or [],
+        StepIn(seq=s.seq, name=s.name, node_type=s.node_type or "processing", default_role=s.default_role, cc_roles=s.cc_roles or [],
                autonomy_level=s.autonomy_level, sla_hours=s.sla_hours, description=s.description)
         for s in old.steps if not s.is_deleted
     ]

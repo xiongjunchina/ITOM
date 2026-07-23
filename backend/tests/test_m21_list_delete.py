@@ -93,6 +93,39 @@ def test_catalog_and_item_guards(client, ctx):
     assert client.delete(f"/api/catalogs/{cat['id']}", headers=ctx["admin"]).json()["success"]
 
 
+def test_service_item_search_status_filter_and_sort(client, ctx):
+    cat = client.post("/api/catalogs", json={"name": "M21筛选目录"}, headers=ctx["admin"]).json()["data"]
+    first = client.post(
+        "/api/service-items",
+        json={"name": "网络访问申请", "catalog_id": cat["id"], "service_type": "权限", "status": "上架"},
+        headers=ctx["admin"],
+    ).json()["data"]
+    second = client.post(
+        "/api/service-items",
+        json={"name": "数据库账号回收", "catalog_id": cat["id"], "service_type": "权限"},
+        headers=ctx["admin"],
+    ).json()["data"]
+    client.patch(f"/api/service-items/{second['id']}", json={"status": "下架"}, headers=ctx["admin"])
+
+    catalog_row = next(
+        row for row in client.get("/api/catalogs", headers=ctx["admin"]).json()["data"] if row["id"] == cat["id"]
+    )
+    assert catalog_row["published_item_count"] == 1
+    assert catalog_row["unpublished_item_count"] == 1
+
+    searched = client.get("/api/service-items?catalog_id=%s&q=数据库" % cat["id"], headers=ctx["admin"]).json()["data"]
+    assert [row["id"] for row in searched] == [second["id"]]
+
+    unpublished = client.get("/api/service-items?catalog_id=%s&status=下架" % cat["id"], headers=ctx["admin"]).json()["data"]
+    assert [row["id"] for row in unpublished] == [second["id"]]
+
+    descending = client.get(
+        "/api/service-items?catalog_id=%s&sort_by=name&sort_dir=descend" % cat["id"],
+        headers=ctx["admin"],
+    ).json()["data"]
+    assert [row["name"] for row in descending] == sorted([first["name"], second["name"]], reverse=True)
+
+
 def test_portfolio_delete_unlinks_projects(client, ctx):
     pf = client.post("/api/portfolios", json={"name": "M21组合"}, headers=ctx["admin"]).json()["data"]
     m = client.post("/api/members", json={"name": "PM-M21"}, headers=ctx["admin"]).json()["data"]

@@ -12,11 +12,11 @@ import {
   Select,
   Space,
   Switch,
-  Table,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import { PlusOutlined, SaveOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { WORKFLOW_ENTITY_LABELS } from '../../api/types';
@@ -352,6 +352,7 @@ export default function WorkflowConfig() {
         loading={loading}
         columns={statusColumns}
         dataSource={statuses}
+        standardToolbar={{ exportFileName: '流程状态定义', searchPlaceholder: '搜索状态编码或名称' }}
         pagination={false}
       />
       <Button
@@ -385,6 +386,7 @@ export default function WorkflowConfig() {
         loading={loading}
         columns={transitionColumns}
         dataSource={transitions}
+        standardToolbar={{ exportFileName: '流程流转规则', searchPlaceholder: '搜索来源状态、目标状态或角色' }}
         pagination={false}
       />
       <Button

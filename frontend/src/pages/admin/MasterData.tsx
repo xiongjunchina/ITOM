@@ -11,7 +11,6 @@ import {
   Row,
   Space,
   Switch,
-  Table,
   Tag,
   message,
 } from 'antd';
@@ -19,6 +18,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
+import Table from '../../components/SortableTable';
 import type { MasterDataItem } from '../../api/types';
 
 interface ItemForm {
@@ -34,6 +34,8 @@ export default function MasterData() {
   const [items, setItems] = useState<MasterDataItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [category, setCategory] = useState<string | null>(null);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(20);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<MasterDataItem | null>(null);
@@ -73,6 +75,10 @@ export default function MasterData() {
         .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0)),
     [items, activeCategory],
   );
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [activeCategory]);
 
   const openCreate = () => {
     setEditing(null);
@@ -162,7 +168,18 @@ export default function MasterData() {
             loading={loading}
             columns={columns}
             dataSource={rows}
-            pagination={{ pageSize: 20, showTotal: (n) => t('admin.total', { n }) }}
+            standardToolbar={{ exportFileName: '主数据', searchPlaceholder: '搜索分类、编码、名称或值' }}
+            pagination={{
+              current: tablePage,
+              pageSize: tablePageSize,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50, 100],
+              showTotal: (n) => t('admin.total', { n }),
+              onChange: (page, pageSize) => {
+                setTablePage(page);
+                setTablePageSize(pageSize);
+              },
+            }}
           />
         </Col>
       </Row>

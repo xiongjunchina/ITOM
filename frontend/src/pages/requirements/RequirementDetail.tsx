@@ -20,13 +20,13 @@ import {
   Space,
   Spin,
   Steps,
-  Table,
   Tag,
   Tooltip,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import Table from '../../components/SortableTable';
 import {
   ArrowLeftOutlined,
   BookOutlined,
@@ -46,6 +46,7 @@ import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
 import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import CompleteStepModal from '../../components/CompleteStepModal';
+import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
   AcceptanceCriterion,
   AllowedTransition,
@@ -631,7 +632,7 @@ export default function RequirementDetail() {
   useEffect(() => {
     if (!canEdit) return;
     api
-      .getList<Member>('/members', { page: 1, page_size: 2000 })
+      .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
     api
@@ -913,6 +914,7 @@ export default function RequirementDetail() {
   const isFinal = st === 'closed' || st === 'cancelled';
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
+  const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
   const reachedEvaluating =
     !!detail.evaluating_at || ['evaluating', 'analyzing', 'implementing', 'closed'].includes(st);
   const reachedAnalyzing = !!detail.analyzing_at || ['analyzing', 'implementing', 'closed'].includes(st);
@@ -1083,6 +1085,11 @@ export default function RequirementDetail() {
               })}
             </Space>
           )}
+          <ProcessActionButtons
+            step={currentProcessStep}
+            disabled={isExample}
+            onDone={() => void load()}
+          />
         </Space>
       </Card>
 

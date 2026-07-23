@@ -1,7 +1,7 @@
 """团队域模型 M6a：建言献策 + 专项活动 + 积分台账（docs/04 §6，PRD §9）。"""
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -39,6 +39,11 @@ class PointRule(GlidBase):
     code: Mapped[str] = mapped_column(String(48), unique=True)
     name: Mapped[str] = mapped_column(String(128))
     points: Mapped[float] = mapped_column(Float)
+    contribution_bucket: Mapped[str] = mapped_column(
+        String(24), default="team_contribution", comment="role_result/team_contribution"
+    )
+    contribution_dimension: Mapped[str | None] = mapped_column(String(48))
+    target_points: Mapped[float | None] = mapped_column(Float, comment="团队贡献维度目标积分")
     active: Mapped[bool] = mapped_column(default=True)
 
 
@@ -84,8 +89,31 @@ class PointEntry(GlidBase):
     campaign_id: Mapped[str | None] = mapped_column(ForeignKey("activity_campaign.id"), index=True)
     task_id: Mapped[str | None] = mapped_column(ForeignKey("campaign_task.id"))
     period: Mapped[str | None] = mapped_column(String(32), index=True, comment="计入考核期")
+    contribution_bucket: Mapped[str] = mapped_column(
+        String(24), default="team_contribution", comment="role_result/team_contribution"
+    )
+    contribution_dimension: Mapped[str | None] = mapped_column(String(48))
     note: Mapped[str | None] = mapped_column(String(200))
     created_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class LearningGrowthGoal(GlidBase):
+    """员工在考核期内填写的学习成长目标及实际完成情况。
+
+    每个目标保存当前完成比例与佐证；服务层会按同一人员/周期的目标平均进度
+    折算为 learning_growth 团队贡献积分，并同步到 PointEntry，保持现有积分账本可追溯。
+    """
+
+    __tablename__ = "learning_growth_goal"
+
+    period: Mapped[str] = mapped_column(String(32), index=True, comment="考核期，如 2026-Q3")
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    goal: Mapped[str] = mapped_column(String(200), comment="学习成长目标")
+    target_description: Mapped[str | None] = mapped_column(Text, comment="目标与验收标准")
+    progress: Mapped[float] = mapped_column(Float, default=0, comment="实际完成比例 0-100")
+    evidence: Mapped[str | None] = mapped_column(Text, comment="相关佐证")
+    note: Mapped[str | None] = mapped_column(Text, comment="补充说明")
+    points: Mapped[float] = mapped_column(Float, default=0, comment="按周期目标积分折算后的积分")
 
 
 class PerfScheme(GlidBase):
@@ -125,6 +153,167 @@ class PerfOverride(GlidBase):
     dimension_code: Mapped[str] = mapped_column(String(48))
     score: Mapped[float] = mapped_column(Float, comment="核定分 0-100")
     created_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class PerformancePeriod(GlidBase):
+    """矩阵角色绩效周期：状态和版本是发布隔离的边界。"""
+
+    __tablename__ = "performance_period"
+    __table_args__ = (UniqueConstraint("period_code", "version"),)
+
+    period_code: Mapped[str] = mapped_column(String(32), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(
+        String(24), default="draft",
+        comment="draft/auto_scored/external_input/manager_review/cio_review/published/locked",
+    )
+    rule_snapshot: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    role_snapshot: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by: Mapped[str | None] = mapped_column(String(26))
+    updated_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class PerformanceContributionConfig(GlidBase):
+    """周期团队贡献与满意度组合规则；由 CIO/系统管理员维护。"""
+
+    __tablename__ = "performance_contribution_config"
+
+    weights: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="团队贡献维度权重，合计 100")
+    targets: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="团队贡献维度目标积分")
+    internal_satisfaction_weight: Mapped[float] = mapped_column(Float, default=50)
+    external_satisfaction_weight: Mapped[float] = mapped_column(Float, default=50)
+    updated_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class PerformanceRoleProfile(GlidBase):
+    """矩阵角色档案；岗位权限角色与绩效角色故意分离。"""
+
+    __tablename__ = "performance_role_profile"
+
+    role_code: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(128))
+    line_type: Mapped[str] = mapped_column(String(16), comment="business/professional/platform")
+    review_mode: Mapped[str] = mapped_column(String(24), default="manager_review", comment="manager_review/cio_direct")
+    description: Mapped[str | None] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PerformanceRoleDimension(GlidBase):
+    """角色评分维度和自动取数配置。"""
+
+    __tablename__ = "performance_role_dimension"
+    __table_args__ = (UniqueConstraint("profile_id", "dimension_code"),)
+
+    profile_id: Mapped[str] = mapped_column(ForeignKey("performance_role_profile.id"), index=True)
+    dimension_code: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(128))
+    weight: Mapped[float] = mapped_column(Float, default=0)
+    source_config: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    evidence_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PerformanceRoleAssignment(GlidBase):
+    """人员-角色-周期快照，承载评审范围和评审主体。"""
+
+    __tablename__ = "performance_role_assignment"
+    __table_args__ = (UniqueConstraint("period_id", "person_id", "role_code"),)
+
+    period_id: Mapped[str] = mapped_column(ForeignKey("performance_period.id"), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    role_code: Mapped[str] = mapped_column(String(64), index=True)
+    line_type: Mapped[str] = mapped_column(String(16))
+    business_domain_id: Mapped[str | None] = mapped_column(ForeignKey("business_domain.id"), index=True)
+    professional_group_id: Mapped[str | None] = mapped_column(ForeignKey("user_group.id"), index=True)
+    role_weight: Mapped[float] = mapped_column(Float, default=0)
+    evaluator_ids: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    evaluator_weights: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="评审人权重，合计 100")
+    review_scope: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    review_mode: Mapped[str] = mapped_column(String(24), default="manager_review")
+    snapshot_detail: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+
+
+class PerformanceExternalInput(GlidBase):
+    """系统外业务评价等原始事实；锁定后只能生成修订版本。"""
+
+    __tablename__ = "performance_external_input"
+
+    period_id: Mapped[str] = mapped_column(ForeignKey("performance_period.id"), index=True)
+    metric_code: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str] = mapped_column(String(26), index=True)
+    evaluator_name: Mapped[str] = mapped_column(String(128))
+    evaluator_department: Mapped[str | None] = mapped_column(String(128))
+    raw_score: Mapped[float] = mapped_column(Float)
+    raw_scale: Mapped[float] = mapped_column(Float, default=100)
+    normalized_score: Mapped[float | None] = mapped_column(Float)
+    comment: Mapped[str | None] = mapped_column(Text)
+    evidence_refs: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    inputter_id: Mapped[str | None] = mapped_column(String(26))
+    status: Mapped[str] = mapped_column(String(16), default="draft", comment="draft/submitted/verified/locked")
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class PerformanceScoreComponent(GlidBase):
+    """单个角色维度的参考分、各阶段建议分和生效分。"""
+
+    __tablename__ = "performance_score_component"
+    __table_args__ = (UniqueConstraint("period_id", "assignment_id", "dimension_code"),)
+
+    period_id: Mapped[str] = mapped_column(ForeignKey("performance_period.id"), index=True)
+    assignment_id: Mapped[str] = mapped_column(ForeignKey("performance_role_assignment.id"), index=True)
+    dimension_code: Mapped[str] = mapped_column(String(64))
+    system_score: Mapped[float | None] = mapped_column(Float)
+    business_manager_score: Mapped[float | None] = mapped_column(Float)
+    professional_manager_score: Mapped[float | None] = mapped_column(Float)
+    cio_score: Mapped[float | None] = mapped_column(Float)
+    manager_scores: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="评审人独立评分")
+    manager_reasons: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="评审人独立说明")
+    manager_evidence_refs: Mapped[dict | None] = mapped_column(JsonCol, default=dict, comment="评审人独立佐证")
+    effective_score: Mapped[float | None] = mapped_column(Float)
+    reason: Mapped[str | None] = mapped_column(Text)
+    evidence_refs: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    updated_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class PerformanceReviewAction(GlidBase):
+    """评审动作追加记录，不覆盖历史。"""
+
+    __tablename__ = "performance_review_action"
+
+    period_id: Mapped[str] = mapped_column(ForeignKey("performance_period.id"), index=True)
+    assignment_id: Mapped[str | None] = mapped_column(ForeignKey("performance_role_assignment.id"), index=True)
+    actor_id: Mapped[str] = mapped_column(String(26), index=True)
+    stage: Mapped[str] = mapped_column(String(24))
+    action: Mapped[str] = mapped_column(String(32))
+    before_value: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    after_value: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    reason: Mapped[str | None] = mapped_column(Text)
+    evidence_refs: Mapped[list | None] = mapped_column(JsonCol, default=list)
+
+
+class PerformanceScore(GlidBase):
+    """已发布的绩效结果快照；员工接口只读取 published 周期。"""
+
+    __tablename__ = "performance_score"
+    __table_args__ = (UniqueConstraint("period_id", "person_id"),)
+
+    period_id: Mapped[str] = mapped_column(ForeignKey("performance_period.id"), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    business_role_score: Mapped[float | None] = mapped_column(Float)
+    professional_role_score: Mapped[float | None] = mapped_column(Float)
+    team_contribution_score: Mapped[float] = mapped_column(Float, default=0)
+    regular_score: Mapped[float | None] = mapped_column(Float)
+    bonus: Mapped[float] = mapped_column(Float, default=0)
+    penalty: Mapped[float] = mapped_column(Float, default=0)
+    published_score: Mapped[float | None] = mapped_column(Float)
+    detail: Mapped[dict | None] = mapped_column(JsonCol, default=dict)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class DevelopmentActivity(GlidBase):
