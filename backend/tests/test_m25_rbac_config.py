@@ -233,6 +233,13 @@ def test_process_definition_crud_and_versioning(client, admin_headers, ctx):
     )
     assert r.json()["error"]["code"] == "STEPS_LOCKED"
 
+    # 等长但修改处理人同样必须另存版本，避免历史任务的 RACI 口径漂移。
+    role_steps = [{k: step.get(k) for k in ("seq", "step_code", "name", "node_type", "default_role", "cc_roles", "autonomy_level", "sla_hours", "description")}
+                  for step in incident["steps"]]
+    role_steps[0]["default_role"] = "cio" if role_steps[0].get("default_role") != "cio" else "it_ops"
+    r = client.patch(f"/api/admin/process-definitions/{incident['id']}", json={"steps": role_steps}, headers=admin_headers)
+    assert r.json()["error"]["code"] == "STEPS_LOCKED"
+
     # 另存新版本：旧版停用、新版 active、老实例不受影响
     r = client.post(
         f"/api/admin/process-definitions/{incident['id']}/new-version",
@@ -324,4 +331,3 @@ def test_delete_process_definition_guards(client, admin_headers):
     resp = client.delete(f"/api/admin/process-definitions/{used['id']}", headers=admin_headers)
     assert resp.json()["error"]["code"] == "PROCESS_IN_USE"
     client.patch(f"/api/admin/process-definitions/{used['id']}", json={"active": True}, headers=admin_headers)
-

@@ -50,6 +50,7 @@ import { useEnums } from '../../i18n/enums';
 type DrawerMode = 'create' | 'edit' | 'new-version';
 
 interface StepFormRow {
+  step_code?: string | null;
   name: string;
   node_type: ProcessNodeType;
   default_role?: string | null;
@@ -159,6 +160,7 @@ export default function Definitions() {
         trigger_json: trigger ? JSON.stringify(trigger) : '',
         description: record.description ?? undefined,
         steps: record.steps.map((s) => ({
+          step_code: s.step_code ?? undefined,
           name: s.name,
           node_type: s.node_type ?? 'processing',
           default_role: s.default_role ?? undefined,
@@ -590,7 +592,15 @@ export default function Definitions() {
                       </Col>
                       <Col flex="auto">
                         <Row gutter={8}>
-                          <Col span={5}>
+                          <Col span={4}>
+                            <Form.Item
+                              name={[field.name, 'step_code']}
+                              style={{ marginBottom: 8 }}
+                            >
+                              <Input placeholder={t('proc.stepCodePlaceholder')} maxLength={64} />
+                            </Form.Item>
+                          </Col>
+                          <Col span={4}>
                             <Form.Item
                               name={[field.name, 'name']}
                               rules={[{ required: true, message: t('proc.stepNameRequired') }]}
@@ -599,7 +609,7 @@ export default function Definitions() {
                               <Input placeholder={t('proc.stepNamePlaceholder')} maxLength={50} />
                             </Form.Item>
                           </Col>
-                          <Col span={5}>
+                          <Col span={4}>
                             <Form.Item
                               name={[field.name, 'node_type']}
                               rules={[{ required: true, message: t('proc.required') }]}
@@ -608,7 +618,7 @@ export default function Definitions() {
                               <Select placeholder={t('proc.node.placeholder')} options={nodeTypeOptions} />
                             </Form.Item>
                           </Col>
-                          <Col span={6}>
+                          <Col span={5}>
                             <Form.Item
                               name={[field.name, 'default_role']}
                               style={{ marginBottom: 8 }}
@@ -622,7 +632,7 @@ export default function Definitions() {
                               />
                             </Form.Item>
                           </Col>
-                          <Col span={5}>
+                          <Col span={4}>
                             <Form.Item
                               name={[field.name, 'autonomy_level']}
                               rules={[{ required: true, message: t('proc.required') }]}

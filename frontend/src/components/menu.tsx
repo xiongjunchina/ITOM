@@ -108,7 +108,7 @@ export const MENU_TREE: MenuNode[] = [
     key: 'admin',
     label: '系统管理',
     icon: <SettingOutlined />,
-    roles: ['admin', 'is_mgr'],
+    roles: ['admin', 'cio', 'is_mgr'],
     children: [
       {
         key: '/admin/org', path: '/admin/org', label: '组织管理',

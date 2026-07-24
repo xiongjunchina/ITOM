@@ -26,7 +26,7 @@ def _walk_process(client, headers, ticket_id, steps_to_complete=None):
 
 
 def test_change_flow_complete_auto_closes(client, ctx):
-    """变更 4 步流程（登记风险评估→审批→实施→复盘）全部完成 → 工单自动 closed。"""
+    """当前运行时四步变更流程（申请→审批→实施→复盘）全部完成 → 工单自动 closed。"""
     t = client.post("/api/tickets", json={
         "title": "服务器重启-M23", "ticket_type": "change", "priority": "P3",
         "description": "d", "service_item_id": ctx["item"],
@@ -56,6 +56,6 @@ def test_incomplete_process_does_not_touch_status(client, ctx):
         "description": "d", "service_item_id": ctx["item"],
         "change_type": "普通", "risk_level": "中",
     }, headers=ctx["admin"]).json()["data"]
-    _walk_process(client, ctx["admin"], t["id"], steps_to_complete=2)
+    _walk_process(client, ctx["admin"], t["id"], steps_to_complete=1)
     final = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]
-    assert final["status"] == "pending_approval"  # 风险评估同意后进入正式变更审批，尚未闭环
+    assert final["status"] == "pending_approval"  # 申请完成后进入变更审批，尚未闭环

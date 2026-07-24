@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
 from app.db import get_db
-from app.deps import require_perm
+from app.deps import require_perm, require_roles
 from app.models import (
     AuthUser,
     BusinessDomain,
@@ -252,6 +252,22 @@ def team_performance(period: str = "", db: Session = Depends(get_db), _=Depends(
     return ok(compute_performance(db, period))
 
 
+@router.get("/api/team/performance/overview")
+def team_performance_overview(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("performance", "view"))):
+    """当前人效总览：使用矩阵角色绩效结果，而不是旧版岗位方案结果。
+
+    保留 ``/api/team/performance`` 供历史客户端和数据迁移兼容；新总览页必须使用
+    该接口，避免把旧版 PerfScheme 的默认方案、活动积分维度再次混入当前规则。
+    """
+    period = _valid_bplus_period(period or current_period())
+    period_row = latest_period(db, period)
+    if not period_row:
+        recompute_bplus(db, period)
+        db.commit()
+        period_row = latest_period(db, period)
+    return ok(build_internal_result(db, period_row))
+
+
 # ==================== 矩阵角色绩效 ====================
 
 
@@ -297,6 +313,7 @@ class RoleDimensionUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     weight: float = Field(gt=0, le=100)
     metric: str = Field(min_length=1, max_length=64)
+    source_config: dict = Field(default_factory=dict)
     evidence_required: bool = False
     sort: int = 0
     active: bool = True
@@ -387,7 +404,8 @@ def list_bplus_role_profiles(db: Session = Depends(get_db), _=Depends(require_pe
             "review_mode": profile.review_mode, "description": profile.description, "active": profile.active,
             "dimensions": [{
                 "id": d.id, "dimension_code": d.dimension_code, "name": d.name, "weight": d.weight,
-                "metric": (d.source_config or {}).get("metric", "manual"), "evidence_required": d.evidence_required,
+                "metric": (d.source_config or {}).get("metric", "manual"), "source_config": d.source_config or {},
+                "evidence_required": d.evidence_required,
                 "sort": d.sort, "active": d.active,
             } for d in dimensions],
         })
@@ -455,6 +473,12 @@ def list_contribution_rules(db: Session = Depends(get_db), _=Depends(require_per
     return ok(get_contribution_config(db))
 
 
+@router.get("/api/point-rules/team-config")
+def list_team_point_config(db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
+    """Team-contribution targets/weights belong to Activity Points, not role scoring."""
+    return ok(get_contribution_config(db))
+
+
 @router.put("/api/admin/performance/contribution-rules")
 def update_contribution_rules(body: ContributionRulesIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("performance_admin", "edit"))):
     _validate_contribution_rules(body)
@@ -471,6 +495,32 @@ def update_contribution_rules(body: ContributionRulesIn, db: Session = Depends(g
     row.updated_by = user.id
     db.flush()
     audit(db, "performance_contribution_config", row.id, "update", user, body.model_dump())
+    db.commit()
+    return ok(get_contribution_config(db))
+
+
+@router.put("/api/point-rules/team-config")
+def update_team_point_config(body: ContributionRulesIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_roles("cio"))):
+    """Canonical Activity Points write endpoint; only admin/CIO may change it."""
+    _validate_contribution_rules(body)
+    row = db.query(PerformanceContributionConfig).filter(
+        PerformanceContributionConfig.is_deleted.is_(False)
+    ).order_by(PerformanceContributionConfig.updated_at.desc()).first()
+    if not row:
+        row = PerformanceContributionConfig()
+        db.add(row)
+    before = {
+        "weights": row.weights or {},
+        "targets": row.targets or {},
+        "internal_satisfaction_weight": row.internal_satisfaction_weight,
+        "external_satisfaction_weight": row.external_satisfaction_weight,
+    }
+    row.weights = body.weights
+    row.targets = body.targets
+    row.internal_satisfaction_weight = body.internal_satisfaction_weight
+    row.external_satisfaction_weight = body.external_satisfaction_weight
+    row.updated_by = user.id
+    audit(db, "team_contribution_config", row.id, "update", user, {"before": before, "after": body.model_dump()})
     db.commit()
     return ok(get_contribution_config(db))
 
@@ -503,7 +553,7 @@ def replace_bplus_role_dimensions(profile_id: str, body: RoleDimensionsUpdate, d
     for item in body.dimensions:
         db.add(PerformanceRoleDimension(
             profile_id=profile.id, dimension_code=item.dimension_code, name=item.name, weight=item.weight,
-            source_config={"metric": item.metric}, evidence_required=item.evidence_required,
+            source_config={**(item.source_config or {}), "metric": item.metric}, evidence_required=item.evidence_required,
             sort=item.sort, active=item.active,
         ))
     audit(db, "performance_role_profile", profile.id, "replace_dimensions", user, {"count": len(body.dimensions)})

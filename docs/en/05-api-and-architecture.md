@@ -130,7 +130,7 @@ POST /api/requirements/{id}/close        # validate all acceptance criteria chec
 ### 4.5 Process
 
 ```text
-GET/POST/PATCH /api/admin/process-definitions (with nested steps)
+GET/POST/PATCH /api/admin/process-definitions (nested steps with stable step_code; used-version node/RACI/SLA changes require a new version)
 GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue aggregation
 POST /api/process-tasks/{id}/complete | /reassign
 ```
@@ -144,7 +144,13 @@ GET/POST /api/trainings                  # training activities
 GET/PUT /api/team-charter
 GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
-GET/PATCH /api/point-rules
+GET /api/point-rules                    # Activity Points team-contribution event rules (ideas.view)
+GET /api/point-rules/team-config         # Activity Points dimension weights/targets/satisfaction mix
+PUT /api/point-rules/team-config         # save team-contribution configuration (admin/CIO)
+GET/PATCH /api/admin/point-rules         # legacy team-contribution endpoint (admin/CIO; role_result rejected)
+# legacy PATCH /api/point-rules/{code} remains for compatibility but also requires the admin/CIO role
+GET /api/team/performance/overview?period=YYYY-Qn|All  # current matrix-role performance overview (role result 80% + team contribution 20%)
+# GET /api/team/performance remains for legacy clients and is not the current overview data source
 POST /api/points/adjust                  # admin manual point adjustment (remark required)
 GET/POST/PATCH /api/admin/performance/role-profiles
 PUT /api/admin/performance/role-profiles/{id}/dimensions
@@ -160,7 +166,7 @@ POST /api/admin/performance/{period}/publish
 POST /api/admin/performance/{period}/unlock
 GET /api/my/performance?period=YYYY-Qn
 GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
-GET/PUT /api/admin/performance/contribution-rules # CIO/admin team-contribution rules and satisfaction ratio
+GET/PUT /api/admin/performance/contribution-rules # legacy compatibility endpoint; canonical team config is /api/point-rules/team-config
 ```
 
 ### 4.7 Dashboard

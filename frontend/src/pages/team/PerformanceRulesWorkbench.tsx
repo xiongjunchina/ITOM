@@ -21,17 +21,12 @@ import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant
 import { api } from '../../api/client';
 import { hasPermission, useAuthStore } from '../../stores/auth';
 import { currentPeriod, periodLabel, recentPeriods } from '../../utils/period';
-import type { PerformanceAssignmentMatrix, PerformanceContributionConfig, PerformanceRoleProfileDefinition } from '../../api/types';
+import type { PerformanceAssignmentMatrix, PerformanceRoleProfileDefinition } from '../../api/types';
 import { useNavigate } from 'react-router-dom';
 
 const periods = recentPeriods(2);
 const lineLabels: Record<string, string> = { business: '服务线', professional: '专业线', platform: '平台角色' };
 const reviewLabels: Record<string, string> = { manager_review: '负责人初评', cio_direct: 'CIO 直评' };
-const contributionLabels: Record<string, string> = {
-  special_activity: '专项活动', learning_growth: '学习成长', training_knowledge: '培训知识',
-  suggestion_improvement: '建言改进', knowledge_asset: '知识资产', cross_team_support: '跨团队支持',
-};
-
 interface RuleFormValues {
   role_code: string;
   name: string;
@@ -44,6 +39,7 @@ interface RuleFormValues {
     name?: string;
     weight?: number;
     metric?: string;
+    source_config_json?: string;
     evidence_required?: boolean;
     sort?: number;
     active?: boolean;
@@ -61,39 +57,24 @@ export default function PerformanceRulesWorkbench() {
   const [loading, setLoading] = useState(false);
   const [dialog, setDialog] = useState<{ open: boolean; editing: PerformanceRoleProfileDefinition | null }>({ open: false, editing: null });
   const [saving, setSaving] = useState(false);
-  const [contribution, setContribution] = useState<PerformanceContributionConfig | null>(null);
   const [form] = Form.useForm<RuleFormValues>();
   const watchedDimensions = Form.useWatch('dimensions', form) ?? [];
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [profileResult, assignmentResult, contributionResult] = await Promise.all([
+      const [profileResult, assignmentResult] = await Promise.all([
         api.getList<PerformanceRoleProfileDefinition>('/admin/performance/role-profiles'),
         api.get<PerformanceAssignmentMatrix>('/admin/performance/assignments', { period }),
-        api.get<PerformanceContributionConfig>('/admin/performance/contribution-rules'),
       ]);
       setProfiles(profileResult.items);
       setMatrix(assignmentResult);
-      setContribution(contributionResult);
     } catch {
       // 已统一提示
     } finally {
       setLoading(false);
     }
   }, [period]);
-
-  const saveContribution = async () => {
-    if (!contribution) return;
-    const total = Object.values(contribution.weights).reduce((sum, value) => sum + Number(value || 0), 0);
-    if (Math.abs(total - 100) > 0.01 || Math.abs(Number(contribution.internal_satisfaction_weight || 0) + Number(contribution.external_satisfaction_weight || 0) - 100) > 0.01) {
-      message.error('团队贡献权重及满意度组合比例必须分别合计 100%');
-      return;
-    }
-    await api.put('/admin/performance/contribution-rules', contribution);
-    message.success('团队贡献与满意度组合规则已保存');
-    void load();
-  };
 
   useEffect(() => {
     void load();
@@ -123,6 +104,7 @@ export default function PerformanceRulesWorkbench() {
         name: dimension.name,
         weight: dimension.weight,
         metric: dimension.metric,
+        source_config_json: dimension.source_config ? JSON.stringify(dimension.source_config) : '{}',
         evidence_required: dimension.evidence_required,
         sort: dimension.sort,
         active: dimension.active,
@@ -135,15 +117,31 @@ export default function PerformanceRulesWorkbench() {
 
   const save = async () => {
     const values = await form.validateFields();
-    const dimensions = (values.dimensions ?? []).map((item, index) => ({
-      dimension_code: item.dimension_code?.trim() ?? '',
-      name: item.name?.trim() ?? '',
-      weight: Number(item.weight ?? 0),
-      metric: item.metric?.trim() || 'manual',
-      evidence_required: item.evidence_required ?? false,
-      sort: item.sort ?? index,
-      active: item.active ?? true,
-    }));
+    let dimensions: {
+      dimension_code: string; name: string; weight: number; metric: string;
+      source_config: Record<string, unknown>; evidence_required: boolean; sort: number; active: boolean;
+    }[];
+    try {
+      dimensions = (values.dimensions ?? []).map((item, index) => {
+        const parsed = JSON.parse(item.source_config_json?.trim() || '{}') as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error(`第 ${index + 1} 个维度的取数配置 JSON 必须是对象`);
+        }
+        return {
+          dimension_code: item.dimension_code?.trim() ?? '',
+          name: item.name?.trim() ?? '',
+          weight: Number(item.weight ?? 0),
+          metric: item.metric?.trim() || 'manual',
+          source_config: parsed as Record<string, unknown>,
+          evidence_required: item.evidence_required ?? false,
+          sort: item.sort ?? index,
+          active: item.active ?? true,
+        };
+      });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '取数配置 JSON 无效');
+      return;
+    }
     if (!dimensions.length || Math.abs(dimensions.reduce((sum, item) => sum + item.weight, 0) - 100) > 0.01) {
       message.error('角色内各考核维度权重合计必须为 100%');
       return;
@@ -254,7 +252,7 @@ export default function PerformanceRulesWorkbench() {
           type="info"
           showIcon
           message="总评分矩阵"
-          description="每个 IT 员工的常规绩效 = 业务角色贡献（与专业角色合计 80%）+ 团队贡献（固定 20%）。同时承担业务线与专业线角色时，两条线各占 40%；只有一条线角色时，该条线占 80%。平台角色由 CIO 直接评分。"
+          description="本页只维护岗位职责结果的角色档案、指标和权重；团队贡献活动积分及目标请在‘活动积分 → 积分规则’维护。业务角色与专业角色合计 80%，团队贡献固定 20%。同时承担两条线时各占 40%；只有一条线时该条线占 80%。平台角色由 CIO 直接评分。"
           style={{ marginBottom: 16 }}
         />
         <Table<PerformanceRoleProfileDefinition>
@@ -276,6 +274,7 @@ export default function PerformanceRulesWorkbench() {
                   { title: '维度名称', dataIndex: 'name' },
                   { title: '权重', dataIndex: 'weight', render: (value: number) => `${value}%` },
                   { title: '取数指标', dataIndex: 'metric' },
+                  { title: '取数/RACI 配置', dataIndex: 'source_config', render: (value: Record<string, unknown>) => <Typography.Text code>{JSON.stringify(value ?? {})}</Typography.Text> },
                   { title: '取数方式', dataIndex: 'metric', render: (value: string) => value === 'manual' ? '负责人/CIO评审' : value.startsWith('external') ? '外部原数据' : value === 'internal_external_satisfaction' ? '系统组合（内部+外部）' : '系统自动取数' },
                   { title: '证据要求', dataIndex: 'evidence_required', render: (value: boolean) => value ? '必须' : '可选' },
                 ] as ColumnsType<PerformanceRoleProfileDefinition['dimensions'][number]>}
@@ -284,19 +283,6 @@ export default function PerformanceRulesWorkbench() {
           }}
           scroll={{ x: 1100 }}
         />
-      </Card>
-
-      <Card title="团队贡献与满意度组合规则" extra={canEdit ? <Button type="primary" onClick={() => void saveContribution()}>保存配置</Button> : null}>
-        <Alert type="info" showIcon message="团队贡献固定计入常规绩效 20%；本配置只影响当前周期重新取数，已发布周期保留规则快照。" style={{ marginBottom: 12 }} />
-        {contribution && <Space direction="vertical" style={{ width: '100%' }}>
-          <Space wrap>
-            {Object.keys(contributionLabels).map((code) => <Space key={code} align="center"><Typography.Text>{contributionLabels[code]}权重</Typography.Text><InputNumber min={0} max={100} value={contribution.weights[code]} addonAfter="%" disabled={!canEdit} onChange={(value) => setContribution((current) => current ? ({ ...current, weights: { ...current.weights, [code]: Number(value ?? 0) } }) : current)} /></Space>)}
-          </Space>
-          <Space wrap>
-            {Object.keys(contributionLabels).map((code) => <Space key={code} align="center"><Typography.Text>{contributionLabels[code]}目标</Typography.Text><InputNumber min={0.1} value={contribution.targets[code]} addonAfter="分" disabled={!canEdit} onChange={(value) => setContribution((current) => current ? ({ ...current, targets: { ...current.targets, [code]: Number(value ?? 0) } }) : current)} /></Space>)}
-          </Space>
-          <Space><Typography.Text>内部满意度比例</Typography.Text><InputNumber min={0} max={100} value={contribution.internal_satisfaction_weight} addonAfter="%" disabled={!canEdit} onChange={(value) => setContribution((current) => current ? ({ ...current, internal_satisfaction_weight: Number(value ?? 0) }) : current)} /><Typography.Text>外部满意度比例</Typography.Text><InputNumber min={0} max={100} value={contribution.external_satisfaction_weight} addonAfter="%" disabled={!canEdit} onChange={(value) => setContribution((current) => current ? ({ ...current, external_satisfaction_weight: Number(value ?? 0) }) : current)} /></Space>
-        </Space>}
       </Card>
 
       <Card
@@ -374,6 +360,7 @@ export default function PerformanceRulesWorkbench() {
                 <Form.Item name={[field.name, 'name']} rules={[{ required: true }]}><Input placeholder="维度名称" style={{ width: 150 }} /></Form.Item>
                 <Form.Item name={[field.name, 'weight']} rules={[{ required: true }]}><InputNumber min={0.1} max={100} placeholder="权重" addonAfter="%" /></Form.Item>
                 <Form.Item name={[field.name, 'metric']} rules={[{ required: true }]}><Input placeholder="取数指标/ manual" style={{ width: 180 }} /></Form.Item>
+                <Form.Item name={[field.name, 'source_config_json']} label="取数/RACI 配置 JSON"><Input placeholder='如 {"entity_type":"ticket_change","step_codes":["risk_assessment","approval"]}' style={{ width: 360 }} /></Form.Item>
                 <Form.Item name={[field.name, 'evidence_required']} valuePropName="checked" label="证据"><Switch size="small" /></Form.Item>
                 <Button type="link" danger onClick={() => remove(field.name)}>移除</Button>
               </Space>)}

@@ -55,7 +55,7 @@ Select a catalog on the left and inspect its service items on the right. Search 
 
 CMDB maintains configuration items and relationships. SLA defines response and resolution targets and feeds service metrics. Incidents record restoration work; changes record risk, approval, implementation, and rollback; problems record root-cause analysis and permanent fixes. Vendors and contracts maintain supplier governance and renewal data. Knowledge articles are created, published, linked, and archived. These pages share search, filters, sorting, pagination, and permission-controlled editing.
 
-**Change lifecycle:** request scope, affected services/items, window, risk, validation, and rollback → risk assessment → approval → implementation → service verification → closure. Implementation starts only after approval. Rejection requires a reason and returns to the configured correction step; a failed verification is rolled back or linked to an incident before closure.
+**Current published change flow:** `it_ops` registers the change (scope, affected services/items, window, risk, validation, and rollback) → `it_op_leader` approves it (`it_bm` is notified) → `it_ops` implements and verifies it → `is_mgr` performs the change retrospective/PIR (`cio` is notified). Implementation starts only after approval. The current state machine allows `cio`, `it_tm`, and `it_op_leader` to approve/reject; rejection requires a reason. A failed verification is rolled back or linked to an incident before closure. The published process version takes precedence over code seeds; process changes require a new version.
 
 **Incident/problem hand-off:** incidents optimize service restoration and capture impact, urgency, recovery, and review. Repeated incidents can be escalated into a problem for root-cause analysis, known error, permanent fix, and verification before the problem is closed.
 
@@ -81,13 +81,13 @@ Shows active headcount, training, campaigns, hiring demand, workload, and points
 
 ### Performance
 
-Performance scoring defaults to 80% role contribution plus 20% team contribution. Overview shows reference, adjusted, bonus/penalty, and final scores. Scoring Rules defines role dimensions and configurable team-contribution targets/weights. Graded Review displays one row per employee and opens a detail page for role weights, evaluator identities, evaluator weights, dimensions, reasons, and evidence. Multiple evaluators are aggregated by their configured weights.
+Performance scoring uses 80% role-result contribution plus 20% team contribution. Overview reads the current matrix-role period result and shows role contributions, team contribution, adjustments, and the current total; expanding an employee shows roles, weights, system reference, manager proposals, CIO final scores, and effective scores. It no longer displays the legacy job-scheme default. The current model has no global default scheme: use **Scoring Rules → Add role rule** to create a reusable role rule, then assign the role and weight in the employee-period detail. Scoring Rules defines role dimensions, source/RACI mappings, and weights; Activity Points → Point Rules defines team-contribution targets and event values. Graded Review remains the detailed scoring workflow, with multiple evaluators aggregated by their configured weights.
 
 External Raw Data accepts only `external_business_satisfaction`, and its target must be a business domain. Enter a 0–100 percentage; the configured internal/external satisfaction ratio produces the derived score. It affects the domain owner, backup owner, and IT BP for that domain. IT PMO is directly reviewed by CIO, while IT PMO can perform the initial review for IT project managers. Final Results exposes only published employee results.
 
 ### Headcount, learning, points, and culture
 
-Headcount contains Position Definitions and Hiring Needs. Administrators and CIO can edit rows inline or in detail, delete, export, download templates, and batch import. Learning & Growth contains Training Development and Learning Tasks. Learning Tasks record a cycle goal, progress, evidence, and notes; 0–100% progress converts to team-contribution points. Activity Points maintains campaign and contribution records. Team Charter maintains vision, annual goals, and working principles.
+Headcount contains Position Definitions and Hiring Needs. Administrators and CIO can edit rows inline or in detail, delete, export, download templates, and batch import. Learning & Growth contains Training Development and Learning Tasks. Learning Tasks record a cycle goal, progress, evidence, and notes; 0–100% progress converts to team-contribution points. Activity Points maintains campaign and contribution records; its sibling Point Rules tab owns team-contribution event configuration. Team Charter maintains vision, annual goals, and working principles.
 
 ## 7. Process center
 

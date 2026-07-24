@@ -63,6 +63,25 @@ def test_requester_cannot_operate_others_task(client, ctx):
     assert resp.status_code == 403, f"业务用户不应能改派任务: {resp.text}"
 
 
+def test_process_task_keeps_version_and_raci_snapshot(client, ctx):
+    """任务保存流程版本、稳定节点编码和 RACI 快照，后续版本演进不改历史取数口径。"""
+    from app.db import SessionLocal
+    from app.models import ProcessTask
+
+    _, proc = _submit_sr(client, ctx, "流程版本快照验证")
+    current = _current(proc)
+    db = SessionLocal()
+    try:
+        task = db.get(ProcessTask, current["task_id"])
+        assert task is not None
+        assert task.definition_version is not None
+        assert task.step_code_snapshot == current.get("step_code", f"step_{current['seq']}")
+        assert task.raci_snapshot["responsible"] is not None
+        assert task.raci_snapshot["informed"] == current.get("cc_roles", [])
+    finally:
+        db.close()
+
+
 def test_assignee_chain_and_requester_confirm_step(client, ctx):
     """被指派人可完成；改派人本人可转派；最后一步指派提交人本人 → 提交人可完成闭环。"""
     t, proc = _submit_sr(client, ctx, "网络卡顿-正常链路")

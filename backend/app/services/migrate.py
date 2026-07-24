@@ -106,6 +106,13 @@ ENSURE_COLUMNS = {
     "process_step": [
         ("cc_roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         ("node_type", "VARCHAR(16) NOT NULL DEFAULT 'processing'"),
+        ("step_code", "VARCHAR(64)"),
+    ],
+    "process_task": [
+        ("definition_version", "INTEGER"),
+        ("step_code_snapshot", "VARCHAR(64)"),
+        ("raci_snapshot", "JSONB"),
+        ("completed_by", "VARCHAR(26)"),
     ],
     "point_rule": [
         ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),
@@ -156,6 +163,37 @@ def ensure_columns(db: Session):
             if name not in existing:
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                 logger.info("added column %s.%s", table, name)
+    db.commit()
+
+
+def backfill_process_step_codes(db: Session):
+    """M78：为历史流程步骤补齐版本内稳定编码，避免名称/序号变更破坏取数映射。"""
+    rows = db.execute(text(
+        "SELECT ps.id, ps.definition_id, ps.seq FROM process_step ps "
+        "WHERE ps.is_deleted=false AND (ps.step_code IS NULL OR ps.step_code='') "
+        "ORDER BY ps.definition_id, ps.seq"
+    )).fetchall()
+    for step_id, definition_id, seq in rows:
+        db.execute(text("UPDATE process_step SET step_code=:code WHERE id=:id"), {
+            "id": step_id, "code": f"step_{seq}",
+        })
+    if rows:
+        logger.info("M78：为 %d 个历史流程节点补齐 step_code", len(rows))
+    db.commit()
+
+
+def separate_role_result_point_entries(db: Session):
+    """M78：把历史 ITSM/需求/项目结果流水明确归入 role_result。"""
+    role_events = (
+        "ticket_resolved", "ticket_sla_met", "ticket_satisfaction",
+        "wbs_done_on_time", "milestone_achieved", "requirement_task_done", "requirement_closed",
+    )
+    changed = db.execute(text(
+        "UPDATE point_entry SET contribution_bucket='role_result' "
+        "WHERE source_type = ANY(:codes) AND is_deleted=false"
+    ), {"codes": list(role_events)}).rowcount
+    if changed:
+        logger.info("M78：将 %d 条 ITSM/需求/项目积分流水隔离为 role_result", changed)
     db.commit()
 
 
@@ -304,7 +342,8 @@ def fix_acceptance_step_role_m165(db: Session):
 
 
 def fix_ops_leader_m166(db: Session):
-    """M16.6：IT运维负责人接管 事件关闭复盘 / 变更复盘(PIR)；变更审批角色补 it_op_leader。"""
+    """M16.6 历史兼容：旧定义中的复盘曾由 it_tm 处理，迁移时改为 it_op_leader；
+    当前运行时若已由流程中心配置为 is_mgr，不覆盖该已发布定义；同时补齐变更审批的 it_op_leader 状态机授权。"""
     n1 = db.execute(text(
         "UPDATE process_step ps SET default_role='it_op_leader' "
         "FROM process_definition d WHERE ps.definition_id=d.id AND ps.is_deleted=false "
@@ -625,6 +664,8 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    backfill_process_step_codes(db)
+    separate_role_result_point_entries(db)
     backfill_password_set_m362(db)
     grant_cio_position_delete(db)
     grant_cio_external_input_delete(db)

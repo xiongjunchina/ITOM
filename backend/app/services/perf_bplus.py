@@ -6,7 +6,7 @@
 from collections import defaultdict
 from datetime import datetime
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -527,9 +527,19 @@ def _team_people(db: Session, group_ids: list[str]) -> set[str]:
 
 
 def _team_contribution_scores(db: Session, period: str, member_ids: list[str], period_row: PerformancePeriod | None = None) -> dict[str, dict[str, float]]:
+    # Legacy rows without a bucket are only accepted for known team-activity
+    # events.  ITSM/requirement/project result events are deliberately excluded
+    # so role-result evidence can never leak into the 20% team contribution.
+    legacy_team_events = {
+        "campaign_award", "training_host", "training_attend", "knowledge_published",
+        "knowledge_voted", "idea_submit", "idea_like", "idea_adopt", "learning_growth",
+    }
     rows = db.query(PointEntry).filter(
         period_clause(PointEntry.period, period),
-        or_(PointEntry.contribution_bucket == "team_contribution", PointEntry.contribution_bucket.is_(None)),
+        or_(
+            PointEntry.contribution_bucket == "team_contribution",
+            and_(PointEntry.contribution_bucket.is_(None), PointEntry.source_type.in_(legacy_team_events)),
+        ),
         PointEntry.person_id.in_(member_ids), PointEntry.is_deleted.is_(False),
     ).all()
     aliases = {

@@ -80,11 +80,11 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 
 Performance review does not treat `auth_user` roles as the evaluator assignment. Each period creates a `performance_role_assignment` snapshot with the person's business/professional role, business-domain or professional-pool scope, evaluator, and `review_mode`. A business-line lead proposes only business-role scores in scope; a professional-line lead proposes only professional-role scores in scope. Platform roles default to `review_mode=cio_direct` and are scored directly by the CIO. No leader may self-score; the CIO finalizes leaders' own scores.
 
-The built-in roles are finalized at **12**: admin, cio, it_bm, it_tm, it_pdm, it_pm, it_dev, it_ops, is_mgr, it_bp, auditor, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
+The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it_pdm_leader, it_pm, it_pmo, it_dev, it_dev_leader, it_ops, it_op_leader, is_mgr, it_bp, auditor, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
 
 ## 7 (M3.6). Function Permission Matrix
 
-- **Granularity**: modules (30, aligned with the menu pages) × actions (view — includes visibility and viewing / create / edit / delete). Stored as `role_permission` (role_code × module → actions).
+- **Granularity**: all menu-aligned modules × actions (view — includes visibility and viewing / create / edit / delete). Stored as `role_permission` (role_code × module → actions).
 - **Determination**: a user's permissions = the **union** of the matrices of direct roles ∪ group-granted roles; admin has implicit full authority, is not in the matrix, and is not configurable (to prevent lockout). The login response carries `permissions`, from which the front end renders menus/buttons, and the backend enforces `require_perm(module, action)`.
 - **Boundaries** (three permission layers each own a segment, without redundancy):
   1. Function matrix: page visibility and create/edit/delete toggles (this section).
@@ -93,6 +93,7 @@ The built-in roles are finalized at **12**: admin, cio, it_bm, it_tm, it_pdm, it
 - **Performance modules**: use separate modules for `performance_result` (result view), `performance_review` (staged review), `performance_external` (external raw input), and `performance_admin` (rules/period/publication). The function matrix controls page/actions; `performance_role_assignment.review_scope` then restricts business-domain, professional-pool, and editable line scope.
 - **Performance visibility**: business/professional leads see reference scores and proposal fields only in their scope; the CIO sees all internal details and performs final review; evaluated employees have only `performance_result.view`, and the endpoint returns published final results only.
 - **Performance field authority**: leads cannot edit raw team-contribution points, external raw facts, or the other line's components. Platform roles and leaders' own scores are entered directly by the CIO. Locked external facts are corrected by a new version only.
+- **Point-rule authority**: team-contribution activity rules belong to the `ideas` Activity Points page; reads use `ideas.view`, while writes are hard-guarded to admin (implicit full authority) and CIO. Role-result rules belong to Team Management → Performance → Scoring Rules and use role profiles, dimensions, source mappings, and process/RACI step mappings. The two ledgers and period snapshots remain separate; changes never recalculate historical `point_entry` rows or published periods, and each change is audited against its own entity.
 - **Custom roles**: on creation, **copy** the matrix of the selected template role (base_role) as the initial value, then edit independently; base_role also retains the "process-reference inheritance matching" semantics (when a transition rule specifies it_ops, a custom role inheriting it_ops also matches).
 - The default matrix is coded in `services/permissions.py` (DEFAULT_MATRIX), seeded only on first startup, after which the in-database configuration is authoritative.
 
@@ -107,13 +108,14 @@ The built-in roles are finalized at **12**: admin, cio, it_bm, it_tm, it_pdm, it
 
 | Process | ITIL practice | Steps → default role |
 | --- | --- | --- |
-| Incident handling | Incident Management | Intake & prioritization (it_ops) → Diagnosis & handling (it_ops) → Resolution & user confirmation (it_ops) → Closure & retrospective (it_tm) |
-| Service-request delivery | Service Request Mgmt | Intake confirmation (it_ops) → Implementation & delivery (it_ops) → User confirmation & closure (it_bp) |
-| Change management | Change Enablement | Change registration & risk assessment (is_mgr) → Change approval (cio) → Implementation & verification (it_ops) → Change retrospective PIR (it_tm) |
-| Problem analysis | Problem Management | Problem confirmation (it_ops) → Root-cause analysis (it_ops) → Resolution & verification (it_ops) → Closure & retrospective (it_tm) |
-| Requirement delivery (pre-configured, attached in M5) | — | Requirement registration & business alignment (it_bp) → Requirement analysis & solution (it_pdm) → Scheduling & resource coordination (it_bm) → Development & implementation (it_dev) → Acceptance & closure (it_pdm) |
+| Incident handling | Incident Management | Intake & prioritization (it_op_leader, approval) → Diagnosis & handling (it_ops) → Resolution & user confirmation (it_ops, approval) → Closure & retrospective (it_op_leader) |
+| Service-request delivery | Service Request Mgmt | Intake confirmation (it_ops) → Implementation & delivery (it_ops) → User confirmation & closure (requester, approval) |
+| Change management | Change Enablement | Change request (it_ops) → Change approval (it_op_leader; CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr; CC cio) |
+| Problem analysis | Problem Management | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
+| Requirement delivery (pre-configured, attached in M5) | — | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
+| Project key milestones | Project Management | Project kickoff (it_pm, approval) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval) |
 
-State machine: the change approval/rejection transition allowed_roles = **[cio, it_tm]**; the approval notification's recipients are resolved dynamically from allowed_roles (including groups and inheritance); the SLA-imminent escalation notification → the assignee + holders of cio/it_tm. All of this remains adjustable on the state-machine-config / process-definition pages.
+Current published runtime: the change approval/rejection transition has `allowed_roles = [cio, it_tm, it_op_leader]`; the approval task defaults to `it_op_leader` and CCs `it_bm`; the PIR task is handled by `is_mgr` and CCs `cio`. Approval recipients are resolved dynamically from `allowed_roles` (including groups and inheritance). All of this remains adjustable on the state-machine-config / process-definition pages; the published runtime version takes precedence over code seeds.
 
 ## 10 (M3.8). Process-Node Standard: Handler / CC Party (mandatory for all subsequent process features)
 
@@ -128,5 +130,6 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 - `process_step.node_type` makes the node semantics explicit: `processing` is an execution node completed from the flow diagram with a processing note; `approval` is an approval node that the handler can approve/reject from the detail-page actions, or approve through the diagram's “Complete step” action. Approval comments are optional; rejection reasons are mandatory and retained in the task audit trail, and the process instance becomes `rejected` (the problem-confirmation node keeps its specialized “return to reporter for more information” rule).
 - The process-definition page shows a **process diagram** for each process (node cards: step name + handler in blue + CC in gray + autonomy level/SLA), with live preview in the editor.
 - The record-detail process bar also shows the CC parties.
-- Seed example: the four steps of the change-management process CC it_tm / it_bm / is_mgr+it_bm / cio respectively.
+- Current runtime change-management process: Change request (it_ops) → Change approval (it_op_leader, CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr, CC cio). Do not treat the old five-step “risk assessment → change approval” seed or its former CC relationships as the current process definition.
+- Task creation also stores the process version, `step_code`, and RACI snapshot. Changing a handler or CC relationship requires a new process version, so historical tasks and performance extraction remain stable.
 The digital-team population is an explicit shared department-tree scope in `org_settings`, optionally including descendants. It is authoritative for team metrics and business-domain owner, backup-owner, and service-team selectors; the legacy `dept_type`/role heuristic is used only until an administrator configures the scope.

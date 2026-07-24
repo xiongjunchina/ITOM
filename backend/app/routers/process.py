@@ -31,6 +31,7 @@ class ReassignIn(BaseModel):
 
 class StepIn(BaseModel):
     seq: int
+    step_code: str | None = Field(default=None, min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_:-]+$")
     name: str = Field(min_length=1, max_length=128)
     node_type: Literal["processing", "approval"] = "processing"
     default_role: str | None = None
@@ -159,7 +160,7 @@ def _def_row(d: ProcessDefinition, db: Session) -> dict:
         "instance_count": instance_count,
         "steps_locked": instance_count > 0,
         "steps": [
-            {"seq": s.seq, "name": s.name, "node_type": s.node_type or "processing", "default_role": s.default_role, "cc_roles": s.cc_roles or [],
+            {"seq": s.seq, "step_code": s.step_code or f"step_{s.seq}", "name": s.name, "node_type": s.node_type or "processing", "default_role": s.default_role, "cc_roles": s.cc_roles or [],
              "autonomy_level": s.autonomy_level, "sla_hours": s.sla_hours, "description": s.description}
             for s in d.steps if not s.is_deleted
         ],
@@ -173,6 +174,11 @@ def _validate_steps(db: Session, steps: list[StepIn]):
     seqs = [s.seq for s in steps]
     if sorted(seqs) != list(range(1, len(steps) + 1)):
         raise AppError("INVALID_STEPS", "步骤序号必须从 1 连续递增")
+    codes = [s.step_code or f"step_{s.seq}" for s in steps]
+    if len(set(codes)) != len(codes):
+        raise AppError("INVALID_STEPS", "步骤编码必须唯一")
+    for step, code in zip(steps, codes):
+        step.step_code = code
     valid_keys = valid_role_codes(db)
     valid_keys |= {
         f"{GROUP_PREFIX}{code}"
@@ -250,12 +256,12 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
             .filter(ProcessStep.definition_id == definition.id, ProcessStep.is_deleted.is_(False))
             .count()
         )
-        # 有运行实例时仅锁「结构」：增删步骤会使实例 current_step_seq 错乱 → 另存新版本；
-        # 等长编辑（改名/SLA/角色/知会）对运行实例安全，放行（M14.2，用户场景=改节点名）
+        # 有运行实例时锁结构和责任映射：历史任务必须沿用生成时的节点/RACI；
+        # 仅允许改展示名称、说明等非取数字段。需要改节点、处理人或知会关系时另存新版本。
         if instance_count > 0 and len(step_models) != live:
             raise AppError(
                 "STEPS_LOCKED",
-                f"该流程已有 {instance_count} 个实例，不可增删步骤（当前 {live} 步）；改名/SLA 等可直接保存，结构调整请「另存新版本」",
+                f"该流程已有 {instance_count} 个实例，不可增删步骤（当前 {live} 步）；节点/RACI 调整请「另存新版本」",
             )
         # 就地 upsert（M14.2）：保留步骤行 id 不物理删——历史任务(含已删项目的软删任务)
         # 外键引用步骤行，物理删除会撞 ForeignKeyViolation；改名/调参直接更新，
@@ -268,6 +274,19 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
         )
         for i, sm in enumerate(step_models):
             if i < len(existing):
+                if sm.step_code is None:
+                    sm.step_code = existing[i].step_code or f"step_{sm.seq}"
+                if instance_count > 0:
+                    old = existing[i]
+                    protected_before = (old.seq, old.step_code or f"step_{old.seq}", old.node_type or "processing", old.default_role,
+                                        old.cc_roles or [], old.autonomy_level, old.sla_hours)
+                    protected_after = (sm.seq, sm.step_code, sm.node_type or "processing", sm.default_role,
+                                       sm.cc_roles or [], sm.autonomy_level, sm.sla_hours)
+                    if protected_before != protected_after:
+                        raise AppError(
+                            "STEPS_LOCKED",
+                            f"该流程已有 {instance_count} 个实例，步骤「{old.name}」的节点/RACI/SLA 已被历史任务引用，请「另存新版本」",
+                        )
                 for k, v in sm.model_dump().items():
                     setattr(existing[i], k, v)
             else:
@@ -315,7 +334,7 @@ def new_version(def_id: str, body: DefinitionUpdate, db: Session = Depends(get_d
     if not old or old.is_deleted:
         raise AppError("NOT_FOUND", "流程定义不存在", 404)
     steps = body.steps if body.steps is not None else [
-        StepIn(seq=s.seq, name=s.name, node_type=s.node_type or "processing", default_role=s.default_role, cc_roles=s.cc_roles or [],
+        StepIn(seq=s.seq, step_code=s.step_code or f"step_{s.seq}", name=s.name, node_type=s.node_type or "processing", default_role=s.default_role, cc_roles=s.cc_roles or [],
                autonomy_level=s.autonomy_level, sla_hours=s.sla_hours, description=s.description)
         for s in old.steps if not s.is_deleted
     ]

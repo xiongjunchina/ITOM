@@ -282,11 +282,33 @@ def test_dashboard_team_section(client, admin_headers):
 
 
 def test_point_rules_api(client, admin_headers, ctx):
-    """积分规则可查看；管理者可调分值/停用。"""
+    """活动积分只展示团队贡献事件；只有系统管理员和 CIO 可调分值/停用。"""
     rows = client.get("/api/point-rules", headers=ctx["dev_h"]).json()["data"]
-    assert {"idea_submit", "training_host", "ticket_resolved"} <= {r["code"] for r in rows}
+    codes = {r["code"] for r in rows}
+    assert {"idea_submit", "training_host", "knowledge_published"} <= codes
+    assert "ticket_resolved" not in codes  # 岗位职责结果由人效评分计分规则维护
+    assert client.get("/api/admin/point-rules", headers=ctx["dev_h"]).status_code == 403
+    assert client.get("/api/admin/point-rules", headers=ctx["cio_h"]).json()["success"]
     r = client.patch("/api/point-rules/idea_like", json={"points": 2, "active": True}, headers=ctx["dev_h"])
     assert r.status_code == 403
     r = client.patch("/api/point-rules/idea_like", json={"points": 2, "active": True}, headers=ctx["tm_h"])
+    assert r.status_code == 403
+    r = client.patch("/api/admin/point-rules/idea_like", json={"points": 2, "active": True}, headers=ctx["cio_h"])
     assert r.json()["data"]["points"] == 2
-    client.patch("/api/point-rules/idea_like", json={"points": 1, "active": True}, headers=ctx["tm_h"])
+    r = client.patch("/api/admin/point-rules/idea_like", json={"points": 1, "active": True}, headers=admin_headers)
+    assert r.json()["data"]["points"] == 1
+    r = client.patch("/api/admin/point-rules/ticket_resolved", json={"points": 6, "active": True}, headers=admin_headers)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "ROLE_RESULT_RULE"
+    config = client.get("/api/point-rules/team-config", headers=ctx["dev_h"])
+    assert config.status_code == 200 and set(config.json()["data"]["weights"]) >= {"special_activity", "learning_growth"}
+    assert client.put("/api/point-rules/team-config", json=config.json()["data"], headers=ctx["dev_h"]).status_code == 403
+    updated_config = client.put("/api/point-rules/team-config", json=config.json()["data"], headers=ctx["cio_h"])
+    assert updated_config.status_code == 200, updated_config.text
+    audit_rows = client.get(
+        "/api/admin/audit-logs?entity_type=point_rule&page_size=20", headers=admin_headers
+    ).json()["data"]
+    assert any("before_points" in (row["summary"] or {}) for row in audit_rows)
+    config_audits = client.get(
+        "/api/admin/audit-logs?entity_type=team_contribution_config&page_size=20", headers=admin_headers
+    ).json()["data"]
+    assert config_audits and config_audits[0]["action"] == "update"

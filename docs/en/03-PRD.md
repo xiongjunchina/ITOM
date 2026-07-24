@@ -45,7 +45,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 | it_pm — IT Project Manager | Base team-member permissions; focused on the Project domain: project creation and management, WBS / milestone / risk / cost maintenance | Project manager |
 | it_dev — IT Developer | Base team-member permissions; focused on delivery: requirement development tasks, WBS tasks, ticket handling | Development engineer |
 | it_ops — IT Operations | Base team-member permissions; focused on operations: ticket / change implementation / problem analysis, CMDB and SLA maintenance | Operations engineer |
-| is_mgr — Information Security Manager | Base team-member permissions; focused on security governance: security-type ticket/problem handling, security-type CI maintenance, change-risk assessment opinions, audit-log viewing | Security manager |
+| is_mgr — Information Security Manager | Base team-member permissions; focused on security governance: security-type ticket/problem handling, security-type CI maintenance, change retrospective/security audit, audit-log viewing | Security manager |
 | it_bp — IT Business Partner | Base team-member permissions; focused on the business interface: requirement registration and business alignment, submitting tickets on behalf of business units, acceptance collaboration, satisfaction follow-up | IT BP |
 | requester — Business User | Submit tickets and requirements, query one's own submissions, rate satisfaction | Colleague in a business unit |
 
@@ -54,7 +54,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 ### 2.1a Matrix-Organization Roles (M3.6, added 2026-07-11; see docs/06 §6 / §7 for details)
 
 - The built-in roles are finalized at **16**: `admin`, `cio`, `it_bm`, `it_tm`, `it_pdm`, `it_pdm_leader`, `it_pm`, `it_pmo`, `it_dev`, `it_dev_leader`, `it_ops`, `it_op_leader`, `is_mgr`, `it_bp`, `auditor`, and `requester`. Built-in role codes are locked; names and descriptions remain editable.
-- **Function permission matrix**: 30 modules × 4 actions (view / create / edit / delete) configured per role (System Management → Permission Configuration page); admin has implicit full authority and is not configurable; a custom role copies its template role's matrix on creation. Three-layer permission division: the function matrix governs page toggles, data-scope rules are built into the code, and process permissions live on the state-machine / process-definition pages.
+- **Function permission matrix**: all system modules × 4 actions (view / create / edit / delete) configured per role (System Management → Permission Configuration page); admin has implicit full authority and is not configurable; a custom role copies its template role's matrix on creation. Three-layer permission division: the function matrix governs page toggles, data-scope rules are built into the code, and process permissions live on the state-machine / process-definition pages.
 - Business domain = horizontal service line: owner (BM) + service-team members; user group = vertical technical-line resource pool: owner (TM) + group-granted roles.
 
 ### 2.2 Custom Roles & User Groups (added 2026-07-10, M3.5 extension)
@@ -75,7 +75,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 ### 2.3 Permission Highlights
 
 - After login, the menu is rendered by role; the interface layer validates in parallel (front-end hiding ≠ permission).
-- Process-engine step default assignment can reference: built-in roles, custom roles (including inheritance matching), and user groups, e.g.: requirement registration / business alignment → it_bp, requirement analysis → it_pdm, project milestone → it_pm, change implementation → it_ops, requirement development task → it_dev, change risk assessment → is_mgr.
+- Process-engine step default assignment can reference: built-in roles, custom roles (including inheritance matching), and user groups, e.g.: requirement review → it_bm, solution assessment → it_pdm_leader, project milestone → it_pm, change request/implementation → it_ops, change approval → it_op_leader, change retrospective → is_mgr, requirement development task → it_dev_leader.
 - Each state-machine transition rule can restrict the allowed roles/user groups (blank = unrestricted).
 - Performance-score visibility and adjudication: admin/cio/it_bm/it_tm (IT management roles); Position & Headcount is admin/cio only (adjustable via the permission matrix); members can see their own points ledger and the leaderboard.
 - requester (Business User) boundary (verified and hardened 2026-07-12): only Overview / Tickets (submit + track one's own) / Knowledge Base (view) / Requirements (submit + track one's own); internal modules such as Problem/Change/Incident/Project/Team/Process are forcibly 403'd at the interface layer, not merely hidden from the menu.
@@ -177,9 +177,15 @@ Change: New → Pending Approval → Approved → Implementing → Resolved → 
               ↘ Rejected (terminal)                         ↘ Rolled Back → Closed
 ```
 
+**Current published change process (runtime baseline):** the active `change_flow` is a four-step process; do not treat the code seed or an older document as the runtime fact:
+
+`Change request (it_ops, processing) → Change approval (it_op_leader, approval; CC it_bm) → Implementation & verification (it_ops, processing) → Change retrospective/PIR (is_mgr, processing; CC cio)`
+
+The change request and implementation tasks are handled by IT Operations. The approval task is assigned by default to the IT Operations leader; this is distinct from the full set of roles allowed by the state machine. The current `pending_approval → approved/rejected` transition allows `cio`, `it_tm`, and `it_op_leader`. The published runtime process definition, state-machine configuration, and version take precedence over `seed_itsm.py`; changes require a new process version and historical instances retain their original snapshots.
+
 - **At resolution** fill in: solution (required), root cause (optional).
 - **At closure** fill in: closure code (dropdown). After closure, a satisfaction rating (1–5 stars, optional) is initiated toward the submitter.
-- Change approval: cio/it_tm (adjustable via the state machine) approve/reject with one click in the Pending-Approval state (with comments), recording the approver and time.
+- Change approval: in the currently published `change_flow`, the “Change approval” task is assigned by default to `it_op_leader`; the state-machine `pending_approval → approved/rejected` transition allows `[cio, it_tm, it_op_leader]` (adjustable in configuration). Comments are recorded together with the approver and time; both the process-task guard and state-machine authorization must pass.
 - Escalation: an escalation notification is produced when a P1/P2 ticket exceeds 80% of its SLA target without being resolved.
 
 #### Acceptance Criteria
@@ -354,7 +360,19 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 - Three-layer model: **Process Definition** (with steps: name / sequence / node type [processing/approval] / default role / CC roles / L1–L4 autonomy level / SLA deadline) → **Process Instance** (triggered by a record) → **Process Task** (a step instance, assigned to a person). Approval nodes expose top-right approve (optional comment) and reject (required reason); processing nodes advance via “Complete step”.
 - Autonomy levels: L1 fully automatic / L2 system suggests, human confirms / L3 human acts, system assists / L4 purely manual. Used for process-monitoring display and later performance analysis; it does not control execution.
 - Initially 6–8 built-in processes: incident handling, service-request delivery, change approval & implementation, problem analysis, requirement delivery, project key milestones.
-- Assignment rules: assigned by each step's default position role (e.g. requirement registration / business alignment → it_bp, requirement analysis → it_pdm, project milestone → it_pm, change implementation → it_ops, development task → it_dev, change risk assessment → is_mgr); reassignable within an instance, with no external dependency.
+- Assignment rules: assigned by each step's default role (e.g. requirement review → it_bm, solution assessment → it_pdm_leader, project milestone → it_pm, change request/implementation → it_ops, change approval → it_op_leader, change retrospective → is_mgr, development task → it_dev_leader); reassignable within an instance, with no external dependency.
+
+**Snapshot of the six active built-in processes in the current published runtime (verified locally on 2026-07-24):** this table is the actual process-center configuration, not a generic ITIL example or an old seed description. A newly published process version supersedes it; historical instances retain their original snapshots.
+
+| Process | Actual steps (default handler; node semantics/CC in parentheses) |
+| --- | --- |
+| `incident_flow` | Intake & prioritization (it_op_leader, approval) → Diagnosis & handling (it_ops) → Resolution & user confirmation (it_ops, approval) → Closure & retrospective (it_op_leader) |
+| `sr_flow` | Intake confirmation (it_ops) → Implementation & delivery (it_ops) → User confirmation & closure (requester, approval) |
+| `change_flow` | Change request (it_ops) → Change approval (it_op_leader, approval; CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr; CC cio) |
+| `problem_flow` | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
+| `requirement_flow` | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
+| `project_flow` | Project kickoff (it_pm, approval; CC cio, it_bm) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval; CC cio, it_tm) |
+
 - **Process-node standard (M3.8, mandatory for all subsequent process features)**: each node can configure a **handler** (approve/execute; produces a task and blocks the process) and **CC parties** (in-app notification only; produces no task, does not block, and can be multiple roles/user groups); the process-definition page shows a **process diagram** (handler in blue, CC in gray), with live preview in the editor. See docs/06 §10 for details.
 - Pages: process-definition management (admin; includes enable/disable and step editing), process monitoring (instance list, stuck steps, overdue tasks).
 - The record detail page shows a process bar (current step highlighted).
@@ -387,6 +405,7 @@ Facts already used for role-result metrics, such as ticket SLA, change complianc
 
 The detailed role profiles, evaluator rules, learning-task model, APIs, and acceptance criteria are defined in [IT Team Role Performance PRD](08-it-team-role-performance-prd.md).
 The current “Performance → Scoring Rules” UI is the matrix-role profile design: it shows per-role dimension weights, system/external/manual collection modes, and the employee-period matrix of business/professional role weight (80%) plus team contribution (20%). The legacy `perf_scheme` API remains only for historical compatibility and is not the primary UI design.
+- “Performance → Overview” reads the matrix-role period result and shows role-result contribution, team contribution at 20%, adjustments, and current total per employee; it no longer displays the legacy default-scheme or legacy job-dimension columns. The current model has no global default scheme: add a reusable role rule from “Scoring Rules → Add role rule”, then assign that role and its weight in the employee-period detail.
 - The “Performance → Staged Review” overview is aggregated to one row per employee. Selecting “Score details” opens an employee-level detail page with all role weights, dimensions, system reference scores, manager proposals, CIO final/adjusted scores, effective scores, and adjustment reasons, subject to permission scope.
 
 ### 9.2 Growth Points
@@ -403,7 +422,7 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 | Suggestions | Submitting a suggestion, liked, adopted |
 
 - Points ledger: person / event / points / source record / time, traceable to the triggering record; admin manual point adjustments also go through the ledger (a reason is required).
-- Pages: leaderboard (month/quarter/year/cumulative), personal points detail, point-rule configuration (admin).
+- Pages: leaderboard (month/quarter/year/cumulative), personal points detail, Activity Points → Point Rules (team-contribution events; only admin/CIO can edit; every change is audited). Role-result source mappings, RACI/process-step mappings, and weights are maintained in Team Management → Performance → Scoring Rules and are never mixed with activity points.
 - Points are one of the input sources for the 9.1 performance evaluation.
 
 ### 9.3 Position & Headcount
@@ -437,19 +456,20 @@ Single-page rich-text management: vision, goals, code of conduct (manager/admin 
 
 ## 10. Supporting: System Management (admin)
 
-Menu structure (finalized M3.9, 6 entry points):
+Menu structure (8 entry points):
 
 1. **Organization Management**: the Org Structure tab treats Feishu as the source of truth and lets administrators select a shared digital-team department scope after sync, optionally including descendants. That scope drives team statistics and every operational person selector: project managers/task owners, requirement owners/reviewers/development owners, ticket/problem/service-item/CI/contract owners, and user-group owners/members. The UI loads these options with `scope=it`; once a scope is configured, the backend validates assignments as well, so client-side filtering is not the only guard. Administrators may delete a business domain only when no active requirement references it. Feishu settings independently control whether scheduled org sync is allowed and select a 1/6/12/24-hour interval.
 2. **User & Group Management**: "Users" (account / roles / auth source / provisioning default roles) + "User Groups" (technical-line resource pool: owner TM / group-granted roles / members).
-3. **Roles & Permissions**: "Role Definitions" (16 built-in, renamable + custom copies of a template) + "Pre-assignment Rules" (department → first-provisioning default roles) + "Permission Configuration" (role × 30 modules × 4 actions matrix).
+3. **Roles & Permissions**: "Role Definitions" (16 built-in, renamable + custom copies of a template) + "Pre-assignment Rules" (department → first-provisioning default roles) + "Permission Configuration" (role × all system modules × 4 actions matrix).
 4. **Data Dictionary** (dropdown items such as business line / closure code / category + system configuration such as company name).
 5. **State Machine Configuration** (visual editing of each record type's states and transition rules, including in-use-state deletion protection).
-6. **Audit Log** (viewable by admin/is_mgr/auditor).
-7. **Interface & Branding** (admin): bilingual product identity, logos/favicon, login portal, controlled colors/themes/density/sidebar, role landing pages, announcements, and environment markers. Selected images enter a draggable, zoomable and rotatable cropper before upload: 4:1 for horizontal logos, 1:1 for square logos/favicon, and 16:9 for login backgrounds; only the confirmed crop is uploaded. The authenticated experience is role-specific: requester-only business users receive Scheme F, a modular service portal with top navigation, help search, shortcuts, and a card-based service catalog; every other role receives Scheme C, a precise high-density workbench with a compact 216px light sidebar whose first- and second-level navigation retain a coordinated light hierarchy. Sidebar width is constrained by the logo/title footprint and the longest single-line navigation label, leaving only necessary horizontal breathing room. In the expanded internal sidebar, the horizontal logo occupies its own row above the system name, and the logo, system name, and English subtitle share one centered axis; the collapsed sidebar uses the square logo. The expanded sidebar menu area scrolls independently when open items exceed the viewport, while the brand area and top account access remain visible. The sidebar footer does not duplicate the current user and role; account access remains in the top bar. Changes follow draft → preview → publish with version history and rollback.
+6. **System Integrations** (Feishu, SMTP, AD/LDAP, and other external connections).
+7. **Audit Log** (viewable by admin/is_mgr/auditor).
+8. **Interface & Branding** (admin): bilingual product identity, logos/favicon, login portal, controlled colors/themes/density/sidebar, role landing pages, announcements, and environment markers. Selected images enter a draggable, zoomable and rotatable cropper before upload: 4:1 for horizontal logos, 1:1 for square logos/favicon, and 16:9 for login backgrounds; only the confirmed crop is uploaded. The authenticated experience is role-specific: requester-only business users receive Scheme F, a modular service portal with top navigation, help search, shortcuts, and a card-based service catalog; every other role receives Scheme C, a precise high-density workbench with a compact 216px light sidebar whose first- and second-level navigation retain a coordinated light hierarchy. Sidebar width is constrained by the logo/title footprint and the longest single-line navigation label, leaving only necessary horizontal breathing room. In the expanded internal sidebar, the horizontal logo occupies its own row above the system name, and the logo, system name, and English subtitle share one centered axis; the collapsed sidebar uses the square logo. The expanded sidebar menu area scrolls independently when open items exceed the viewport, while the brand area and top account access remain visible. The sidebar footer does not duplicate the current user and role; account access remains in the top bar. Changes follow draft → preview → publish with version history and rollback.
 
 Also: SLA policies are maintained on the ITSM-SLA board page; the notification outbox is retained in the background.
 
-**Process-definition management** (process center): processes/steps are fully configurable — step name, default assignment (role / user group), L1–L4 autonomy level, step SLA, trigger condition (the trigger condition activating a process for the same record type must be unique); steps of a process with existing instances are locked and evolve via **Save as a new version** (old records keep the old version; new records use the new version).
+**Process-definition management** (process center): processes/steps are fully configurable — stable step code, step name, node type, default assignment (role / user group), CC parties, L1–L4 autonomy level, step SLA, trigger condition (the trigger condition activating a process for the same record type must be unique). Task creation stores process version, step code, and RACI (responsible/informed) snapshots; node/handler/CC/node-type/SLA changes on a used version are locked and evolve via **Save as a new version** (old records keep the old version; new records use the new version).
 
 ---
 

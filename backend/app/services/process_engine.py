@@ -215,6 +215,14 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
         ProcessTask(
             instance_id=instance.id,
             step_id=step.id,
+            definition_version=instance.definition.version,
+            step_code_snapshot=step.step_code or f"step_{step.seq}",
+            raci_snapshot={
+                "responsible": step.default_role,
+                "accountable": step.default_role,
+                "consulted": [],
+                "informed": step.cc_roles or [],
+            },
             assignee=assignee,
             status="待处理",
             started_at=now,
@@ -255,6 +263,7 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
         raise AppError("TASK_DONE", "该任务已处理")
     task.status = "已完成"
     task.completed_at = datetime.now()
+    task.completed_by = actor.person_id
     task.comment = comment or task.comment
 
     instance = db.get(ProcessInstance, task.instance_id)
@@ -563,11 +572,13 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
     return {
         "id": instance.id,
         "definition_name": instance.definition.name,
+        "definition_version": instance.definition.version,
         "status": instance.status,
         "current_step_seq": instance.current_step_seq,
         "steps": [
             {
                 "seq": s.seq,
+                "step_code": s.step_code or f"step_{s.seq}",
                 "name": s.name,
                 "description": s.description,
                 "node_type": s.node_type or "processing",
@@ -580,6 +591,7 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
                 "assignee_name": member_names.get(tasks_by_step[s.id].assignee) if s.id in tasks_by_step and tasks_by_step[s.id].assignee else None,
                 "due_at": tasks_by_step[s.id].due_at if s.id in tasks_by_step else None,
                 "completed_at": tasks_by_step[s.id].completed_at if s.id in tasks_by_step else None,
+                "raci_snapshot": tasks_by_step[s.id].raci_snapshot if s.id in tasks_by_step else None,
             }
             for s in _live_steps(instance.definition)
         ],

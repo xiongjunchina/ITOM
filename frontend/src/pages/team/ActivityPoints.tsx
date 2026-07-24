@@ -20,7 +20,6 @@ import {
   Space,
   Spin,
   Statistic,
-  Switch,
   Tag,
   Typography,
   message,
@@ -52,10 +51,10 @@ import type {
   IdeaStatus,
   Member,
   MyPoints,
-  PointRule,
   PointsLeaderboard,
 } from '../../api/types';
 import { CAMPAIGN_STATUS_COLORS, IDEA_STATUS_COLORS } from '../../api/types';
+import ActivityPointRulesTab from './ActivityPointRulesTab';
 
 /** 写权限：优先权限矩阵；存量会话缺失 permissions 时放行（后端仍会校验并中文提示） */
 function useIdeasPerm(action: 'create' | 'edit'): boolean {
@@ -828,10 +827,6 @@ function IdeasTab() {
   const [declining, setDeclining] = useState(false);
   const [declineForm] = Form.useForm<{ reason: string }>();
 
-  // 积分规则
-  const [rules, setRules] = useState<PointRule[]>([]);
-  const [rulesLoading, setRulesLoading] = useState(false);
-
   // 排行榜
   const [boardOpen, setBoardOpen] = useState(false);
   const [board, setBoard] = useState<PointsLeaderboard | null>(null);
@@ -849,22 +844,9 @@ function IdeasTab() {
     }
   }, []);
 
-  const loadRules = useCallback(async () => {
-    setRulesLoading(true);
-    try {
-      const res = await api.getList<PointRule>('/point-rules');
-      setRules(res.items);
-    } catch {
-      // 已统一提示
-    } finally {
-      setRulesLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
     void load();
-    void loadRules();
-  }, [load, loadRules]);
+  }, [load]);
 
   const handleCreate = async () => {
     const values = await form.validateFields();
@@ -918,16 +900,6 @@ function IdeasTab() {
       .then(setBoard)
       .catch(() => undefined)
       .finally(() => setBoardLoading(false));
-  };
-
-  const saveRule = async (code: string, points: number, active: boolean) => {
-    try {
-      await api.patch(`/point-rules/${code}`, { points, active });
-      message.success(t('team.idea.ruleUpdated'));
-      void loadRules();
-    } catch {
-      // 已统一提示
-    }
   };
 
   const columns: ColumnsType<IdeaRow> = [
@@ -1032,48 +1004,9 @@ function IdeasTab() {
       : []),
   ];
 
-  const ruleColumns: ColumnsType<PointRule> = [
-    { title: t('team.rule.col.name'), dataIndex: 'name', ellipsis: true },
-    {
-      title: t('team.rule.col.points'),
-      dataIndex: 'points',
-      width: 100,
-      render: (v: number, r) =>
-        canManage ? (
-          <InputNumber
-            key={`${r.code}-${v}`}
-            size="small"
-            min={0}
-            step={0.5}
-            defaultValue={v}
-            style={{ width: 80 }}
-            onBlur={(e) => {
-              const raw = e.target.value.trim();
-              if (raw === '') return;
-              const next = Number(raw);
-              if (!Number.isNaN(next) && next !== r.points) void saveRule(r.code, next, r.active);
-            }}
-          />
-        ) : (
-          v
-        ),
-    },
-    {
-      title: t('team.enableCol'),
-      dataIndex: 'active',
-      width: 70,
-      render: (v: boolean, r) =>
-        canManage ? (
-          <Switch size="small" checked={v} onChange={(checked) => void saveRule(r.code, r.points, checked)} />
-        ) : (
-          <Tag color={v ? 'green' : 'default'}>{v ? t('team.enabled') : t('team.disabled')}</Tag>
-        ),
-    },
-  ];
-
   return (
     <Row gutter={[16, 16]}>
-      <Col xs={24} lg={16}>
+      <Col xs={24}>
         <Card
           title={t('team.idea.title')}
           extra={
@@ -1125,25 +1058,6 @@ function IdeasTab() {
                 </Space>
               ),
             }}
-          />
-        </Card>
-      </Col>
-      <Col xs={24} lg={8}>
-        <Card
-          title={t('team.rule.title')}
-          extra={
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {canManage ? t('team.rule.blurHint') : ''}
-            </Typography.Text>
-          }
-        >
-          <Table<PointRule>
-            rowKey="code"
-            size="small"
-            loading={rulesLoading}
-            columns={ruleColumns}
-            dataSource={rules}
-            pagination={false}
           />
         </Card>
       </Col>
@@ -1215,7 +1129,7 @@ function IdeasTab() {
 
 // ---------------- 页面 ----------------
 
-/** 活动积分复合页：专项活动 | 建言献策（顶部我的积分卡片） */
+/** 活动积分复合页：专项活动 | 建言献策 | 积分规则（顶部我的积分卡片） */
 export default function ActivityPoints() {
   const t = useT();
   return (
@@ -1225,6 +1139,7 @@ export default function ActivityPoints() {
         tabs={[
           { key: 'campaigns', label: t('team.campaign.tab'), modules: ['ideas'], children: <CampaignsTab /> },
           { key: 'ideas', label: t('team.idea.title'), modules: ['ideas'], children: <IdeasTab /> },
+          { key: 'point-rules', label: t('team.pointRules.tab'), modules: ['ideas'], children: <ActivityPointRulesTab /> },
         ]}
       />
     </div>

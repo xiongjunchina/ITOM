@@ -177,7 +177,7 @@ PRIORITY_DEFINITIONS = [
 
 # ITIL 4 实践 × 矩阵式组织（docs/06 §六）：
 # 事件=快速恢复(运维处理,TM 复盘)；服务请求=标准交付(BP 对接用户确认)；
-# 变更=风险评估(信息安全)→授权(CIO/TM)→实施(运维)→PIR 复盘(TM)；
+# 变更=申请(运维)→审批(运维负责人)→实施与验证(运维)→PIR 复盘(信息安全)；
 # 问题=根因管理；需求=BP登记→产品分析→BM排期协调→开发→产品验收（M5 单据上线即挂接）
 PROCESS_DEFS = [
     {
@@ -202,15 +202,14 @@ PROCESS_DEFS = [
         ],
     },
     {
-        # 用户调试版（M33 固化）：登记与风险评估拆分为两步
+        # 当前运行时基线：申请→审批→实施与验证→PIR；流程中心发布版本优先于此新环境种子
         "code": "change_flow", "name": "变更管理流程", "entity_type": "ticket_change",
         "trigger": {"ticket_type": "change"},
         "steps": [
-            ("变更登记", IT_OPS, "L3", None),
-            ("风险评估", IS_MGR, "L3", 8, [IT_TM], None, "approval"),
-            ("变更审批", CIO, "L3", 24, [IT_BM], None, "approval"),
-            ("实施与验证", IT_OPS, "L3", None, [IS_MGR, IT_BM]),
-            ("变更复盘(PIR)", IT_OP_LEADER, "L2", 48, [CIO]),
+            ("变更申请", IT_OPS, "L3", None),
+            ("变更审批", IT_OP_LEADER, "L3", 24, [IT_BM], None, "approval"),
+            ("实施与验证", IT_OPS, "L3", None),
+            ("变更复盘(PIR)", IS_MGR, "L2", 48, [CIO]),
         ],
     },
     {

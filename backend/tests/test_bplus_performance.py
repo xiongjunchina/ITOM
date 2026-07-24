@@ -68,6 +68,18 @@ def test_bplus_recompute_external_input_and_publish(client, admin_headers):
     assert "roles" in after["result"] and "dimensions" not in after["result"]
 
 
+def test_team_performance_overview_uses_bplus_result_model(client, admin_headers):
+    """团队人效总览必须读取当前矩阵角色结果，不再返回旧版 PerfScheme 维度表。"""
+    response = client.get("/api/team/performance/overview?period=2026-Q3", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert {"period", "version", "status", "rows"} <= set(data)
+    if data["rows"]:
+        row = data["rows"][0]
+        assert {"roles", "business_contribution", "professional_contribution", "team_contribution_score", "regular_score"} <= set(row)
+        assert "scheme_name" not in row and "dims" not in row
+
+
 def test_bplus_manager_scope_and_new_version(client, admin_headers):
     dev_id, _ = _member_and_user(client, admin_headers, "B+组员", "bplus_member", ["it_dev"])
     multi_id, _ = _member_and_user(client, admin_headers, "B+多角色员工", "bplus_multi", ["it_dev", "it_pm"])

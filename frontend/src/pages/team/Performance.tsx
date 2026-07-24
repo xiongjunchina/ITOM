@@ -43,10 +43,15 @@ import type {
   PerfScheme,
   PerformanceData,
   PerformanceRow,
+  BplusDimensionScore,
+  BplusPerformanceData,
+  BplusPerformanceRow,
+  BplusRoleScore,
   Position,
 } from '../../api/types';
 import { ExternalInputWorkbench, MyPerformanceResult, ReviewWorkbench } from './BplusPerformance';
 import PerformanceRulesWorkbench from './PerformanceRulesWorkbench';
+import { useNavigate } from 'react-router-dom';
 
 const GRAY = 'rgba(0, 0, 0, 0.25)';
 
@@ -61,7 +66,8 @@ interface AdjFormValues {
   reason: string;
 }
 
-function PerfOverview() {
+/** @deprecated 历史岗位方案总览，仅保留兼容导出；页面已使用 BplusPerfOverview。 */
+export function PerfOverview() {
   const t = useT();
   const [period, setPeriod] = useState(currentPeriod());
   const [data, setData] = useState<PerformanceData | null>(null);
@@ -477,6 +483,184 @@ function PerfOverview() {
   );
 }
 
+/** 当前矩阵角色绩效总览。旧版 PerfOverview 保留在上方仅用于兼容历史代码，不再挂载。 */
+function BplusPerfOverview() {
+  const t = useT();
+  const navigate = useNavigate();
+  const [period, setPeriod] = useState(currentPeriod());
+  const [data, setData] = useState<BplusPerformanceData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [forbidden, setForbidden] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(20);
+  const user = useAuthStore((s) => s.user);
+  const canEdit = user?.permissions ? hasPermission(user, 'performance', 'edit') : true;
+  const [adjPersonId, setAdjPersonId] = useState<string | null>(null);
+  const [adjSaving, setAdjSaving] = useState(false);
+  const [adjForm] = Form.useForm<AdjFormValues>();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await api.get<BplusPerformanceData>('/team/performance/overview', { period }));
+      setForbidden(false);
+    } catch (e) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      if (status === 403) setForbidden(true);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const submitAdjustment = async () => {
+    const values = await adjForm.validateFields();
+    if (!adjPersonId) return;
+    setAdjSaving(true);
+    try {
+      await api.post('/perf/adjustments', { period, person_id: adjPersonId, ...values });
+      message.success(t('team.performance.adjAdded'));
+      adjForm.resetFields();
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setAdjSaving(false);
+    }
+  };
+
+  const removeAdjustment = async (id: string) => {
+    try {
+      await api.delete(`/perf/adjustments/${id}`);
+      message.success(t('team.performance.adjRemoved'));
+      void load();
+    } catch {
+      // 已统一提示
+    }
+  };
+
+  if (forbidden) {
+    return <Card><Result status="403" title={t('team.performance.noPermTitle')} subTitle={t('team.performance.noPermDesc')} /></Card>;
+  }
+
+  const rows = data?.rows ?? [];
+  const adjRow = rows.find((r) => r.person_id === adjPersonId) ?? null;
+  const score = (value: number | null | undefined) => value == null ? '—' : value.toFixed(1);
+  const columns: ColumnsType<BplusPerformanceRow> = [
+    { title: t('team.col.name'), dataIndex: 'person_name', width: 120, fixed: 'left' },
+    {
+      title: '角色与权重', dataIndex: 'roles', width: 330,
+      render: (roles: BplusRoleScore[], row) => roles.length
+        ? <Space wrap size={[4, 4]}>{roles.map((role) => <Tag key={role.assignment_id}>{role.role_name} · {role.role_weight}%</Tag>)}</Space>
+        : <Tag>{row.role_status ?? '未配置角色'}</Tag>,
+    },
+    {
+      title: '角色职责结果（80%）', key: 'role_result', width: 170,
+      render: (_, row) => <Space direction="vertical" size={0}><span>业务：{score(row.business_contribution)}</span><span>专业：{score(row.professional_contribution)}</span></Space>,
+    },
+    { title: '团队贡献（20%）', dataIndex: 'team_contribution_score', width: 160, render: (value: number) => `${score(value)} × 20% = ${score(value * 0.2)}` },
+    { title: '常规绩效', dataIndex: 'regular_score', width: 100, render: (value: number) => score(value) },
+    { title: '加分 / 扣分', key: 'adjustments', width: 110, render: (_, row) => `${score(row.bonus)} / ${score(row.penalty)}` },
+    {
+      title: '当前总分', dataIndex: 'published_score', width: 100,
+      sorter: (a, b) => (a.published_score ?? -1) - (b.published_score ?? -1),
+      defaultSortOrder: 'descend',
+      render: (value: number, row) => row.roles.length ? <Typography.Text strong>{score(value)}</Typography.Text> : EMPTY_CELL,
+    },
+    ...(canEdit ? [{
+      title: t('common.actions'), key: 'action', width: 90, fixed: 'right',
+      render: (_: unknown, row: BplusPerformanceRow) => <Button type="link" size="small" onClick={() => setAdjPersonId(row.person_id)}>{t('team.performance.adjust')}</Button>,
+    } as ColumnsType<BplusPerformanceRow>[number]] : []),
+  ];
+
+  return (
+    <Card title={t('team.performance.overviewTitle')} extra={<Space>
+      <Button size="small" onClick={() => navigate('/team/performance?tab=schemes')}>查看角色计分规则</Button>
+      <Select value={period} style={{ width: 130 }} onChange={setPeriod} options={recentPeriods(2).map((p) => ({ value: p, label: periodLabel(p) }))} />
+    </Space>}>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 8 }}
+        message={`当前规则：角色职责结果 80% + 团队贡献 20% · 周期 ${data?.period ?? period} · 版本 ${data?.version ?? '—'} · 状态 ${data?.status ?? '加载中'}`}
+        description="角色职责结果来自角色档案、流程/ITSM指标和负责人/CIO评审；团队贡献只读取活动积分中的团队贡献事件。旧版岗位‘默认方案’不参与当前总览计算。"
+      />
+      <Table<BplusPerformanceRow>
+        rowKey="person_id"
+        loading={loading}
+        columns={columns}
+        dataSource={rows}
+        standardToolbar={{ exportFileName: '人效评分结果', searchPlaceholder: '搜索员工、角色或评分状态' }}
+        sticky
+        expandable={{
+          expandedRowRender: (row) => row.roles.length ? (
+            <Space direction="vertical" size={12} style={{ display: 'flex' }}>
+              {row.roles.map((role) => (
+                <Card key={role.assignment_id} type="inner" size="small" title={`${role.role_name} · ${role.line_type === 'business' ? '业务线' : role.line_type === 'professional' ? '专业线' : '平台角色'} · 权重 ${role.role_weight}%`}>
+                  <Typography.Text type="secondary">角色得分：{score(role.role_score)} · 评分主体：{role.review_mode === 'cio_direct' ? 'CIO 直评' : '负责人初评'}</Typography.Text>
+                  <Table<BplusDimensionScore>
+                    rowKey="code"
+                    size="small"
+                    pagination={false}
+                    dataSource={role.dimensions}
+                    columns={[
+                      { title: '评价维度', dataIndex: 'name', width: 190 },
+                      { title: '权重', dataIndex: 'weight', width: 80, render: (value: number) => `${value}%` },
+                      { title: '系统参考', dataIndex: 'system_score', width: 100, render: (value: number | null) => score(value) },
+                      { title: '负责人初评', dataIndex: 'business_manager_score', width: 110, render: (value: number | null) => score(value) },
+                      { title: '专业负责人初评', dataIndex: 'professional_manager_score', width: 120, render: (value: number | null) => score(value) },
+                      { title: 'CIO 终审', dataIndex: 'cio_score', width: 100, render: (value: number | null) => score(value) },
+                      { title: '当前生效分', dataIndex: 'effective_score', width: 110, render: (value: number | null) => score(value) },
+                      { title: '评分说明', dataIndex: 'reason', ellipsis: true, render: (value: string | null) => value || '—' },
+                    ] as ColumnsType<BplusDimensionScore>}
+                    scroll={{ x: 1000 }}
+                  />
+                </Card>
+              ))}
+            </Space>
+          ) : <Typography.Text type="secondary">当前人员尚未分配角色规则。</Typography.Text>,
+        }}
+        scroll={{ x: 1280 + (canEdit ? 90 : 0) }}
+        pagination={{
+          current: tablePage,
+          pageSize: tablePageSize,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50, 100],
+          showTotal: (n) => t('team.totalPeople', { n }),
+          onChange: (page, pageSize) => { setTablePage(page); setTablePageSize(pageSize); },
+        }}
+      />
+
+      <Drawer title={t('team.performance.adjDrawerTitle', { name: adjRow?.person_name ?? '', period })} width={440} open={adjPersonId != null} onClose={() => setAdjPersonId(null)} destroyOnClose>
+        <List
+          size="small"
+          header={<Typography.Text type="secondary">{t('team.performance.periodItems', { n: adjRow?.adjustments.length ?? 0 })}</Typography.Text>}
+          dataSource={adjRow?.adjustments ?? []}
+          locale={{ emptyText: t('team.performance.adjEmpty') }}
+          renderItem={(a) => (
+            <List.Item
+              actions={[<Popconfirm key="del" title={t('team.performance.delAdjConfirm')} onConfirm={() => void removeAdjustment(a.id)}><Button type="link" size="small" danger icon={<DeleteOutlined />} /></Popconfirm>]}
+            >
+              <List.Item.Meta
+                title={<Space size={8}><Tag color={a.kind === 'bonus' ? 'green' : 'red'}>{a.kind === 'bonus' ? t('team.performance.bonus') : t('team.performance.penalty')}</Tag><span style={{ color: a.kind === 'bonus' ? '#52c41a' : '#ff4d4f', fontWeight: 600 }}>{a.kind === 'bonus' ? `+${a.points}` : `−${a.points}`}</span></Space>}
+                description={<><div>{a.reason}</div><Typography.Text type="secondary" style={{ fontSize: 12 }}>{a.created_at ? dayjs(a.created_at).format('YYYY-MM-DD HH:mm') : ''}</Typography.Text></>}
+              />
+            </List.Item>
+          )}
+        />
+        <Divider style={{ margin: '16px 0 12px' }}>{t('team.performance.addItem')}</Divider>
+        <Form<AdjFormValues> form={adjForm} layout="vertical" preserve={false} initialValues={{ kind: 'bonus' }}>
+          <Form.Item name="kind" label={t('team.performance.typeLabel')} rules={[{ required: true, message: t('team.performance.typeRequired') }]}><Radio.Group optionType="button" buttonStyle="solid" options={[{ value: 'bonus', label: t('team.performance.bonus') }, { value: 'penalty', label: t('team.performance.penalty') }]} /></Form.Item>
+          <Form.Item name="points" label={t('team.performance.pointsLabel')} rules={[{ required: true, message: t('team.performance.pointsRequired') }]}><InputNumber min={0.1} max={1000} style={{ width: '100%' }} placeholder={t('team.performance.pointsPlaceholder')} /></Form.Item>
+          <Form.Item name="reason" label={t('team.performance.reasonLabel')} rules={[{ required: true, message: t('team.performance.reasonRequired') }, { min: 2, message: t('team.minChars', { n: 2 }) }]}><Input.TextArea rows={3} maxLength={200} showCount placeholder={t('team.performance.reasonPlaceholder')} /></Form.Item>
+          <Button type="primary" block icon={<PlusOutlined />} loading={adjSaving} onClick={() => void submitAdjustment()}>{t('team.add')}</Button>
+        </Form>
+      </Drawer>
+    </Card>
+  );
+}
+
 // ============ Tab B 计分规则 ============
 
 interface SchemeFormValues {
@@ -843,7 +1027,7 @@ export default function Performance() {
   return (
     <PermTabs
       tabs={[
-        { key: 'overview', label: t('team.performance.tabOverview'), modules: ['performance'], children: <PerfOverview /> },
+        { key: 'overview', label: t('team.performance.tabOverview'), modules: ['performance'], children: <BplusPerfOverview /> },
         { key: 'schemes', label: t('team.performance.schemesTitle'), modules: ['performance_admin'], children: <PerformanceRulesWorkbench /> },
         { key: 'bplus-review', label: '分级评审', modules: ['performance_review'], children: <ReviewWorkbench /> },
         { key: 'external-input', label: '外部原数据', modules: ['performance_external'], children: <ExternalInputWorkbench /> },

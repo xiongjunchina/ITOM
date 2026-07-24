@@ -112,7 +112,8 @@ deploy/          docker-compose、Nginx、备份
 - **示例数据**：`GlidBase.is_example`（列表置顶）；编辑、状态流转和业务操作仍只读，系统管理员可在列表页明确删除示例记录；默认不种，`SEED_EXAMPLES=1` 开启（测试用）。
 - **考核周期**：季度制 `YYYY-Q1/Q2/Q3`，第四季度执行全年考核 `YYYY-All`（统计范围为本年度全年）。
 - **帮助中心式用户操作手册**：右上角语言切换按钮左侧提供“操作手册”入口，采用搜索优先、按产品分类、热门/最近文档、文章内目录和相关文档的帮助中心结构；内容覆盖系统总体介绍、通用列表规则、全部业务/管理模块的运作逻辑、操作步骤、角色边界和常见问题。中文权威版本为 `docs/用户操作手册.md`，英文译本为 `docs/en/user-operation-manual.md`。
-- **矩阵角色人效评分**：矩阵角色贡献 80% + 团队贡献 20%，支持 ITSM/需求/项目/流程自动取数、负责人分级初评、CIO 终审、外部原数据录入和发布后个人结果隔离；同一角色可配置多名评审人及独立权重，评审结果按权重汇总。外部满意度仅按业务服务域录入，外部指标采用白名单校验；团队贡献维度、目标积分及内外部满意度比例由 CIO/管理员配置，并在考核周期生成规则快照。
+- **矩阵角色人效评分**：人效总览使用当前矩阵角色结果（角色职责结果 80% + 团队贡献 20%），支持 ITSM/需求/项目/流程自动取数、负责人分级初评、CIO 终审、外部原数据录入和发布后个人结果隔离；同一角色可配置多名评审人及独立权重，评审结果按权重汇总。外部满意度仅按业务服务域录入，外部指标采用白名单校验；团队贡献维度、目标积分及内外部满意度比例由 CIO/管理员配置，并在考核周期生成规则快照。旧版岗位计分方案接口仅保留历史客户端兼容，不再作为总览数据源。
+- **积分规则配置**：团队管理→活动积分→积分规则维护团队贡献活动的自动事件分值、启停状态、维度权重、目标积分和满意度组合；仅 admin/CIO 可修改。团队管理→人效评分→计分规则只维护岗位角色档案、角色维度、取数口径和权重，不混入团队贡献活动。规则修改写入审计日志，仅影响后续事件/考核周期，历史积分台账和已发布周期不自动重算。
 - **双语**：语言存 `auth_user.preferences.language`（zh/en）；登录即应用，用户可自行切换；飞书开通时由管理员设默认语言。
 - **飞书扫码登录 + 开通审批**：管理员批准时生成 12 位高强度初始密码并加密保存，但不自动发信。管理员可在用户详情点击闭眼图标按需查看，或点击“邮件发送”手工投递；查看与发送均审计，用户改密/管理员重置后密文立即清除。
 
@@ -233,6 +234,7 @@ deploy/          docker-compose, Nginx, backups
 - **Feishu is the Source of Truth for people master data**: `org_sync` idempotently applies an org snapshot (external wins, missing → offboarded/inactive); locally only position/skills/remarks/dept-type are editable. Besides the remote sync scope, administrators can enable/disable scheduled sync and choose a 1/6/12/24-hour interval.
 - **Example data**: `GlidBase.is_example` (pinned to the top of lists); editing, workflow transitions, and business actions remain read-only, while administrators can explicitly delete examples from list pages; not seeded by default, enable with `SEED_EXAMPLES=1` (used by tests).
 - **Assessment period**: quarterly `YYYY-Q1/Q2/Q3`; Q4 runs the full-year assessment `YYYY-All` (statistics cover the whole calendar year).
+- **Point-rule configuration**: Team Management → Activity Points → Point Rules controls team-contribution event values, activation, dimension weights, targets, and satisfaction mix; only admin/CIO can edit. Team Management → Performance → Scoring Rules owns role profiles, role dimensions, source mappings, and weights, with no team-activity rules mixed in. Changes are audited, affect future events/assessment periods, and never recalculate historical ledgers or published periods automatically.
 - **Help-center user manual**: the signed-in header places a “User Manual” entry immediately to the left of the language switcher. It uses search-first navigation, product categories, popular/recent guides, article TOCs, and related documents while covering the system overview, all module procedures, role boundaries, and troubleshooting. The authoritative Chinese version is `docs/用户操作手册.md` and the English mirror is `docs/en/user-operation-manual.md`.
 - **Bilingual**: language is stored in `auth_user.preferences.language` (zh/en); applied on login and switchable by the user; the admin sets the default during Feishu provisioning.
 - **Feishu QR sign-in + provisioning approval**: approval generates a 12-character strong initial password and stores only encrypted recoverable ciphertext without sending it. An administrator may reveal it with the eye control or manually email it from user details; both actions are audited and the ciphertext is cleared after a change/reset.

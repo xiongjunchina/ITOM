@@ -106,12 +106,8 @@ def test_problem_transition_follows_flow_operator(client, ctx):
     assert r.json()["success"], r.text
 
 
-def test_unassigned_task_claimable_by_default_role(client, ctx):
-    """未指派任务（角色无在岗用户）：默认角色持有者可认领操作，不会卡死等 admin。
-
-    用户实测：TK-202607-0003 受理定级 default_role=IT运维负责人但库里无该角色用户 → 任务空指派。
-    """
-    # M33 变更流程五步：第 2 步「风险评估」default_role=is_mgr，本测试库尚无 is_mgr 用户 → 任务未指派
+def test_change_approval_task_uses_current_runtime_role(client, ctx):
+    """当前运行时四步变更流程：第 2 步审批默认指派 IT 运维负责人。"""
     t = client.post("/api/tickets", json={
         "title": "M25未指派认领", "ticket_type": "change", "priority": "P3",
         "description": "d", "service_item_id": ctx["item"],
@@ -119,23 +115,16 @@ def test_unassigned_task_claimable_by_default_role(client, ctx):
     }, headers=ctx["admin"]).json()["data"]
     proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
     cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
-    client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "变更登记完成"}, headers=ctx["admin"])
+    client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "变更申请完成"}, headers=ctx["admin"])
     proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
     cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
-    assert cur["name"] == "风险评估" and cur["assignee"] is None
+    assert cur["name"] == "变更审批" and cur["assignee"] == ctx["leader_pid"]
 
-    # 非该角色（运维）不能完成
+    # 非当前处理人（运维）不能完成
     r = client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "越权认领"}, headers=ctx["ops_h"])
     assert r.status_code == 403
-    # 建 is_mgr 用户 → 可认领完成 + 有状态按钮
-    m = client.post("/api/members", json={"name": "安全M25"}, headers=ctx["admin"]).json()["data"]
-    client.post("/api/admin/users", json={"username": "m25_ismgr", "password": "pass123",
-                                          "roles": ["is_mgr"], "person_id": m["id"]}, headers=ctx["admin"])
-    tk = client.post("/api/auth/login", json={"username": "m25_ismgr", "password": "pass123"}).json()["data"]["token"]
-    mgr_h = {"Authorization": f"Bearer {tk}"}
-    d = client.get(f"/api/tickets/{t['id']}", headers=mgr_h).json()["data"]
-    assert d["allowed_transitions"], "默认角色持有者应有状态按钮"
-    r = client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "风险评估完成"}, headers=mgr_h)
+    # IT 运维负责人完成审批节点
+    r = client.post(f"/api/process-tasks/{cur['task_id']}/approve", json={}, headers=ctx["leader_h"])
     assert r.json()["success"], r.text
 
 
@@ -147,18 +136,11 @@ def test_change_approval_node_supports_optional_approve_and_reject_reason(client
         "change_type": "标准", "risk_level": "低",
     }, headers=ctx["admin"]).json()["data"]
 
-    # 变更登记是处理节点，完成后进入风险评估审批节点。
+    # 变更申请是处理节点，完成后进入变更审批节点。
     proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
     cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
     assert cur["node_type"] == "processing"
     client.post(f"/api/process-tasks/{cur['task_id']}/complete", json={"comment": "登记完成"}, headers=ctx["admin"])
-    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
-    cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
-    assert cur["name"] == "风险评估" and cur["node_type"] == "approval"
-
-    # 审批同意理由可选。
-    r = client.post(f"/api/process-tasks/{cur['task_id']}/approve", json={}, headers=ctx["admin"])
-    assert r.json()["success"], r.text
     proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
     cur = next(s for s in proc["steps"] if s["seq"] == proc["current_step_seq"])
     assert cur["name"] == "变更审批" and cur["node_type"] == "approval"
@@ -171,6 +153,22 @@ def test_change_approval_node_supports_optional_approve_and_reject_reason(client
     detail = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]
     assert detail["status"] == "rejected"
     assert detail["process"]["status"] == "rejected"
+
+    # 另一张变更验证审批同意理由可选，并推进到实施与验证。
+    t2 = client.post("/api/tickets", json={
+        "title": "M75变更审批同意", "ticket_type": "change", "priority": "P3",
+        "description": "d", "service_item_id": ctx["item"],
+        "change_type": "标准", "risk_level": "低",
+    }, headers=ctx["admin"]).json()["data"]
+    p2 = client.get(f"/api/tickets/{t2['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    first = next(s for s in p2["steps"] if s["seq"] == p2["current_step_seq"])
+    client.post(f"/api/process-tasks/{first['task_id']}/complete", json={"comment": "申请完成"}, headers=ctx["admin"])
+    p2 = client.get(f"/api/tickets/{t2['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    approval = next(s for s in p2["steps"] if s["seq"] == p2["current_step_seq"])
+    r = client.post(f"/api/process-tasks/{approval['task_id']}/approve", json={}, headers=ctx["admin"])
+    assert r.json()["success"], r.text
+    detail2 = client.get(f"/api/tickets/{t2['id']}", headers=ctx["admin"]).json()["data"]
+    assert detail2["status"] == "approved"
 
 
 def test_requirement_transition_follows_flow_operator(client, ctx):

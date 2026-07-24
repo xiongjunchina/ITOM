@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_not_example
 from app.db import get_db
-from app.deps import get_current_user, require_perm
+from app.deps import get_current_user, require_perm, require_roles
 from app.models import (
     ActivityCampaign,
     AuthUser,
@@ -371,25 +371,86 @@ class RuleIn(BaseModel):
     active: bool = True
 
 
-@router.get("/api/point-rules")
-def list_point_rules(db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
+def _point_rule_rows(db: Session, contribution_bucket: str = "team_contribution"):
     from app.models import PointRule
 
-    rows = db.query(PointRule).filter(PointRule.is_deleted.is_(False)).order_by(PointRule.created_at).all()
-    return ok([{"code": r.code, "name": r.name, "points": r.points, "active": r.active} for r in rows], total=len(rows))
+    rows = (
+        db.query(PointRule)
+        .filter(
+            PointRule.is_deleted.is_(False),
+            PointRule.contribution_bucket == contribution_bucket,
+        )
+        .order_by(PointRule.created_at)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "code": r.code,
+            "name": r.name,
+            "points": r.points,
+            "active": r.active,
+            "contribution_bucket": r.contribution_bucket,
+            "contribution_dimension": r.contribution_dimension,
+            "updated_at": r.updated_at,
+        }
+        for r in rows
+    ]
 
 
-@router.patch("/api/point-rules/{code}")
-def update_point_rule(code: str, body: RuleIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("ideas", "edit"))):
+@router.get("/api/point-rules")
+def list_point_rules(db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
+    """Activity-point rules only; role-result events are not team-contribution rules.
+
+    The endpoint name remains compatible with the previous activity-points client.
+    """
+    rows = _point_rule_rows(db)
+    return ok(rows, total=len(rows))
+
+
+@router.get("/api/admin/point-rules")
+def list_admin_point_rules(db: Session = Depends(get_db), _=Depends(require_roles("cio"))):
+    rows = _point_rule_rows(db)
+    return ok(rows, total=len(rows))
+
+
+def _update_point_rule(code: str, body: RuleIn, db: Session, user: AuthUser):
     from app.models import PointRule
 
     rule = db.query(PointRule).filter(PointRule.code == code, PointRule.is_deleted.is_(False)).first()
     if not rule:
         raise AppError("NOT_FOUND", "积分规则不存在", 404)
+    if (rule.contribution_bucket or "team_contribution") != "team_contribution":
+        raise AppError("ROLE_RESULT_RULE", "岗位职责结果规则请在人效评分的计分规则页面维护", 422)
+    before = {"points": rule.points, "active": rule.active}
     rule.points, rule.active = body.points, body.active
-    audit(db, "point_rule", rule.id, "update", user, {"code": code, "points": body.points, "active": body.active})
+    audit(
+        db,
+        "point_rule",
+        rule.id,
+        "update",
+        user,
+        {
+            "code": code,
+            "before_points": before["points"],
+            "points": rule.points,
+            "before_active": before["active"],
+            "active": rule.active,
+        },
+    )
     db.commit()
     return ok({"code": rule.code, "points": rule.points, "active": rule.active})
+
+
+@router.patch("/api/point-rules/{code}")
+def update_point_rule(code: str, body: RuleIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_roles("cio"))):
+    """Legacy URL kept for existing clients; writes use the dedicated permission."""
+    return _update_point_rule(code, body, db, user)
+
+
+@router.patch("/api/admin/point-rules/{code}")
+def update_admin_point_rule(code: str, body: RuleIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_roles("cio"))):
+    return _update_point_rule(code, body, db, user)
 
 
 # ---------- 积分台账 ----------

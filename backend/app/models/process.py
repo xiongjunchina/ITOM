@@ -26,6 +26,9 @@ class ProcessStep(GlidBase):
 
     definition_id: Mapped[str] = mapped_column(ForeignKey("process_definition.id"))
     seq: Mapped[int] = mapped_column(Integer)
+    # Stable business key inside a process definition.  Names and sequence numbers
+    # may be edited in a new version; performance/RACI mappings use this key.
+    step_code: Mapped[str | None] = mapped_column(String(64), comment="版本内稳定节点编码")
     name: Mapped[str] = mapped_column(String(128))
     node_type: Mapped[str] = mapped_column(String(16), default="processing", comment="processing/approval")
     default_role: Mapped[str | None] = mapped_column(String(32), comment="处理人：角色码或 group:组码（产生任务，阻塞流程）")
@@ -55,11 +58,15 @@ class ProcessTask(GlidBase):
 
     instance_id: Mapped[str] = mapped_column(ForeignKey("process_instance.id"))
     step_id: Mapped[str] = mapped_column(ForeignKey("process_step.id"))
+    definition_version: Mapped[int | None] = mapped_column(Integer, comment="任务生成时的流程版本")
+    step_code_snapshot: Mapped[str | None] = mapped_column(String(64), comment="任务生成时的节点编码")
+    raci_snapshot: Mapped[dict | None] = mapped_column(JsonCol, comment="任务生成时的 RACI 主责/知会快照")
     assignee: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), index=True)
     status: Mapped[str] = mapped_column(String(16), default="待处理", comment="待处理/已完成/已跳过")
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     due_at: Mapped[datetime | None] = mapped_column(DateTime, comment="按步骤 SLA")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_by: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="实际完成任务的人员")
     comment: Mapped[str | None] = mapped_column(Text)
 
     step: Mapped[ProcessStep] = relationship()

@@ -67,6 +67,7 @@ export const zh: Dict = {
 
   // 流程定义：步骤编辑
   'proc.stepDef': '步骤定义',
+  'proc.stepCodePlaceholder': '稳定节点编码（可选）',
   'proc.stepNameRequired': '步骤名称必填',
   'proc.stepNamePlaceholder': '步骤名称',
   'proc.node.processing': '处理节点',
@@ -161,6 +162,7 @@ export const en: Dict = {
 
   // Process definitions: step editing
   'proc.stepDef': 'Step Definition',
+  'proc.stepCodePlaceholder': 'Stable step code (optional)',
   'proc.stepNameRequired': 'Step name is required',
   'proc.stepNamePlaceholder': 'Step name',
   'proc.node.processing': 'Processing',

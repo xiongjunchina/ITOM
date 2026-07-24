@@ -128,7 +128,7 @@ POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {
 ### 4.5 流程
 
 ```text
-GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套)
+GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code，已有实例的节点/RACI/SLA 改动需另存新版本)
 GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时聚合
 POST /api/process-tasks/{id}/complete | /reassign
 ```
@@ -144,7 +144,13 @@ GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
 GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
     # 员工维护本期学习成长目标；完成比例按同周期目标等权平均折算 learning_growth 积分并写入 point_entry
-GET/PATCH /api/point-rules
+GET /api/point-rules                    # 活动积分页读取团队贡献事件规则（按 ideas.view）
+GET /api/point-rules/team-config         # 活动积分→积分规则读取团队贡献维度权重/目标/满意度组合
+PUT /api/point-rules/team-config         # 活动积分→积分规则保存（admin/CIO）
+GET/PATCH /api/admin/point-rules         # 兼容旧客户端的团队贡献事件规则接口（admin/CIO；不接受 role_result）
+# 旧 PATCH /api/point-rules/{code} 保留兼容，但同样只允许修改 team_contribution
+GET /api/team/performance/overview?period=YYYY-Qn|All  # 当前矩阵角色人效总览（角色职责 80% + 团队贡献 20%）
+# GET /api/team/performance 保留旧版岗位方案结果，仅供历史客户端兼容，不作为当前总览数据源
 POST /api/points/adjust                  # 管理员手工调分(必填 remark)
 GET/POST/PATCH /api/admin/performance/role-profiles
 PUT /api/admin/performance/role-profiles/{id}/dimensions
@@ -161,7 +167,7 @@ POST /api/admin/performance/{period}/publish
 POST /api/admin/performance/{period}/unlock
 GET /api/my/performance?period=YYYY-Qn
 GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
-GET/PUT /api/admin/performance/contribution-rules # CIO/管理员配置团队贡献权重、目标及满意度组合比例
+GET/PUT /api/admin/performance/contribution-rules # 兼容旧客户端；团队贡献权重、目标及满意度组合的规范入口是 /api/point-rules/team-config
 ```
 
 ### 4.7 Dashboard

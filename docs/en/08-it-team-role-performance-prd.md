@@ -155,9 +155,11 @@ The first implementation lets each employee maintain learning and growth goals f
 
 ## 8. CIO configuration and review workbenches
 
-Configuration supports role profiles, dimensions, weights, evidence rules, per-period role assignments, evaluator assignments, contribution targets, point-rule mapping, lifecycle states, snapshots, and audit logs.
+Configuration supports role profiles, dimensions, weights, evidence rules, per-period role assignments, evaluator assignments, role-result source mappings, lifecycle states, snapshots, and audit logs. Team-contribution targets and point-rule mappings are maintained under Activity Points → Point Rules.
 
-The “Performance → Scoring Rules” page shows both layers: each role profile's dimension weights (100% within the role) and the current-period employee role matrix (business/professional roles total 80%, with team contribution fixed at 20%). Administrators and the CIO can edit role profiles for pre-release validation.
+The “Performance → Scoring Rules” page owns role-result rules only: each role profile's dimension weights (100% within the role), system source mappings, process/RACI step mappings, and the current-period employee role matrix (business/professional roles total 80%). The fixed 20% team-contribution event rules, targets, and satisfaction mix are maintained under “Activity Points → Point Rules” and are not duplicated here. Administrators and the CIO can edit the corresponding rule page for pre-release validation.
+
+The performance overview reads the matrix-role period result and does not fall back to or display the legacy `perf_scheme` default. To add a non-default rule, select **Add role rule** in Scoring Rules, then assign the role and its business/professional weight to an employee in the period detail; role weights must total 80% and team contribution remains fixed at 20%.
 
 The current-period role matrix is aggregated to one row per employee; the employee detail page contains all role allocations and supports CIO/admin weight adjustments. Recompute generates defaults only for a new period or an explicit reset, and preserves manual period-weight overrides.
 

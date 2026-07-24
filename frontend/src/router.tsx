@@ -132,12 +132,14 @@ export const router = createBrowserRouter([
       { path: 'team/ideas', element: <ActivityPoints /> },
       { path: 'team/charter', element: <Charter /> },
 
-      // 系统管理（admin，M3.9 收敛为 6 项）
+      // 系统管理（按权限矩阵展示；活动积分规则归属团队管理）
       { path: 'admin/org', element: <OrgManagement /> },
       { path: 'admin/identity', element: <Identity /> },
       { path: 'admin/access', element: <Access /> },
       { path: 'admin/master-data', element: <MasterData /> },
       { path: 'admin/workflow-config', element: <WorkflowConfig /> },
+      // 旧书签兼容：积分规则已归入「活动积分」同级标签页。
+      { path: 'admin/point-rules', element: <Navigate to="/team/ideas?tab=point-rules" replace /> },
       // 需求评分规则已并入需求管理标签页（2026-07-14），保留旧地址重定向
       { path: 'admin/requirement-scoring', element: <Navigate to="/requirements/scoring" replace /> },
       { path: 'admin/integrations', element: <SystemIntegrations /> },

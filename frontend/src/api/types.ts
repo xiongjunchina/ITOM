@@ -371,6 +371,7 @@ export interface AllowedTransition {
 /** 工单流程步骤 */
 export interface ProcessStep {
   seq: number;
+  step_code?: string | null;
   name: string;
   node_type?: ProcessNodeType | null;
   default_role?: string | null;
@@ -384,11 +385,13 @@ export interface ProcessStep {
   assignee_name?: string | null;
   due_at?: string | null;
   completed_at?: string | null;
+  raci_snapshot?: Record<string, unknown> | null;
 }
 
 /** 工单关联流程实例 */
 export interface TicketProcess {
   definition_name: string;
+  definition_version?: number | null;
   status: string;
   current_step_seq?: number | null;
   steps: ProcessStep[];
@@ -627,6 +630,7 @@ export const AUTONOMY_LABELS: Record<AutonomyLevel, string> = {
 /** 流程步骤定义；default_role = 角色 code 或 "group:组码" */
 export interface ProcessStepDef {
   seq: number;
+  step_code?: string | null;
   name: string;
   node_type: ProcessNodeType;
   default_role?: string | null;
@@ -1562,10 +1566,14 @@ export interface PointsLeaderboard {
 
 /** 积分规则（自动事件分值，可调可停用） */
 export interface PointRule {
+  id?: string;
   code: string;
   name: string;
   points: number;
   active: boolean;
+  contribution_bucket?: string | null;
+  contribution_dimension?: string | null;
+  updated_at?: string | null;
 }
 
 /** 学习成长目标（GET/POST/PATCH /team/learning-growth）。 */
@@ -1907,6 +1915,7 @@ export interface PerformanceRoleDimensionDefinition {
   name: string;
   weight: number;
   metric: string;
+  source_config?: Record<string, unknown>;
   evidence_required: boolean;
   sort: number;
   active: boolean;

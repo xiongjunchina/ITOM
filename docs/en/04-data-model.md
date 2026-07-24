@@ -245,7 +245,7 @@ code, name, entity_type (linked record type), trigger_condition JSONB (e.g. `{"t
 
 ### 5.2 process_step — process step [cfg]
 
-definition_id FK, seq, name, node_type (processing / approval), default_role, cc_roles (notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
+definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step_code, node type, handler, CC parties, and SLA cannot be changed in place; use a new version. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
 
 ### 5.3 process_instance — process instance
 
@@ -253,7 +253,7 @@ definition_id FK, entity_type, entity_id (triggering record), status (In Progres
 
 ### 5.4 process_task — process task
 
-instance_id FK, step_id FK, assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Skipped), started_at, due_at [C] (from the step SLA), completed_at, comment.
+instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Skipped), started_at, due_at [C] (from the step SLA), completed_at, completed_by FK, comment. Snapshots keep historical performance extraction stable after later process versions.
 
 ---
 
