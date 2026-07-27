@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import OrgMember, ServiceCatalog, ServiceItem, SlaPolicy, Ticket
+from app.models import Department, OrgMember, ServiceCatalog, ServiceItem, SlaPolicy, Ticket
 from app.schemas.common import ok
 from app.schemas.itsm import (
     CatalogCreate,
@@ -23,6 +23,60 @@ from app.services.codes import gen_code
 from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(tags=["itsm"])
+
+
+def _resolve_target_audience(db: Session, mode: str, refs: list[dict] | None) -> tuple[str, list[dict]]:
+    """校验服务对象引用并生成兼容旧字段的可读摘要。"""
+    if mode == "all":
+        return "全体员工", []
+    if mode != "custom":
+        raise AppError("INVALID_AUDIENCE", "服务对象范围必须为全体员工或自定义范围")
+
+    normalized: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for ref in refs or []:
+        kind = ref.get("type")
+        ref_id = str(ref.get("id") or "")
+        key = (kind, ref_id)
+        if kind not in {"department", "member"} or not ref_id or key in seen:
+            continue
+        seen.add(key)
+        normalized.append({"type": kind, "id": ref_id})
+    if not normalized:
+        raise AppError("AUDIENCE_REQUIRED", "请选择至少一个部门或员工")
+
+    department_ids = [r["id"] for r in normalized if r["type"] == "department"]
+    member_ids = [r["id"] for r in normalized if r["type"] == "member"]
+    departments = {
+        d.id: d
+        for d in db.query(Department).filter(
+            Department.id.in_(department_ids or ["-"]),
+            Department.is_deleted.is_(False),
+            Department.active.is_(True),
+        )
+    }
+    members = {
+        m.id: m
+        for m in db.query(OrgMember).filter(
+            OrgMember.id.in_(member_ids or ["-"]),
+            OrgMember.is_deleted.is_(False),
+            OrgMember.status == "在岗",
+        )
+    }
+    missing = [
+        f"部门:{ref['id']}" if ref["type"] == "department" else f"员工:{ref['id']}"
+        for ref in normalized
+        if (ref["id"] not in departments if ref["type"] == "department" else ref["id"] not in members)
+    ]
+    if missing:
+        raise AppError("AUDIENCE_NOT_FOUND", f"服务对象已不存在或不可用：{'、'.join(missing)}")
+
+    parts = []
+    if department_ids:
+        parts.append("部门：" + "、".join(departments[ref_id].name for ref_id in department_ids))
+    if member_ids:
+        parts.append("员工：" + "、".join(members[ref_id].name for ref_id in member_ids))
+    return "；".join(parts), normalized
 
 
 # ---- 服务目录 ----
@@ -142,7 +196,8 @@ def _item_row(i: ServiceItem, db: Session) -> dict:
         "service_type": i.service_type, "owner": i.owner, "owner_name": owner.name if owner else None,
         "description": i.description,
         "sla_response_hours": i.sla_response_hours, "sla_resolution_hours": i.sla_resolution_hours,
-        "target_audience": i.target_audience, "status": i.status,
+        "target_audience": i.target_audience, "target_audience_mode": i.target_audience_mode or "all",
+        "target_audience_refs": i.target_audience_refs or [], "status": i.status,
     }
 
 
@@ -198,7 +253,13 @@ def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=De
     if not db.get(ServiceCatalog, body.catalog_id):
         raise AppError("NOT_FOUND", "目录不存在", 404)
     require_it_member_if_configured(db, body.owner, "服务项负责人")
-    item = ServiceItem(**body.model_dump(), item_code=gen_code(db, ServiceItem, "item_code", "SI"))
+    data = body.model_dump(exclude_unset=True)
+    mode = data.get("target_audience_mode") or "all"
+    summary, refs = _resolve_target_audience(db, mode, data.get("target_audience_refs"))
+    data["target_audience"] = summary
+    data["target_audience_mode"] = mode
+    data["target_audience_refs"] = refs
+    item = ServiceItem(**data, item_code=gen_code(db, ServiceItem, "item_code", "SI"))
     db.add(item)
     db.flush()
     audit(db, "service_item", item.id, "create", actor, {"name": body.name})
@@ -213,6 +274,11 @@ def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get
         raise AppError("NOT_FOUND", "服务项不存在", 404)
     ensure_not_example(item)
     data = body.model_dump(exclude_unset=True)
+    if "target_audience_mode" in data or "target_audience_refs" in data:
+        mode = data.get("target_audience_mode") or item.target_audience_mode or "all"
+        refs = data.get("target_audience_refs") if "target_audience_refs" in data else (item.target_audience_refs or [])
+        summary, normalized_refs = _resolve_target_audience(db, mode, refs)
+        data.update({"target_audience": summary, "target_audience_mode": mode, "target_audience_refs": normalized_refs})
     if "owner" in data:
         require_it_member_if_configured(db, data["owner"], "服务项负责人")
     for k, v in data.items():

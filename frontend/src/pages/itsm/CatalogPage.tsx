@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Key } from 'react';
 import {
   Badge,
   Button,
   Card,
   Col,
+  Alert,
   Empty,
   Form,
   Input,
@@ -13,18 +15,21 @@ import {
   Select,
   Space,
   Tag,
+  Tree,
   Tooltip,
   Typography,
   message,
   Popconfirm,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
+import type { DataNode } from 'antd/es/tree';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowDownOutlined,
   ArrowLeftOutlined,
   ArrowRightOutlined,
   ArrowUpOutlined,
+  ApartmentOutlined,
   CustomerServiceOutlined,
   DeleteOutlined,
   EditOutlined,
@@ -34,6 +39,7 @@ import {
   ReadOutlined,
   RightOutlined,
   SearchOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
@@ -42,7 +48,7 @@ import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
 import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
-import type { Catalog, CatalogTier, Member, ServiceItem } from '../../api/types';
+import type { Catalog, CatalogTier, Department, Member, ServiceItem } from '../../api/types';
 import { TIER_COLORS, TIER_LABELS } from '../../api/types';
 import SortableTable from '../../components/SortableTable';
 
@@ -62,9 +68,11 @@ interface ItemFormValues {
   description?: string;
   sla_response_hours?: number | null;
   sla_resolution_hours?: number | null;
-  target_audience?: string;
+  target_audience_mode?: 'all' | 'custom';
   status?: '上架' | '下架';
 }
+
+type AudienceRef = { type: 'department' | 'member'; id: string };
 
 export default function CatalogPage() {
   const navigate = useNavigate();
@@ -103,6 +111,15 @@ export default function CatalogPage() {
   const [itemSaving, setItemSaving] = useState(false);
   const [itemForm] = Form.useForm<ItemFormValues>();
 
+  // 服务对象范围选择器：结构化保存部门/员工引用，兼容旧版 target_audience 文本。
+  const [audienceMode, setAudienceMode] = useState<'all' | 'custom'>('all');
+  const [audienceRefs, setAudienceRefs] = useState<AudienceRef[]>([]);
+  const [audienceDraftRefs, setAudienceDraftRefs] = useState<AudienceRef[]>([]);
+  const [audienceDepartments, setAudienceDepartments] = useState<Department[]>([]);
+  const [audienceMembers, setAudienceMembers] = useState<Member[]>([]);
+  const [audienceModalOpen, setAudienceModalOpen] = useState(false);
+  const [audienceLoading, setAudienceLoading] = useState(false);
+
   const loadCatalogs = useCallback(async () => {
     setCatalogLoading(true);
     try {
@@ -131,6 +148,22 @@ export default function CatalogPage() {
     }
   }, [selectedCatalog, q, itemStatus]);
 
+  const loadAudienceOptions = useCallback(async () => {
+    setAudienceLoading(true);
+    try {
+      const [departmentRes, memberRes] = await Promise.all([
+        api.getList<Department>('/admin/departments'),
+        api.getList<Member>('/members', { page: 1, page_size: 2000 }),
+      ]);
+      setAudienceDepartments(departmentRes.items.filter((department) => department.active));
+      setAudienceMembers(memberRes.items.filter((member) => member.status !== '离职'));
+    } catch {
+      // 已统一提示
+    } finally {
+      setAudienceLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadCatalogs();
   }, [loadCatalogs]);
@@ -151,6 +184,96 @@ export default function CatalogPage() {
         .catch(() => undefined);
     }
   }, [canManage]);
+
+  const audienceTreeData = useMemo<DataNode[]>(() => {
+    const activeDepartments = audienceDepartments.filter((department) => department.active);
+    const membersByDepartment = new Map<string, Member[]>();
+    const unassignedMembers: Member[] = [];
+    audienceMembers.forEach((member) => {
+      if (member.department_id) {
+        const current = membersByDepartment.get(member.department_id) ?? [];
+        current.push(member);
+        membersByDepartment.set(member.department_id, current);
+      } else {
+        unassignedMembers.push(member);
+      }
+    });
+    const departmentByParent = new Map<string | null, Department[]>();
+    activeDepartments.forEach((department) => {
+      const current = departmentByParent.get(department.parent_id) ?? [];
+      current.push(department);
+      departmentByParent.set(department.parent_id, current);
+    });
+    const memberNode = (member: Member): DataNode => ({
+      key: `audience-member:${member.id}`,
+      title: <Space size={6}><UserOutlined />{member.name}{member.employee_no ? `（${member.employee_no}）` : ''}</Space>,
+      isLeaf: true,
+    });
+    const building = (parentId: string | null, trail = new Set<string>()): DataNode[] =>
+      (departmentByParent.get(parentId) ?? [])
+        .filter((department) => !trail.has(department.id))
+        .map((department) => {
+          const nextTrail = new Set(trail).add(department.id);
+          const children = [
+            ...building(department.id, nextTrail),
+            ...(membersByDepartment.get(department.id) ?? []).map(memberNode),
+          ];
+          return {
+            key: `audience-department:${department.id}`,
+            title: <Space size={6}><ApartmentOutlined />{department.name}</Space>,
+            children,
+          };
+        });
+    const rootChildren = building(null);
+    if (unassignedMembers.length > 0) {
+      rootChildren.push({
+        key: 'audience-unassigned',
+        title: '未归属部门人员',
+        disableCheckbox: true,
+        children: unassignedMembers.map(memberNode),
+      });
+    }
+    return [{
+      key: 'audience-root',
+      title: '公司组织架构',
+      disableCheckbox: true,
+      children: rootChildren,
+    }];
+  }, [audienceDepartments, audienceMembers]);
+
+  const audienceLabels = useMemo(() => {
+    const labels = new Map<string, string>();
+    audienceDepartments.forEach((department) => labels.set(`department:${department.id}`, `部门：${department.name}`));
+    audienceMembers.forEach((member) => labels.set(`member:${member.id}`, `员工：${member.name}`));
+    return labels;
+  }, [audienceDepartments, audienceMembers]);
+
+  const audienceSummary = audienceMode === 'all'
+    ? t('itsm.catalog.allEmployees')
+    : audienceRefs.map((ref) => audienceLabels.get(`${ref.type}:${ref.id}`) ?? `${ref.type === 'department' ? '部门' : '员工'}：${ref.id}`).join('、')
+      || t('itsm.catalog.selectAudience');
+
+  const parseAudienceKeys = (keys: Key[]): AudienceRef[] => keys.flatMap((key): AudienceRef[] => {
+    const [kind, id] = String(key).split(':');
+    if (kind === 'audience-department' && id) return [{ type: 'department' as const, id }];
+    if (kind === 'audience-member' && id) return [{ type: 'member' as const, id }];
+    return [];
+  });
+
+  const openAudienceSelector = async () => {
+    setAudienceDraftRefs(audienceRefs);
+    setAudienceModalOpen(true);
+    await loadAudienceOptions();
+  };
+
+  const confirmAudienceSelector = () => {
+    if (audienceDraftRefs.length === 0) {
+      message.warning(t('itsm.catalog.audienceRequired'));
+      return;
+    }
+    setAudienceRefs(audienceDraftRefs);
+    setAudienceModalOpen(false);
+  };
 
   const selectCatalog = (catalogId: string | null) => {
     if (catalogId === selectedCatalog) return;
@@ -241,13 +364,27 @@ export default function CatalogPage() {
   // ---- 服务项增改 ----
   const openItemCreate = () => {
     setEditingItem(null);
+    setAudienceMode('all');
+    setAudienceRefs([]);
+    setAudienceDraftRefs([]);
     itemForm.resetFields();
-    if (selectedCatalog != null) itemForm.setFieldsValue({ catalog_id: selectedCatalog });
+    itemForm.setFieldsValue({
+      ...(selectedCatalog != null ? { catalog_id: selectedCatalog } : {}),
+      target_audience_mode: 'all',
+    });
     setItemModalOpen(true);
   };
 
   const openItemEdit = (it: ServiceItem) => {
     setEditingItem(it);
+    const legacyCustom = it.target_audience_mode !== 'custom'
+      && !!it.target_audience
+      && it.target_audience !== '全体员工';
+    const mode: 'all' | 'custom' = it.target_audience_mode === 'custom' || legacyCustom ? 'custom' : 'all';
+    const refs = (it.target_audience_refs ?? []) as AudienceRef[];
+    setAudienceMode(mode);
+    setAudienceRefs(refs);
+    setAudienceDraftRefs(refs);
     itemForm.setFieldsValue({
       name: it.name,
       catalog_id: it.catalog_id,
@@ -256,7 +393,7 @@ export default function CatalogPage() {
       description: it.description ?? undefined,
       sla_response_hours: it.sla_response_hours ?? undefined,
       sla_resolution_hours: it.sla_resolution_hours ?? undefined,
-      target_audience: it.target_audience ?? undefined,
+      target_audience_mode: mode,
       status: it.status,
     });
     setItemModalOpen(true);
@@ -264,8 +401,14 @@ export default function CatalogPage() {
 
   const saveItem = async () => {
     const values = await itemForm.validateFields();
+    if (audienceMode === 'custom' && audienceRefs.length === 0) {
+      message.warning(t('itsm.catalog.audienceRequired'));
+      return;
+    }
     const payload = {
       ...values,
+      target_audience_mode: audienceMode,
+      target_audience_refs: audienceMode === 'custom' ? audienceRefs : [],
       sla_response_hours: values.sla_response_hours ?? null,
       sla_resolution_hours: values.sla_resolution_hours ?? null,
     };
@@ -739,9 +882,49 @@ export default function CatalogPage() {
               <InputNumber min={0} style={{ width: '100%' }} />
             </Form.Item>
           </Space.Compact>
-          <Form.Item name="target_audience" label={t('itsm.f.targetAudience')}>
-            <Input maxLength={100} placeholder={t('itsm.catalog.audiencePlaceholder')} />
+          <Form.Item
+            name="target_audience_mode"
+            label={t('itsm.f.targetAudience')}
+            rules={[{ required: true, message: t('itsm.catalog.audienceModeRequired') }]}
+          >
+            <Select
+              options={[
+                { value: 'all', label: t('itsm.catalog.allEmployees') },
+                { value: 'custom', label: t('itsm.catalog.customAudience') },
+              ]}
+              onChange={(value: 'all' | 'custom') => {
+                setAudienceMode(value);
+                if (value === 'all') {
+                  setAudienceRefs([]);
+                  setAudienceDraftRefs([]);
+                }
+              }}
+            />
           </Form.Item>
+          {audienceMode === 'custom' ? (
+            <Form.Item label={t('itsm.catalog.selectAudience')}>
+              <Button block onClick={() => void openAudienceSelector()}>
+                {audienceSummary}
+              </Button>
+              <Typography.Text type="secondary">{t('itsm.catalog.audienceCustomHint')}</Typography.Text>
+              {editingItem
+                && editingItem.target_audience_mode !== 'custom'
+                && editingItem.target_audience
+                && editingItem.target_audience !== '全体员工'
+                && audienceRefs.length === 0 && (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    style={{ marginTop: 8 }}
+                    message={t('itsm.catalog.legacyAudienceHint')}
+                  />
+                )}
+            </Form.Item>
+          ) : (
+            <Form.Item label={t('itsm.catalog.audienceSummary')}>
+              <Typography.Text>{t('itsm.catalog.allEmployees')}</Typography.Text>
+            </Form.Item>
+          )}
           <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
@@ -756,6 +939,34 @@ export default function CatalogPage() {
             </Form.Item>
           )}
         </Form>
+      </Modal>
+
+      <Modal
+        title={t('itsm.catalog.audienceTreeTitle')}
+        open={audienceModalOpen}
+        onOk={confirmAudienceSelector}
+        confirmLoading={audienceLoading}
+        onCancel={() => setAudienceModalOpen(false)}
+        destroyOnClose
+        width={640}
+      >
+        <Alert
+          type="info"
+          showIcon
+          message={t('itsm.catalog.audienceTreeHint')}
+          style={{ marginBottom: 12 }}
+        />
+        <Tree
+          checkable
+          checkStrictly
+          defaultExpandAll
+          treeData={audienceTreeData}
+          checkedKeys={audienceDraftRefs.map((ref) => `audience-${ref.type}:${ref.id}`)}
+          onCheck={(checkedKeys) => {
+            const keys = Array.isArray(checkedKeys) ? checkedKeys : checkedKeys.checked;
+            setAudienceDraftRefs(parseAudienceKeys(keys));
+          }}
+        />
       </Modal>
     </Row>
   );

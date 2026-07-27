@@ -88,12 +88,13 @@ const ZH_SECTIONS: ManualSection[] = [
     logic: [
       '服务请求按登记、分派、处理、验收和关闭推进；处理人只处理当前节点。',
       '服务目录由目录和服务项两层组成，服务项状态分为上架和下架。',
+      '服务项的服务对象可选全体员工或自定义范围；自定义范围从组织架构树勾选部门或在岗员工，保存时校验引用并展示可读摘要。',
       'SLA 根据服务项和优先级匹配响应/解决时限，并为服务看板和绩效提供取数。',
       '事件强调恢复，变更强调审批、实施和回退，问题强调根因和永久修复。',
     ],
     steps: [
       '服务请求：进入“ITSM → 服务请求”，新建后在当前节点完成处理，登记人验收并关闭。',
-      '服务目录：左侧选择目录，右侧搜索/筛选服务项；使用上架、下架、编辑、删除或批量导入。删除目录时可在二次确认后同时软删除下属服务项，历史工单、项目和配置项仍保留。',
+      '服务目录：左侧选择目录，右侧搜索/筛选服务项；使用上架、下架、编辑、删除或批量导入。编辑服务项时在“服务对象”选择全体员工或自定义范围，并在组织架构树勾选部门/在岗员工。删除目录时可在二次确认后同时软删除下属服务项，历史工单、项目和配置项仍保留。',
       'CMDB/SLA：维护配置项、关联服务和时限策略。',
       '事件/变更/问题：打开详情，按流程图或右上角允许的按钮推进并填写说明。',
       '供应商/合同/知识库：维护基础资料、到期信息和可复用知识。',
@@ -199,8 +200,8 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'itsm', title: 'ITSM', summary: 'Manage requests, catalog, CMDB, SLA, incidents, changes, problems, vendors, contracts, and knowledge.',
-    logic: ['Requests move through assignment, processing, acceptance, and closure.', 'Catalogs contain service items with published/unpublished status.', 'SLA targets feed service dashboards and performance.', 'Incidents restore service; changes manage approval/implementation/rollback; problems manage root cause and permanent fixes.'],
-    steps: ['Create and process a service request.', 'Select a catalog and maintain items with search/filter/sort or bulk import; deleting a catalog can also soft-delete its child items after confirmation.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
+    logic: ['Requests move through assignment, processing, acceptance, and closure.', 'Catalogs contain service items with published/unpublished status.', 'A service item audience is either all employees or a structured custom scope selected from departments and active employees; references are validated before save.', 'SLA targets feed service dashboards and performance.', 'Incidents restore service; changes manage approval/implementation/rollback; problems manage root cause and permanent fixes.'],
+    steps: ['Create and process a service request.', 'Select a catalog and maintain items with search/filter/sort or bulk import; when editing an item, choose All employees or Custom scope and select departments/employees in the organization tree; deleting a catalog can also soft-delete its child items after confirmation.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
     role: 'Business users normally see requests and knowledge; ITSM maintenance is permission-controlled.',
   },
   {

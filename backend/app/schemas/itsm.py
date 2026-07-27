@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -18,6 +20,11 @@ class CatalogUpdate(BaseModel):
     status: str | None = None
 
 
+class AudienceRef(BaseModel):
+    type: Literal["department", "member"]
+    id: str = Field(min_length=1, max_length=26)
+
+
 class ServiceItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     catalog_id: str
@@ -27,6 +34,8 @@ class ServiceItemCreate(BaseModel):
     sla_response_hours: float | None = None
     sla_resolution_hours: float | None = None
     target_audience: str | None = None
+    target_audience_mode: Literal["all", "custom"] | None = None
+    target_audience_refs: list[AudienceRef] | None = None
 
 
 class ServiceItemUpdate(BaseModel):
@@ -38,6 +47,8 @@ class ServiceItemUpdate(BaseModel):
     sla_response_hours: float | None = None
     sla_resolution_hours: float | None = None
     target_audience: str | None = None
+    target_audience_mode: Literal["all", "custom"] | None = None
+    target_audience_refs: list[AudienceRef] | None = None
     status: str | None = None
 
 

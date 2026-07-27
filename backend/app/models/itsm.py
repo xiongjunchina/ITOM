@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db import GlidBase
+from app.db import GlidBase, JsonCol
 
 
 class ServiceCatalog(GlidBase):
@@ -30,6 +30,10 @@ class ServiceItem(GlidBase):
     sla_response_hours: Mapped[float | None] = mapped_column(Float, comment="覆盖 SLA 策略，可空")
     sla_resolution_hours: Mapped[float | None] = mapped_column(Float)
     target_audience: Mapped[str | None] = mapped_column(String(128))
+    target_audience_mode: Mapped[str] = mapped_column(String(16), default="all", comment="all/custom")
+    target_audience_refs: Mapped[list | None] = mapped_column(
+        JsonCol, default=list, comment="服务对象引用 [{type: department|member, id}]"
+    )
     status: Mapped[str] = mapped_column(String(16), default="上架")
 
     catalog: Mapped[ServiceCatalog] = relationship()

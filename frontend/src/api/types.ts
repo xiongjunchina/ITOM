@@ -702,6 +702,8 @@ export interface ServiceItem {
   sla_response_hours?: number | null;
   sla_resolution_hours?: number | null;
   target_audience?: string | null;
+  target_audience_mode?: 'all' | 'custom' | null;
+  target_audience_refs?: Array<{ type: 'department' | 'member'; id: string }> | null;
   status: '上架' | '下架';
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;

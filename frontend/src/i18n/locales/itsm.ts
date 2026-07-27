@@ -175,6 +175,16 @@ export const zh: Dict = {
   'itsm.catalog.slaResolutionH': 'SLA 解决(小时)',
   'itsm.catalog.slaBlankHint': '留空 = 使用全局策略',
   'itsm.catalog.audiencePlaceholder': '如：全体员工 / 研发团队',
+  'itsm.catalog.audienceModeRequired': '请选择服务对象范围',
+  'itsm.catalog.audienceSummary': '服务对象摘要',
+  'itsm.catalog.allEmployees': '全体员工',
+  'itsm.catalog.customAudience': '自定义范围',
+  'itsm.catalog.selectAudience': '选择部门或员工',
+  'itsm.catalog.audienceCustomHint': '可同时选择部门和员工；选择部门后，该部门人员均视为服务对象。',
+  'itsm.catalog.audienceTreeTitle': '选择服务对象',
+  'itsm.catalog.audienceTreeHint': '勾选部门或在岗员工；保存后将按当前组织架构校验。',
+  'itsm.catalog.audienceRequired': '请至少选择一个部门或员工',
+  'itsm.catalog.legacyAudienceHint': '该服务项使用旧版文本服务对象，请重新选择部门或员工。',
 
   // CMDB
   'itsm.cmdb.updated': '配置项已更新',
@@ -515,6 +525,16 @@ export const en: Dict = {
   'itsm.catalog.slaResolutionH': 'SLA Resolution (h)',
   'itsm.catalog.slaBlankHint': 'Blank = use global policy',
   'itsm.catalog.audiencePlaceholder': 'e.g. All staff / R&D team',
+  'itsm.catalog.audienceModeRequired': 'Please select a service audience scope',
+  'itsm.catalog.audienceSummary': 'Audience summary',
+  'itsm.catalog.allEmployees': 'All employees',
+  'itsm.catalog.customAudience': 'Custom scope',
+  'itsm.catalog.selectAudience': 'Select departments or employees',
+  'itsm.catalog.audienceCustomHint': 'You can select departments and employees; a selected department covers its people.',
+  'itsm.catalog.audienceTreeTitle': 'Select service audience',
+  'itsm.catalog.audienceTreeHint': 'Select departments or active employees; the current organization data is validated on save.',
+  'itsm.catalog.audienceRequired': 'Please select at least one department or employee',
+  'itsm.catalog.legacyAudienceHint': 'This service item uses the legacy text audience. Select departments or employees again.',
 
   // CMDB
   'itsm.cmdb.updated': 'CI updated',

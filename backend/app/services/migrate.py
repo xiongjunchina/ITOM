@@ -138,6 +138,10 @@ ENSURE_COLUMNS = {
         ("assigned_line", "VARCHAR(16)"),
         ("reporter", "VARCHAR(26)"),
     ],
+    "service_item": [
+        ("target_audience_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
+        ("target_audience_refs", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+    ],
 }
 
 
