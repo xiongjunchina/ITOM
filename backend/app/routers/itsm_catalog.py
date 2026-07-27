@@ -1,7 +1,7 @@
 """服务目录 + 服务项 + SLA 策略/看板（PRD §5.3/5.5）。"""
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import asc, desc, func, or_
 from sqlalchemy.orm import Session
@@ -87,24 +87,49 @@ def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(g
 
 
 @router.delete("/api/catalogs/{catalog_id}")
-def delete_catalog(catalog_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
-    """删除服务目录（M21，软删）：目录下仍有服务项时拒绝。"""
+def delete_catalog(
+    catalog_id: str,
+    cascade: bool = Query(False, description="同时软删除该目录下的服务项"),
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    """删除服务目录（软删），可在管理员明确确认后级联软删下属服务项。
+
+    级联只删除目录和服务项本身，不删除历史工单、项目或配置项；这些历史记录仍保留
+    对原服务项的引用，避免为了清理目录而破坏审计链路。
+    """
     catalog = db.get(ServiceCatalog, catalog_id)
     if not catalog or catalog.is_deleted:
         raise AppError("NOT_FOUND", "目录不存在", 404)
     ensure_example_delete_allowed(catalog, db, actor)
     live_items = db.query(ServiceItem).filter(ServiceItem.catalog_id == catalog.id, ServiceItem.is_deleted.is_(False)).all()
-    if live_items:
-        # 示例目录可由系统管理员连同其示例服务项一起清理；真实目录继续受引用保护。
-        if catalog.is_example and all(item.is_example for item in live_items):
-            for item in live_items:
-                item.is_deleted = True
-        else:
-            raise AppError("CATALOG_IN_USE", f"该目录下还有 {len(live_items)} 个服务项，请先删除或迁移服务项")
+    if live_items and not cascade:
+        raise AppError("CATALOG_IN_USE", f"该目录下还有 {len(live_items)} 个服务项，请先删除或迁移服务项，或确认级联删除")
+    for item in live_items:
+        item.is_deleted = True
+        audit(
+            db,
+            "service_item",
+            item.id,
+            "delete",
+            actor,
+            {
+                "code": item.item_code,
+                "name": item.name,
+                "cascade_from_catalog": catalog.id,
+            },
+        )
     catalog.is_deleted = True
-    audit(db, "service_catalog", catalog.id, "delete", actor, {"code": catalog.code, "name": catalog.name, "items_deleted": len(live_items) if catalog.is_example else 0})
+    audit(
+        db,
+        "service_catalog",
+        catalog.id,
+        "delete",
+        actor,
+        {"code": catalog.code, "name": catalog.name, "items_deleted": len(live_items), "cascade": cascade},
+    )
     db.commit()
-    return ok({"id": catalog.id})
+    return ok({"id": catalog.id, "items_deleted": len(live_items), "cascade": cascade})
 
 
 # ---- 服务项 ----

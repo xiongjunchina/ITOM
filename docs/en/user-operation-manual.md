@@ -49,7 +49,7 @@ If more information is needed, explain it at the current step instead of changin
 
 ### Service catalog
 
-Select a catalog on the left and inspect its service items on the right. Search items, filter by all/published/unpublished, sort by any header, and use the back/forward controls to return to all items. Catalogs and items have publish, unpublish, edit, and delete actions subject to permission. Templates and batch import are available for bulk maintenance.
+Select a catalog on the left and inspect its service items on the right. Search items, filter by all/published/unpublished, sort by any header, and use the back/forward controls to return to all items. Catalogs and items have publish, unpublish, edit, and delete actions subject to permission. Deleting a catalog requires explicit confirmation and can soft-delete all child service items; historical tickets, projects, and configuration records remain intact. Templates and batch import are available for bulk maintenance.
 
 ### CMDB, SLA, incidents, changes, problems, vendors, contracts, and knowledge
 

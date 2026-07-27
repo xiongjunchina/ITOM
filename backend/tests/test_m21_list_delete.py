@@ -93,6 +93,33 @@ def test_catalog_and_item_guards(client, ctx):
     assert client.delete(f"/api/catalogs/{cat['id']}", headers=ctx["admin"]).json()["success"]
 
 
+def test_catalog_delete_cascades_service_items_without_deleting_history(client, ctx):
+    cat = client.post("/api/catalogs", json={"name": "M21级联目录"}, headers=ctx["admin"]).json()["data"]
+    item = client.post(
+        "/api/service-items",
+        json={"name": "M21级联服务项", "catalog_id": cat["id"], "service_type": "支持类"},
+        headers=ctx["admin"],
+    ).json()["data"]
+    ticket = client.post(
+        "/api/tickets",
+        json={
+            "title": "M21历史工单保留",
+            "ticket_type": "service_request",
+            "priority": "P4",
+            "description": "目录删除后仍需保留历史引用",
+            "service_item_id": item["id"],
+        },
+        headers=ctx["admin"],
+    ).json()["data"]
+
+    response = client.delete(f"/api/catalogs/{cat['id']}?cascade=true", headers=ctx["admin"])
+    assert response.json()["success"]
+    assert response.json()["data"]["items_deleted"] == 1
+    assert all(row["id"] != cat["id"] for row in client.get("/api/catalogs", headers=ctx["admin"]).json()["data"])
+    assert all(row["id"] != item["id"] for row in client.get("/api/service-items", headers=ctx["admin"]).json()["data"])
+    assert client.get(f"/api/tickets/{ticket['id']}", headers=ctx["admin"]).status_code == 200
+
+
 def test_service_item_search_status_filter_and_sort(client, ctx):
     cat = client.post("/api/catalogs", json={"name": "M21筛选目录"}, headers=ctx["admin"]).json()["data"]
     first = client.post(

@@ -93,7 +93,7 @@ const ZH_SECTIONS: ManualSection[] = [
     ],
     steps: [
       '服务请求：进入“ITSM → 服务请求”，新建后在当前节点完成处理，登记人验收并关闭。',
-      '服务目录：左侧选择目录，右侧搜索/筛选服务项；使用上架、下架、编辑、删除或批量导入。',
+      '服务目录：左侧选择目录，右侧搜索/筛选服务项；使用上架、下架、编辑、删除或批量导入。删除目录时可在二次确认后同时软删除下属服务项，历史工单、项目和配置项仍保留。',
       'CMDB/SLA：维护配置项、关联服务和时限策略。',
       '事件/变更/问题：打开详情，按流程图或右上角允许的按钮推进并填写说明。',
       '供应商/合同/知识库：维护基础资料、到期信息和可复用知识。',
@@ -200,7 +200,7 @@ const EN_SECTIONS: ManualSection[] = [
   {
     id: 'itsm', title: 'ITSM', summary: 'Manage requests, catalog, CMDB, SLA, incidents, changes, problems, vendors, contracts, and knowledge.',
     logic: ['Requests move through assignment, processing, acceptance, and closure.', 'Catalogs contain service items with published/unpublished status.', 'SLA targets feed service dashboards and performance.', 'Incidents restore service; changes manage approval/implementation/rollback; problems manage root cause and permanent fixes.'],
-    steps: ['Create and process a service request.', 'Select a catalog and maintain items with search/filter/sort or bulk import.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
+    steps: ['Create and process a service request.', 'Select a catalog and maintain items with search/filter/sort or bulk import; deleting a catalog can also soft-delete its child items after confirmation.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
     role: 'Business users normally see requests and knowledge; ITSM maintenance is permission-controlled.',
   },
   {

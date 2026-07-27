@@ -529,8 +529,13 @@ export default function CatalogPage() {
                     {canDelete && (!c.is_example || isAdmin) && (
                       <Popconfirm
                         title={t('common.deleteConfirm')}
+                        description={
+                          c.item_count > 0
+                            ? t('itsm.catalog.deleteCatalogWithItems', { n: c.item_count })
+                            : t('itsm.catalog.deleteCatalogDescription')
+                        }
                         onConfirm={async () => {
-                          await api.delete(`/catalogs/${c.id}`);
+                          await api.delete(`/catalogs/${c.id}?cascade=true`);
                           message.success(t('common.deleted'));
                           if (selectedCatalog === c.id) setSelectedCatalog(null);
                           void loadCatalogs();
