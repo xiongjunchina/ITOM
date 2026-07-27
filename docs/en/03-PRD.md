@@ -209,7 +209,7 @@ Sources: manual creation, escalation from a ticket (one click; description and l
 Two-tier structure: **Catalog** (category, Gold/Silver/Bronze tiering) → **Service Item**.
 
 - Service item fields (10): name ✔, owning catalog ✔, service type, owner, description, SLA response deadline (hours), SLA resolution deadline (hours), target audience, status (automatic), code (automatic).
-- The target audience is structured: choose “All employees” or “Custom scope”. Custom scope selects departments and active employees from the organization tree; references are validated on save and a readable summary remains available for lists, search, and historical records.
+- The target audience is structured: choose “All employees” or “Custom scope”. Custom scope selects departments and active employees from the organization tree; references are validated on save and a readable summary remains available for lists, search, and historical records. The requester portal and ticket-creation API enforce the scope server-side; administrators and internal IT roles retain the full catalog view.
 - A service item's annual ticket volume is displayed as a live statistic, not entered.
 - Admin/CIO can publish or unpublish catalogs and service items directly from the list using up/down actions. Unpublishing does not delete history; unpublished items are hidden from the requester service portal.
 - The service-item list supports keyword search, publish-status filtering (all/published/unpublished), clickable column sorting, and back/forward navigation between catalogs. The catalog list also shows each catalog's published and unpublished service-item counts. All system tables use the same clickable-header sorting interaction.

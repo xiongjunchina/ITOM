@@ -7,13 +7,14 @@ from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_
 from app.core.rbac import REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import AuthUser, OrgMember, Ticket
+from app.models import AuthUser, OrgMember, ServiceItem, Ticket
 from app.schemas.common import ok, paginate
 from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, TicketUpdate, TransitionIn
 from app.services import process_engine
 from app.services import tickets as svc
 from app.services.audit import audit
 from app.services.team_scope import require_it_member_if_configured
+from app.services.service_audience import service_item_visible_to_user
 from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
 
 router = APIRouter(prefix="/api/tickets", tags=["itsm"])
@@ -111,6 +112,11 @@ def list_tickets(
 @router.post("")
 def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     _require_type_perm(db, user, body.ticket_type, "create")  # M17.2：按工单类型鉴权
+    service_item = db.get(ServiceItem, body.service_item_id)
+    if not service_item or service_item.is_deleted:
+        raise AppError("NOT_FOUND", "服务项不存在", 404)
+    if not service_item_visible_to_user(db, service_item, user):
+        raise AppError("SERVICE_ITEM_FORBIDDEN", "当前账号不在该服务项的服务对象范围内", 403)
     require_it_member_if_configured(db, body.assignee, "工单受理人")
     ticket = svc.create_ticket(db, body.model_dump(exclude_none=True), user)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}

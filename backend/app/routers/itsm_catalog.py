@@ -20,6 +20,7 @@ from app.schemas.itsm import (
 )
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services.service_audience import service_item_visible_to_user
 from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(tags=["itsm"])
@@ -209,7 +210,7 @@ def list_items(
     sort_by: str = "",
     sort_dir: str = "ascend",
     db: Session = Depends(get_db),
-    _=Depends(get_current_user),
+    user=Depends(get_current_user),
 ):
     """服务项列表。
 
@@ -245,6 +246,7 @@ def list_items(
         rows = query.order_by(ServiceItem.is_example.desc(), ordering, ServiceItem.created_at).all()
     else:
         rows = query.order_by(ServiceItem.is_example.desc(), ServiceItem.created_at).all()
+    rows = [item for item in rows if service_item_visible_to_user(db, item, user)]
     return ok([_item_row(i, db) for i in rows], total=len(rows))
 
 
