@@ -5,7 +5,7 @@
 > Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
-> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol/identity foundations and P1 intake are implemented. P1 passes automated MCP/API regression, a production frontend build, real Aily queries, and a requester-confirmed service-request write UAT; requirement write UAT awaits local business-domain configuration. P2–P3 remain target capabilities.
+> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol/identity foundations and P1 intake are implemented. P1 passes automated MCP/API regression, a production frontend build, and real Aily preview, confirmation, write, and own-record-query UAT for both service requests and IT requirements. P2–P3 remain target capabilities.
 
 ---
 
@@ -524,7 +524,7 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | M38 Interface & Branding | 10, 11 | Branding and login configuration, safe image assets, global appearance, role landing pages, banners/environment labels, publish history and rollback, built-in fallback |
 | M41 Role-specific Visual Redesign | 10, 11 | Scheme F service portal for requester-only users; Scheme C high-density workbench for all other roles; full-width horizontal logo above the sidebar title |
 | Aily-MCP P0 Protocol & Foundation (code and real identity path complete; proactive bot delivery pending) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
-| Aily-MCP P1 Intake (real service-request write complete; requirement UAT awaits a domain) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
+| Aily-MCP P1 Intake (real Aily write UAT complete for service requests and IT requirements) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
 | Aily-MCP P2 Closure Loop | 3, 5, 8 | Dispatch, accept, resolve, proactive notification, confirm/reopen, close, and rate across real roles |
 | Aily-MCP P3 Approval & Release | 8, 10, 11 | Feishu Approval idempotency, IDC security/performance/recovery/UAT, user-approved PR to `main` |
 

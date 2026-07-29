@@ -328,7 +328,7 @@ services:
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path complete; proactive bot delivery pending) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
-| Aily-MCP P1 (real service-request write complete; requirement UAT awaits a domain) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
+| Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
 | Aily-MCP P2 | accept, resolution message, confirm/reopen, rating | existing ticket detail collaboration | PRD §5.1 |
 | Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
 

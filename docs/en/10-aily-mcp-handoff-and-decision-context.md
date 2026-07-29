@@ -1,6 +1,6 @@
 # ITOM Feishu Aily Agent + MCP Server Final Design Baseline
 
-> Status: **formal baseline; P0 real identity is complete; P1 code, automation, real Aily queries, and service-request write UAT are complete; requirement write UAT awaits business-domain configuration, and proactive bot delivery remains pending**
+> Status: **formal baseline; P0 real identity is complete; P1 code, automation, and real Aily write UAT for both service requests and IT requirements are complete; proactive bot delivery remains pending**
 > Approval date: 2026-07-29
 > The Chinese document is authoritative. This file is its English mirror.
 
@@ -228,14 +228,14 @@ Local acceptance snapshot on 2026-07-29: the full backend regression suite repor
 
 ### Phase 1: request and requirement intake
 
-**Current state: code, automated MCP/API acceptance, the production frontend build, real Aily queries, and the service-request preview/confirmation/write UAT are complete. Requirement write UAT awaits at least one active business domain in the local environment.**
+**Current state: code, automated MCP/API acceptance, the production frontend build, and real Aily form → preview → explicit confirmation → write → own-record-query UAT are complete for both service requests and IT requirements.**
 
 - dynamic forms, search metadata, process/dispatch binding;
 - service-item search, form retrieval, preview, confirmation, and submission;
 - requirement form, preview, registration, and own-record queries;
 - normal users cannot create incidents.
 
-P1 local acceptance snapshot on 2026-07-29: the full backend suite reported `267 passed`, the focused P1 Streamable HTTP suite reported `5 passed`, and the production frontend build succeeded. Docker Compose migrations completed; model metadata and PostgreSQL both contain 80 tables; all 32 existing service items have a published form and `sr_flow`; and local port 8180 plus ngrok-public `/api/health` both returned HTTP 200. After Aily re-saved the canonical `/mcp/` URL, it discovered 12 tools and made real search, form, preview, and confirmed-submit calls. Test ticket `TK-202607-0001` was created exactly once as a P3 `service_request` in New status with its form version/schema snapshot and a running process instance. Because no explicit dispatch rule exists, it correctly entered the unassigned manual fallback queue. Aily also read the live requirement form and correctly reported that the local business-domain list is empty; it neither invented a domain nor created an invalid requirement. Requirement write UAT continues after an administrator configures a domain.
+P1 local acceptance snapshot on 2026-07-29: the full backend suite reported `267 passed`, the focused P1 Streamable HTTP suite reported `5 passed`, and the production frontend build succeeded. Docker Compose migrations completed; model metadata and PostgreSQL both contain 80 tables; all 32 existing service items have a published form and `sr_flow`; and local port 8180 plus ngrok-public `/api/health` both returned HTTP 200. After Aily re-saved the canonical `/mcp/` URL, it discovered 12 tools and made real search, form, preview, and confirmed-submit calls. Test ticket `TK-202607-0001` was created exactly once as a P3 `service_request` in New status with its form version/schema snapshot and a running process instance. Because no explicit dispatch rule exists, it correctly entered the unassigned manual fallback queue. An administrator then configured active domain `bsz_sc` (供应链服务域 / Supply Chain Service Domain). Aily re-read the live requirement form, returned only that domain, and completed preview plus explicit confirmation. `RQ-202607-0001` was created exactly once as a Function requirement in `evaluating` status, started a running `requirement_flow`, and generated/assigned its first “business-domain owner review” task. The creation audit and consumed idempotency intent are present, the same title produced zero `ticket` rows, and `get_my_it_requirement` returned the same title, domain, and status. This verifies that a normal-user requirement does not fall through to `service_request`; both P1 real-Aily write paths have passed UAT.
 
 Acceptance: results come from the live catalog; audience/form validation works; retrying a confirmed submission creates one record; the request starts the right process and dispatch; the requirement enters requirement management.
 

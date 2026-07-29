@@ -329,7 +329,7 @@ services:
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份链路已完成，机器人主动消息待验证） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
-| Aily-MCP P1（服务请求真实写入已完成；需求 UAT 等待业务域） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
+| Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2 | 受理、解决通知、确认/重开、评价 | 现有工单详情协同 | PRD §5.1 |
 | Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
 
