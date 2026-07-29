@@ -2,7 +2,7 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on [03-PRD.md](03-PRD.md) (v1.1, aligned through M44). **51 tables** in total: Support 17 (including org-governance and system-integration settings), ITSM 12, Project 6, Requirement 2, Process 4, Team 10.
+> Based on [03-PRD.md](03-PRD.md) (v1.1, aligned through M46). **52 tables** in total: Support 18 (including org governance, system integrations, and Feishu Helpdesk reliable synchronization), ITSM 12, Project 6, Requirement 2, Process 4, Team 10.
 > Compared with SN-AOM's 106 tables; no pre-computed/snapshot tables at all.
 
 ## 0. Global Conventions
@@ -91,7 +91,7 @@ event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu…), s
 
 ### 1.8 in_app_notification — in-app notification
 
-recipient FK→org_member, title, content, link (front-end route), read_at. The data source for the top-bar bell.
+recipient FK→org_member, title, content, link (front-end route), read_at. The data source for the top-bar bell. `POST /api/notifications/read-all` bulk-updates `read_at` for unread rows addressed to the current account's person/account recipient IDs; `POST /api/notifications/clear-read` soft-deletes already-read rows for the same recipient IDs. Neither action changes source business records.
 
 ### 1.9 attachment — generic attachment
 
@@ -119,12 +119,13 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | target_audience | VARCHAR(128) | |
 | status | VARCHAR(16) | Listed / Delisted |
 
-### 2.3 ticket — ticket (single table, multiple types; 38 columns, only 5 required on creation)
+### 2.3 ticket — ticket (single table, multiple types; 40 columns, pre-consultation fields required for service requests)
 
 | Group | Fields | Description |
 | --- | --- | --- |
-| Required on creation | title, ticket_type (incident/service_request/change), priority (P1-P4), description, service_item_id FK | |
-| Optional on creation | assignee FK, ci_id FK, remarks | |
+| Required on creation | title, ticket_type (incident/service_request/change), priority (P1-P4), description, service_item_id FK | The service-request UI presents priority as Urgency and selects service items under a category |
+| Pre-consultation fields | service_category, other_info | Stores the ITSM catalog name and supplemental information separately from internal remarks |
+| Optional on creation | assignee FK, ci_id FK, remarks | Assignee/remarks are exposed in Internal Handling Information to IT staff and administrators |
 | Change conditional fields | change_type, risk_level, change_reason, rollback_plan, planned_start_at, planned_end_at, implementation_plan | change type only |
 | Staged fields | solution, root_cause, closure_code, satisfaction (1-5) | at resolution/closure/follow-up |
 | Approval [C] | approved_by, approved_at, approval_comment | written by change approval |
@@ -371,8 +372,15 @@ erDiagram
 `ui_branding_asset` stores controlled brand images with kind, path, MIME type, byte size, dimensions and uploader. Only PNG/JPEG/WebP/ICO up to 5 MB and 4096×4096 are accepted; SVG and arbitrary HTML/CSS/JS or remote fonts are intentionally unsupported.
 ### Org governance settings (M42)
 
-`org_settings` is a singleton containing `digital_team_department_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. It is separate from credentials so the internal digital-team definition survives an organization-source change.
+`org_settings` is a singleton containing `digital_team_department_ids`, `digital_team_member_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. The effective digital team is the union of active people in the expanded department scope and active individually selected people; selecting an individual never includes their colleagues. The settings remain separate from credentials so the internal digital-team definition survives an organization-source change.
 
 ### System integration settings (M44)
 
 `system_integration_config` stores global email and LDAP JSON settings. SMTP and LDAP bind passwords are Fernet-encrypted; read APIs expose only `has_secret`.
+
+### 1.10 feishu_config / feishu_helpdesk_handoff / feishu_helpdesk_intake — Feishu Helpdesk (M45/M46)
+
+`feishu_config` adds `helpdesk_id`, encrypted `helpdesk_token`, `helpdesk_enabled`, encrypted event Verification Token, `helpdesk_event_url`, and event-subscription status/time/error fields alongside organization sync and OAuth settings. Read APIs return only masks/configured flags; the status distinguishes saved credentials from a successfully registered Helpdesk event subscription.
+
+`feishu_helpdesk_handoff` stores `ticket_id`, `action(service_request/requirement)`, source guest/agent open IDs, Helpdesk ID, `token_hash`, a sanitized `ticket_snapshot`, status (`issued/consumed/expired`), expiry, consumed entity metadata, and `callback_event_id` for card-callback idempotency. The raw token is never persisted, expires after ten minutes by default, and the current `auth_user.external_id` must match the Feishu guest open_id.
+`feishu_helpdesk_intake` is unique by `helpdesk_id + ticket_id` and stores the guest/agent open IDs, current Helpdesk state, sanitized snapshot, classification (`pending/service_request/requirement/cancelled`), linked ITOM record, plus the stable-entry delivery time, channel (`helpdesk_post/helpdesk_text/im_card_fallback`), and Feishu message ID. `feishu_helpdesk_sync_event` stores the unique event ID, type, ticket ID, payload, processing status, attempts, next retry time, and error. `feishu_helpdesk_outbox` stores only user-visible `routing_prompt`, compatible `choice_card`, and progress messages with a dedupe key, delivery state, and Feishu message ID. All three use soft deletion; Helpdesk credentials never enter event or outbox payloads.

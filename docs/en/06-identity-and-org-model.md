@@ -20,7 +20,7 @@
 
 ## 2. The 10th Built-in Role: auditor (Auditor)
 
-- Permission boundary: **read-only across all modules + audit-log viewing**; cannot modify any record (enforced by a global read-only middleware, exceptions: login and notification read-receipts).
+- Permission boundary: **read-only across all modules + audit-log viewing**; cannot modify any record (enforced by a global read-only middleware, exceptions: login and notification handling, including the notification popover's Mark all as read and Clear read actions).
 - Multi-role unrestricted: a user with auditor + it_ops can write normally (the read-only restriction applies only to users who hold *only* auditor).
 - **Not auto-granted**: audit-department users are also provisioned as requester by default; auditor is granted manually by the admin (directly, or by adding the user to a group that carries the auditor role).
 
@@ -50,8 +50,11 @@ Auth-source adapter (AuthProvider) → on success returns a user profile (Provis
 ## 4-A. Account Lifecycle and Personal Identity (M36–M37)
 
 - `auth_user` and `org_member` have separate lifecycles. Deleting an account only soft-deletes, disables, and unlinks it; personnel master data and historical references remain. The built-in admin and current account cannot be deleted.
+- User updates distinguish an omitted `person_id` from an explicit `person_id: null`: omission preserves the current link, while explicit null unlinks the account without deleting personnel master data, department placement, user-group membership, or historical business records.
 - Browser QR login and Feishu workplace login share identity handling: an active bound account signs in directly, while a new identity enters the `login_request` approval flow.
 - A signed-in account may bind or rebind one Feishu open_id; the identity cannot be occupied by another active account. Unbinding requires a local password and does not unlink the person record.
+- The Feishu Helpdesk handoff reuses `auth_user.external_id=open_id`: the stable link written to the original Helpdesk conversation contains only an intake ID and action, never an open_id or one-time token. After ITOM login, the backend compares the signed-in account, stored intake, and freshly read Helpdesk guest open IDs; only a three-way match issues a ten-minute token, and a repeated click expires any older unconsumed token. The service category is used only for ITSM catalog/item context, never inferred as a requirement business domain, and the token is consumed after creation.
+- Reliable Helpdesk synchronization never puts identity in a browser URL: the server verifies the event token and idempotently queues events by `event_id`, while the pending intake stores guest/agent open IDs and a sanitized snapshot. The stable entry is delivered in the original Helpdesk conversation as rich post or fallback text; only repeated original-conversation failures use an independent application-bot card. Every path still requires the signed-in account's `external_id` to match the freshly read guest. Outbound updates contain only user-visible milestones, never internal notes or approval details.
 - Since M44, approval generates a 12-character initial password and stores recoverable encrypted ciphertext without automatic delivery. Reveal and manual email actions are audited, and changing/resetting the password clears the ciphertext.
 - `preferences` stores language, avatar, bio, notification categories, theme, and density. The personal audit view is isolated to the current account as actor.
 
@@ -71,8 +74,8 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 
 | Organizational concept | System carrier |
 | --- | --- |
-| Horizontal · service line (business domain) | `business_domain`: owner/backup owner (digital team only) + `business_domain_member` service team (digital team only) + `business_domain_department` service scope (selected during creation, optionally including descendants) |
-| Operational person-selector scope | Project/requirement/ticket/problem/service-item/CI/contract/user-group/account-linking dropdowns load `GET /api/members?scope=it`; after the digital-team scope is configured, write APIs re-check it to prevent company-wide people from being submitted by bypassing the UI |
+| Horizontal · service line (business domain) | `business_domain`: owner/backup owner and service-team members use the `org_settings` digital-team union (department members plus individually selected people); `business_domain_department` stores the served organization scope |
+| Operational person-selector scope | Project/requirement/ticket/problem/service-item/CI/contract/user-group/account-linking dropdowns load `GET /api/members?scope=it`; the scope can combine departments and specific people, so selecting one person from a mixed Test organization does not include their colleagues; write APIs re-check the configured union |
 | Vertical · technical line (resource pool: a TM centrally manages personnel in a technical direction) | `user_group`: owner = TM (field) + roles group-granted roles (e.g. the development resource pool grants it_dev) + members |
 | Professional identity | Roles: it_pdm/it_pm/it_dev/it_ops/is_mgr/it_bp + custom additions (data governance, AI, etc.) |
 | Management layer | cio (IT Head) / it_bm / it_tm, three built-in roles (manager was removed on 2026-07-11) |
@@ -110,6 +113,8 @@ The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it
 | --- | --- | --- |
 | Incident handling | Incident Management | Intake & prioritization (it_op_leader, approval) → Diagnosis & handling (it_ops) → Resolution & user confirmation (it_ops, approval) → Closure & retrospective (it_op_leader) |
 | Service-request delivery | Service Request Mgmt | Intake confirmation (it_ops) → Implementation & delivery (it_ops) → User confirmation & closure (requester, approval) |
+
+After a Feishu Helpdesk handoff, a service request enters these three steps directly; ITOM does not add another human-routing step. Automatic assignment/reassignment represents the system-assigned point, the final requester step represents user confirmation and closure, the state machine then reaches resolved and closed, and the Feishu rating is written back to `Ticket.satisfaction`.
 | Change management | Change Enablement | Change request (it_ops) → Change approval (it_op_leader; CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr; CC cio) |
 | Problem analysis | Problem Management | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
 | Requirement delivery (pre-configured, attached in M5) | — | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |

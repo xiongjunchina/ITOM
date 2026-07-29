@@ -74,7 +74,7 @@ GET/POST/PATCH /api/members              # personnel master data
 GET /api/admin/master-data?category=     # dictionary (read-only for all, writable by admin)
 GET/PUT /api/admin/workflow-config       # state machine
 GET /api/admin/audit-logs
-GET /api/notifications | POST /api/notifications/{id}/read   # in-app notifications
+GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # in-app notifications, bulk read, and read cleanup
 POST /api/attachments (multipart) | GET /api/attachments?entity=
 ```
 
@@ -89,6 +89,44 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 ```
 
 A repeated trigger while running returns HTTP 409 / `SYNC_RUNNING`. The UI polls every three seconds for up to ten minutes. Completion or failure sends an in-app notification to the initiator, and the background worker uses an independent database session.
+
+### 4.1b Feishu Helpdesk handoff and reliable synchronization (M45/M46)
+
+```text
+POST /api/integrations/feishu/helpdesk/events
+    # Feishu event URL verification; checks the configured Verification Token
+POST /api/integrations/feishu/helpdesk/card-callback
+    # Feishu 2.0 interactive-card callback; token may be in header.token or event.token
+    # event.action.value={action:create_service_request|create_requirement,ticket_id}
+POST /api/integrations/feishu/helpdesk/cards
+    # compatibility/fallback endpoint; trusted bot caller sends a card to guest.open_id
+POST /api/integrations/feishu/helpdesk/handoffs
+    # trusted server/bot only; X-Lark-Helpdesk-Authorization=base64(helpdesk_id:helpdesk_token)
+    # body: {ticket_id, action: service_request|requirement}
+GET /api/integrations/feishu/helpdesk/handoffs/{token}
+    # authenticated user reads the one-time context; Feishu guest open_id must match
+    # issued returns prefill context; consumed returns linked entity_type/entity_id for idempotent navigation
+POST /api/integrations/feishu/helpdesk/handoffs/{token}/consume
+    # called after creation; body: {entity_type: ticket|requirement, entity_id}; duplicate consumption remains HTTP 409
+POST /api/integrations/feishu/helpdesk/intakes/{intake_id}/handoff
+    # authenticated stable-entry exchange; body: {action: service_request|requirement}
+    # issues a token only after account, intake guest, and fresh ticket guest open IDs match
+GET /api/integrations/feishu/helpdesk/intakes
+    # admin/CIO/IT managers inspect intake state and entry delivery channel/time/message ID
+GET /api/integrations/feishu/helpdesk/sync-events
+    # inspect processed/pending/failed inbound events and retry counts
+POST /api/admin/feishu-config/subscribe-helpdesk-events
+    # admin-only; registers the configured app for Helpdesk events
+```
+
+The primary path starts from `/feishu/helpdesk/entry?intake=...&action=...` in the original Helpdesk conversation. This stable URL contains no open_id, Helpdesk credential, or one-time token. The public entry sends unauthenticated users through login and then calls `POST /intakes/{intake_id}/handoff`; only a fresh ticket read and three-way open_id match returns a token-bearing `entry_url`. `POST /handoffs`, `POST /cards`, and card callbacks remain available for trusted middleware and independent-bot fallback.
+
+Handoff reads are idempotent: an `issued` token returns its prefill context; after creation changes it to `consumed`, the same Feishu identity receives the linked entity and the frontend redirects there. Identity mismatch remains HTTP 403, expiration remains HTTP 410, and a second `POST /consume` remains HTTP 409, preserving duplicate-creation protection without treating a reopened link as an error.
+
+The Helpdesk token is encrypted and used only by the backend. Only a hash of `handoff_token` is stored, and the snapshot contains prefill fields only. ITOM supports the Helpdesk ticket-detail `customized_fields` shape (`key_name`/`display_name`/`value`) and maps title, urgency, service category, problem description, and supplemental information into `prefill`. Assigned agents may be returned as `agent`, `service_agent`, `assignee`, or an `agents` array; for an array ITOM uses the first agent ID for linkage and joins the names for display, allowing the human-service stage to be detected. When the service category is returned as a dropdown option UUID, the backend reads the Helpdesk field metadata and converts `dropdown_options` to the display label. `prefill.service_category` is used for ITSM catalog/item context; the requirement page preserves it as source metadata and never fills `business_domain_id` automatically.
+The public root comes from `ITOM_PUBLIC_URL` when set, otherwise from the scheme and host of the complete `helpdesk_event_url`. It must be an employee-reachable HTTPS root when local Docker is exposed through ngrok or a reverse proxy. Each successful stable-entry exchange expires older unconsumed tokens for the same Helpdesk ticket before issuing a fresh one. Compatible interactive-card callbacks still validate the Verification Token, action, and `event.operator.open_id`, and use callback event IDs for idempotency.
+The service-request creation API preserves the pre-consultation semantics: `service_category` stores the ITSM catalog name and `other_info` stores the pre-consultation supplemental information; both remain separate from internal `remarks`. Regular business users submit only the pre-consultation fields, while IT staff/administrators may additionally submit `assignee` and `remarks`. Service category is never written to requirement `business_domain_id`.
+Reliable synchronization uses three stages: inbound event queue, fresh Helpdesk-detail read, and outbound outbox. `helpdesk.ticket.created_v1`, `helpdesk.ticket.updated_v1`, and `helpdesk.ticket_message.created_v1` are persisted by unique `event_id`; a five-second worker consumes them with exponential backoff (up to eight attempts). Processing re-reads the current ticket, creates or updates the pending intake, and queues one `routing_prompt` once human service is detected. Delivery first attempts a rich post in the original Helpdesk conversation and immediately downgrades to full-URL text if rich content is unsupported. If the original conversation still fails through two retries, the third attempt sends the independent application-bot card. The selected channel, send time, and Feishu message ID are persisted on the intake for diagnostics. The ITOM record is linked only when the one-time handoff is consumed. Service requests retain the existing three-step `sr_flow` (intake confirmation → implementation and delivery → requester confirmation and closure); no separate ITOM routing step is introduced. Automatic task assignment and in-process reassignment publish `ticket.assigned`; handoff consumption replays the current assignment when the record was created before linkage. Completion of the final requester step publishes `ticket.user_confirmed`, after which the state machine emits `resolved` and `closed`. In the reverse direction, a Feishu user-confirmed detail event completes ITOM's pending requester task; a closed state follows the reachable closure path instead of directly writing status. Rating is refreshed from ticket details after an update event, updates `Ticket.satisfaction`, and emits `ticket.satisfaction_rated`. Internal notes, approval comments, and unpublished details never leave ITOM. Only user-visible milestones enter the outbox and are posted back into the original conversation. Before testing, an admin must configure the public callback URL, add the three Helpdesk events in Feishu and publish the app, then click “Subscribe Helpdesk events” in ITOM. Field-validation failures preserve `field_violations` and `log_id`; the configuration page exposes subscription state, entry channel, queue backlog, and last errors.
 
 ### 4.2 ITSM
 
@@ -274,7 +312,9 @@ POST /api/admin/ui-branding/reset
 ```
 
 Public reads need no session. Admin endpoints require `admin_ui_branding`; all writes are audited. The client merges missing data with built-in defaults so a missing or failed branding configuration can never lock users out of login.
-M42 adds `GET/PATCH /api/admin/org-settings` for the digital-team department scope and Feishu scheduled-sync policy. `DELETE /api/admin/business-domains/{id}` returns `DOMAIN_IN_USE` (409) while an active requirement references the domain. The scheduler checks due state every 15 minutes and reuses `org_sync.run_sync` for execution.
+M42 adds `GET/PATCH /api/admin/org-settings` for the digital-team scope and Feishu scheduled-sync policy. The scope payload contains `digital_team_department_ids`, `digital_team_member_ids`, and `digital_team_include_children`; the server validates and deduplicates both entity types, then uses their union. `DELETE /api/admin/business-domains/{id}` returns `DOMAIN_IN_USE` (409) while an active requirement references the domain. The scheduler checks due state every 15 minutes and reuses `org_sync.run_sync` for execution.
 
-Person-selector contract: operational owner/assignee/reviewer/project-manager, service-item/CI/contract owner, user-group owner/member, and account-linking dropdowns load `GET /api/members?scope=it`. Once administrators configure the digital-team roots, corresponding write APIs re-check the same scope with `require_it_member_if_configured` (including batch group members); before configuration, legacy records remain writable for compatibility while `scope=it` keeps its existing filtered semantics.
+Person-selector contract: operational owner/assignee/reviewer/project-manager, service-item/CI/contract owner, user-group owner/member, and account-linking dropdowns load `GET /api/members?scope=it`. Once administrators configure any digital-team department or individual, corresponding write APIs re-check the same union scope with `require_it_member_if_configured` (including batch group members); before configuration, legacy records remain writable for compatibility while `scope=it` keeps its existing filtered semantics.
+
+`PATCH /api/admin/users/{id}` uses explicit PATCH semantics for the nullable link: omitting `person_id` preserves the current person, while sending `person_id: null` unlinks it and immediately returns/persists the empty value for subsequent list reads and auditing.
 M44: approval generates a 12-character password and stores encrypted ciphertext without sending. `GET /api/admin/users/{id}/initial-password` reveals it under authorization; `POST .../initial-password/email` sends it explicitly. Global SMTP/LDAP settings use `GET/PUT /api/admin/integrations/email|ldap`, with connection-test endpoints and masked secrets.

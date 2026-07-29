@@ -42,6 +42,51 @@ def list_my_notifications(db: Session = Depends(get_db), user: AuthUser = Depend
     )
 
 
+@router.post("/read-all")
+def mark_all_read(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """将当前账号可见的所有未读通知标记为已读。"""
+    recipient_ids = _my_recipient_ids(user)
+    if not recipient_ids:
+        return ok({"updated": 0})
+
+    now = datetime.now()
+    updated = (
+        db.query(InAppNotification)
+        .filter(
+            InAppNotification.recipient.in_(recipient_ids),
+            InAppNotification.is_deleted.is_(False),
+            InAppNotification.read_at.is_(None),
+        )
+        .update({InAppNotification.read_at: now}, synchronize_session=False)
+    )
+    db.commit()
+    return ok({"updated": updated})
+
+
+@router.post("/clear-read")
+def clear_read(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """软删除当前账号可见的所有已读通知。"""
+    recipient_ids = _my_recipient_ids(user)
+    if not recipient_ids:
+        return ok({"deleted": 0})
+
+    now = datetime.now()
+    deleted = (
+        db.query(InAppNotification)
+        .filter(
+            InAppNotification.recipient.in_(recipient_ids),
+            InAppNotification.is_deleted.is_(False),
+            InAppNotification.read_at.is_not(None),
+        )
+        .update(
+            {InAppNotification.is_deleted: True, InAppNotification.updated_at: now},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return ok({"deleted": deleted})
+
+
 @router.post("/{notification_id}/read")
 def mark_read(notification_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     n = db.get(InAppNotification, notification_id)

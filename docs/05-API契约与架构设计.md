@@ -72,7 +72,7 @@ GET/POST/PATCH /api/members              # 人员主数据
 GET /api/admin/master-data?category=     # 字典（全员只读，admin 可写）
 GET/PUT /api/admin/workflow-config       # 状态机
 GET /api/admin/audit-logs
-GET /api/notifications | POST /api/notifications/{id}/read   # 站内通知
+GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # 站内通知、批量已读与已读清理
 POST /api/attachments (multipart) | GET /api/attachments?entity=
 ```
 
@@ -87,6 +87,44 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 ```
 
 后台同步运行期间重复触发返回 HTTP 409 / `SYNC_RUNNING`。前端每 3 秒读取 `last_sync_stats`，最长等待 10 分钟；完成或失败后向触发人发送站内通知。后台任务使用独立数据库会话，不能复用请求会话。
+
+### 4.1b 飞书服务台交接与可靠同步（M45/M46）
+
+```text
+POST /api/integrations/feishu/helpdesk/events
+    # 飞书事件 URL verification；校验管理员配置的 Verification Token
+POST /api/integrations/feishu/helpdesk/card-callback
+    # 飞书 2.0 动态卡片回调；token 可能在 header.token 或 event.token
+    # event.action.value={action:create_service_request|create_requirement,ticket_id}
+POST /api/integrations/feishu/helpdesk/cards
+    # 兼容/兜底接口：受信任机器人调用，向工单 guest.open_id 发送分流选择卡片
+POST /api/integrations/feishu/helpdesk/handoffs
+    # 仅服务端/机器人调用；Header: X-Lark-Helpdesk-Authorization=base64(helpdesk_id:helpdesk_token)
+    # body: {ticket_id, action: service_request|requirement}
+GET /api/integrations/feishu/helpdesk/handoffs/{token}
+    # 当前登录用户读取一次性交接上下文；必须与工单 guest 的 Feishu open_id 一致
+    # issued 返回预填上下文；consumed 返回已关联 entity_type/entity_id，供前端幂等跳转
+POST /api/integrations/feishu/helpdesk/handoffs/{token}/consume
+    # 正常创建单据后消费，body: {entity_type: ticket|requirement, entity_id}；重复消费仍返回 409
+POST /api/integrations/feishu/helpdesk/intakes/{intake_id}/handoff
+    # 原会话稳定入口在用户登录后调用；body: {action: service_request|requirement}
+    # 校验登录账号、待分流记录与实时工单 guest 的 open_id 后才签发短时令牌
+GET /api/integrations/feishu/helpdesk/intakes
+    # admin/CIO/IT 管理角色查看分流状态及入口投递渠道/时间/消息 ID
+GET /api/integrations/feishu/helpdesk/sync-events
+    # 查看事件入站队列的 processed/pending/failed 与重试次数
+POST /api/admin/feishu-config/subscribe-helpdesk-events
+    # 仅管理员；为当前配置的应用注册服务台事件流
+```
+
+主路径由原服务台会话中的 `/feishu/helpdesk/entry?intake=...&action=...` 稳定链接开始。该链接不含 open_id、服务台凭据或一次性令牌；公开入口只负责引导登录，随后调用 `POST /intakes/{intake_id}/handoff`。服务端重新读取工单并完成三方 open_id 比对后，才返回带短时令牌的 `entry_url`。`POST /handoffs`、`POST /cards` 和卡片回调保留给受信任中间层与独立机器人兜底。
+
+交接读取采用幂等查看语义：首次打开且令牌为 `issued` 时返回预填字段；成功建单后令牌变为 `consumed`，同一 Feishu 身份再次读取时返回已关联单据并由前端直接跳转。身份不匹配仍返回 403，过期返回 410，`POST /consume` 的二次消费仍返回 409，从而兼顾重复打开体验与防重复建单。
+
+服务台 Token 只在后端加密保存和调用；`handoff_token` 只保存哈希，原始工单快照仅包含预填字段。ITOM 兼容飞书工单详情的 `customized_fields`（`key_name`/`display_name`/`value`），将标题、紧急程度、服务类别、问题描述和其他补充信息映射到 `prefill`；接单客服同时兼容单个 `agent`、`service_agent`、`assignee` 和多人 `agents` 数组，数组场景使用首个客服 ID 建立关联并汇总客服姓名展示，以正确触发人工服务阶段。服务类别返回下拉选项内部 UUID 时，后端读取服务台字段配置的 `dropdown_options` 将其转换为显示名称。服务类别写入 `prefill.service_category`，服务请求页可按服务目录/服务项匹配；需求页只保留来源信息，不能自动填充 `business_domain_id`。
+稳定入口的公网根地址优先取后端环境变量 `ITOM_PUBLIC_URL`，未配置时从完整的 `helpdesk_event_url` 提取协议与域名；本地通过 ngrok 或反向代理接入飞书时必须确保该根地址是员工可访问的 HTTPS 地址。稳定入口每次成功核验后会先使同一飞书工单此前未消费的令牌失效，再签发新令牌。兼容的动态卡片回调仍校验 Verification Token、卡片动作和点击人的 `event.operator.open_id`，并用回调事件 ID 做幂等。
+服务请求创建接口保留询前单语义：`service_category` 保存 ITSM 服务目录名称，`other_info` 保存询前单其他补充信息；两者与 `remarks`（内部备注）分开。普通业务用户仅提交询前单字段，IT 内部角色/管理员可额外提交 `assignee` 与 `remarks`。服务类别不写入需求 `business_domain_id`。
+可靠同步采用“事件入站 + 详情重读 + outbox 出站”三段式：`helpdesk.ticket.created_v1`、`helpdesk.ticket.updated_v1` 和 `helpdesk.ticket_message.created_v1` 先以唯一 `event_id` 入库，后台每 5 秒消费，按指数退避最多重试 8 次；消费时通过服务台 API 重读工单当前详情，创建/更新待分流记录，并在人工客服阶段入队一个 `routing_prompt`。出站先尝试通过服务台工单消息接口发送富文本链接，不兼容则立即降级为包含完整 URL 的文本；若返回 `99991672`/缺少 `helpdesk:all`，这是确定性的权限问题，不等待指数重试，立即改用应用机器人发送兜底卡片/文本；其他暂时性错误才保留两次重试，随后才使用独立应用机器人卡片。最终渠道、发送时间和飞书消息 ID 回写待分流记录或 outbox 供管理员审计。ITOM 单据只有在分流令牌消费后才与待分流记录关联；仅停留在“待分流”时，飞书关单或评价不会凭空生成正式 ITOM 单据。服务请求沿现有 `sr_flow` 三节点执行：受理确认 → 实施交付 → 用户确认关闭；无需新增“人工分流”节点。流程任务自动指派、流程内改派统一发布 `ticket.assigned`，改派同时更新工单展示字段与当前流程任务的权威处理人，并通知新处理人；若建单先于交接关联，消费交接令牌时会补发当前节点分派；最后一个 `requester` 节点完成时发布 `ticket.user_confirmed`，随后按既有状态机进入 `resolved`、`closed`。反向同步同样通过状态机完成：飞书 `status=51` 表示人工关闭，`status=50` 表示机器人关闭，`solve=2` 表示已解决；若详情事件表明用户已确认，ITOM 会完成当前 `requester` 任务；若飞书只发送已关闭状态，则 ITOM 沿可达闭环路径执行关单，不直接写状态，保留流程、审计和 SLA 记录。飞书没有独立的 rated 事件，评价通过工单更新/消息事件触发详情重读，再从满意度数字或“你的打分为：满意/一般/不满意”结果文案写入关联 `Ticket.satisfaction` 并发布 `ticket.satisfaction_rated`，不会把包含全部选项的评价提示误判为结果。内部备注、审批意见和未发布信息不出站；仅登记、分派、处理中、用户确认、已完成、关闭及评价确认等用户可见节点进入 outbox 并回写原会话。管理员须先在飞书开放平台配置公网回调地址、开通 `helpdesk:all`（用于原服务台会话消息）、添加上述三个服务台事件并发布应用，再在 ITOM 点击“订阅服务台事件”。订阅 API 的 `events` 请求体按飞书线上格式提交 `{type, subtype}` 对象数组，而不是完整事件 Key 字符串；字段校验失败时保留 `field_violations` 与 `log_id` 供排障。配置页会显示订阅成功/失败、入口渠道及最近错误，管理员可通过上述两个查询接口排查积压、失败和最后错误。
 
 ### 4.2 ITSM
 
@@ -260,9 +298,11 @@ PUT /api/admin/business-domains/{domain_id}/members
 
 部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。负责人、备份负责人和服务团队在服务端统一通过 `it_member_ids` 校验，不允许全公司其他人员绕过前端写入。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。
 
-M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队部门范围和飞书自动同步策略；新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
+M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队范围和飞书自动同步策略。范围请求包含 `digital_team_department_ids`、`digital_team_member_ids` 与 `digital_team_include_children`；服务端分别校验有效部门和人员并去重，实际口径取部门成员与指定人员并集。新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
 
-人员选择器统一约定：涉及业务负责人、项目经理/任务负责人、需求负责人/评审人/开发负责人、工单/问题/服务项/配置项/合同负责人、用户组负责人/成员及账号关联人员的前端下拉，统一调用 `GET /api/members?scope=it`。管理员配置数字化团队根部门后，相关写接口也通过 `require_it_member_if_configured`（批量成员使用同等校验）复核；未配置范围时兼容历史数据，但不改变 `scope=it` 的返回口径。
+人员选择器统一约定：涉及业务负责人、项目经理/任务负责人、需求负责人/评审人/开发负责人、工单/问题/服务项/配置项/合同负责人、用户组负责人/成员及账号关联人员的前端下拉，统一调用 `GET /api/members?scope=it`。管理员配置任一数字化团队部门或指定人员后，相关写接口也通过 `require_it_member_if_configured`（批量成员使用同等校验）复核；未配置范围时兼容历史数据，但不改变 `scope=it` 的返回口径。
+
+`PATCH /api/admin/users/{id}` 对可空字段采用显式 PATCH 语义：请求省略 `person_id` 时不改变关联人员，提交 `person_id: null` 时解除关联并在响应、审计及后续列表查询中立即体现。
 
 ## 9. UI 品牌配置 API（M38）
 

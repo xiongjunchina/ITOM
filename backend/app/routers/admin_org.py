@@ -1,4 +1,5 @@
 """组织结构管理（admin）：部门 / 业务域 / 开通规则（docs/06）。"""
+from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -155,6 +156,7 @@ class DomainDepartmentsIn(BaseModel):
 
 class OrgSettingsUpdate(BaseModel):
     digital_team_department_ids: list[str] | None = None
+    digital_team_member_ids: list[str] | None = None
     digital_team_include_children: bool | None = None
     feishu_auto_sync_enabled: bool | None = None
     feishu_auto_sync_interval_minutes: int | None = Field(default=None, ge=15, le=10080)
@@ -163,6 +165,7 @@ class OrgSettingsUpdate(BaseModel):
 def _org_settings_payload(settings) -> dict:
     return {
         "digital_team_department_ids": settings.digital_team_department_ids or [],
+        "digital_team_member_ids": settings.digital_team_member_ids or [],
         "digital_team_include_children": settings.digital_team_include_children,
         "feishu_auto_sync_enabled": settings.feishu_auto_sync_enabled,
         "feishu_auto_sync_interval_minutes": settings.feishu_auto_sync_interval_minutes,
@@ -192,6 +195,15 @@ def update_org_settings(body: OrgSettingsUpdate, db: Session = Depends(get_db), 
         if set(roots) - valid:
             raise AppError("INVALID_DEPARTMENT", "数字化团队范围包含不存在或已停用的部门")
         data["digital_team_department_ids"] = roots
+    member_ids = data.get("digital_team_member_ids")
+    if member_ids is not None:
+        member_ids = list(dict.fromkeys(member_ids))
+        valid_members = {row.id for row in db.query(OrgMember).filter(
+            OrgMember.id.in_(member_ids or ["-"]), OrgMember.is_deleted.is_(False)
+        )}
+        if set(member_ids) - valid_members:
+            raise AppError("INVALID_MEMBER", "数字化团队范围包含不存在或已删除的人员")
+        data["digital_team_member_ids"] = member_ids
     for key, value in data.items():
         setattr(settings, key, value)
     audit(db, "org_settings", settings.id, "update", actor, {"fields": list(data)})
@@ -507,6 +519,11 @@ class FeishuConfigIn(_BM):
     api_base: str | None = None
     app_id: str | None = None
     app_secret: str | None = None  # 留空=不修改
+    helpdesk_id: str | None = None
+    helpdesk_token: str | None = None  # 留空=不修改
+    helpdesk_enabled: bool | None = None
+    helpdesk_event_verification_token: str | None = None  # 留空=不修改
+    helpdesk_event_url: str | None = None
     sync_scope: str | None = None
     enabled: bool | None = None
 
@@ -521,6 +538,15 @@ def _feishu_cfg_payload(cfg) -> dict:
     return {
         "api_base": cfg.api_base, "app_id": cfg.app_id,
         "app_secret_masked": _mask(cfg.app_secret), "has_secret": bool(cfg.app_secret),
+        "helpdesk_id": cfg.helpdesk_id,
+        "helpdesk_token_masked": "********" if cfg.helpdesk_token_encrypted else None,
+        "has_helpdesk_token": bool(cfg.helpdesk_token_encrypted),
+        "helpdesk_enabled": cfg.helpdesk_enabled,
+        "helpdesk_event_verification_token_configured": bool(cfg.helpdesk_event_verification_token_encrypted),
+        "helpdesk_event_url": cfg.helpdesk_event_url,
+        "helpdesk_event_subscription_status": cfg.helpdesk_event_subscription_status,
+        "helpdesk_event_subscription_at": cfg.helpdesk_event_subscription_at,
+        "helpdesk_event_subscription_error": cfg.helpdesk_event_subscription_error,
         "sync_scope": cfg.sync_scope, "enabled": cfg.enabled,
         "last_sync_at": cfg.last_sync_at, "last_sync_stats": cfg.last_sync_stats,
     }
@@ -538,6 +564,7 @@ def get_feishu_config(db: Session = Depends(get_db), _=Depends(require_roles("ad
 @router.put("/feishu-config")
 def update_feishu_config(body: FeishuConfigIn, db: Session = Depends(get_db), actor=Depends(require_roles("admin"))):
     from app.services.feishu import get_config
+    from app.services.secrets_store import encrypt_secret
 
     cfg = get_config(db)
     data = body.model_dump(exclude_unset=True)
@@ -546,14 +573,37 @@ def update_feishu_config(body: FeishuConfigIn, db: Session = Depends(get_db), ac
         secret = data.get("app_secret") or cfg.app_secret
         if not (app_id and secret):
             raise AppError("FEISHU_CONFIG_INCOMPLETE", "启用前需先配置 App ID 与 App Secret")
+    if data.get("helpdesk_enabled"):
+        helpdesk_id = data.get("helpdesk_id") or cfg.helpdesk_id
+        helpdesk_token = data.get("helpdesk_token") or cfg.helpdesk_token_encrypted
+        if not (helpdesk_id and helpdesk_token):
+            raise AppError("FEISHU_HELPDESK_CONFIG_INCOMPLETE", "启用服务台前需先配置服务台 ID 与 Token")
     for k, v in data.items():
         if k == "app_secret":
             if v:  # 留空不改
                 cfg.app_secret = v
             continue
+        if k == "helpdesk_token":
+            if v:
+                cfg.helpdesk_token_encrypted = encrypt_secret(v)
+            continue
+        if k == "helpdesk_event_verification_token":
+            if v:
+                cfg.helpdesk_event_verification_token_encrypted = encrypt_secret(v)
+            continue
         setattr(cfg, k, v)
+    if any(k in data for k in {
+        "app_id", "app_secret", "helpdesk_id", "helpdesk_token", "helpdesk_enabled",
+    }):
+        # 凭据或启用状态变化后，旧订阅结果不能继续显示为有效；管理员需重新点击订阅。
+        cfg.helpdesk_event_subscription_status = "not_configured"
+        cfg.helpdesk_event_subscription_at = None
+        cfg.helpdesk_event_subscription_error = None
     audit(db, "feishu_config", cfg.id, "update", actor,
-          {"fields": [k for k in data if k != "app_secret"], "secret_changed": bool(data.get("app_secret"))})
+          {
+              "fields": [k for k in data if k not in {"app_secret", "helpdesk_token", "helpdesk_event_verification_token"}],
+              "secret_changed": bool(data.get("app_secret") or data.get("helpdesk_token") or data.get("helpdesk_event_verification_token")),
+          })
     db.commit()
     return ok(_feishu_cfg_payload(cfg))
 
@@ -577,3 +627,75 @@ def test_feishu_config(db: Session = Depends(get_db), _=Depends(require_roles("a
             scope_names.append((client.get_department(token, dep) or {}).get("name") or dep)
     db.commit()
     return ok({"connected": True, "scope_names": scope_names})
+
+
+class FeishuHelpdeskTestIn(_BM):
+    ticket_id: str
+
+
+def _subscribe_helpdesk_events(db: Session, cfg) -> dict:
+    """订阅服务台事件并把结果写入配置，失败不回滚已保存的凭据。"""
+    from app.services.feishu import FeishuClient
+    from app.services.secrets_store import decrypt_secret
+
+    if not (cfg.helpdesk_enabled and cfg.helpdesk_id and cfg.helpdesk_token_encrypted):
+        cfg.helpdesk_event_subscription_status = "not_configured"
+        cfg.helpdesk_event_subscription_error = "请先启用服务台并配置服务台 ID、Token"
+        cfg.helpdesk_event_subscription_at = None
+        return {"subscribed": False, "status": cfg.helpdesk_event_subscription_status,
+                "error": cfg.helpdesk_event_subscription_error}
+    if not (cfg.app_id and cfg.app_secret):
+        cfg.helpdesk_event_subscription_status = "waiting_config"
+        cfg.helpdesk_event_subscription_error = "请先配置飞书 App ID 与 App Secret"
+        cfg.helpdesk_event_subscription_at = None
+        return {"subscribed": False, "status": cfg.helpdesk_event_subscription_status,
+                "error": cfg.helpdesk_event_subscription_error}
+    try:
+        client = FeishuClient(cfg.api_base, cfg.app_id, cfg.app_secret)
+        client.subscribe_helpdesk_events(cfg.helpdesk_id, decrypt_secret(cfg.helpdesk_token_encrypted))
+    except AppError as exc:
+        cfg.helpdesk_event_subscription_status = "failed"
+        cfg.helpdesk_event_subscription_error = exc.message[:1000]
+        db.commit()
+        return {"subscribed": False, "status": cfg.helpdesk_event_subscription_status,
+                "error": cfg.helpdesk_event_subscription_error}
+    cfg.helpdesk_event_subscription_status = "subscribed"
+    cfg.helpdesk_event_subscription_error = None
+    cfg.helpdesk_event_subscription_at = datetime.now()
+    db.commit()
+    return {"subscribed": True, "status": cfg.helpdesk_event_subscription_status,
+            "subscribed_at": cfg.helpdesk_event_subscription_at}
+
+
+@router.post("/feishu-config/subscribe-helpdesk-events")
+def subscribe_feishu_helpdesk_events(db: Session = Depends(get_db), _=Depends(require_roles("admin"))):
+    """显式注册服务台事件；事件类型仍需在飞书开放平台添加并发布应用。"""
+    from app.services.feishu import get_config
+
+    cfg = get_config(db)
+    result = _subscribe_helpdesk_events(db, cfg)
+    return ok(result)
+
+
+@router.post("/feishu-config/test-helpdesk")
+def test_feishu_helpdesk(
+    body: FeishuHelpdeskTestIn,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles("admin")),
+):
+    """使用服务台配置读取一张真实工单，返回脱敏摘要供管理员验证权限和字段。"""
+    from app.services.feishu import build_helpdesk_client
+
+    client, _, helpdesk_id, helpdesk_token = build_helpdesk_client(db)
+    ticket = client.get_helpdesk_ticket(body.ticket_id, helpdesk_id, helpdesk_token)
+    guest = ticket.get("guest") or {}
+    return ok({
+        "connected": True,
+        "ticket_id": ticket.get("ticket_id") or body.ticket_id,
+        "helpdesk_id": ticket.get("helpdesk_id") or helpdesk_id,
+        "title": ticket.get("title"),
+        "status": ticket.get("status"),
+        "stage": ticket.get("stage"),
+        "guest": {"id": guest.get("id"), "name": guest.get("name")},
+        "field_keys": sorted(ticket.keys()),
+    })

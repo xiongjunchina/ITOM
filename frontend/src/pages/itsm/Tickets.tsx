@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { isAxiosError } from 'axios';
 import {
   Badge,
   Button,
@@ -58,8 +59,10 @@ interface TicketFormValues {
   title: string;
   priority: TicketPriority;
   description: string;
-  service_item_id: number;
-  assignee?: number;
+  service_item_id: string;
+  service_category?: string;
+  other_info?: string;
+  assignee?: string;
   remarks?: string;
   change_type?: string;
   risk_level?: string;
@@ -87,6 +90,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const canCloseRow = (r: TicketRow): boolean =>
     isAdmin || (fixedType === 'service_request' && !!r.submitter && r.submitter === authUser?.id);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const handoffToken = searchParams.get('handoff');
+  const createRequested = searchParams.get('create') === '1';
+  const isFeishuQuickMenu = searchParams.get('entry') === 'feishu_helpdesk';
   const t = useT();
   const et = useEnums();
   const [items, setItems] = useState<TicketRow[]>([]);
@@ -108,7 +115,31 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<TicketFormValues>();
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
+  const [serviceItemsLoading, setServiceItemsLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
+  const [handoffStarted, setHandoffStarted] = useState(false);
+  const [handoffSource, setHandoffSource] = useState<{ service_category?: string; agent_name?: string; guest_name?: string } | null>(null);
+  const directCreateStarted = useRef(false);
+
+  const isServiceRequest = fixedType === 'service_request';
+  const showInternalFields = !isServiceRequest || canEdit || isAdmin;
+  const serviceCategoryOptions = useMemo(() => {
+    const names = new Set<string>();
+    serviceItems.forEach((item) => {
+      if (item.catalog_name) names.add(item.catalog_name);
+    });
+    if (handoffSource?.service_category) names.add(handoffSource.service_category);
+    return [...names].map((name) => ({ value: name, label: name }));
+  }, [serviceItems, handoffSource]);
+
+  const serviceItemsForCategory = (category?: string) =>
+    serviceItems.filter((item) => item.catalog_name === category || item.name === category);
+
+  const clearHandoffParam = () => {
+    const next = new URLSearchParams(window.location.search);
+    next.delete('handoff');
+    navigate({ pathname: window.location.pathname, search: next.toString() }, { replace: true });
+  };
 
   // M20 行内编辑 / 关闭
   const [editing, setEditing] = useState<TicketRow | null>(null);
@@ -150,14 +181,33 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     void load();
   }, [load]);
 
-  const openCreate = () => {
+  const openCreate = (seed?: { title?: string; description?: string; priority?: string; service_category?: string; service_item_id?: string; other_info?: string; agent_name?: string; guest_name?: string }) => {
     form.resetFields();
+    if (seed) {
+      form.setFieldsValue({
+        title: seed.title,
+        description: seed.description,
+        priority: (seed.priority as TicketPriority) || 'P3',
+        service_category: seed.service_category,
+        service_item_id: seed.service_item_id,
+        other_info: seed.other_info,
+      });
+      setHandoffSource({ service_category: seed.service_category, agent_name: seed.agent_name, guest_name: seed.guest_name });
+    } else {
+      setHandoffSource(null);
+    }
     setDrawerOpen(true);
     if (serviceItems.length === 0) {
+      setServiceItemsLoading(true);
       api
         .getList<ServiceItem>('/service-items')
-        .then((res) => setServiceItems(res.items.filter((i) => i.status === '上架')))
-        .catch(() => undefined);
+        .then((res) => {
+          const liveItems = res.items.filter((i) => i.status === '上架');
+          setServiceItems(liveItems);
+          if (seed?.service_item_id) form.setFieldValue('service_item_id', seed.service_item_id);
+        })
+        .catch(() => undefined)
+        .finally(() => setServiceItemsLoading(false));
     }
     if (members.length === 0) {
       api
@@ -166,6 +216,43 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         .catch(() => undefined);
     }
   };
+
+  // 飞书服务台快捷菜单使用 create=1 直达新建表单；一次性 guard 避免 React StrictMode 重复打开。
+  useEffect(() => {
+    if (fixedType !== 'service_request' || !createRequested || handoffToken || !canCreate || directCreateStarted.current) return;
+    directCreateStarted.current = true;
+    openCreate();
+    // openCreate intentionally captures the current form/service-item loaders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixedType, createRequested, handoffToken, canCreate]);
+
+  useEffect(() => {
+    if (!handoffToken || handoffStarted || !canCreate || fixedType !== 'service_request') return;
+    setHandoffStarted(true);
+    api
+      .get<{ status?: string; action: string; consumed_entity_type?: string; consumed_entity_id?: string; prefill?: { title?: string; description?: string; priority?: string; service_category?: string; service_item_id?: string; other_info?: string }; source?: { agent_name?: string; guest_name?: string } }>(
+        `/integrations/feishu/helpdesk/handoffs/${encodeURIComponent(handoffToken)}`,
+      )
+      .then((data) => {
+        if (data.status === 'consumed') {
+          if (data.consumed_entity_type === 'ticket' && data.consumed_entity_id) {
+            navigate(`/itsm/tickets/${data.consumed_entity_id}`, { replace: true });
+          } else if (data.consumed_entity_type === 'requirement' && data.consumed_entity_id) {
+            navigate(`/requirements/${data.consumed_entity_id}`, { replace: true });
+          } else {
+            clearHandoffParam();
+          }
+          return;
+        }
+        if (data.action !== 'service_request') throw new Error('该交接链接属于 IT 需求，请返回交接页选择正确入口');
+        openCreate({ ...(data.prefill ?? {}), agent_name: data.source?.agent_name, guest_name: data.source?.guest_name });
+      })
+      .catch((error: unknown) => {
+        if (isAxiosError(error) && [409, 410].includes(error.response?.status ?? 0)) clearHandoffParam();
+      });
+    // openCreate intentionally captures the current form/service-item loaders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoffToken, handoffStarted, canCreate, fixedType]);
 
   const handleCreate = async () => {
     const values = await form.validateFields();
@@ -176,6 +263,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       description: values.description,
       service_item_id: values.service_item_id,
     };
+    if (isServiceRequest) {
+      if (values.service_category) payload.service_category = values.service_category;
+      if (values.other_info) payload.other_info = values.other_info;
+    }
     if (values.assignee != null) payload.assignee = values.assignee;
     if (values.remarks) payload.remarks = values.remarks;
     if (fixedType === 'change') {
@@ -191,7 +282,12 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
     setSaving(true);
     try {
-      const created = await api.post<{ id: number }>('/tickets', payload);
+      const created = await api.post<{ id: string }>('/tickets', payload);
+      if (handoffToken && created?.id) {
+        await api.post(`/integrations/feishu/helpdesk/handoffs/${encodeURIComponent(handoffToken)}/consume`, {
+          entity_type: 'ticket', entity_id: created.id,
+        }).catch(() => undefined);
+      }
       message.success(t('itsm.ticket.createdTyped', { type: et.ticketType(fixedType) }));
       setDrawerOpen(false);
       if (created?.id) {
@@ -382,7 +478,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       title={t('itsm.ticket.title.' + fixedType)}
       extra={
         canCreate && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
             {t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
           </Button>
         )
@@ -471,45 +567,112 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           </Space>
         }
       >
+        {(handoffSource || isFeishuQuickMenu) && (
+          <Tag color="blue" style={{ marginBottom: 16 }}>
+            {isFeishuQuickMenu ? t('itsm.ticket.feishuQuickMenuSource') : t('itsm.ticket.feishuSource')}
+          </Tag>
+        )}
         <Form<TicketFormValues>
           form={form}
           layout="vertical"
           preserve={false}
           initialValues={{ priority: 'P3' }}
         >
-          <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
-            <Input maxLength={200} placeholder={t('itsm.ticket.titlePlaceholder')} />
-          </Form.Item>
-          <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
-            <Select
-              options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({
-                value: p,
-                label: p,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item
-            name="description"
-            label={t('itsm.f.description')}
-            rules={[{ required: true, message: t('itsm.rule.description') }]}
-          >
-            <Input.TextArea rows={4} maxLength={2000} placeholder={t('itsm.ticket.descPlaceholder')} />
-          </Form.Item>
-          <Form.Item
-            name="service_item_id"
-            label={t('itsm.f.serviceItem')}
-            rules={[{ required: true, message: t('itsm.rule.serviceItem') }]}
-          >
-            <Select
-              showSearch
-              optionFilterProp="label"
-              placeholder={t('itsm.selectServiceItem')}
-              options={serviceItems.map((i) => ({
-                value: i.id,
-                label: `${i.name}（${i.catalog_name ?? i.item_code}）`,
-              }))}
-            />
-          </Form.Item>
+          {isServiceRequest ? (
+            <>
+              <Form.Item label={t('itsm.ticket.user')}>
+                <Input disabled value={handoffSource?.guest_name || authUser?.name || authUser?.username || '-'} />
+              </Form.Item>
+              <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+                <Input maxLength={200} placeholder={t('itsm.ticket.titlePlaceholder')} />
+              </Form.Item>
+              <Form.Item name="priority" label={t('itsm.ticket.urgency')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
+                <Select
+                  options={([
+                    ['P1', 'itsm.ticket.priorityUrgent'],
+                    ['P2', 'itsm.ticket.priorityHigh'],
+                    ['P3', 'itsm.ticket.priorityNormal'],
+                    ['P4', 'itsm.ticket.priorityLow'],
+                  ] as [TicketPriority, string][]).map(([value, label]) => ({ value, label: t(label) }))}
+                />
+              </Form.Item>
+              <Form.Item
+                name="service_category"
+                label={t('itsm.ticket.serviceCategory')}
+                rules={[{ required: true, message: t('itsm.ticket.serviceCategoryRequired') }]}
+              >
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  loading={serviceItemsLoading}
+                  placeholder={t('itsm.ticket.serviceCategoryPlaceholder')}
+                  options={serviceCategoryOptions}
+                  onChange={(value: string) => {
+                    const matches = serviceItemsForCategory(value);
+                    form.setFieldValue('service_item_id', matches.length === 1 ? matches[0].id : undefined);
+                  }}
+                />
+              </Form.Item>
+              <Form.Item noStyle shouldUpdate={(prev, next) => prev.service_category !== next.service_category}>
+                {({ getFieldValue }) => {
+                  const category = getFieldValue('service_category') as string | undefined;
+                  const matches = serviceItemsForCategory(category);
+                  if (matches.length === 1) {
+                    return <Form.Item name="service_item_id" hidden><Input /></Form.Item>;
+                  }
+                  return (
+                    <Form.Item
+                      name="service_item_id"
+                      label={t('itsm.ticket.serviceItemDetail')}
+                      rules={[{ required: true, message: t('itsm.rule.serviceItem') }]}
+                    >
+                      <Select
+                        showSearch
+                        optionFilterProp="label"
+                        disabled={!category || serviceItemsLoading}
+                        placeholder={category ? t('itsm.ticket.serviceItemDetailPlaceholder') : t('itsm.ticket.chooseCategoryFirst')}
+                        options={matches.map((i) => ({ value: i.id, label: i.name }))}
+                      />
+                    </Form.Item>
+                  );
+                }}
+              </Form.Item>
+              <Form.Item
+                name="description"
+                label={t('itsm.ticket.problemDescription')}
+                rules={[{ required: true, message: t('itsm.rule.description') }]}
+              >
+                <Input.TextArea rows={5} maxLength={2000} placeholder={t('itsm.ticket.descPlaceholder')} />
+              </Form.Item>
+              <Form.Item name="other_info" label={t('itsm.ticket.otherInfo')}>
+                <Input.TextArea rows={3} maxLength={1000} placeholder={t('itsm.ticket.otherInfoPlaceholder')} />
+              </Form.Item>
+              <Form.Item label={t('itsm.ticket.agent')}>
+                <Input disabled value={handoffSource?.agent_name || t('itsm.ticket.agentPending')} />
+              </Form.Item>
+            </>
+          ) : (
+            <>
+              <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+                <Input maxLength={200} placeholder={t('itsm.ticket.titlePlaceholder')} />
+              </Form.Item>
+              <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
+                <Select options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))} />
+              </Form.Item>
+              <Form.Item name="description" label={t('itsm.f.description')} rules={[{ required: true, message: t('itsm.rule.description') }]}>
+                <Input.TextArea rows={4} maxLength={2000} placeholder={t('itsm.ticket.descPlaceholder')} />
+              </Form.Item>
+              <Form.Item name="service_item_id" label={t('itsm.f.serviceItem')} rules={[{ required: true, message: t('itsm.rule.serviceItem') }]}>
+                <Select
+                  showSearch
+                  optionFilterProp="label"
+                  loading={serviceItemsLoading}
+                  placeholder={t('itsm.selectServiceItem')}
+                  options={serviceItems.map((i) => ({ value: i.id, label: `${i.name}（${i.catalog_name ?? i.item_code}）` }))}
+                />
+              </Form.Item>
+            </>
+          )}
 
           {fixedType === 'change' && (
             <Card size="small" title={t('itsm.ticket.changeInfo')} style={{ marginBottom: 16 }}>
@@ -545,34 +708,36 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
             </Card>
           )}
 
-          <Collapse
-            ghost
-            items={[
-              {
-                key: 'more',
-                label: t('itsm.ticket.moreOptions'),
-                children: (
-                  <>
-                    <Form.Item name="assignee" label={t('itsm.f.assignee')}>
-                      <Select
-                        allowClear
-                        showSearch
-                        optionFilterProp="label"
-                        placeholder={t('itsm.ticket.assigneePlaceholder')}
-                        options={members.map((m) => ({
-                          value: m.id,
-                          label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-                        }))}
-                      />
-                    </Form.Item>
-                    <Form.Item name="remarks" label={t('common.remark')}>
-                      <Input.TextArea rows={2} maxLength={500} />
-                    </Form.Item>
-                  </>
-                ),
-              },
-            ]}
-          />
+          {showInternalFields && (
+            <Collapse
+              ghost
+              items={[
+                {
+                  key: 'more',
+                  label: isServiceRequest ? t('itsm.ticket.internalOptions') : t('itsm.ticket.moreOptions'),
+                  children: (
+                    <>
+                      <Form.Item name="assignee" label={t('itsm.f.assignee')}>
+                        <Select
+                          allowClear
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder={t('itsm.ticket.assigneePlaceholder')}
+                          options={members.map((m) => ({
+                            value: m.id,
+                            label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+                          }))}
+                        />
+                      </Form.Item>
+                      <Form.Item name="remarks" label={t('common.remark')}>
+                        <Input.TextArea rows={2} maxLength={500} />
+                      </Form.Item>
+                    </>
+                  ),
+                },
+              ]}
+            />
+          )}
         </Form>
       </Drawer>
 

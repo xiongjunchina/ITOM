@@ -310,6 +310,21 @@ export default function TicketDetail() {
             </Tag>
           </Space>
           <Space wrap>
+            {canRate && (
+              <div
+                role="group"
+                aria-label={t('itsm.ticket.ratingCard')}
+                style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}
+              >
+                <Typography.Text strong>{t('itsm.ticket.ratingCard')}</Typography.Text>
+                <Space size={12} wrap>
+                  <Rate value={rating} onChange={setRating} />
+                  <Button type="primary" loading={ratingSaving} onClick={() => void submitRating()}>
+                    {t('itsm.ticket.submitRating')}
+                  </Button>
+                </Space>
+              </div>
+            )}
             <ProcessActionButtons
               step={currentProcessStep}
               disabled={isExample}
@@ -528,17 +543,6 @@ export default function TicketDetail() {
               </Descriptions.Item>
             )}
           </Descriptions>
-        </Card>
-      )}
-
-      {canRate && (
-        <Card title={t('itsm.ticket.ratingCard')} size="small">
-          <Space>
-            <Rate value={rating} onChange={setRating} />
-            <Button type="primary" loading={ratingSaving} onClick={() => void submitRating()}>
-              {t('itsm.ticket.submitRating')}
-            </Button>
-          </Space>
         </Card>
       )}
 

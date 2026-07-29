@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { isAxiosError } from 'axios';
 import {
   Alert,
   Button,
@@ -134,6 +135,10 @@ export default function Requirements() {
   const t = useT();
   const et = useEnums();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const handoffToken = searchParams.get('handoff');
+  const createRequested = searchParams.get('create') === '1';
+  const isFeishuQuickMenu = searchParams.get('entry') === 'feishu_helpdesk';
   const canCreate = useReqPerm('create');
   const user = useAuthStore((s) => s.user);
   const canDelete = hasPermission(user, 'requirements', 'delete'); // M21：默认矩阵仅 admin
@@ -162,6 +167,15 @@ export default function Requirements() {
   const [form] = Form.useForm<CreateFormValues>();
   const [sources, setSources] = useState<MasterDataItem[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [handoffStarted, setHandoffStarted] = useState(false);
+  const [handoffSource, setHandoffSource] = useState<{ service_category?: string; agent_name?: string } | null>(null);
+  const directCreateStarted = useRef(false);
+
+  const clearHandoffParam = () => {
+    const next = new URLSearchParams(window.location.search);
+    next.delete('handoff');
+    navigate({ pathname: window.location.pathname, search: next.toString() }, { replace: true });
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -212,8 +226,18 @@ export default function Requirements() {
     return groups;
   }, [items]);
 
-  const openCreate = () => {
+  const openCreate = (seed?: { title?: string; description?: string; source?: string; service_category?: string; agent_name?: string }) => {
     form.resetFields();
+    if (seed) {
+      form.setFieldsValue({
+        title: seed.title,
+        description: seed.description,
+        source: seed.source,
+      });
+      setHandoffSource({ service_category: seed.service_category, agent_name: seed.agent_name });
+    } else {
+      setHandoffSource(null);
+    }
     setCreateOpen(true);
     if (sources.length === 0) {
       api
@@ -226,6 +250,42 @@ export default function Requirements() {
         .catch(() => undefined);
     }
   };
+
+  // 飞书服务台快捷菜单使用 create=1 直达需求登记窗口；一次性 guard 避免 React StrictMode 重复打开。
+  useEffect(() => {
+    if (!createRequested || handoffToken || !canCreate || directCreateStarted.current) return;
+    directCreateStarted.current = true;
+    openCreate();
+    // openCreate intentionally captures the current form/source loaders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createRequested, handoffToken, canCreate]);
+
+  useEffect(() => {
+    if (!handoffToken || handoffStarted || !canCreate) return;
+    setHandoffStarted(true);
+    api
+      .get<{ status?: string; action: string; consumed_entity_type?: string; consumed_entity_id?: string; prefill?: { title?: string; description?: string; source?: string; service_category?: string }; source?: { agent_name?: string } }>(
+        `/integrations/feishu/helpdesk/handoffs/${encodeURIComponent(handoffToken)}`,
+      )
+      .then((data) => {
+        if (data.status === 'consumed') {
+          if (data.consumed_entity_type === 'ticket' && data.consumed_entity_id) {
+            navigate(`/itsm/tickets/${data.consumed_entity_id}`, { replace: true });
+          } else if (data.consumed_entity_type === 'requirement' && data.consumed_entity_id) {
+            navigate(`/requirements/${data.consumed_entity_id}`, { replace: true });
+          } else {
+            clearHandoffParam();
+          }
+          return;
+        }
+        if (data.action !== 'requirement') throw new Error('该交接链接属于服务请求，请返回交接页选择正确入口');
+        openCreate({ ...(data.prefill ?? {}), agent_name: data.source?.agent_name });
+      })
+      .catch((error: unknown) => {
+        if (isAxiosError(error) && [409, 410].includes(error.response?.status ?? 0)) clearHandoffParam();
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handoffToken, handoffStarted, canCreate]);
 
   const submitCreate = async () => {
     const values = await form.validateFields();
@@ -242,6 +302,11 @@ export default function Requirements() {
         expected_effect: values.expected_effect || null,
         business_value_note: values.business_value_note || null,
       });
+      if (handoffToken && created?.id) {
+        await api.post(`/integrations/feishu/helpdesk/handoffs/${encodeURIComponent(handoffToken)}/consume`, {
+          entity_type: 'requirement', entity_id: created.id,
+        }).catch(() => undefined);
+      }
       message.success(t('req.created', { code: created.requirement_code ?? '' }));
       setCreateOpen(false);
       if (created?.id) {
@@ -492,7 +557,7 @@ export default function Requirements() {
             <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
               {t('req.import')}
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
               {t('req.register')}
             </Button>
           </Space>
@@ -543,6 +608,15 @@ export default function Requirements() {
         onCancel={() => setCreateOpen(false)}
         destroyOnClose
       >
+        {(handoffSource || isFeishuQuickMenu) && (
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={isFeishuQuickMenu ? t('req.feishuQuickMenuSource') : `来自飞书服务台${handoffSource?.service_category ? `（服务类别：${handoffSource.service_category}）` : ''}`}
+            description={handoffSource ? '飞书服务类别只作为来源信息保留，不会自动映射为需求业务域；请在本页选择需求分类和业务域。' : undefined}
+          />
+        )}
         <Form<CreateFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="title"

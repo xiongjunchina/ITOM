@@ -10,24 +10,35 @@ def test_configured_digital_team_department_is_authoritative(client, admin_heade
     with SessionLocal() as db:
         parent = Department(code="m42_org_eff", name="组织效率部", dept_type="business")
         other = Department(code="m42_other", name="其他部门", dept_type="business")
-        db.add_all([parent, other]); db.flush()
+        mixed_vendor = Department(code="m42_test", name="Test", dept_type="business")
+        db.add_all([parent, other, mixed_vendor]); db.flush()
         digital = Department(code="m42_digital", name="数字化流程效率组", parent_id=parent.id, dept_type="business")
         db.add(digital); db.flush()
         included = OrgMember(name="M42数字化成员", department_id=digital.id)
         excluded = OrgMember(name="M42其他成员", department_id=other.id)
-        db.add_all([included, excluded]); db.commit()
-        parent_id, included_id, excluded_id = parent.id, included.id, excluded.id
+        selected_contractor = OrgMember(name="M42指定外包", department_id=mixed_vendor.id, employment_type="外包")
+        other_contractor = OrgMember(name="M42其他供应商", department_id=mixed_vendor.id, employment_type="外包")
+        db.add_all([included, excluded, selected_contractor, other_contractor]); db.commit()
+        parent_id = parent.id
+        included_id, excluded_id = included.id, excluded.id
+        selected_contractor_id, other_contractor_id = selected_contractor.id, other_contractor.id
 
     response = client.patch("/api/admin/org-settings", headers=admin_headers, json={
-        "digital_team_department_ids": [parent_id], "digital_team_include_children": True,
+        "digital_team_department_ids": [parent_id],
+        "digital_team_member_ids": [selected_contractor_id],
+        "digital_team_include_children": True,
     })
     assert response.status_code == 200
+    assert response.json()["data"]["digital_team_member_ids"] == [selected_contractor_id]
     with SessionLocal() as db:
         ids = it_member_ids(db)
-    assert included_id in ids and excluded_id not in ids
+    assert included_id in ids and selected_contractor_id in ids
+    assert excluded_id not in ids and other_contractor_id not in ids
 
     members = client.get("/api/members?scope=it&page_size=2000", headers=admin_headers).json()["data"]
-    assert included_id in {row["id"] for row in members}
+    member_ids = {row["id"] for row in members}
+    assert included_id in member_ids and selected_contractor_id in member_ids
+    assert other_contractor_id not in member_ids
 
     # 配置统一口径后，项目经理也必须来自同一数字化团队范围（不能只靠前端下拉过滤）。
     rejected = client.post("/api/projects", headers=admin_headers, json={
@@ -41,6 +52,37 @@ def test_configured_digital_team_department_is_authoritative(client, admin_heade
         "planned_start": "2026-07-01", "planned_end": "2026-07-31",
     })
     assert accepted.status_code == 200, accepted.text
+    contractor_accepted = client.post("/api/projects", headers=admin_headers, json={
+        "name": "M42外包项目经理", "pm": selected_contractor_id,
+        "planned_start": "2026-08-01", "planned_end": "2026-08-31",
+    })
+    assert contractor_accepted.status_code == 200, contractor_accepted.text
+
+
+def test_digital_team_scope_can_use_only_individual_people(client, admin_headers):
+    with SessionLocal() as db:
+        mixed_vendor = Department(code="m42_individual_test", name="Test-Individual", dept_type="business")
+        db.add(mixed_vendor); db.flush()
+        selected = OrgMember(name="M42单独指定人员", department_id=mixed_vendor.id)
+        colleague = OrgMember(name="M42未指定同事", department_id=mixed_vendor.id)
+        db.add_all([selected, colleague]); db.commit()
+        selected_id, colleague_id = selected.id, colleague.id
+
+    response = client.patch("/api/admin/org-settings", headers=admin_headers, json={
+        "digital_team_department_ids": [],
+        "digital_team_member_ids": [selected_id],
+    })
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        ids = it_member_ids(db)
+    assert selected_id in ids
+    assert colleague_id not in ids
+
+    invalid = client.patch("/api/admin/org-settings", headers=admin_headers, json={
+        "digital_team_member_ids": ["missing-person"],
+    })
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "INVALID_MEMBER"
 
 
 def test_domain_delete_is_available_and_protects_references(client, admin_headers):

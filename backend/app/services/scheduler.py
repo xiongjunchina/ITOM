@@ -12,6 +12,7 @@ from app.services import sla
 logger = logging.getLogger("aom.scheduler")
 
 INTERVAL_SECONDS = 15 * 60
+FEISHU_SYNC_INTERVAL_SECONDS = 5
 WARN_RATIO = 0.8  # PRD §5.1：超 SLA 目标 80% 未解决触发升级
 
 
@@ -154,3 +155,16 @@ async def run_forever():
             except Exception:
                 logger.exception("scheduler scan failed: %s", scan.__name__)
         await asyncio.sleep(INTERVAL_SECONDS)
+
+
+async def run_feishu_helpdesk_forever():
+    """高频消费飞书事件和出站消息；回调接口只入队，避免超过飞书 3 秒响应窗口。"""
+    from app.services.feishu_helpdesk import scan_outbox, scan_sync_events
+
+    while True:
+        try:
+            scan_sync_events()
+            scan_outbox()
+        except Exception:
+            logger.exception("feishu helpdesk sync scan failed")
+        await asyncio.sleep(FEISHU_SYNC_INTERVAL_SECONDS)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { Alert, Button, Card, Divider, Form, Input, Modal, Space, Typography, message } from 'antd';
 import { LockOutlined, QrcodeOutlined, UserOutlined } from '@ant-design/icons';
 import { isAxiosError } from 'axios';
@@ -74,11 +74,26 @@ export default function Login() {
   const [feishuStarting, setFeishuStarting] = useState(false);
   const [feishuForm] = Form.useForm<FeishuForm>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { token, user, setAuth } = useAuthStore();
   const t = useT();
   const lang = useLangStore((s) => s.lang);
   const branding = useBrandingStore((s) => s.current?.config);
   const [appLoginTrying, setAppLoginTrying] = useState(/Lark|Feishu/i.test(navigator.userAgent));
+  const nextPath = (() => {
+    const next = searchParams.get('next');
+    return next && next.startsWith('/') ? next : null;
+  })();
+
+  useEffect(() => {
+    if (nextPath) localStorage.setItem('aom-login-next', nextPath);
+  }, [nextPath]);
+
+  const afterLogin = (loginUser: import('../api/types').AuthUser) => {
+    const stored = localStorage.getItem('aom-login-next') || nextPath;
+    localStorage.removeItem('aom-login-next');
+    navigate(stored && stored.startsWith('/') ? stored : firstAccessiblePath(loginUser), { replace: true });
+  };
 
   useEffect(() => {
     if (token || !appLoginTrying) return;
@@ -89,7 +104,7 @@ export default function Login() {
       }
       if (data.status === 'active') {
         setAuth(data.token, data.user);
-        navigate(firstAccessiblePath(data.user), { replace: true });
+        afterLogin(data.user);
       } else {
         localStorage.setItem('aom-pending-token', data.pending_token);
         localStorage.setItem('aom-pending-name', data.display_name);
@@ -172,7 +187,7 @@ export default function Login() {
       if (data.status === 'active') {
         setFeishuOpen(false);
         setAuth(data.token, data.user);
-        navigate(firstAccessiblePath(data.user), { replace: true });
+        afterLogin(data.user);
       } else {
         // pending：暂存 pending 凭据，进过渡页轮询开通结果
         localStorage.setItem('aom-pending-token', data.pending_token);

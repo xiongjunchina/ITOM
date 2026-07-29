@@ -57,7 +57,9 @@ export default function FeishuCallback() {
         const data = env.data;
         if (data.status === 'active') {
           setAuth(data.token, data.user);
-          navigate(firstAccessiblePath(data.user), { replace: true });
+          const next = localStorage.getItem('aom-login-next');
+          localStorage.removeItem('aom-login-next');
+          navigate(next && next.startsWith('/') ? next : firstAccessiblePath(data.user), { replace: true });
         } else {
           // pending：暂存 pending 凭据，进过渡页轮询开通结果（与模拟扫码一致）
           localStorage.setItem('aom-pending-token', data.pending_token);

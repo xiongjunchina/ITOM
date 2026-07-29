@@ -229,6 +229,23 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
             due_at=now + timedelta(hours=step.sla_hours) if step.sla_hours else None,
         )
     )
+    # 流程任务才是“系统分派”的权威来源。工单创建时 Ticket.assignee 可能为空，
+    # 但服务请求的首个节点仍会按默认角色解析出实际处理人；发布领域事件后，
+    # 飞书同步层才能把这次分派回写到已经关联的服务台会话中。
+    if assignee and instance.entity_type == "ticket":
+        from app.events.bus import publish
+
+        publish(
+            db,
+            "ticket.assigned",
+            "ticket",
+            instance.entity_id,
+            {
+                "assignee": assignee,
+                "step_code": step.step_code or f"step_{step.seq}",
+                "step_name": step.name,
+            },
+        )
     _notify_assignee(db, instance, step, assignee)
     _notify_cc(db, instance, step, assignee)
 
@@ -276,6 +293,24 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     else:
         instance.status = "completed"
         instance.completed_at = datetime.now()
+        # 服务请求最后一个节点是 requester 审批节点时，明确记录“用户确认”
+        # 节奏点，再由工单编排继续走 resolved -> closed。这样“用户确认关闭”
+        # 不会被流程完成后的自动关单吞掉，外部同步也能稳定区分该节点。
+        if instance.entity_type == "ticket" and task.step.default_role == "requester":
+            ticket = db.get(Ticket, instance.entity_id)
+            if (
+                ticket
+                and ticket.ticket_type == "service_request"
+            ):
+                from app.events.bus import publish
+
+                publish(
+                    db,
+                    "ticket.user_confirmed",
+                    "ticket",
+                    ticket.id,
+                    {"step_code": task.step.step_code or f"step_{task.step.seq}"},
+                )
     return instance
 
 
@@ -550,6 +585,32 @@ def reassign_task(db: Session, task_id: str, assignee: str) -> ProcessTask:
     if changed:
         instance = db.get(ProcessInstance, task.instance_id)
         step = db.get(ProcessStep, task.step_id)
+        # A ticket has two projections of its current owner: the process task
+        # is authoritative for who may operate the node, while Ticket.assignee
+        # is what the list/detail APIs display.  Keep both in sync regardless
+        # of whether reassignment came from the process monitor or the ticket
+        # detail page.
+        if instance and instance.entity_type in {"ticket", "ticket_change"}:
+            from app.models import Ticket
+
+            linked_ticket = db.get(Ticket, instance.entity_id)
+            if linked_ticket and not linked_ticket.is_deleted:
+                linked_ticket.assignee = assignee
+        if instance and instance.entity_type == "ticket":
+            from app.events.bus import publish
+
+            publish(
+                db,
+                "ticket.assigned",
+                "ticket",
+                instance.entity_id,
+                {
+                    "assignee": assignee,
+                    "step_code": step.step_code or f"step_{step.seq}",
+                    "step_name": step.name,
+                    "reassigned": True,
+                },
+            )
         _notify_assignee(db, instance, step, assignee, reassigned=True)
     return task
 

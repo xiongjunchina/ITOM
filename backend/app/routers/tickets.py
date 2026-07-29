@@ -63,6 +63,8 @@ def _row(t: Ticket, db: Session, names: dict) -> dict:
         "status": t.status, "status_name": names.get(t.status, t.status),
         "service_item_id": t.service_item_id,
         "service_item_name": t.service_item.name if t.service_item else None,
+        "service_category": t.service_category,
+        "other_info": t.other_info,
         "service_line": t.service_line,
         "submitter": t.submitter, "submitter_name": t.submitter_name, "submitter_dept": t.submitter_dept,
         "assignee": t.assignee, "assignee_name": assignee.name if assignee else None,
@@ -153,6 +155,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
         {
             "submitter": t.submitter,
             "description": t.description, "remarks": t.remarks, "ci_id": t.ci_id,
+            "service_category": t.service_category, "other_info": t.other_info,
             "solution": t.solution, "root_cause": t.root_cause, "closure_code": t.closure_code,
             "change_type": t.change_type, "risk_level": t.risk_level,
             "change_reason": t.change_reason, "rollback_plan": t.rollback_plan,
@@ -199,12 +202,21 @@ def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_
         setattr(t, k, v)
     audit(db, "ticket", t.id, "update", user, {"fields": list(data.keys())})
     if reassigned and t.assignee:
-        from app.events import notifier
+        # The detail page edits Ticket.assignee directly.  When a live process
+        # task exists, route the same change through the process engine so the
+        # authorization source and the displayed ticket owner cannot diverge.
+        pending = process_engine.current_pending_task(db, svc.entity_type_of(t), t.id)
+        if pending:
+            process_engine.reassign_task(db, pending.id, t.assignee)
+        else:
+            from app.events import notifier
+            from app.events.bus import publish
 
-        notifier.notify(
-            db, "ticket.assigned", "ticket", t.id, [t.assignee],
-            f"工单改派给您：{t.ticket_code} {t.title}", link=f"/itsm/tickets/{t.id}",
-        )
+            publish(db, "ticket.assigned", "ticket", t.id, {"assignee": t.assignee})
+            notifier.notify(
+                db, "ticket.assigned", "ticket", t.id, [t.assignee],
+                f"工单改派给您：{t.ticket_code} {t.title}", link=f"/itsm/tickets/{t.id}",
+            )
     db.commit()
     return ok({"id": t.id})
 

@@ -85,6 +85,8 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 - Administrators with user-delete permission can soft-delete an account and unlink its person record without deleting personnel master data, department membership, or business history. The built-in `admin` and the current account cannot be deleted; the original username is released for later reprovisioning.
 - Browser QR OAuth and Feishu workplace JSAPI login share identity matching, first-time provisioning approval, and normal sign-in behavior.
+- **Feishu Helpdesk handoff (M45)**: after the pre-consultation form reaches human service, ITOM writes two stable choices into the original Helpdesk conversation: “Create IT service request” and “Register IT requirement.” The link carries only the pending-intake ID and action—never identity or a one-time token. After ITOM login, the backend compares the signed-in account's Feishu `open_id`, the stored intake guest, and a freshly read Helpdesk guest; only a three-way match issues a ten-minute token and opens the pre-filled form. The service category maps only to the ITSM catalog/item, never to a requirement business domain. Successful creation consumes the token; reopening the stable conversation link enters the already linked record. Requirement type and business domain remain explicit ITOM choices.
+- **Feishu Helpdesk reliable synchronization (M46)**: after human handoff, the ticket first becomes a Pending Routing intake. Its stable choices are delivered as rich content in the original conversation, downgraded to full-URL text when rich content is unsupported, and only after repeated original-conversation failures fall back to an independent application-bot card. Helpdesk create/update/message events are idempotent by event ID, processed asynchronously with retries, and resolved against current ticket detail. Only user-visible registered, assigned, processing, resolved, and closed milestones are posted back; internal notes, approval comments, and unpublished details are never exported. Administrators can inspect the entry-delivery channel, pending intakes, and failed retry records.
 - The profile center exposes account source, effective roles, timestamps, and read-only linked HR data. Users can set a local password, bind or unbind Feishu safely, inspect only their own audit activity, and persist avatar, bio, language, notification-category preferences, theme, and content density. Both the Scheme C workbench and Scheme F portal bind the active preference directly to their application shells. Dark mode consistently uses three charcoal surface levels for canvas, header, and modules instead of a white shell or pure-black canvas; navigation, tabs, segmented controls, and other interaction states use matching dark colors with clearly readable contrast.
 - The signed-in application header exposes a “User Manual” entry immediately to the left of the language switcher. Every signed-in role can use search, product categories, popular/recent guides, and article TOCs to read the current system overview, module logic, procedures, role boundaries, and troubleshooting notes; it is maintained alongside `docs/en/user-operation-manual.md`.
 - On approval, a 12-character strong initial password is stored as recoverable encrypted ciphertext without automatic delivery. User details hide it until an administrator clicks the eye control; email is sent only through the explicit action. Both are audited, and a password change/reset clears the ciphertext. System Integrations groups Feishu, SMTP, and AD/LDAP; LDAP supports connection testing and directory-password authentication for an existing same-name ITOM account.
@@ -107,6 +109,8 @@ The state transitions of each record type are driven by state-machine configurat
 - Unified event outlet: events such as ticket creation/assignment/SLA-imminent/escalation, change pending approval, milestone overdue, requirement stage transition, and suggestion adopted are written to the notification outbox.
 - Initially only **in-app notifications** are implemented (top-bar bell + Dashboard alert area); later, adding a Feishu channel adapter connects it, with zero changes to business features.
 - Since M34, administrator accounts without a linked person can receive management notifications by account ID; the bell polls for updates and delivery honors the `work`, `workflow`, and `system` category preferences.
+- **Account/person unlinking**: clearing Linked Person in the user editor explicitly persists `person_id=null`, while PATCH requests that omit `person_id` retain the existing link.
+- The notification popover provides **Mark all as read** and **Clear read**. The former writes `read_at` for notifications visible to the current account; the latter soft-deletes that account's already-read notifications. Neither action changes source business records.
 
 ### 3.4 Page Inventory
 
@@ -151,14 +155,18 @@ Ticket types: **Incident / Service Request / Change**. Problem is a standalone e
 
 #### Creation Form
 
+For business users, the service-request form follows the Feishu Helpdesk pre-consultation order: User (read-only, current ITOM user or the Feishu handoff requester), Service agent (read-only, populated on a handoff or shown as pending back-office assignment), Title, Urgency, Service Category, Specific Service Item, Problem Description, and Other Supplemental Information. Service Category maps to the ITSM service catalog only and never to a requirement business domain. If exactly one published item matches, it is selected automatically; otherwise the user selects a specific item. IT staff and administrators can expand Internal Handling Information to set an assignee and internal remarks.
+
 | Field | Required | Description |
 | --- | --- | --- |
 | Title | ✔ | |
 | Type | ✔ | One of three, default "Service Request" |
-| Priority | ✔ | P1 Critical / P2 High / P3 Medium / P4 Low, default P3 |
-| Description | ✔ | Rich text |
-| Service item | ✔ | Dropdown (from the Service Catalog); carries over the service line and SLA target |
-| Assignee | Optional | If empty, defaults to the process assignment |
+| Urgency | ✔ | P1 Critical / P2 High / P3 Normal / P4 Low, default P3 |
+| Service Category | ✔ | From the ITSM Service Catalog; never a requirement business domain |
+| Specific Service Item | ✔ | Auto-selected for a unique match, otherwise selected from the category; carries over the service line and SLA target |
+| Problem Description | ✔ | Same field semantics as the Feishu pre-consultation form |
+| Other Supplemental Information | Optional | Same field semantics as the Feishu pre-consultation form |
+| Assignee | Optional | Available to IT staff/administrators under Internal Handling Information; if empty, defaults to the process assignment |
 | Linked CI | Optional | Collapsed under "More" |
 | Remarks | Optional | Collapsed under "More" |
 
@@ -184,7 +192,7 @@ Change: New → Pending Approval → Approved → Implementing → Resolved → 
 The change request and implementation tasks are handled by IT Operations. The approval task is assigned by default to the IT Operations leader; this is distinct from the full set of roles allowed by the state machine. The current `pending_approval → approved/rejected` transition allows `cio`, `it_tm`, and `it_op_leader`. The published runtime process definition, state-machine configuration, and version take precedence over `seed_itsm.py`; changes require a new process version and historical instances retain their original snapshots.
 
 - **At resolution** fill in: solution (required), root cause (optional).
-- **At closure** fill in: closure code (dropdown). After closure, a satisfaction rating (1–5 stars, optional) is initiated toward the submitter.
+- **At closure** fill in: closure code (dropdown). After closure, an optional 1–5-star satisfaction control appears for the submitter at the right side of the ticket-detail header. It disappears after submission, while the result remains read-only in Basic Information.
 - Change approval: in the currently published `change_flow`, the “Change approval” task is assigned by default to `it_op_leader`; the state-machine `pending_approval → approved/rejected` transition allows `[cio, it_tm, it_op_leader]` (adjustable in configuration). Comments are recorded together with the approver and time; both the process-task guard and state-machine authorization must pass.
 - Escalation: an escalation notification is produced when a P1/P2 ticket exceeds 80% of its SLA target without being resolved.
 
@@ -375,6 +383,8 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 | `requirement_flow` | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
 | `project_flow` | Project kickoff (it_pm, approval; CC cio, it_bm) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval; CC cio, it_tm) |
 
+Service requests do not add a separate ITOM routing step: Feishu Helpdesk handles the pre-consultation and type choice, and the final ITOM record enters the three steps above after the handoff token is consumed. Automatic task assignment/reassignment publishes `ticket.assigned`; completion of the final requester step publishes `ticket.user_confirmed`; the existing state machine then reaches `resolved` → `closed`, and a Feishu rating writes back to `Ticket.satisfaction`. These events are the internal facts for the five synchronization points; only user-visible progress is sent outward.
+
 - **Process-node standard (M3.8, mandatory for all subsequent process features)**: each node can configure a **handler** (approve/execute; produces a task and blocks the process) and **CC parties** (in-app notification only; produces no task, does not block, and can be multiple roles/user groups); the process-definition page shows a **process diagram** (handler in blue, CC in gray), with live preview in the editor. See docs/06 §10 for details.
 - Pages: process-definition management (admin; includes enable/disable and step editing), process monitoring (instance list, stuck steps, overdue tasks).
 - The record detail page shows a process bar (current step highlighted).
@@ -460,7 +470,7 @@ Single-page rich-text management: vision, goals, code of conduct (manager/admin 
 
 Menu structure (8 entry points):
 
-1. **Organization Management**: the Org Structure tab treats Feishu as the source of truth and lets administrators select a shared digital-team department scope after sync, optionally including descendants. That scope drives team statistics and every operational person selector: project managers/task owners, requirement owners/reviewers/development owners, ticket/problem/service-item/CI/contract owners, and user-group owners/members. The UI loads these options with `scope=it`; once a scope is configured, the backend validates assignments as well, so client-side filtering is not the only guard. Administrators may delete a business domain only when no active requirement references it. Feishu settings independently control whether scheduled org sync is allowed and select a 1/6/12/24-hour interval.
+1. **Organization Management**: the Org Structure tab treats Feishu as the source of truth and lets administrators define a shared digital-team scope after sync. The scope is the union of members in selected departments (optionally including descendants) and individually selected people. This allows administrators to include only target contractors from a mixed vendor organization such as Test without including their colleagues. The same scope drives team statistics, performance-review subjects, and every operational person selector: project managers/task owners, requirement owners/reviewers/development owners, ticket/problem/service-item/CI/contract owners, and user-group owners/members. The UI loads these options with `scope=it`; once a scope is configured, the backend validates assignments as well, so client-side filtering is not the only guard. Administrators may delete a business domain only when no active requirement references it. Feishu settings independently control whether scheduled org sync is allowed and select a 1/6/12/24-hour interval.
 2. **User & Group Management**: "Users" (account / roles / auth source / provisioning default roles) + "User Groups" (technical-line resource pool: owner TM / group-granted roles / members).
 3. **Roles & Permissions**: "Role Definitions" (16 built-in, renamable + custom copies of a template) + "Pre-assignment Rules" (department → first-provisioning default roles) + "Permission Configuration" (role × all system modules × 4 actions matrix).
 4. **Data Dictionary** (dropdown items such as business line / closure code / category + system configuration such as company name).

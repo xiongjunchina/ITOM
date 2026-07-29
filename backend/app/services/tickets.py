@@ -72,6 +72,9 @@ def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
     publish(db, "ticket.created", "ticket", ticket.id, {"code": ticket.ticket_code})
 
     if ticket.assignee:
+        publish(db, "ticket.assigned", "ticket", ticket.id, {"assignee": ticket.assignee})
+
+    if ticket.assignee:
         notifier.notify(
             db, "ticket.assigned", "ticket", ticket.id,
             [ticket.assignee],
@@ -90,6 +93,8 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     # 打点与派生
     if from_code == "new" and to != "new":
         sla.mark_first_response(ticket, now)
+    if to == "processing" and from_code != "processing":
+        publish(db, "ticket.processing", "ticket", ticket.id, {})
     if to == "paused":
         ticket.paused_started_at = now
     if from_code == "paused" and to != "paused":
@@ -192,7 +197,13 @@ def on_ticket_advanced(db: Session, ticket_id: str, actor: AuthUser) -> None:
         auto_close_on_process_complete(db, t.id, actor)
         return
     if t.ticket_type == "change":
-        return  # 变更：审批链走状态机显式授权，不做中间态映射
+        # 变更单的状态由审批链驱动：申请处理节点完成后，立即进入
+        # ``pending_approval``，这样审批人看到的状态与当前流程节点一致。
+        # 审批节点的同意/驳回仍由 process_engine.approve_task/reject_task
+        # 负责，避免在这里重复推进审批状态。
+        if task.step and task.step.node_type == "approval" and t.status == "new":
+            do_transition(db, t, "pending_approval", {}, actor, system=True)
+        return
     from app.models import ProcessInstance
 
     inst = db.get(ProcessInstance, task.instance_id)

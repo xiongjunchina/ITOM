@@ -67,6 +67,50 @@ def test_user_crud_and_rbac(client, admin_headers):
     assert client.get("/api/dashboard", headers=biz_headers).status_code == 403
 
 
+def test_user_can_clear_linked_person(client, admin_headers):
+    dept_id = client.post(
+        "/api/admin/departments",
+        json={"code": "m1_unlink_it", "name": "M1 解绑测试部门", "dept_type": "it"},
+        headers=admin_headers,
+    ).json()["data"]["id"]
+    person_id = client.post(
+        "/api/members",
+        json={"name": "M1 解绑测试人员", "department_id": dept_id},
+        headers=admin_headers,
+    ).json()["data"]["id"]
+    user = client.post(
+        "/api/admin/users",
+        json={
+            "username": "m1_unlink_user",
+            "password": "pass123",
+            "roles": ["it_ops"],
+            "person_id": person_id,
+        },
+        headers=admin_headers,
+    ).json()["data"]
+    assert user["person_id"] == person_id
+
+    unchanged = client.patch(
+        f"/api/admin/users/{user['id']}",
+        json={"roles": ["it_ops"]},
+        headers=admin_headers,
+    )
+    assert unchanged.json()["data"]["person_id"] == person_id
+
+    cleared = client.patch(
+        f"/api/admin/users/{user['id']}",
+        json={"person_id": None},
+        headers=admin_headers,
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["person_id"] is None
+
+    refreshed = client.get(
+        "/api/admin/users?q=m1_unlink_user", headers=admin_headers
+    ).json()["data"]
+    assert refreshed[0]["person_id"] is None
+
+
 def test_duplicate_username_rejected(client, admin_headers):
     resp = client.post(
         "/api/admin/users",

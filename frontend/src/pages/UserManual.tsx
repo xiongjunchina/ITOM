@@ -61,7 +61,7 @@ const ZH_SECTIONS: ManualSection[] = [
     summary: 'ITOM 将 IT 服务、项目、需求、团队能力和流程治理集中到一个平台。',
     logic: [
       '采用“业务域 × 专业线”的矩阵式组织：业务域负责横向服务，用户组负责纵向资源池。',
-      '所有人员选择默认来自管理员配置的数字化团队部门范围；组织架构由飞书或其他集成源同步。',
+      '所有人员选择默认来自管理员配置的数字化团队范围；范围是所选部门成员与单独指定人员的并集，组织架构由飞书或其他集成源同步。',
       '服务请求、事件、变更、问题、需求和项目通过流程节点推进状态；审批节点与处理节点分开管理。',
       '总览将服务请求、变更、事件、问题拆成四个独立面板，分别展示未关闭/处理中数量和 P1–P4 处理级别，不再重复展示跨模块 ITSM 汇总。',
       '人效评分按考核周期计算，角色贡献、团队贡献、外部满意度和学习成长积分分别取数后汇总。',
@@ -158,14 +158,14 @@ const ZH_SECTIONS: ManualSection[] = [
     title: '系统管理',
     summary: '维护组织、用户、权限、字典、状态机、集成、品牌和审计。',
     logic: [
-      '组织管理维护部门树、人员主数据和业务服务域；数字化团队范围决定所有人员下拉选项。',
+      '组织管理维护部门树、人员主数据和业务服务域；数字化团队范围可组合部门与指定人员，并决定人员下拉和绩效对象。',
       '用户与组管理维护账号、角色、用户组、登录开通和初始密码。',
       '角色与权限按模块设置查看/新建/编辑/删除；admin 隐式全权，auditor 只读。',
       '系统集成统一配置飞书、SMTP 和 AD/LDAP；界面与品牌管理登录页和登录后视觉配置。',
       '审计日志记录用户、权限、流程、绩效、外部原数据和品牌发布等关键操作。',
     ],
     steps: [
-      '组织管理：同步组织架构后，指定数字化团队部门范围；再创建业务服务域并选择服务部门。',
+      '组织管理：同步组织架构后，选择数字化团队部门及需要额外纳入的具体人员；再创建业务服务域并选择服务部门。',
       '用户与组：关联人员、配置角色/用户组并审批飞书登录申请。',
       '角色与权限：维护角色定义、预分配规则和模块动作权限。',
       '系统集成：分别保存飞书、SMTP、AD/LDAP 配置并执行连接测试。',
@@ -228,7 +228,7 @@ const EN_SECTIONS: ManualSection[] = [
   {
     id: 'admin', title: 'System administration', summary: 'Organization, users, permissions, dictionaries, integrations, branding, and audit.',
     logic: ['Organization scope controls every operational person selector.', 'Users/groups manage accounts, roles, resource pools, provisioning, and initial passwords.', 'System Integrations groups Feishu, SMTP, and AD/LDAP.', 'Branding controls login and post-login visual settings; audit records important changes.'],
-    steps: ['Sync organization data and set the digital-team scope.', 'Manage users/groups and approve Feishu provisioning.', 'Maintain roles, provisioning rules, and module actions.', 'Save/test Feishu, SMTP, and AD/LDAP settings.', 'Configure names, logos, theme, sidebar, announcements, and landing pages.', 'Search audit logs.'],
+    steps: ['Sync organization data, select digital-team departments, and add any individually included people.', 'Manage users/groups and approve Feishu provisioning.', 'Maintain roles, provisioning rules, and module actions.', 'Save/test Feishu, SMTP, and AD/LDAP settings.', 'Configure names, logos, theme, sidebar, announcements, and landing pages.', 'Search audit logs.'],
     role: 'Most system pages are admin-only; other access follows the permission matrix.',
   },
   {

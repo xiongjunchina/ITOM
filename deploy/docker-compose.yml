@@ -22,6 +22,7 @@ services:
       DATABASE_URL: postgresql+psycopg2://aom:${DB_PASSWORD:-aom}@db:5432/new_aom
       JWT_SECRET: ${JWT_SECRET:-change-me-in-prod}
       ADMIN_INIT_PASSWORD: ${ADMIN_INIT_PASSWORD:-admin123}
+      ITOM_PUBLIC_URL: ${ITOM_PUBLIC_URL:-}
       UPLOAD_DIR: /data/uploads
       SEED_INITIAL_CONFIG: ${SEED_INITIAL_CONFIG:-1}
       TZ: Asia/Shanghai

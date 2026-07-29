@@ -145,6 +145,15 @@ export interface FeishuConfig {
   app_id: string;
   app_secret_masked: string;
   has_secret: boolean;
+  helpdesk_id: string | null;
+  helpdesk_token_masked: string | null;
+  has_helpdesk_token: boolean;
+  helpdesk_enabled: boolean;
+  helpdesk_event_verification_token_configured: boolean;
+  helpdesk_event_url: string | null;
+  helpdesk_event_subscription_status: 'not_configured' | 'waiting_config' | 'subscribed' | 'failed' | string;
+  helpdesk_event_subscription_at: string | null;
+  helpdesk_event_subscription_error: string | null;
   /** 组织架构同步范围：open_department_id 列表（逗号分隔），0=全公司（M32） */
   sync_scope: string;
   enabled: boolean;
@@ -154,10 +163,45 @@ export interface FeishuConfig {
 
 export interface OrgSettings {
   digital_team_department_ids: string[];
+  /** 从混合组织中单独纳入数字化团队的人员 */
+  digital_team_member_ids: string[];
   digital_team_include_children: boolean;
   feishu_auto_sync_enabled: boolean;
   feishu_auto_sync_interval_minutes: number;
   feishu_auto_sync_last_attempt_at: string | null;
+}
+
+/** 飞书服务台待分流记录（GET /integrations/feishu/helpdesk/intakes）。 */
+export interface FeishuHelpdeskIntake {
+  id: string;
+  ticket_id: string;
+  helpdesk_id: string;
+  guest_name?: string | null;
+  agent_name?: string | null;
+  classification: 'pending' | 'service_request' | 'requirement' | 'cancelled' | string;
+  linked_entity_type?: string | null;
+  linked_entity_id?: string | null;
+  feishu_status?: string | null;
+  feishu_stage?: string | null;
+  choice_card_sent_at?: string | null;
+  routing_prompt_sent_at?: string | null;
+  routing_prompt_channel?: 'helpdesk_post' | 'helpdesk_text' | 'im_card_fallback' | string | null;
+  routing_prompt_message_id?: string | null;
+  last_synced_at?: string | null;
+  last_error?: string | null;
+}
+
+/** 飞书事件入站队列记录（GET /integrations/feishu/helpdesk/sync-events）。 */
+export interface FeishuHelpdeskSyncEvent {
+  id: string;
+  event_id: string;
+  event_type: string;
+  ticket_id?: string | null;
+  status: 'pending' | 'processing' | 'processed' | 'failed' | string;
+  attempts: number;
+  next_attempt_at?: string | null;
+  last_error?: string | null;
+  processed_at?: string | null;
 }
 
 /** 系统用户（管理端） */
@@ -346,6 +390,8 @@ export interface TicketRow {
   status_name: string;
   service_item_id: string | null;
   service_item_name: string | null;
+  service_category?: string | null;
+  other_info?: string | null;
   service_line: string | null;
   submitter?: string | null;
   submitter_name: string | null;

@@ -18,7 +18,8 @@ const zh: Dict = {
   'header.logout': '退出登录',
   'header.notifications': '通知',
   'header.noNotifications': '暂无通知',
-  'header.markAllRead': '全部已读',
+  'header.markAllRead': '一键已读',
+  'header.clearRead': '清除已读',
   'header.user': '用户',
   'header.manual': '操作手册',
 
@@ -218,7 +219,8 @@ const en: Dict = {
   'header.logout': 'Sign out',
   'header.notifications': 'Notifications',
   'header.noNotifications': 'No notifications',
-  'header.markAllRead': 'Mark all read',
+  'header.markAllRead': 'Mark all as read',
+  'header.clearRead': 'Clear read',
   'header.user': 'User',
   'header.manual': 'User Manual',
 

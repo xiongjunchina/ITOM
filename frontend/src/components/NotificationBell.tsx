@@ -40,6 +40,26 @@ export default function NotificationBell() {
 
   const unread = items.filter((i) => !i.read_at).length;
 
+  const handleMarkAllRead = async () => {
+    if (!unread) return;
+    try {
+      await api.post<{ updated: number }>('/notifications/read-all');
+      const readAt = new Date().toISOString();
+      setItems((prev) => prev.map((item) => (item.read_at ? item : { ...item, read_at: readAt })));
+    } catch {
+      // 忽略，已由 api client 统一提示
+    }
+  };
+
+  const handleClearRead = async () => {
+    try {
+      await api.post<{ deleted: number }>('/notifications/clear-read');
+      setItems((prev) => prev.filter((item) => !item.read_at));
+    } catch {
+      // 忽略，已由 api client 统一提示
+    }
+  };
+
   const handleClick = async (item: NotificationItem) => {
     try {
       if (!item.read_at) {
@@ -94,9 +114,38 @@ export default function NotificationBell() {
     </div>
   );
 
+  const popoverTitle = (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+      <Typography.Text strong>{t('header.notifications')}</Typography.Text>
+      <span>
+        <Button
+          type="link"
+          size="small"
+          disabled={!unread}
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleMarkAllRead();
+          }}
+        >
+          {t('header.markAllRead')}
+        </Button>
+        <Button
+          type="link"
+          size="small"
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleClearRead();
+          }}
+        >
+          {t('header.clearRead')}
+        </Button>
+      </span>
+    </div>
+  );
+
   return (
     <Popover
-      title={t('header.notifications')}
+      title={popoverTitle}
       trigger="click"
       placement="bottomRight"
       content={content}

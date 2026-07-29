@@ -59,6 +59,8 @@ class TicketCreate(BaseModel):
     priority: str = "P3"
     description: str = Field(min_length=1)
     service_item_id: str
+    service_category: str | None = None
+    other_info: str | None = None
     # 可选
     assignee: str | None = None
     ci_id: str | None = None
@@ -77,6 +79,8 @@ class TicketUpdate(BaseModel):
     title: str | None = None
     priority: str | None = None
     description: str | None = None
+    service_category: str | None = None
+    other_info: str | None = None
     assignee: str | None = None
     ci_id: str | None = None
     remarks: str | None = None

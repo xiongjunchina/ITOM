@@ -94,8 +94,11 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
         user.initial_password_ciphertext = None
         user.initial_password_sent_at = None
         changes["password"] = "reset"
-    if body.person_id is not None:
+    # PATCH 中 `person_id: null` 表示管理员明确要求解绑；字段未提交才表示保持原值。
+    # 不能只判断值是否为 None，否则会把“清空”和“未修改”混为一谈。
+    if "person_id" in body.model_fields_set:
         require_it_member_if_configured(db, body.person_id or None, "账号关联人员")
+        changes["person_id"] = {"from": user.person_id, "to": body.person_id or None}
         user.person_id = body.person_id or None
     if body.is_active is not None:
         changes["is_active"] = body.is_active

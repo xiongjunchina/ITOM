@@ -43,6 +43,8 @@ import ProjectDetail from './pages/projects/ProjectDetail';
 import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
 import UserManual from './pages/UserManual';
+import FeishuHelpdeskHandoff from './pages/FeishuHelpdeskHandoff';
+import FeishuHelpdeskEntry from './pages/FeishuHelpdeskEntry';
 
 /** M19 首页落点：菜单序第一个有权限的页面（业务用户关掉总览后落到服务请求） */
 function HomeRedirect() {
@@ -78,6 +80,8 @@ export const router = createBrowserRouter([
   { path: '/onboarding/pending', element: <OnboardingPending /> },
   // 真实飞书 OAuth 回调页：公开路由，飞书扫码后跳回此处兑换 code
   { path: '/login/feishu-callback', element: <FeishuCallback /> },
+  { path: '/feishu/helpdesk/entry', element: <FeishuHelpdeskEntry /> },
+  { path: '/feishu/helpdesk/handoff', element: <FeishuHelpdeskHandoff /> },
   {
     path: '/',
     element: <MainLayout />,

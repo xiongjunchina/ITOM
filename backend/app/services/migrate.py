@@ -31,6 +31,9 @@ ENSURE_COLUMNS = {
         ("supervisor_id", "VARCHAR(26)"),
         ("work_location", "VARCHAR(64)"),
     ],
+    "org_settings": [
+        ("digital_team_member_ids", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+    ],
     "wbs_task": [
         ("stage", "VARCHAR(64)"),
         ("wbs_dict", "TEXT"),
@@ -99,6 +102,24 @@ ENSURE_COLUMNS = {
         ("initial_password_ciphertext", "TEXT"),
         ("initial_password_sent_at", "TIMESTAMP"),
     ],
+    "feishu_config": [
+        ("helpdesk_id", "VARCHAR(64)"),
+        ("helpdesk_token_encrypted", "TEXT"),
+        ("helpdesk_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("helpdesk_event_verification_token_encrypted", "TEXT"),
+        ("helpdesk_event_url", "VARCHAR(500)"),
+        ("helpdesk_event_subscription_status", "VARCHAR(16) NOT NULL DEFAULT 'not_configured'"),
+        ("helpdesk_event_subscription_at", "TIMESTAMP"),
+        ("helpdesk_event_subscription_error", "TEXT"),
+    ],
+    "feishu_helpdesk_handoff": [
+        ("callback_event_id", "VARCHAR(128)"),
+    ],
+    "feishu_helpdesk_intake": [
+        ("routing_prompt_sent_at", "TIMESTAMP"),
+        ("routing_prompt_channel", "VARCHAR(24)"),
+        ("routing_prompt_message_id", "VARCHAR(128)"),
+    ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         ("owner_id", "VARCHAR(26)"),
@@ -141,6 +162,10 @@ ENSURE_COLUMNS = {
     "service_item": [
         ("target_audience_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
         ("target_audience_refs", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+    ],
+    "ticket": [
+        ("service_category", "VARCHAR(128)"),
+        ("other_info", "TEXT"),
     ],
 }
 

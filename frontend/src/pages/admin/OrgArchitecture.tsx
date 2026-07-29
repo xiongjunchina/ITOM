@@ -130,6 +130,7 @@ export default function OrgArchitecture() {
   const [scopeOpen, setScopeOpen] = useState(false);
   const [orgSettings, setOrgSettings] = useState<OrgSettings | null>(null);
   const [scopeDepartmentIds, setScopeDepartmentIds] = useState<string[]>([]);
+  const [scopeMemberIds, setScopeMemberIds] = useState<string[]>([]);
   const [scopeIncludeChildren, setScopeIncludeChildren] = useState(true);
 
   const [companyOpen, setCompanyOpen] = useState(false);
@@ -169,12 +170,13 @@ export default function OrgArchitecture() {
 
   const openDigitalTeamScope = () => {
     setScopeDepartmentIds(orgSettings?.digital_team_department_ids ?? []);
+    setScopeMemberIds(orgSettings?.digital_team_member_ids ?? []);
     setScopeIncludeChildren(orgSettings?.digital_team_include_children ?? true);
     setScopeOpen(true);
   };
 
   const saveDigitalTeamScope = async () => {
-    if (scopeDepartmentIds.length === 0) {
+    if (scopeDepartmentIds.length === 0 && scopeMemberIds.length === 0) {
       message.warning(t('admin.org.digitalTeamRequired'));
       return;
     }
@@ -182,6 +184,7 @@ export default function OrgArchitecture() {
     try {
       const settings = await api.patch<OrgSettings>('/admin/org-settings', {
         digital_team_department_ids: scopeDepartmentIds,
+        digital_team_member_ids: scopeMemberIds,
         digital_team_include_children: scopeIncludeChildren,
       });
       setOrgSettings(settings);
@@ -229,6 +232,24 @@ export default function OrgArchitecture() {
   const deptNameOf = useCallback(
     (id?: string | null) => (id ? deptById.get(id)?.name ?? null : null),
     [deptById],
+  );
+
+  const scopeMemberOptions = useMemo(
+    () => [...allMembers]
+      .sort((a, b) => {
+        if (a.status === '离职' && b.status !== '离职') return 1;
+        if (a.status !== '离职' && b.status === '离职') return -1;
+        return a.name.localeCompare(b.name, 'zh-CN');
+      })
+      .map((member) => {
+        const department = deptNameOf(member.department_id) ?? t('admin.org.unassigned');
+        const suffix = member.status === '离职' ? ` · ${t('admin.org.inactiveMember')}` : '';
+        return {
+          value: member.id,
+          label: `${member.name}（${department}${suffix}）`,
+        };
+      }),
+    [allMembers, deptNameOf, t],
   );
 
   const selected = useMemo<Selected>(() => {
@@ -775,6 +796,7 @@ export default function OrgArchitecture() {
         destroyOnClose
       >
         <Alert type="info" showIcon message={t('admin.org.digitalTeamHint')} style={{ marginBottom: 16 }} />
+        <div style={{ marginBottom: 8, fontWeight: 600 }}>{t('admin.org.digitalTeamDepartments')}</div>
         <TreeSelect
           treeData={deptTreeSelectData}
           treeCheckable
@@ -791,6 +813,20 @@ export default function OrgArchitecture() {
           <span>{t('admin.org.digitalTeamChildren')}</span>
           <Switch checked={scopeIncludeChildren} onChange={setScopeIncludeChildren} />
         </Space>
+        <div style={{ marginTop: 20, marginBottom: 8, fontWeight: 600 }}>{t('admin.org.digitalTeamMembers')}</div>
+        <Select
+          mode="multiple"
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          options={scopeMemberOptions}
+          value={scopeMemberIds}
+          onChange={setScopeMemberIds}
+          maxTagCount="responsive"
+          placeholder={t('admin.org.digitalTeamMemberPlaceholder')}
+          style={{ width: '100%' }}
+        />
+        <div style={{ marginTop: 8, color: GRAY }}>{t('admin.org.digitalTeamMemberHint')}</div>
       </Modal>
       <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
         <div style={{ width: 320, flexShrink: 0 }}>

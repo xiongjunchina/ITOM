@@ -71,6 +71,9 @@ class Ticket(GlidBase):
     priority: Mapped[str] = mapped_column(String(8), index=True, comment="P1-P4")
     description: Mapped[str] = mapped_column(Text)
     service_item_id: Mapped[str] = mapped_column(ForeignKey("service_item.id"), index=True)
+    # 服务请求对齐飞书服务台询前单；历史工单允许为空
+    service_category: Mapped[str | None] = mapped_column(String(128))
+    other_info: Mapped[str | None] = mapped_column(Text)
     # 创建可选
     assignee: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), index=True)
     ci_id: Mapped[str | None] = mapped_column(String(26), comment="M3 接 CMDB 外键")

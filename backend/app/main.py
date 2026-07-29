@@ -35,6 +35,7 @@ from app.routers import (
     vendors_contracts,
     ui_branding,
     integrations,
+    feishu_helpdesk,
 )
 from app.services import scheduler
 from app.services.migrate import run_migrations
@@ -63,9 +64,14 @@ async def lifespan(app: FastAPI):
     from app.services.points import register_subscribers
 
     register_subscribers()
+    from app.services.feishu_helpdesk import register_subscribers as register_feishu_subscribers
+
+    register_feishu_subscribers()
     task = asyncio.create_task(scheduler.run_forever())
+    sync_task = asyncio.create_task(scheduler.run_feishu_helpdesk_forever())
     yield
     task.cancel()
+    sync_task.cancel()
 
 
 app = FastAPI(title="IT运营管理平台 API", version="0.9.0-m9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -140,7 +146,7 @@ async def auditor_readonly_guard(request: Request, call_next):
 
 
 for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
-          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, team_activities, team_learning, team_mgmt, ui_branding, integrations):
+          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, team_activities, team_learning, team_mgmt, ui_branding, integrations, feishu_helpdesk):
     app.include_router(r.router)
 
 

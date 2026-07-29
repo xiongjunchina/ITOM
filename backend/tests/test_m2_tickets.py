@@ -48,6 +48,20 @@ def test_create_auto_fields(client, ctx):
     assert [s["task_status"] for s in detail["process"]["steps"]][0] == "待处理"
 
 
+def test_service_request_preserves_helpdesk_fields(client, ctx):
+    t = _create(
+        client,
+        ctx["ops"],
+        ctx["item"],
+        ticket_type="service_request",
+        service_category="电脑与终端",
+        other_info="办公地点：广州；方便联系时间：工作日",
+    )
+    detail = client.get(f"/api/tickets/{t['id']}", headers=ctx["ops"]).json()["data"]
+    assert detail["service_category"] == "电脑与终端"
+    assert detail["other_info"] == "办公地点：广州；方便联系时间：工作日"
+
+
 def test_ticket_lifecycle_and_sla(client, ctx, admin_headers):
     t = _create(client, ctx["ops"], ctx["item"], priority="P1")
     tid = t["id"]

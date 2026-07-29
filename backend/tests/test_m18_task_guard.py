@@ -135,3 +135,96 @@ def test_task_assignment_notifies_assignee(client, ctx):
     if step2["assignee"] == ctx["ops_pid"]:
         notes = client.get("/api/notifications", headers=ctx["ops_h"]).json()["data"]
         assert any("实施交付" in n["title"] for n in notes)
+
+
+def test_ticket_detail_reassign_updates_live_process_task(client, ctx, admin_headers):
+    """详情页改派必须同时切换流程节点权限、工单展示人和通知对象。"""
+    other = client.post("/api/members", json={"name": "改派目标M18"}, headers=admin_headers).json()["data"]
+    other_user = client.post(
+        "/api/admin/users",
+        json={"username": "m18_reassign_target", "password": "pass123", "roles": ["it_ops"], "person_id": other["id"]},
+        headers=admin_headers,
+    )
+    assert other_user.status_code in {200, 409}
+    other_token = client.post(
+        "/api/auth/login", json={"username": "m18_reassign_target", "password": "pass123"}
+    ).json()["data"]["token"]
+    other_headers = {"Authorization": f"Bearer {other_token}"}
+
+    ticket, proc = _submit_sr(client, ctx, "详情页改派链路验证")
+    current = _current(proc)
+    updated = client.patch(
+        f"/api/tickets/{ticket['id']}",
+        json={"assignee": other["id"]},
+        headers=admin_headers,
+    )
+    assert updated.status_code == 200, updated.text
+
+    detail = client.get(f"/api/tickets/{ticket['id']}", headers=admin_headers).json()["data"]
+    assert detail["assignee"] == other["id"]
+    assert _current(detail["process"])["assignee"] == other["id"]
+    old_completion = client.post(
+        f"/api/process-tasks/{current['task_id']}/complete",
+        json={"comment": "旧处理人不应再操作"},
+        headers=ctx["ops_h"],
+    )
+    assert old_completion.status_code == 403
+    new_completion = client.post(
+        f"/api/process-tasks/{current['task_id']}/complete",
+        json={"comment": "改派目标已受理"},
+        headers=other_headers,
+    )
+    assert new_completion.status_code == 200, new_completion.text
+
+
+def test_sr_five_point_visible_sync_events(client, ctx):
+    """服务请求按受理→交付→用户确认关闭时，用户可见节奏点全部入同步 outbox。"""
+    from app.db import SessionLocal
+    from app.models import FeishuHelpdeskIntake, FeishuHelpdeskOutbox
+
+    t, proc = _submit_sr(client, ctx, "网络卡顿-五节点同步")
+    db = SessionLocal()
+    db.add(FeishuHelpdeskIntake(
+        helpdesk_id="hd-five-points",
+        ticket_id="feishu-five-points",
+        guest_open_id="ou_guest-five-points",
+        classification="service_request",
+        linked_entity_type="ticket",
+        linked_entity_id=t["id"],
+    ))
+    db.commit()
+    db.close()
+
+    # 受理、实施由 IT 运维完成；最后一步由提交人确认。
+    current = _current(proc)
+    r = client.post(f"/api/process-tasks/{current['task_id']}/complete",
+                    json={"comment": "已受理"}, headers=ctx["ops_h"])
+    assert r.json()["success"], r.text
+    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    current = _current(proc)
+    r = client.post(f"/api/process-tasks/{current['task_id']}/complete",
+                    json={"comment": "已交付"}, headers=ctx["ops_h"])
+    assert r.json()["success"], r.text
+    proc = client.get(f"/api/tickets/{t['id']}", headers=ctx["req_h"]).json()["data"]["process"]
+    current = _current(proc)
+    r = client.post(f"/api/process-tasks/{current['task_id']}/complete",
+                    json={"comment": "确认关闭"}, headers=ctx["req_h"])
+    assert r.json()["success"], r.text
+
+    db = SessionLocal()
+    rows = db.query(FeishuHelpdeskOutbox).filter(
+        FeishuHelpdeskOutbox.ticket_id == "feishu-five-points"
+    ).order_by(FeishuHelpdeskOutbox.created_at).all()
+    texts = [row.payload.get("text") for row in rows]
+    assert "你已确认处理结果，工单正在关闭。" in texts
+    assert "ITOM 已处理完成，请在飞书服务台确认结果并评价。" in texts
+    assert "工单已关闭，感谢你的评价。" in texts
+    assert all("内部" not in (text or "") for text in texts)
+    for row in rows:
+        db.delete(row)
+    intake = db.query(FeishuHelpdeskIntake).filter(
+        FeishuHelpdeskIntake.ticket_id == "feishu-five-points"
+    ).one()
+    db.delete(intake)
+    db.commit()
+    db.close()

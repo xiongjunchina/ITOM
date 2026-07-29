@@ -59,7 +59,8 @@ export default function MainLayout() {
   }, [openKey]);
 
   if (!token) {
-    return <Navigate to="/login" replace />;
+    const next = `${location.pathname}${location.search}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(next)}`} replace />;
   }
 
   const crumbs = breadcrumbOf(location.pathname);

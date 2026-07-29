@@ -6,6 +6,9 @@ venv/
 node_modules/
 frontend/dist/
 backend/uploads/
+outputs/
+uploads/
+deploy/backups/
 *.log
 .DS_Store
 .pytest_cache/

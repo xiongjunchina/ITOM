@@ -14,19 +14,32 @@ def _is_it_role(code: str | None) -> bool:
 def it_member_ids(db: Session, active_only: bool = True) -> set[str]:
     """返回 IT 团队人员 ID。
 
-    主口径是 department.dept_type=it；为兼容未补部门的存量账号，持有 IT 内置角色
-    （含自定义角色的 base_role）或加入授予 IT 角色用户组的人员也纳入。
+    管理员已配置统一范围时，口径为所选部门成员与单独指定人员的并集；这允许
+    从混合供应商临时组织中只纳入需要参与 IT 业务和绩效考核的外包人员。
+    未配置统一范围时，仍以 department.dept_type=it 为主，并兼容持有 IT 内置
+    角色或加入授予 IT 角色用户组的存量人员。
     """
     settings = get_org_settings(db)
     configured_roots = settings.digital_team_department_ids or []
-    if configured_roots:
-        department_ids = expand_department_ids(db, configured_roots, settings.digital_team_include_children)
-        query = db.query(OrgMember).filter(
-            OrgMember.is_deleted.is_(False), OrgMember.department_id.in_(department_ids or {"-"})
-        )
-        if active_only:
-            query = query.filter(OrgMember.status == "在岗")
-        return {m.id for m in query}
+    configured_members = set(settings.digital_team_member_ids or [])
+    if configured_roots or configured_members:
+        result: set[str] = set()
+        if configured_roots:
+            department_ids = expand_department_ids(db, configured_roots, settings.digital_team_include_children)
+            query = db.query(OrgMember).filter(
+                OrgMember.is_deleted.is_(False), OrgMember.department_id.in_(department_ids or {"-"})
+            )
+            if active_only:
+                query = query.filter(OrgMember.status == "在岗")
+            result.update(m.id for m in query)
+        if configured_members:
+            query = db.query(OrgMember).filter(
+                OrgMember.is_deleted.is_(False), OrgMember.id.in_(configured_members)
+            )
+            if active_only:
+                query = query.filter(OrgMember.status == "在岗")
+            result.update(m.id for m in query)
+        return result
 
     query = db.query(OrgMember).join(Department, Department.id == OrgMember.department_id).filter(
         OrgMember.is_deleted.is_(False), Department.is_deleted.is_(False), Department.dept_type == "it"
@@ -63,8 +76,9 @@ def is_it_member(db: Session, person_id: str | None) -> bool:
 
 
 def digital_team_scope_configured(db: Session) -> bool:
-    """是否已由管理员配置数字化团队根部门。"""
-    return bool(get_org_settings(db).digital_team_department_ids)
+    """是否已由管理员配置数字化团队部门或指定人员。"""
+    settings = get_org_settings(db)
+    return bool(settings.digital_team_department_ids or settings.digital_team_member_ids)
 
 
 def require_it_member_if_configured(db: Session, person_id: str | None, label: str = "人员") -> None:
