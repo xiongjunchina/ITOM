@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份底座、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 真实 Aily 多角色 UAT 与 P3 仍待完成。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已分别通过真实 Aily 多角色对话闭环与机器人收件验证，普通用户同单端到端验收及 P3 仍待完成。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -332,9 +332,9 @@ services:
 | M4 项目 | portfolios/projects/wbs/milestones/risks/costs/charter-import | 项目两标签页/详情 5 tab/甘特 | PRD §6 |
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
-| Aily-MCP P0（代码/自动化/真实身份链路已完成，机器人主动消息待验证） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
+| Aily-MCP P0（代码/自动化/真实身份及机器人真实收件已完成） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
-| Aily-MCP P2（代码、自动化与真实 Aily 对话闭环完成；主动机器人送达待配置） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
+| Aily-MCP P2（代码/自动化、真实 Aily 对话闭环及机器人收件分别完成；普通用户同单端到端待验收） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
 
 ## 8.1 业务域服务部门 API（M41）

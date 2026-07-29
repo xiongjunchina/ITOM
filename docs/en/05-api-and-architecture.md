@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity foundations, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`; real-Aily P2 multi-role UAT and P3 remain pending. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 has separately passed the real-Aily multi-role conversational loop and bot-receipt checks; a normal-user same-ticket end-to-end run and P3 remain pending. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -331,9 +331,9 @@ services:
 | M4 Project | portfolios/projects/wbs/milestones/risks/costs/charter-import | project two tabs / detail 5 tabs / Gantt | PRD §6 |
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
-| Aily-MCP P0 (code/automation/real identity path complete; proactive bot delivery pending) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
+| Aily-MCP P0 (code/automation/real identity path and live bot receipt complete) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
 | Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
-| Aily-MCP P2 (code/automation and real-Aily conversational loop complete; proactive bot delivery awaits configuration) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
+| Aily-MCP P2 (code/automation, real-Aily conversational loop, and bot receipt passed separately; normal-user same-ticket end-to-end UAT pending) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
 | Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
 
 ## 8.1 Business-domain Service Department API (M41)

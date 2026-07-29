@@ -5,7 +5,7 @@
 > Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
-> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 foundations, P1 intake, and P2 service-closure code are implemented. P1 passed real-Aily write UAT; P2 passes automated MCP/API closure regression and a production frontend build, while real-Aily multi-role/proactive-message UAT remains pending. P3 is not implemented.
+> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol, identity, and live bot receipt; P1 intake; and P2 service-closure code are complete. P1 passed real-Aily write UAT. P2 separately passed automated regression, a real-Aily multi-role conversational loop, and normal-user bot receipt; one same-ticket end-to-end run under the normal user remains pending. P3 is not implemented.
 
 ---
 
@@ -209,7 +209,7 @@ The change request and implementation tasks are handled by IT Operations. The ap
 - [x] Item, form, options, SLA, process, and person scope come from live ITOM data.
 - [x] Retrying a confirmed submission creates one ticket and starts the bound process and dispatch rule.
 - [x] Confirmation/reopen/rating requires an explicit ticket code, affects only the submitter's record, is idempotent, and uses the same web/MCP closure semantics (P2 automation).
-- [ ] Real-Aily proactive delivery, reply handling, and the complete multi-role closure loop pass UAT (P2 live environment).
+- [ ] One new normal-user ticket completes real-Aily creation → multi-role IT handling → proactive bot notification → Aily confirmation/reopen → closure and rating UAT (the conversational loop and bot receipt have passed separately).
 
 ### 5.2 Problem Management
 
@@ -524,9 +524,9 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | M36–37 Accounts and Personal Settings | 2.4, 3 | Safe account deletion, Feishu workplace login, profile center, self-service password, binding management, notification/theme/density preferences, personal activity |
 | M38 Interface & Branding | 10, 11 | Branding and login configuration, safe image assets, global appearance, role landing pages, banners/environment labels, publish history and rollback, built-in fallback |
 | M41 Role-specific Visual Redesign | 10, 11 | Scheme F service portal for requester-only users; Scheme C high-density workbench for all other roles; full-width horizontal logo above the sidebar title |
-| Aily-MCP P0 Protocol & Foundation (code and real identity path complete; proactive bot delivery pending) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
+| Aily-MCP P0 Protocol & Foundation (code, real identity path, and live bot receipt complete) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
 | Aily-MCP P1 Intake (real Aily write UAT complete for service requests and IT requirements) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
-| Aily-MCP P2 Closure Loop (code/automation and real-Aily conversational loop complete; proactive bot delivery awaits configuration) | 3, 5, 8 | Dispatch, accept, resolve, reliable outbox, confirm/reopen, close, and rate across real roles |
+| Aily-MCP P2 Closure Loop (code/automation, real-Aily conversational loop, and bot receipt passed separately; normal-user same-ticket end-to-end UAT pending) | 3, 5, 8 | Dispatch, accept, resolve, reliable outbox, confirm/reopen, close, and rate across real roles |
 | Aily-MCP P3 Approval & Release | 8, 10, 11 | Feishu Approval idempotency, IDC security/performance/recovery/UAT, user-approved PR to `main` |
 
 **System-level overall acceptance**: all creation forms require ≤ 5 items; no page manually maintains statistics; all six point-event categories trigger automatically; real acceptance covers “Aily request → MCP create → ITOM dispatch/accept/resolve → Aily proactive notification → requester confirm/reopen → close → rate” and “Aily requirement registration → ITOM evaluation → delivery/project → acceptance and closure.”
