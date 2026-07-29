@@ -5,7 +5,7 @@
 > Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
-> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol and foundation code is implemented and passes automated tests, production builds, and real Aily/ngrok identity integration; P1–P3 remain target capabilities. The frozen Helpdesk implementation remains under `v1.0.0-feishu-helpdesk` and is not the current contract for the new branch.
+> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol/identity foundations and P1 intake are implemented. P1 passes automated MCP/API regression, a production frontend build, real Aily queries, and a requester-confirmed service-request write UAT; requirement write UAT awaits local business-domain configuration. P2–P3 remain target capabilities.
 
 ---
 
@@ -88,8 +88,8 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 - User management and Feishu provisioning can link any non-deleted company person. The digital-team scope constrains IT assignment, resource pools, and performance subjects—not login accounts. User-list responses include readable linked-person and department names and never use the internal `person_id` as display text. An explicit `person_id: null` unlinks the account, while an omitted field preserves the current link.
 - Browser QR OAuth and Feishu workplace JSAPI login share identity matching, first-time provisioning approval, and normal sign-in behavior.
 - **Aily + MCP identity entry (implemented in P0)**: during first-time custom-MCP registration, read-only discovery calls such as `initialize` and `tools/list` are available only when MCP is enabled and Origin is allowlisted, because Aily reveals `identityJWTSecret` only after creation. Every `tools/call` must then pass `x-aily-jwt` HS256 signature/expiry and tenant/agent allowlists, map provider/tenant/app/subject to an active ITOM account, and only then apply RBAC, data scope, and process guards. The server accepts both the documented `user_id` and the `feishu_open_id` observed from the real tenant on 2026-07-29. `open_id` values from different Feishu apps are not assumed equal.
-- **Normal-user boundary (pending P1)**: Aily allows normal employees to create IT service requests or register IT requirements only. Service requests are fixed to `service_request`; requirements are separate `Requirement` records. Self-registration does not grant review or management rights.
-- **Mutation confirmation and audit**: P0 implements redacted tool audit and the `mcp_operation_intent` schema. P1 mutations use preview → explicit confirmation → confirmation intent plus idempotency key. Secrets, internal notes, and sensitive organization data never enter model context.
+- **Normal-user boundary (implemented in P1)**: Aily allows normal employees to create IT service requests or register IT requirements only. Service requests are fixed to `service_request`; requirements are separate `Requirement` records. Own-record access does not grant review or management rights.
+- **Mutation confirmation and audit (active in P1)**: mutations use preview → explicit confirmation → confirmation intent plus idempotency key, and retries return the first result. Secrets, internal notes, and sensitive organization data never enter model context or tool audit.
 - The profile center exposes account source, effective roles, timestamps, and read-only linked HR data. Users can set a local password, bind or unbind Feishu safely, inspect only their own audit activity, and persist avatar, bio, language, notification-category preferences, theme, and content density. Both the Scheme C workbench and Scheme F portal bind the active preference directly to their application shells. Dark mode consistently uses three charcoal surface levels for canvas, header, and modules instead of a white shell or pure-black canvas; navigation, tabs, segmented controls, and other interaction states use matching dark colors with clearly readable contrast.
 - The signed-in application header exposes a “User Manual” entry immediately to the left of the language switcher. Every signed-in role can use search, product categories, popular/recent guides, and article TOCs to read the current system overview, module logic, procedures, role boundaries, and troubleshooting notes; it is maintained alongside `docs/en/user-operation-manual.md`.
 - On approval, a 12-character strong initial password is stored as recoverable encrypted ciphertext without automatic delivery. User details hide it until an administrator clicks the eye control; email is sent only through the explicit action. Both are audited, and a password change/reset clears the ciphertext. System Integrations groups Feishu, SMTP, and AD/LDAP; LDAP supports connection testing and directory-password authentication for an existing same-name ITOM account.
@@ -168,7 +168,7 @@ Forms are service-item-specific instead of sharing a fixed Helpdesk questionnair
 | Type | System-fixed | Normal-user creation is always `service_request`; Aily cannot change it |
 | Urgency | Per item | P1–P4; defaults and allowed values come from ITOM rules |
 | Catalog / service item | ✔ | Live catalog plus requester scope; supplies SLA, process, and dispatch |
-| Dynamic answers | Per form | Text, options, dates, people/departments, attachments, etc. |
+| Dynamic answers | Per form | P1 supports text, options, number, dates, people/departments, and boolean; attachments and asset/CI fields are later extensions |
 | Assignee | Optional | Available to IT staff/administrators under Internal Handling Information; if empty, defaults to the process assignment |
 | Linked CI | Optional | Collapsed under "More" |
 | Remarks | Optional | Collapsed under "More" |
@@ -205,9 +205,10 @@ The change request and implementation tasks are handled by IT Operations. The ap
 - [ ] A change ticket cannot enter Implementing without approval.
 - [ ] SLA attainment is auto-determined correctly (including deduction of on-hold time).
 - [ ] Resolving a ticket auto-produces a point event.
-- [ ] Normal users cannot create incidents or changes; the Aily submission tool has no `ticket_type` input.
-- [ ] Item, form, options, SLA, process, and person scope come from live ITOM data.
-- [ ] Retrying a confirmed submission creates one ticket; confirmation/reopen/rating affects the explicitly selected ticket.
+- [x] Normal users cannot create incidents or changes; the Aily submission tool has no `ticket_type` input.
+- [x] Item, form, options, SLA, process, and person scope come from live ITOM data.
+- [x] Retrying a confirmed submission creates one ticket and starts the bound process and dispatch rule.
+- [ ] Confirmation/reopen/rating affects the explicitly selected ticket (P2).
 
 ### 5.2 Problem Management
 
@@ -222,8 +223,8 @@ Sources: manual creation, escalation from a ticket (one click; description and l
 
 Two-tier structure: **Catalog** (category, Gold/Silver/Bronze tiering) → **Service Item**.
 
-- Base fields remain name, catalog, service type, owner, description, SLA, audience, status, and code. The Aily + MCP target adds search keywords/synonyms, typical/excluded scenarios, active form version, bound process, dispatch rule, approval, and default-priority rules.
-- Form versions support text, options, number, date, people/department, boolean, attachment, and later asset/CI fields. Tickets store answer and schema snapshots so later item changes do not rewrite history.
+- Base fields remain name, catalog, service type, owner, description, SLA, audience, status, and code. P1 adds search keywords/synonyms, typical/excluded scenarios, the active form version, a bound process, layered dispatch, and a default priority. Admin/CIO maintains and publishes these through the catalog's visual Form/Dispatch action. Approval is derived from approval nodes in the bound process rather than duplicated as a drifting boolean.
+- Form versions are immutable once published. P1 supports short/long text, single/multi-select, number, date/datetime, person, department, and boolean fields; attachments and asset/CI fields are later extensions. Tickets store answer and schema snapshots so later item changes do not rewrite history.
 - The target audience is structured: choose “All employees” or “Custom scope”. Custom scope selects departments and active employees from the organization tree; references are validated on save and a readable summary remains available for lists, search, and historical records. The requester portal and ticket-creation API enforce the scope server-side; administrators and internal IT roles retain the full catalog view.
 - A service item's annual ticket volume is displayed as a live statistic, not entered.
 - Admin/CIO can publish or unpublish catalogs and service items directly from the list using up/down actions. Unpublishing does not delete history; unpublished items are hidden from the requester service portal.
@@ -367,8 +368,8 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 - [ ] Closure is not allowed until all acceptance criteria are checked (otherwise hand off a problem or explain).
 - [ ] Handed-off problems/knowledge automatically carry the requirement code as a back-link.
 - [ ] Fully bilingual; weights / thresholds / rubric are admin-configurable.
-- [ ] Aily retrieves the real requirement form, asks only for missing fields, and writes a `Requirement` rather than a ticket after confirmation.
-- [ ] Normal users can register and read their own requirements but cannot review, assign, score, convert, or close them.
+- [x] Aily retrieves the real requirement form, asks only for missing fields, and writes a `Requirement` rather than a ticket after confirmation.
+- [x] Normal users can register and read their own requirements but cannot review, assign, score, convert, or close them.
 
 ---
 
@@ -523,7 +524,7 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | M38 Interface & Branding | 10, 11 | Branding and login configuration, safe image assets, global appearance, role landing pages, banners/environment labels, publish history and rollback, built-in fallback |
 | M41 Role-specific Visual Redesign | 10, 11 | Scheme F service portal for requester-only users; Scheme C high-density workbench for all other roles; full-width horizontal logo above the sidebar title |
 | Aily-MCP P0 Protocol & Foundation (code and real identity path complete; proactive bot delivery pending) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
-| Aily-MCP P1 Intake | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
+| Aily-MCP P1 Intake (real service-request write complete; requirement UAT awaits a domain) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
 | Aily-MCP P2 Closure Loop | 3, 5, 8 | Dispatch, accept, resolve, proactive notification, confirm/reopen, close, and rate across real roles |
 | Aily-MCP P3 Approval & Release | 8, 10, 11 | Feishu Approval idempotency, IDC security/performance/recovery/UAT, user-approved PR to `main` |
 

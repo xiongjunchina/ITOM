@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol, identity, audit, message foundation, and Helpdesk removal are implemented on `feature/aily-agent-mcp`; P1–P3 business tools remain approved targets. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity foundations and P1 intake are implemented on `feature/aily-agent-mcp`; P2–P3 remain approved targets. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -94,11 +94,12 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 
 A repeated trigger while running returns HTTP 409 / `SYNC_RUNNING`. The UI polls every three seconds for up to ten minutes. Completion or failure sends an in-app notification to the initiator, and the background worker uses an independent database session.
 
-### 4.1b Aily Agent + MCP (P0 implemented; P1 business tools pending)
+### 4.1b Aily Agent + MCP (P0/P1 implemented; P2 closure tools pending)
 
 ```text
-GET/POST /mcp
+GET/POST /mcp/
     # Implemented Streamable HTTP entry; exact allowlisted Origin is always required
+    # Aily's custom-MCP request URL must retain the canonical trailing slash; omitting it fails save-time validation
     # read-only initialize/tools-list discovery can complete first registration before the JWT secret is copied back
     # tools/call requires a verifiable x-aily-jwt plus tenant/agent and identity mapping
     # Nginx disables buffering, uses a 300-second read timeout, and forwards auth/Origin
@@ -115,7 +116,7 @@ get_current_user_context
     # temporary P0 diagnostic: returns verification, account status, and readable account name only; no internal/external IDs; writes mcp_tool_call
 ```
 
-MCP is mounted inside FastAPI and does not create a second business API. P0 uses MCP Python SDK 1.29 with stateless Streamable HTTP. Each FastAPI lifespan creates an independent protocol session manager, supporting production startup, test restarts, and development reloads. Aily reveals `identityJWTSecret` only after a custom MCP has been saved, so registration allows only protocol discovery (`initialize`, `notifications/initialized`, `ping`, `tools/list`, and empty resource/prompt lists), still guarded by the enable switch and exact Origin allowlist. Every `tools/call` requires JWT, tenant/agent, external-identity, and account-status validation. The tool layer handles protocol, identity context, input/output, and audit. P1 search, form validation, creation, confirmation, reopen, and rating call the same ITOM domain services as the web application.
+MCP is mounted inside FastAPI and does not create a second business API. P0 uses MCP Python SDK 1.29 with stateless Streamable HTTP. First registration permits protocol discovery only and remains guarded by enablement and the exact Origin allowlist. Every `tools/call` requires JWT, tenant/agent, external identity, and account status. P1 tools handle protocol, identity context, structured I/O, and redacted audit only; catalog search, form validation, ticket creation, dispatch, process start, and requirement registration use the same ITOM domain services as the web application.
 
 #### Service-request tools
 
@@ -126,6 +127,11 @@ prepare_service_request
 submit_service_request
 get_my_service_request
 list_my_service_requests
+```
+
+The six tools above are implemented in P1. The following closure tools belong to P2:
+
+```text
 get_my_pending_confirmations
 confirm_service_request_resolution
 rate_service_request
@@ -148,7 +154,7 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-Registration creates a separate `Requirement`, never a Ticket. Normal employees use constrained `requirements.self_create` plus own-record data scope; review, scoring, project conversion, and closure keep existing permissions.
+Registration creates a separate `Requirement`, never a Ticket. Normal employees reuse existing `requirements.create/view` permissions with enforced own-record scope; review, scoring, project conversion, and closure retain existing edit/process permissions.
 
 #### Forbidden tools
 
@@ -170,8 +176,9 @@ POST /api/tickets/{id}/escalate-problem  # one-click escalation to a problem
 POST /api/tickets/{id}/to-knowledge      # one-click knowledge capture (draft)
 GET/POST/PATCH /api/problems | POST /api/problems/{id}/transition
 GET/POST/PATCH /api/catalogs | /api/service-items. The catalog list returns `item_count` plus `published_item_count` and `unpublished_item_count`; the service-item GET endpoint accepts `catalog_id`, `q` (code/name/type/audience/owner keyword), `status` (published/unpublished; omitted means all), `sort_by`, and `sort_dir` for list filtering and sorting.
-GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # target
-GET/PUT /api/service-items/{id}/dispatch-rule  # target; catalog/global fallback is managed by admin APIs
+GET /api/service-items/{id}/form                # P1 active form visible to the requester
+GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # P1
+GET/PUT /api/service-items/{id}/dispatch-rule  # P1 item rule; runtime also resolves catalog/global fallback
 POST /api/tickets/{id}/accept                  # target; actual acceptance timestamp and response SLA
 POST /api/tickets/{id}/confirm-resolution      # target; requester close or reopen, shared by web and MCP
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # impact analysis (upstream/downstream + linked tickets)
@@ -199,7 +206,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
-# target: requirements.self_create plus own-record scope for normal employees; no second requirement entity
+# P1: requirements.create/view plus enforced own-record scope; no second requirement entity
 ```
 
 ### 4.5 Process
@@ -290,10 +297,10 @@ Scheduled tasks cover SLA, contracts, and milestones. P0 adds Aily outbox delive
 6. **Matrix-role performance review**: the system first generates reference scores from ITSM, requirements, projects, processes, and points events. Business-line leads can write only business-role proposals; professional-line leads can write only professional-role proposals; platform roles and leaders' own scores are entered directly by the CIO. The backend enforces `performance_role_assignment.review_scope`; UI hiding is not an authorization boundary.
 7. **External-input and publication isolation**: external business satisfaction is stored in `performance_external_input` and must be submitted, verified, and locked before it affects scoring. `performance_score_component` keeps reference, stage proposal, and effective values separately. `/api/my/performance` returns published snapshots only.
 8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again.
-9. **MCP boundary (target)**: tools call domain services only. `x-aily-jwt` passes allowlist and `external_identity` mapping before creating request-scoped `AuthUser` context. Prompts are never the sole business validator.
-10. **Confirmation/idempotency (target)**: a preview stores `mcp_operation_intent`; submission validates token hash, user, tool, payload digest, expiry, and idempotency key. Retries return the first result.
-11. **Form snapshots (target)**: published versions are immutable; ticket creation stores version, answers, and schema. Person/department choices are revalidated at submit time.
-12. **Dispatch (target)**: service-item rule → catalog default → global fallback; round-robin selects only enabled active group members. Failure preserves the ticket and alerts administrators.
+9. **MCP boundary (implemented in P1)**: tools call domain services only. `x-aily-jwt` passes allowlist and `external_identity` mapping before creating request-scoped `AuthUser` context. Prompts are never the sole business validator.
+10. **Confirmation/idempotency (implemented in P1)**: preview stores `mcp_operation_intent`; submission validates token hash, user, tool, expiry, and idempotency key. Payload digest prevents key reuse with different content; retries return the first result.
+11. **Form snapshots (implemented in P1)**: published versions are immutable; ticket creation stores version, answers, and schema. Person/department choices are revalidated at submit time.
+12. **Dispatch (implemented in P1)**: service-item rule → catalog default → global fallback; round-robin selects only enabled, active members with an active account. No matching assignee preserves the ticket and emits an unassigned event.
 
 ## 7. Deployment Architecture
 
@@ -306,8 +313,8 @@ services:
 ```
 
 - Environment variables: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_INIT_PASSWORD`, `TZ=Asia/Shanghai`.
-- IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes local Docker plus ngrok on the full `127.0.0.1:8180` origin for the web app, `/api`, OAuth callback, and `/mcp`.
-- `/mcp` preserves streaming and a suitable read timeout. Secrets belong in headers, never URLs, logs, or frontend build variables.
+- IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes local Docker plus ngrok on the full `127.0.0.1:8180` origin for the web app, `/api`, OAuth callback, and `/mcp/`.
+- `/mcp/` preserves streaming and a suitable read timeout. Aily uses the canonical URL with its trailing slash. Secrets belong in headers, never URLs, logs, or frontend build variables.
 - Logging: structured JSON to stdout (viewable via docker logs).
 
 ## 8. Milestone Mapping (development order)
@@ -321,7 +328,7 @@ services:
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path complete; proactive bot delivery pending) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
-| Aily-MCP P1 | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
+| Aily-MCP P1 (real service-request write complete; requirement UAT awaits a domain) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
 | Aily-MCP P2 | accept, resolution message, confirm/reopen, rating | existing ticket detail collaboration | PRD §5.1 |
 | Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
 

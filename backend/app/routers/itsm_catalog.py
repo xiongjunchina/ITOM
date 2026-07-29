@@ -9,17 +9,30 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import Department, OrgMember, ServiceCatalog, ServiceItem, SlaPolicy, Ticket
+from app.models import (
+    Department,
+    OrgMember,
+    ProcessDefinition,
+    ServiceCatalog,
+    ServiceDispatchRule,
+    ServiceItem,
+    ServiceItemFormVersion,
+    SlaPolicy,
+    Ticket,
+)
 from app.schemas.common import ok
 from app.schemas.itsm import (
     CatalogCreate,
     CatalogUpdate,
     ServiceItemCreate,
+    ServiceDispatchRuleIn,
+    ServiceItemFormVersionIn,
     ServiceItemUpdate,
     SlaPolicyIn,
 )
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services import dispatch, service_forms
 from app.services.service_audience import service_item_visible_to_user
 from app.services.team_scope import require_it_member_if_configured
 
@@ -191,6 +204,7 @@ def delete_catalog(
 
 def _item_row(i: ServiceItem, db: Session) -> dict:
     owner = db.get(OrgMember, i.owner) if i.owner else None
+    process = db.get(ProcessDefinition, i.process_definition_id) if i.process_definition_id else None
     return {
         "id": i.id, "item_code": i.item_code, "name": i.name, "is_example": i.is_example,
         "catalog_id": i.catalog_id, "catalog_name": i.catalog.name if i.catalog else None,
@@ -199,7 +213,24 @@ def _item_row(i: ServiceItem, db: Session) -> dict:
         "sla_response_hours": i.sla_response_hours, "sla_resolution_hours": i.sla_resolution_hours,
         "target_audience": i.target_audience, "target_audience_mode": i.target_audience_mode or "all",
         "target_audience_refs": i.target_audience_refs or [], "status": i.status,
+        "search_keywords": i.search_keywords or [], "search_synonyms": i.search_synonyms or [],
+        "typical_scenarios": i.typical_scenarios or [], "exclusion_scenarios": i.exclusion_scenarios or [],
+        "active_form_version_id": i.active_form_version_id,
+        "process_definition_id": i.process_definition_id,
+        "process_definition_name": process.name if process else None,
+        "default_priority": i.default_priority,
     }
+
+
+def _validate_service_process(db: Session, definition_id: str | None) -> None:
+    if not definition_id:
+        return
+    definition = db.get(ProcessDefinition, definition_id)
+    if not definition or definition.is_deleted or not definition.active or definition.entity_type != "ticket":
+        raise AppError("INVALID_PROCESS_DEFINITION", "服务项必须绑定活动的工单流程定义")
+    trigger_type = (definition.trigger_condition or {}).get("ticket_type")
+    if trigger_type not in (None, "service_request"):
+        raise AppError("INVALID_PROCESS_DEFINITION", "服务项不能绑定事件或变更专用流程")
 
 
 @router.get("/api/service-items")
@@ -256,6 +287,16 @@ def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=De
         raise AppError("NOT_FOUND", "目录不存在", 404)
     require_it_member_if_configured(db, body.owner, "服务项负责人")
     data = body.model_dump(exclude_unset=True)
+    if not data.get("process_definition_id"):
+        default_process = db.query(ProcessDefinition).filter(
+            ProcessDefinition.code == "sr_flow",
+            ProcessDefinition.entity_type == "ticket",
+            ProcessDefinition.active.is_(True),
+            ProcessDefinition.is_deleted.is_(False),
+        ).first()
+        if default_process:
+            data["process_definition_id"] = default_process.id
+    _validate_service_process(db, data.get("process_definition_id"))
     mode = data.get("target_audience_mode") or "all"
     summary, refs = _resolve_target_audience(db, mode, data.get("target_audience_refs"))
     data["target_audience"] = summary
@@ -264,6 +305,7 @@ def create_item(body: ServiceItemCreate, db: Session = Depends(get_db), actor=De
     item = ServiceItem(**data, item_code=gen_code(db, ServiceItem, "item_code", "SI"))
     db.add(item)
     db.flush()
+    service_forms.ensure_default_form(db, item, actor.id)
     audit(db, "service_item", item.id, "create", actor, {"name": body.name})
     db.commit()
     return ok(_item_row(item, db))
@@ -283,11 +325,125 @@ def update_item(item_id: str, body: ServiceItemUpdate, db: Session = Depends(get
         data.update({"target_audience": summary, "target_audience_mode": mode, "target_audience_refs": normalized_refs})
     if "owner" in data:
         require_it_member_if_configured(db, data["owner"], "服务项负责人")
+    if "process_definition_id" in data:
+        _validate_service_process(db, data["process_definition_id"])
     for k, v in data.items():
         setattr(item, k, v)
     audit(db, "service_item", item.id, "update", actor, {"fields": list(data.keys())})
     db.commit()
     return ok(_item_row(item, db))
+
+
+def _get_service_item(db: Session, item_id: str) -> ServiceItem:
+    item = db.get(ServiceItem, item_id)
+    if not item or item.is_deleted:
+        raise AppError("NOT_FOUND", "服务项不存在", 404)
+    return item
+
+
+@router.get("/api/service-items/{item_id}/form")
+def get_current_item_form(
+    item_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    item = _get_service_item(db, item_id)
+    if item.status != "上架" or not service_item_visible_to_user(db, item, user):
+        raise AppError("NOT_FOUND", "服务项不存在或当前账号不可申请", 404)
+    return ok(service_forms.form_row(service_forms.active_form(db, item)))
+
+
+@router.get("/api/service-items/{item_id}/form-versions")
+def list_item_form_versions(
+    item_id: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_perm("catalog", "view")),
+):
+    item = _get_service_item(db, item_id)
+    rows = (
+        db.query(ServiceItemFormVersion)
+        .filter(
+            ServiceItemFormVersion.service_item_id == item.id,
+            ServiceItemFormVersion.is_deleted.is_(False),
+        )
+        .order_by(ServiceItemFormVersion.version.desc())
+        .all()
+    )
+    return ok([service_forms.form_row(row) for row in rows], total=len(rows))
+
+
+@router.post("/api/service-items/{item_id}/form-versions")
+def create_item_form_version(
+    item_id: str,
+    body: ServiceItemFormVersionIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    item = _get_service_item(db, item_id)
+    ensure_not_example(item)
+    row = service_forms.create_draft(db, item, body.form_schema)
+    audit(db, "service_item_form", row.id, "create_draft", actor, {"item_code": item.item_code, "version": row.version})
+    db.commit()
+    return ok(service_forms.form_row(row))
+
+
+@router.post("/api/service-items/{item_id}/form-versions/{version}/publish")
+def publish_item_form_version(
+    item_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    item = _get_service_item(db, item_id)
+    ensure_not_example(item)
+    row = service_forms.publish_version(db, item, version, actor.id)
+    audit(db, "service_item_form", row.id, "publish", actor, {"item_code": item.item_code, "version": row.version})
+    db.commit()
+    return ok(service_forms.form_row(row))
+
+
+@router.get("/api/service-items/{item_id}/dispatch-rule")
+def get_item_dispatch_rule(
+    item_id: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_perm("catalog", "view")),
+):
+    item = _get_service_item(db, item_id)
+    rule = dispatch.resolve_rule(db, item)
+    if not rule:
+        return ok(None)
+    return ok({
+        "id": rule.id, "name": rule.name, "scope_type": rule.scope_type,
+        "scope_id": rule.scope_id, "target_type": rule.target_type,
+        "target_id": rule.target_id, "strategy": rule.strategy,
+        "priority": rule.priority, "active": rule.active, "fallback": rule.fallback,
+    })
+
+
+@router.put("/api/service-items/{item_id}/dispatch-rule")
+def put_item_dispatch_rule(
+    item_id: str,
+    body: ServiceDispatchRuleIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    item = _get_service_item(db, item_id)
+    ensure_not_example(item)
+    dispatch.validate_rule_target(db, body.target_type, body.target_id, body.strategy)
+    for current in db.query(ServiceDispatchRule).filter(
+        ServiceDispatchRule.scope_type == "service_item",
+        ServiceDispatchRule.scope_id == item.id,
+        ServiceDispatchRule.is_deleted.is_(False),
+    ):
+        current.is_deleted = True
+    rule = ServiceDispatchRule(
+        **body.model_dump(), scope_type="service_item", scope_id=item.id
+    )
+    db.add(rule)
+    db.flush()
+    audit(db, "service_dispatch_rule", rule.id, "upsert", actor, {"item_code": item.item_code, "name": rule.name})
+    db.commit()
+    return ok({"id": rule.id, **body.model_dump(), "scope_type": "service_item", "scope_id": item.id})
 
 
 @router.delete("/api/service-items/{item_id}")

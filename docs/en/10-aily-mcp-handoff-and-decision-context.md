@@ -1,6 +1,6 @@
 # ITOM Feishu Aily Agent + MCP Server Final Design Baseline
 
-> Status: **formal design baseline; P0 code, automated verification, and the real Aily/ngrok identity path are complete; real proactive bot delivery remains pending**
+> Status: **formal baseline; P0 real identity is complete; P1 code, automation, real Aily queries, and service-request write UAT are complete; requirement write UAT awaits business-domain configuration, and proactive bot delivery remains pending**
 > Approval date: 2026-07-29
 > The Chinese document is authoritative. This file is its English mirror.
 
@@ -8,7 +8,7 @@
 
 This document is the approved product and architecture baseline for the `feature/aily-agent-mcp` development line. It defines the goals, boundaries, tools, target data model, phases, and acceptance criteria. The implementation must not reintroduce Feishu Helpdesk or turn Aily, MCP, or Feishu into a second ITOM business system.
 
-This document records both target contracts and actual status. The branch implements P0 Helpdesk removal, embedded MCP, Aily JWT/origin/tenant/agent checks, external identity mapping, tool audit, and reliable bot outbox. P1–P3 remain target capabilities. Current capability must continue to be established from the real branch, models, routes, tests, and Git history.
+This document records both target contracts and actual status. The branch implements P0 Helpdesk removal, embedded MCP, Aily JWT/origin/tenant/agent checks, identity mapping, audit, and reliable bot outbox, plus P1 live catalog search, dynamic forms, preview/confirmation, idempotent service-request submission, process/dispatch, requirement registration, and own-record queries. P2–P3 remain targets.
 
 Before starting work, a new chat must read `AGENTS.md`, this document, `docs/03-PRD.md`, `docs/04-数据模型设计.md`, `docs/05-API契约与架构设计.md`, and `docs/06-用户身份与组织模型设计.md`, then inspect the real code and Git status.
 
@@ -117,7 +117,7 @@ In addition to current name, catalog, description, SLA, owner, and target audien
 
 ### 5.2 Dynamic form
 
-Forms are versioned and support short/long text, single/multi-select, number, date/datetime, person, department, boolean, attachment, and later asset/CI fields. Rules include required status, length/range, options, date bounds, people/department scope, conditional visibility/requiredness, and help text.
+Forms are versioned. P1 currently supports short/long text, single/multi-select, number, date/datetime, person, department, and boolean fields; attachment and asset/CI fields are later extensions. Rules include required status, length/range, options, date bounds, people/department scope, conditional visibility/requiredness, and help text.
 
 The ticket stores the form version, answers, and schema snapshot. Later service-item changes must not rewrite historical meaning. Web and MCP creation share the same form parser and validator.
 
@@ -165,6 +165,9 @@ V1 uses auditable round-robin within a group and selects only active, on-duty me
 - `submit_service_request`
 - `get_my_service_request`
 - `list_my_service_requests`
+
+The six tools above are implemented in P1; the following three closure tools are implemented in P2:
+
 - `get_my_pending_confirmations`
 - `confirm_service_request_resolution`
 - `rate_service_request`
@@ -196,11 +199,11 @@ Extend `notification_outbox` with recipient, idempotency key, retry count, next 
 
 ### 8.3 New ITSM models
 
-- `service_item_form_version`: versioned form and JSON Schema;
-- `service_dispatch_rule`: item/catalog/global dispatch rules;
-- `ticket_satisfaction`: score, tags, comment, source, and audit time, with one effective rating per ticket.
+- `service_item_form_version`: versioned form and JSON Schema [implemented in P1];
+- `service_dispatch_rule`: item/catalog/global dispatch rules [implemented in P1];
+- `ticket_satisfaction`: one effective rating with score/tags/comment/source/audit [P2 target].
 
-Extend `service_item` with search metadata and active bindings. Extend `ticket` with form answers/schema snapshot, dispatch facts, acceptance time, confirmation deadline, and suspected-major-impact flag. Keep `ticket.satisfaction` as a compatibility summary populated from the effective rating.
+P1 extends `service_item` with search metadata, active form, bound process, and default priority. Dispatch resolves through `scope_type + scope_id` without a duplicate current-rule FK. P1 extends `ticket` with form answers/schema snapshot, dispatch facts, and suspected-major-impact; P2 writes acceptance/confirmation timing and rating detail.
 
 ## 9. Feishu Helpdesk removal
 
@@ -212,25 +215,31 @@ Retain Feishu OAuth, workplace app login, organization sync, directory access, t
 
 ### Phase 0: protocol and foundation
 
-**Current state: code, automated verification, and the real Aily tenant identity path through ngrok `/mcp` are complete. Real proactive bot-recipient verification remains pending.**
+**Current state: code, automated verification, and the real Aily tenant identity path through ngrok `/mcp/` are complete. Real proactive bot-recipient verification remains pending.**
 
 - remove the Helpdesk runtime and data model;
 - embed MCP and expose `/mcp` through Nginx;
 - implement Aily JWT, identity mapping, tool audit, and proactive bot messaging;
 - validate with local Docker, ngrok, and the real Aily tenant.
 
-Verified: the Aily custom MCP uses Streamable HTTP and points to `/mcp` exposed through ngrok, and the P0 agent configuration is published to the current test account. First-registration discovery works before the Aily JWT secret is available, while `tools/call` still rejects missing JWT, unmapped users, wrong tenants, and wrong origins. A real Aily JWT passes signature, tenant, agent, and `feishu_open_id` validation; an observed pending identity can be approved and mapped by an ITOM administrator. `get_current_user_context` maps the correct account and writes redacted audit, while the final Aily response contains only verification result, account status, and a readable account name—never open_id, tenant_id, agent_id, or an internal ITOM primary key. The bot outbox, idempotency key, and send result are testable; no Helpdesk runtime entry remains. Pending: real proactive Feishu-bot delivery to a recipient.
+Verified: the Aily custom MCP uses Streamable HTTP and points to the canonical ngrok `/mcp/` URL with its trailing slash; live testing showed that omitting the slash fails Aily's save-time configuration validation. The P0 agent configuration is published to the current test account. First-registration discovery works before the Aily JWT secret is available, while `tools/call` still rejects missing JWT, unmapped users, wrong tenants, and wrong origins. A real Aily JWT passes signature, tenant, agent, and `feishu_open_id` validation; an observed pending identity can be approved and mapped by an ITOM administrator. `get_current_user_context` maps the correct account and writes redacted audit, while the final Aily response contains only verification result, account status, and a readable account name—never open_id, tenant_id, agent_id, or an internal ITOM primary key. The bot outbox, idempotency key, and send result are testable; no Helpdesk runtime entry remains. Pending: real proactive Feishu-bot delivery to a recipient.
 
 Local acceptance snapshot on 2026-07-29: the full backend regression suite reported `260 passed`; the focused P0 MCP suite reported `8 passed`; the production frontend image built successfully; the Docker Compose database, backend, and port-8180 frontend were healthy; model metadata contained 78 tables while Helpdesk tables and columns both returned `NONE`; local and ngrok-public `/api/health` returned HTTP 200; and a real Aily preview call reached `/mcp`, mapped the identity, and passed the no-system-identifier disclosure check. The current identity mapping is for local development only and must be rebound to the real ITOM account in production. This snapshot does not replace P1–P3 multi-role business-flow or IDC acceptance.
 
 ### Phase 1: request and requirement intake
+
+**Current state: code, automated MCP/API acceptance, the production frontend build, real Aily queries, and the service-request preview/confirmation/write UAT are complete. Requirement write UAT awaits at least one active business domain in the local environment.**
 
 - dynamic forms, search metadata, process/dispatch binding;
 - service-item search, form retrieval, preview, confirmation, and submission;
 - requirement form, preview, registration, and own-record queries;
 - normal users cannot create incidents.
 
+P1 local acceptance snapshot on 2026-07-29: the full backend suite reported `267 passed`, the focused P1 Streamable HTTP suite reported `5 passed`, and the production frontend build succeeded. Docker Compose migrations completed; model metadata and PostgreSQL both contain 80 tables; all 32 existing service items have a published form and `sr_flow`; and local port 8180 plus ngrok-public `/api/health` both returned HTTP 200. After Aily re-saved the canonical `/mcp/` URL, it discovered 12 tools and made real search, form, preview, and confirmed-submit calls. Test ticket `TK-202607-0001` was created exactly once as a P3 `service_request` in New status with its form version/schema snapshot and a running process instance. Because no explicit dispatch rule exists, it correctly entered the unassigned manual fallback queue. Aily also read the live requirement form and correctly reported that the local business-domain list is empty; it neither invented a domain nor created an invalid requirement. Requirement write UAT continues after an administrator configures a domain.
+
 Acceptance: results come from the live catalog; audience/form validation works; retrying a confirmed submission creates one record; the request starts the right process and dispatch; the requirement enters requirement management.
+
+P1 automated snapshot on 2026-07-29: full backend regression reported `267 passed`; five real Streamable HTTP MCP contract tests cover discovery, audience isolation, shared web/MCP form validation, short-lived confirmation, retries, process binding, dispatch, requirement workflow, and cross-user denial; the TypeScript/Vite production image built successfully; model metadata contains 80 tables. This complements the real Aily evidence above but does not replace P2 multi-role closure UAT or final IDC acceptance.
 
 ### Phase 2: service closure loop
 

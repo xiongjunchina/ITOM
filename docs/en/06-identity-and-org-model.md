@@ -4,7 +4,7 @@
 
 > Finalized on the 2026-07-10/11 product decisions. The design is benchmarked against ServiceNow's four-axis user / group / role / organization model.
 > Three iron rules: **a user may always hold multiple roles and is never bound to one**; **membership is a field, not a role**; **roles are granted on groups first**.
-> The 2026-07-29 Aily + MCP identity model is implemented in P0 and covered by automated protocol/permission tests; P1 business-tool authorization remains pending. The frozen Helpdesk identity path has been removed from the new branch runtime.
+> The 2026-07-29 Aily + MCP identity model is implemented in P0. P1 business tools reuse existing feature permissions, enforce own-record scope, and pass automated protocol, permission, and cross-user isolation tests. The frozen Helpdesk identity path has been removed from the new branch runtime.
 
 ## 1. The Four-Axis Model & Page Positioning
 
@@ -142,7 +142,7 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 - Current runtime change-management process: Change request (it_ops) → Change approval (it_op_leader, CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr, CC cio). Do not treat the old five-step “risk assessment → change approval” seed or its former CC relationships as the current process definition.
 - Task creation also stores the process version, `step_code`, and RACI snapshot. Changing a handler or CC relationship requires a new process version, so historical tasks and performance extraction remain stable.
 
-## 11. Aily + MCP identity and normal-user permissions (P0 identity implemented; P1 business permissions pending)
+## 11. Aily + MCP identity and normal-user permissions (P0/P1 implemented)
 
 ### 11.1 From Aily JWT to ITOM user
 
@@ -152,13 +152,13 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 4. If signature verification succeeds but the tenant or user has not been approved, the server records only a `status=pending` external-identity candidate and rejects tool execution. An administrator must select the ITOM account, allowlist the tenant, and activate the mapping.
 5. The active external subject maps through `external_identity` to `auth_user`; IDs remain strings and security comparisons are constant-time where applicable.
 6. Only active accounts continue; existing role matrix, data scope, and process guards then authorize the operation.
-7. Every tool call writes a redacted `mcp_tool_call` linked to business audit by call ID. P0 exposes only `get_current_user_context`; its result contains verification/account status and a readable account name, never open_id, tenant_id, agent_id, or an internal ITOM primary key. Business tools begin in P1 under the permissions below.
+7. Every tool call writes a redacted `mcp_tool_call`. `get_current_user_context` returns verification/account status and a readable name only. P1 business tools return public business codes and user-visible summaries, never open_id, tenant_id, agent_id, or an internal ITOM primary key.
 
 ### 11.2 Normal employee capability
 
 - Search published service items eligible for the employee and retrieve their real forms.
-- Create `service_request`, read own requests, confirm/reject resolution, and rate closed requests.
-- Register/read own IT requirements through `requirements.self_create`.
+- Create `service_request` and read own requests; resolution confirmation/rejection and rating are enabled in P2.
+- Register/read own IT requirements through existing `requirements.create/view`, with `requester == current auth_user.id` enforced by the service.
 - Never create incidents/changes, read another user's records, or perform review, reassignment, approval, or internal process tasks.
 
 The service-request tool does not accept `ticket_type`; requirement registration calls the separate Requirement domain service. UI hiding is not authorization: web APIs, MCP tools, and domain services enforce the same server-side boundary.

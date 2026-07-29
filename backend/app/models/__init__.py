@@ -1,4 +1,12 @@
-from app.models.itsm import ServiceCatalog, ServiceItem, SlaPolicy, SlaPriorityDefinition, Ticket
+from app.models.itsm import (
+    ServiceCatalog,
+    ServiceDispatchRule,
+    ServiceItem,
+    ServiceItemFormVersion,
+    SlaPolicy,
+    SlaPriorityDefinition,
+    Ticket,
+)
 from app.models.itsm_assets import (
     Ci,
     CiRelationship,
@@ -137,7 +145,9 @@ __all__ = [
     "ProcessStep",
     "ProcessTask",
     "ServiceCatalog",
+    "ServiceDispatchRule",
     "ServiceItem",
+    "ServiceItemFormVersion",
     "SlaPolicy",
     "SlaPriorityDefinition",
     "TeamCharter",

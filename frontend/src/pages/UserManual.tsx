@@ -89,12 +89,13 @@ const ZH_SECTIONS: ManualSection[] = [
       '服务请求按登记、分派、处理、验收和关闭推进；处理人只处理当前节点。',
       '服务目录由目录和服务项两层组成，服务项状态分为上架和下架。',
       '服务项的服务对象可选全体员工或自定义范围；自定义范围从组织架构树勾选部门或在岗员工，保存时校验引用并展示可读摘要。业务用户门户和提交服务请求时均由后端再次校验范围，管理员及 IT 内部角色仍可查看完整目录。',
+      '服务项绑定版本化动态表单、流程和派单规则；网页端与 Aily MCP 使用同一份表单定义和后端校验，历史工单保存创建时快照。',
       'SLA 根据服务项和优先级匹配响应/解决时限，并为服务看板和绩效提供取数。',
       '事件强调恢复，变更强调审批、实施和回退，问题强调根因和永久修复。',
     ],
     steps: [
-      '服务请求：进入“ITSM → 服务请求”，新建后在当前节点完成处理，登记人验收并关闭。',
-      '服务目录：左侧选择目录，右侧搜索/筛选服务项；使用上架、下架、编辑、删除或批量导入。编辑服务项时在“服务对象”选择全体员工或自定义范围，并在组织架构树勾选部门/在岗员工；业务用户只能看到并申请命中范围的服务项。删除目录时可在二次确认后同时软删除下属服务项，历史工单、项目和配置项仍保留。',
+      '服务请求：选择已上架且本人可申请的服务项，填写其已发布动态表单；提交后系统保存快照、启动绑定流程并自动派单，登记人最终验收并关闭。',
+      '服务目录：维护搜索词、典型/排除场景、服务对象、流程和默认优先级；在“表单/派单”中用可视化设计器发布表单版本，并配置固定人员、用户组、轮询或人工队列派单。',
       'CMDB/SLA：维护配置项、关联服务和时限策略。',
       '事件/变更/问题：打开详情，按流程图或右上角允许的按钮推进并填写说明。',
       '供应商/合同/知识库：维护基础资料、到期信息和可复用知识。',
@@ -119,6 +120,7 @@ const ZH_SECTIONS: ManualSection[] = [
     summary: '从需求登记到评审、方案评估、路由和验收形成闭环。',
     logic: [
       '需求总览负责登记、澄清和决议；任务跟踪负责拆分任务和执行进度；评分规则负责维度和权重。',
+      '登记前必须至少存在一个已启用的业务域；网页和 Aily MCP 只使用真实业务域列表，列表为空时先由管理员完成配置。',
       '需求可转开发、转项目、暂缓或拒绝；节点处理人和知会人由流程定义决定。',
     ],
     steps: ['在需求总览登记需求并选择业务域。', '根据当前节点补充分析、方案和评审结论。', '在任务跟踪查看责任人、计划日期和完成情况。', '需要调整评价口径时，由管理员维护评分规则。'],
@@ -161,14 +163,14 @@ const ZH_SECTIONS: ManualSection[] = [
       '组织管理维护部门树、人员主数据和业务服务域；数字化团队范围可组合部门与指定人员，并决定人员下拉和绩效对象。',
       '用户与组管理维护账号、角色、用户组、登录开通和初始密码。',
       '角色与权限按模块设置查看/新建/编辑/删除；admin 隐式全权，auditor 只读。',
-      '系统集成统一配置飞书、SMTP 和 AD/LDAP；界面与品牌管理登录页和登录后视觉配置。',
+      '系统集成统一配置飞书登录/组织同步、SMTP 和 AD/LDAP；Aily 通过独立 MCP Server 调用 ITOM 业务能力，不再经过飞书服务台。',
       '审计日志记录用户、权限、流程、绩效、外部原数据和品牌发布等关键操作。',
     ],
     steps: [
       '组织管理：同步组织架构后，选择数字化团队部门及需要额外纳入的具体人员；再创建业务服务域并选择服务部门。',
       '用户与组：关联人员、配置角色/用户组并审批飞书登录申请。',
       '角色与权限：维护角色定义、预分配规则和模块动作权限。',
-      '系统集成：分别保存飞书、SMTP、AD/LDAP 配置并执行连接测试。',
+      '系统集成：分别保存飞书登录/组织同步、SMTP、AD/LDAP 配置并执行连接测试；Aily MCP 的公网地址和身份参数由部署配置维护。',
       '界面与品牌：上传并裁剪 Logo，配置名称、主题、侧栏、公告和默认首页。',
       '审计日志：按实体、动作、操作人和时间检索变更。',
     ],
@@ -200,8 +202,8 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'itsm', title: 'ITSM', summary: 'Manage requests, catalog, CMDB, SLA, incidents, changes, problems, vendors, contracts, and knowledge.',
-    logic: ['Requests move through assignment, processing, acceptance, and closure.', 'Catalogs contain service items with published/unpublished status.', 'A service item audience is either all employees or a structured custom scope selected from departments and active employees; references are validated before save and enforced by both the requester portal and ticket-creation API.', 'SLA targets feed service dashboards and performance.', 'Incidents restore service; changes manage approval/implementation/rollback; problems manage root cause and permanent fixes.'],
-    steps: ['Create and process a service request.', 'Select a catalog and maintain items with search/filter/sort or bulk import; when editing an item, choose All employees or Custom scope and select departments/employees in the organization tree; requesters only see and apply for matching items; deleting a catalog can also soft-delete its child items after confirmation.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
+    logic: ['Requests move through assignment, processing, acceptance, and closure.', 'Catalogs contain service items with published/unpublished status.', 'A service item audience is either all employees or a structured custom scope selected from departments and active employees; references are validated before save and enforced by both the requester portal and ticket-creation API.', 'Each item binds a versioned dynamic form, process, and dispatch rule; web and Aily MCP share one schema and backend validator, while historical tickets retain their creation snapshot.', 'SLA targets feed service dashboards and performance.', 'Incidents restore service; changes manage approval/implementation/rollback; problems manage root cause and permanent fixes.'],
+    steps: ['Choose a published eligible item and complete its published dynamic form; ITOM stores a snapshot, starts the bound process, and dispatches the request.', 'Maintain search terms, typical/excluded scenarios, audience, process, and default priority; use Form / Dispatch to publish form versions and configure fixed-person, group, round-robin, or manual-queue dispatch.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
     role: 'Business users normally see requests and knowledge; ITSM maintenance is permission-controlled.',
   },
   {
@@ -211,7 +213,7 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'requirements', title: 'Requirement management', summary: 'Close the loop from registration and review through solution routing and acceptance.',
-    logic: ['Overview handles registration and decisions; Task Tracking handles execution; Scoring Rules handles dimensions and weights.', 'Requirements route to development, projects, deferment, or rejection through workflow.'],
+    logic: ['Overview handles registration and decisions; Task Tracking handles execution; Scoring Rules handles dimensions and weights.', 'At least one active business domain is required; the web UI and Aily MCP use only the live domain list and report an explicit blocker when it is empty.', 'Requirements route to development, projects, deferment, or rejection through workflow.'],
     steps: ['Register a requirement and select its domain.', 'Add analysis, solution, and review results at the current step.', 'Track owners, dates, and completion in Task Tracking.', 'Maintain scoring rules when the evaluation model changes.'],
   },
   {
@@ -227,8 +229,8 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'admin', title: 'System administration', summary: 'Organization, users, permissions, dictionaries, integrations, branding, and audit.',
-    logic: ['Organization scope controls every operational person selector.', 'Users/groups manage accounts, roles, resource pools, provisioning, and initial passwords.', 'System Integrations groups Feishu, SMTP, and AD/LDAP.', 'Branding controls login and post-login visual settings; audit records important changes.'],
-    steps: ['Sync organization data, select digital-team departments, and add any individually included people.', 'Manage users/groups and approve Feishu provisioning.', 'Maintain roles, provisioning rules, and module actions.', 'Save/test Feishu, SMTP, and AD/LDAP settings.', 'Configure names, logos, theme, sidebar, announcements, and landing pages.', 'Search audit logs.'],
+    logic: ['Organization scope controls every operational person selector.', 'Users/groups manage accounts, roles, resource pools, provisioning, and initial passwords.', 'System Integrations groups Feishu sign-in/organization sync, SMTP, and AD/LDAP; Aily uses the separate MCP Server instead of Feishu Helpdesk.', 'Branding controls login and post-login visual settings; audit records important changes.'],
+    steps: ['Sync organization data, select digital-team departments, and add any individually included people.', 'Manage users/groups and approve Feishu provisioning.', 'Maintain roles, provisioning rules, and module actions.', 'Save/test Feishu sign-in/sync, SMTP, and AD/LDAP settings; maintain Aily MCP public endpoint and identity parameters in deployment configuration.', 'Configure names, logos, theme, sidebar, announcements, and landing pages.', 'Search audit logs.'],
     role: 'Most system pages are admin-only; other access follows the permission matrix.',
   },
   {
@@ -264,7 +266,7 @@ const ARTICLE_META: Record<string, { category: HelpCategoryId; tags: string[]; f
 const CATEGORY_ORDER: HelpCategoryId[] = ['getting-started', 'itsm', 'projects', 'requirements', 'team', 'process', 'admin', 'profile'];
 
 function buildDetailedArticles(english: boolean): HelpArticle[] {
-  const updated = english ? 'Updated Jul 23, 2026' : '更新于 2026-07-23';
+  const updated = english ? 'Updated Jul 29, 2026' : '更新于 2026-07-29';
   if (english) {
     return [
       {
@@ -272,15 +274,15 @@ function buildDetailedArticles(english: boolean): HelpArticle[] {
         summary: 'Understand the complete request lifecycle, ownership hand-offs, acceptance, SLA capture, and closure rules.',
         tags: ['Request', 'Workflow', 'SLA'], updated,
         logic: [
-          'Entry: a requester selects a published service item; the system creates the request number, initial status, SLA clock, and process instance.',
-          'Assignment: service item, business domain, and process rules determine the IT owner. The current handler receives a task; CC recipients only receive a notification.',
+          'Entry: a requester selects a published eligible service item and completes its currently published dynamic form; the same schema and validator are used by the web UI and Aily MCP.',
+          'Assignment: ITOM stores the form version/schema snapshot, creates the request number and SLA clock, starts the process bound to the item, and applies item, catalog, then global dispatch rules.',
           'Processing: the handler records analysis, solution, and delivery evidence, then completes the current processing node. A clarification returns to the active step instead of bypassing the workflow.',
           'Acceptance: the requester checks the delivered result. Acceptance moves the record to closure; rejection returns it to processing with the acceptance comment retained.',
           'Closure: the system stamps completion time, SLA result, audit event, and performance inputs. Reopening is restricted to the configured permission scope.',
         ],
         steps: [
           'Open ITSM → Service Requests and click New.',
-          'Choose a published service item, confirm priority/SLA, and describe the expected outcome and attachments.',
+          'Choose a published service item, confirm priority/SLA, and complete only the fields required by its dynamic form.',
           'Use Current Step or My Turn to locate the task; the assignee completes the node with a processing note.',
           'The requester reviews the result and accepts or returns it with a reason.',
           'After closure, use the audit trail and SLA details to confirm the hand-off was captured.',
@@ -373,15 +375,15 @@ function buildDetailedArticles(english: boolean): HelpArticle[] {
       summary: '讲清服务请求的完整生命周期、责任交接、验收、SLA 取数与关闭规则。',
       tags: ['服务请求', '流程', 'SLA'], updated,
       logic: [
-        '入口：业务用户选择已上架服务项提交申请，系统生成编号、初始状态、SLA 计时和流程实例。',
-        '分派：系统依据服务项、业务域和流程规则确定 IT 负责人；当前处理人收到待办，知会人只收到通知。',
+        '入口：业务用户选择本人可申请的已上架服务项，填写其当前已发布动态表单；网页端与 Aily MCP 使用同一份定义和校验。',
+        '分派：系统保存表单版本与定义快照、生成编号和 SLA 计时、启动服务项绑定流程，并依次应用服务项、目录和全局派单规则。',
         '处理：处理人记录分析、方案和交付佐证，然后完成当前处理节点；需要澄清时回到当前处理步骤，不绕过流程直接改终态。',
         '验收：登记人检查交付结果；通过后进入关闭，拒绝则带着验收意见回到处理节点。',
         '关闭：系统写入实际完成时间、SLA 结果、审计事件和绩效取数；重开仅对配置范围内的角色开放。',
       ],
       steps: [
         '进入“ITSM → 服务请求”，点击新建。',
-        '选择已上架服务项，确认优先级/SLA，填写期望结果、描述和附件。',
+        '选择已上架服务项，确认优先级/SLA，只填写该动态表单要求的字段。',
         '通过“当前节点”或“待我处理”定位待办，处理人填写处理说明并完成节点。',
         '登记人查看交付结果，选择验收通过或带理由退回。',
         '关闭后查看审计轨迹和 SLA 明细，确认责任交接已留痕。',

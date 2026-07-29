@@ -2,9 +2,9 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on PRD v1.2 and the approved Aily + MCP baseline. P0 code currently maps **78 tables**: Support 29, ITSM 13, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 will add three ITSM tables, for a final target of **81 tables**.
+> Based on PRD v1.2 and the approved Aily + MCP baseline. P1 code maps **80 tables**: Support 29, ITSM 15, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 adds form-version and dispatch-rule tables. P2's rating-detail table brings the target to **81 tables**.
 > Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
-> This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support models and outbox extensions are implemented in P0; dynamic-form, dispatch, and rating models remain P1/P2 targets. Database facts must be checked against real models and migrations.
+> This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, and dispatch models are implemented; rating detail remains a P2 target. Database facts must be checked against real models and migrations.
 
 ## 0. Global Conventions
 
@@ -110,13 +110,13 @@ Singleton: enabled, mcp_auth_mode, encrypted MCP JWT secret, allowed tenant/agen
 
 Unique call_id, tool_name, tenant/agent, external subject as subject type plus SHA-256 (never the complete external user ID), auth_user_id, session-reference hash, request digest, result code, entity type/ID, duration, and time. It never stores JWTs, app secrets, full prompts, or sensitive form answers.
 
-### 1.13 mcp_operation_intent [P0 schema; used from P1]
+### 1.13 mcp_operation_intent [active in P1]
 
-Unique intent_id, tool, auth_user_id, normalized payload, payload digest, token hash, idempotency key, status (prepared/consumed/expired/failed), expiry/consumption times, and result entity/snapshot. Unique `(auth_user_id, tool_name, idempotency_key)`; raw confirmation tokens are not stored.
+Unique intent_id, tool, auth_user_id, normalized payload, payload digest, token hash, idempotency key, status (prepared/executed/expired), expiry/consumption times, and result entity/snapshot. Unique `(auth_user_id, tool_name, idempotency_key)`; raw confirmation tokens are not stored.
 
 ---
 
-## 2. ITSM Domain (13 in P0; 16 targeted for P1/P2)
+## 2. ITSM Domain (15 in P1; 16 targeted for P2)
 
 ### 2.1 service_catalog — service catalog [cfg]
 
@@ -134,12 +134,11 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | description | TEXT | |
 | sla_response_hours / sla_resolution_hours | FLOAT | Overrides the SLA policy default; nullable |
 | target_audience | VARCHAR(128) | |
-| search_keywords / search_synonyms | JSONB | Aily search terms [target] |
-| typical_scenarios / exclusion_scenarios | JSONB | Included/excluded scenarios [target] |
-| active_form_version_id | FK→service_item_form_version | Active form [target] |
-| process_definition_id | FK→process_definition | Bound process [target] |
-| dispatch_rule_id | FK→service_dispatch_rule | Dispatch rule [target] |
-| approval_required / default_priority_rule | BOOLEAN / JSONB | Approval/priority rules [target] |
+| search_keywords / search_synonyms | JSONB | Aily search terms [P1] |
+| typical_scenarios / exclusion_scenarios | JSONB | Included/excluded scenarios [P1] |
+| active_form_version_id | FK→service_item_form_version | Active published form [P1] |
+| process_definition_id | FK→process_definition | Bound process [P1] |
+| default_priority | VARCHAR(8) | Default P1–P4 urgency [P1] |
 | status | VARCHAR(16) | Listed / Delisted |
 
 ### 2.3 ticket — single-table ticket; normal users create service_request only
@@ -154,21 +153,21 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | Approval [C] | approved_by, approved_at, approval_comment | written by change approval |
 | Derived [C] | ticket_code, status, submitter, submitter_dept, service_line, submitted_at, first_response_at, resolved_at, closed_at, paused_minutes (on-hold accumulation, deducted from SLA), reopen_count, first_time_fix, sla_response_min, sla_resolution_hours, sla_response_met, sla_resolution_met | |
 | Links | problem_id FK→problem (back-written after escalation), requirement_id FK→requirement, process_instance_id | |
-| Dynamic form [target] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
-| Dispatch facts [target] | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | Rule/source plus dispatch/acceptance times |
-| Confirmation [target] | confirmation_due_at, suspected_major_impact | Confirmation deadline and suspected broad impact |
+| Dynamic form [P1] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
+| Dispatch facts [P1 model] | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records rule/source/dispatch; P2 records actual acceptance |
+| Confirmation | confirmation_due_at [P2], suspected_major_impact [P1] | Confirmation deadline and suspected broad impact |
 
 Indexes: status, assignee, service_item_id, submitted_at, (ticket_type, status).
 
 Normal-user creation fixes `ticket_type=service_request`; MCP does not accept the field. Incidents are created only by IT staff or monitoring identities. `ticket.satisfaction` remains a compatibility score populated from the effective rating row.
 
-### 2.13 service_item_form_version [cfg][target]
+### 2.13 service_item_form_version [cfg][implemented in P1]
 
 service_item_id, version, status (draft/published/retired), schema JSONB, publisher/time, checksum. Schema covers field code/type/label, required/default, length/range/date/options, person/department scope, conditional rules, help text, and sensitivity. Unique `(service_item_id, version)`; referenced versions cannot be physically deleted.
 
-### 2.14 service_dispatch_rule [cfg][target]
+### 2.14 service_dispatch_rule [cfg][implemented in P1]
 
-name, scope_type (service_item/catalog/global), scope_id, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. Execution results are snapshotted to the ticket.
+name, scope_type (service_item/catalog/global), scope_id, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. A service item does not duplicate a current-rule FK; resolution uses `scope_type + scope_id` in item → catalog → global order, and records the execution facts on the ticket.
 
 ### 2.15 ticket_satisfaction [target]
 
@@ -373,7 +372,7 @@ period_id FK, person FK, version, business_role_score, professional_role_score, 
 erDiagram
     service_catalog ||--o{ service_item : "contains"
     service_item ||--o{ service_item_form_version : "form versions"
-    service_item }o--|| service_dispatch_rule : "dispatch"
+    service_item ||--o{ service_dispatch_rule : "logical scope_id"
     service_item ||--o{ ticket : "ticket basis / carries SLA"
     ticket ||--o| ticket_satisfaction : "effective rating"
     ticket }o--|| ci : "links"

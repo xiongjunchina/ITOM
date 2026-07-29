@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议、身份、审计、消息底座和 Helpdesk 清理已在 `feature/aily-agent-mcp` 实现；P1–P3 业务工具仍是已确认目标。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份底座和 P1 服务入口已在 `feature/aily-agent-mcp` 实现；P2–P3 仍是已确认目标。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -92,11 +92,12 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 
 后台同步运行期间重复触发返回 HTTP 409 / `SYNC_RUNNING`。前端每 3 秒读取 `last_sync_stats`，最长等待 10 分钟；完成或失败后向触发人发送站内通知。后台任务使用独立数据库会话，不能复用请求会话。
 
-### 4.1b Aily Agent + MCP（P0 已实现；P1 业务工具待实现）
+### 4.1b Aily Agent + MCP（P0/P1 已实现；P2 闭环工具待实现）
 
 ```text
-GET/POST /mcp
+GET/POST /mcp/
     # P0 已实现的 Streamable HTTP 主入口；Origin 必须命中白名单
+    # Aily 自定义 MCP 配置必须填写带末尾斜杠的规范地址；省略斜杠会在保存校验阶段失败
     # initialize/tools/list 等只读协议发现允许在尚未回填 JWT Secret 时完成首次注册
     # tools/call 必须携带可验签 x-aily-jwt，并通过租户/Agent/身份映射
     # Nginx 关闭缓冲、保留 300 秒读超时并透传鉴权/Origin；密钥不进入 URL
@@ -113,7 +114,7 @@ get_current_user_context
     # P0 临时 MCP 联调工具：只返回验证成功、账号状态和可读账号名；不返回内外部 ID，并写 mcp_tool_call
 ```
 
-MCP Server 作为 FastAPI 后端模块挂载，不建立第二套业务 API。P0 使用 MCP Python SDK 1.29 的无状态 Streamable HTTP；每次 FastAPI 生命周期创建独立会话管理器，兼容生产启动、测试重启和开发热重载。Aily 首次保存自定义 MCP 后才展示 `identityJWTSecret`，因此注册阶段只允许 `initialize`、`notifications/initialized`、`ping`、`tools/list` 及空资源/提示词列表等协议发现方法；这些请求仍须命中启用开关和 Origin 白名单。任何 `tools/call` 都必须完成 JWT、租户/Agent、身份映射和账号状态校验。工具层只负责协议、身份上下文、输入/输出和审计，P1 的搜索、表单校验、创建、确认、重开和评价必须调用与网页相同的 ITOM 领域服务。
+MCP Server 作为 FastAPI 后端模块挂载，不建立第二套业务 API。P0 使用 MCP Python SDK 1.29 的无状态 Streamable HTTP；每次 FastAPI 生命周期创建独立会话管理器，兼容生产启动、测试重启和开发热重载。Aily 首次保存自定义 MCP 后才展示 `identityJWTSecret`，因此注册阶段只允许协议发现方法，且仍须命中启用开关和 Origin 白名单。任何 `tools/call` 都必须完成 JWT、租户/Agent、身份映射和账号状态校验。P1 工具层只负责协议、身份上下文、结构化输入/输出和脱敏审计；服务项检索、表单校验、建单、派单、流程启动与需求登记均调用与网页相同的 ITOM 领域服务。
 
 #### 服务请求工具
 
@@ -124,6 +125,11 @@ prepare_service_request
 submit_service_request
 get_my_service_request
 list_my_service_requests
+```
+
+以上 6 个服务请求工具已在 P1 实现。以下闭环工具属于 P2：
+
+```text
 get_my_pending_confirmations
 confirm_service_request_resolution
 rate_service_request
@@ -146,7 +152,7 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-需求登记写入独立 `Requirement`，不创建 Ticket。普通员工使用受限的 `requirements.self_create` 和本人数据范围；评审、评分、转项目和关闭继续由现有需求权限及流程控制。
+需求登记写入独立 `Requirement`，不创建 Ticket。普通员工复用现有 `requirements.create/view` 功能权限并强制本人数据范围；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
 
 #### 禁止工具
 
@@ -168,8 +174,9 @@ POST /api/tickets/{id}/escalate-problem  # 一键升级为问题
 POST /api/tickets/{id}/to-knowledge      # 一键沉淀知识(草稿)
 GET/POST/PATCH /api/problems | POST /api/problems/{id}/transition
 GET/POST/PATCH /api/catalogs | /api/service-items。目录列表返回 `item_count` 及按状态拆分的 `published_item_count`、`unpublished_item_count`；服务项 GET 支持 `catalog_id`、`q`（编号/名称/类型/服务对象/负责人关键字）、`status`（上架/下架，未传表示全部）、`sort_by` 与 `sort_dir` 参数，列表页据此实现筛选和排序。
-GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # 目标：动态表单版本
-GET/PUT /api/service-items/{id}/dispatch-rule  # 目标：服务项派单规则；目录/全局兜底在管理 API 维护
+GET /api/service-items/{id}/form                # P1：当前用户可申请的已发布表单
+GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # P1：动态表单版本
+GET/PUT /api/service-items/{id}/dispatch-rule  # P1：服务项派单规则；运行时仍支持目录/全局兜底
 POST /api/tickets/{id}/accept                  # 目标：实际受理打点，响应 SLA 以此为准
 POST /api/tickets/{id}/confirm-resolution      # 目标：提交人确认关闭或未解决重开；网页与 MCP 共用服务
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # 影响分析(上下游+关联工单)
@@ -197,7 +204,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
-# 目标：普通员工通过 requirements.self_create 受限登记，并由服务层强制本人数据范围；不新增第二套需求实体
+# P1：普通员工复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
 ```
 
 ### 4.5 流程
@@ -291,10 +298,10 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。
 7. **外部原数据与发布隔离**：外部业务满意度先写入 `performance_external_input`，完成提交/核验/锁定后才参与折算；`performance_score_component` 保存系统参考分、阶段建议分和生效分，`/api/my/performance` 只返回已发布快照。
 8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。
-9. **MCP 适配边界（目标）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
-10. **确认与幂等（目标）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、payload digest、过期时间和 idempotency key；重复调用返回首次结果，不重复建单或启动流程。
-11. **动态表单快照（目标）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项由 ITOM 实时返回并在提交时二次校验。
-12. **服务派单（目标）**：服务项规则 → 目录默认组 → 全局兜底组；组内轮询只选择启用且在岗成员。派单失败保留工单并告警，禁止静默无处理人。
+9. **MCP 适配边界（P1 已实现）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
+10. **确认与幂等（P1 已实现）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、过期时间和 idempotency key；payload digest 在准备阶段防止同键异内容，重复调用返回首次结果，不重复建单或启动流程。
+11. **动态表单快照（P1 已实现）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项在提交时二次校验。
+12. **服务派单（P1 已实现）**：服务项规则 → 目录默认组 → 全局兜底组；组内轮询只选择启用且在岗并有活动账号的成员。没有可用规则时保留工单并产生未派单事件，禁止静默丢单。
 
 ## 7. 部署架构
 
@@ -307,8 +314,8 @@ services:
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
-- 正式发布仍以 IDC Kubernetes 为最终验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布。当前 IDC 基础设施阻塞期间，用户已授权 Aily + MCP 使用本地 Docker 开发，并由 ngrok 暴露完整 `127.0.0.1:8180`；同一 HTTPS 根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp`。
-- `/mcp` 必须保留流式响应并设置合理读超时；密钥只放请求头，不放 URL、日志或前端构建变量。
+- 正式发布仍以 IDC Kubernetes 为最终验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布。当前 IDC 基础设施阻塞期间，用户已授权 Aily + MCP 使用本地 Docker 开发，并由 ngrok 暴露完整 `127.0.0.1:8180`；同一 HTTPS 根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。
+- `/mcp/` 必须保留流式响应并设置合理读超时；Aily 配置使用带末尾斜杠的规范地址，密钥只放请求头，不放 URL、日志或前端构建变量。
 - 日志：结构化 JSON 到 stdout（docker logs 可查）。
 
 ## 8. 里程碑映射（开发顺序）
@@ -322,7 +329,7 @@ services:
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份链路已完成，机器人主动消息待验证） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
-| Aily-MCP P1 | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
+| Aily-MCP P1（服务请求真实写入已完成；需求 UAT 等待业务域） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2 | 受理、解决通知、确认/重开、评价 | 现有工单详情协同 | PRD §5.1 |
 | Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
 

@@ -153,10 +153,26 @@ ENSURE_COLUMNS = {
     "service_item": [
         ("target_audience_mode", "VARCHAR(16) NOT NULL DEFAULT 'all'"),
         ("target_audience_refs", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("search_keywords", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("search_synonyms", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("typical_scenarios", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("exclusion_scenarios", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("active_form_version_id", "VARCHAR(26)"),
+        ("process_definition_id", "VARCHAR(26)"),
+        ("default_priority", "VARCHAR(8) NOT NULL DEFAULT 'P3'"),
     ],
     "ticket": [
         ("service_category", "VARCHAR(128)"),
         ("other_info", "TEXT"),
+        ("request_data", "JSONB"),
+        ("request_form_version_id", "VARCHAR(26)"),
+        ("request_form_snapshot", "JSONB"),
+        ("dispatch_rule_id", "VARCHAR(26)"),
+        ("dispatch_source", "VARCHAR(32)"),
+        ("assigned_at", "TIMESTAMP"),
+        ("accepted_at", "TIMESTAMP"),
+        ("confirmation_due_at", "TIMESTAMP"),
+        ("suspected_major_impact", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ],
 }
 

@@ -69,6 +69,7 @@ def test_registration_mode_requires_origin_but_not_jwt(client, admin_headers):
     assert response.status_code == 200, response.text
     assert response.json()["data"]["mcp_discovery_ready"] is True
     assert response.json()["data"]["mcp_tool_calls_ready"] is False
+    assert response.json()["data"]["mcp_path"] == "/mcp/"
 
     discovery_headers = {"origin": ORIGIN, "accept": "application/json, text/event-stream"}
     initialize = client.post("/mcp/", headers=discovery_headers, json={

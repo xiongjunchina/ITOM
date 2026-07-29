@@ -14,6 +14,7 @@ from app.core.glid import new_glid
 from app.db import SessionLocal
 from app.mcp.context import current_aily_principal, require_aily_principal
 from app.mcp.identity import resolve_aily_principal, validate_aily_request_source
+from app.mcp.tools import P1_TOOLS
 from app.models import AuthUser, McpToolCall
 
 
@@ -176,7 +177,7 @@ def build_mcp_server() -> FastMCP:
         name="ITOM Aily MCP",
         instructions=(
             "ITOM 是服务目录、表单、权限、流程和业务状态的唯一依据。"
-            "当前 P0 仅开放身份与链路诊断工具，业务工具将在后续阶段启用。"
+            "当前 P1 开放服务项检索、真实表单、服务请求提交、IT 需求登记及本人单据查询。"
         ),
         stateless_http=True,
         json_response=True,
@@ -186,6 +187,8 @@ def build_mcp_server() -> FastMCP:
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
     server.tool()(get_current_user_context)
+    for tool in P1_TOOLS:
+        server.tool()(tool)
     return server
 
 

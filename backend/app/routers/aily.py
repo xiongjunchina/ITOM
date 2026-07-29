@@ -101,7 +101,10 @@ def _config_payload(cfg) -> dict:
         "last_test_at": cfg.last_test_at,
         "last_test_status": cfg.last_test_status,
         "last_error_redacted": cfg.last_error_redacted,
-        "mcp_path": "/mcp",
+        # Aily's custom-MCP save validation requires the canonical mounted path.
+        # Keep the trailing slash in the operator-facing URL even though FastAPI
+        # also accepts the mount prefix without it.
+        "mcp_path": "/mcp/",
     }
 
 

@@ -251,6 +251,7 @@ PROCESS_DEFS = [
 
 def run_seed_itsm(db: Session):
     from app.models import MasterData
+    from app.services.service_forms import ensure_default_form
 
     for category, code, name, sort in CI_CATEGORIES:
         if not db.query(MasterData).filter_by(category=category, code=code).first():
@@ -293,4 +294,10 @@ def run_seed_itsm(db: Session):
                 service_type="日常运维", description="未细分服务项前的默认入口，可编辑",
             )
         )
+    db.flush()
+    service_request_process = db.query(ProcessDefinition).filter_by(code="sr_flow", active=True).first()
+    for item in db.query(ServiceItem).filter(ServiceItem.is_deleted.is_(False)):
+        ensure_default_form(db, item)
+        if not item.process_definition_id and service_request_process:
+            item.process_definition_id = service_request_process.id
     db.commit()

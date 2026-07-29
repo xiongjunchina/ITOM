@@ -9,6 +9,7 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   Modal,
   Popconfirm,
   Select,
@@ -28,7 +29,7 @@ import type { PendingStep } from '../../components/PendingStepCell';
 import { useT } from '../../i18n';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
-import type { Member, ServiceItem, TicketPriority, TicketRow, TicketType } from '../../api/types';
+import type { Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 
 /** 状态 → Badge 样式（按语义猜测，未匹配用 processing；含变更状态机 rejected/rolled_back） */
@@ -69,6 +70,7 @@ interface TicketFormValues {
   rollback_plan?: string;
   planned_window?: [Dayjs, Dayjs];
   implementation_plan?: string;
+  request_data?: Record<string, unknown>;
 }
 
 /** 工单类型 → 权限模块（M17.2 按类型独立授权） */
@@ -113,6 +115,8 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const [form] = Form.useForm<TicketFormValues>();
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [serviceItemsLoading, setServiceItemsLoading] = useState(false);
+  const [serviceForm, setServiceForm] = useState<ServiceItemFormVersion | null>(null);
+  const [serviceFormLoading, setServiceFormLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const directCreateStarted = useRef(false);
 
@@ -128,6 +132,77 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
 
   const serviceItemsForCategory = (category?: string) =>
     serviceItems.filter((item) => item.catalog_name === category || item.name === category);
+
+  const loadServiceForm = async (itemId?: string) => {
+    setServiceForm(null);
+    if (!itemId || !isServiceRequest) return;
+    setServiceFormLoading(true);
+    try {
+      const current = await api.get<ServiceItemFormVersion>(`/service-items/${itemId}/form`);
+      setServiceForm(current);
+      const defaults: Record<string, unknown> = {};
+      Object.entries(current.schema.properties).forEach(([code, definition]) => {
+        if (definition.default !== undefined) defaults[code] = definition.default;
+      });
+      form.setFieldValue('request_data', defaults);
+      if (typeof defaults.priority === 'string') {
+        form.setFieldValue('priority', defaults.priority as TicketPriority);
+      }
+    } catch {
+      setServiceForm(null);
+    } finally {
+      setServiceFormLoading(false);
+    }
+  };
+
+  const renderDynamicField = (code: string, definition: ServiceFormField, required: boolean) => {
+    const rules = required ? [{ required: true, message: `请填写${definition.title}` }] : undefined;
+    const common = { name: ['request_data', code], label: definition.title, rules };
+    if (definition.type === 'boolean') {
+      return <Form.Item key={code} {...common} valuePropName="checked"><Switch /></Form.Item>;
+    }
+    if (definition.type === 'integer' || definition.type === 'number') {
+      return (
+        <Form.Item key={code} {...common}>
+          <InputNumber
+            precision={definition.type === 'integer' ? 0 : undefined}
+            min={definition.minimum}
+            max={definition.maximum}
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+      );
+    }
+    if (definition.type === 'array') {
+      const options = definition.items?.enum ?? definition.enum;
+      return (
+        <Form.Item key={code} {...common}>
+          <Select
+            mode={options ? 'multiple' : 'tags'}
+            options={options?.map((value) => ({ value, label: String(value) }))}
+          />
+        </Form.Item>
+      );
+    }
+    if (definition.enum) {
+      return (
+        <Form.Item key={code} {...common}>
+          <Select options={definition.enum.map((value) => ({ value, label: String(value) }))} />
+        </Form.Item>
+      );
+    }
+    if (definition.format === 'date') {
+      return <Form.Item key={code} {...common}><DatePicker style={{ width: '100%' }} /></Form.Item>;
+    }
+    if (definition['x-itom-field-type'] === 'long_text') {
+      return (
+        <Form.Item key={code} {...common}>
+          <Input.TextArea rows={3} maxLength={definition.maxLength} />
+        </Form.Item>
+      );
+    }
+    return <Form.Item key={code} {...common}><Input maxLength={definition.maxLength} /></Form.Item>;
+  };
 
   // M20 行内编辑 / 关闭
   const [editing, setEditing] = useState<TicketRow | null>(null);
@@ -171,6 +246,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
 
   const openCreate = () => {
     form.resetFields();
+    setServiceForm(null);
     setDrawerOpen(true);
     if (serviceItems.length === 0) {
       setServiceItemsLoading(true);
@@ -212,6 +288,15 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     if (isServiceRequest) {
       if (values.service_category) payload.service_category = values.service_category;
       if (values.other_info) payload.other_info = values.other_info;
+      const requestData = { ...(values.request_data ?? {}) };
+      Object.entries(requestData).forEach(([code, value]) => {
+        if (dayjs.isDayjs(value)) requestData[code] = value.format('YYYY-MM-DD');
+      });
+      requestData.title = values.title;
+      requestData.description = values.description;
+      if (serviceForm?.schema.properties.priority) requestData.priority = values.priority;
+      payload.request_data = requestData;
+      payload.request_form_version_id = serviceForm?.id;
     }
     if (values.assignee != null) payload.assignee = values.assignee;
     if (values.remarks) payload.remarks = values.remarks;
@@ -545,7 +630,9 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                   options={serviceCategoryOptions}
                   onChange={(value: string) => {
                     const matches = serviceItemsForCategory(value);
-                    form.setFieldValue('service_item_id', matches.length === 1 ? matches[0].id : undefined);
+                    const itemId = matches.length === 1 ? matches[0].id : undefined;
+                    form.setFieldValue('service_item_id', itemId);
+                    void loadServiceForm(itemId);
                   }}
                 />
               </Form.Item>
@@ -568,6 +655,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                         disabled={!category || serviceItemsLoading}
                         placeholder={category ? t('itsm.ticket.serviceItemDetailPlaceholder') : t('itsm.ticket.chooseCategoryFirst')}
                         options={matches.map((i) => ({ value: i.id, label: i.name }))}
+                        onChange={(itemId: string) => void loadServiceForm(itemId)}
                       />
                     </Form.Item>
                   );
@@ -583,6 +671,14 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
               <Form.Item name="other_info" label={t('itsm.ticket.otherInfo')}>
                 <Input.TextArea rows={3} maxLength={1000} placeholder={t('itsm.ticket.otherInfoPlaceholder')} />
               </Form.Item>
+              {serviceFormLoading && <Card size="small" loading style={{ marginBottom: 16 }} />}
+              {serviceForm && Object.entries(serviceForm.schema.properties)
+                .filter(([code]) => !['title', 'description', 'priority'].includes(code))
+                .map(([code, definition]) => renderDynamicField(
+                  code,
+                  definition,
+                  (serviceForm.schema.required ?? []).includes(code),
+                ))}
               <Form.Item label={t('itsm.ticket.agent')}>
                 <Input disabled value={t('itsm.ticket.agentPending')} />
               </Form.Item>

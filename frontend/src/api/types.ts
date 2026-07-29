@@ -747,9 +747,46 @@ export interface ServiceItem {
   target_audience?: string | null;
   target_audience_mode?: 'all' | 'custom' | null;
   target_audience_refs?: Array<{ type: 'department' | 'member'; id: string }> | null;
+  search_keywords?: string[];
+  search_synonyms?: string[];
+  typical_scenarios?: string[];
+  exclusion_scenarios?: string[];
+  active_form_version_id?: string | null;
+  process_definition_id?: string | null;
+  process_definition_name?: string | null;
+  default_priority?: TicketPriority;
   status: '上架' | '下架';
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+}
+
+export interface ServiceFormField {
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'array';
+  title: string;
+  enum?: Array<string | number>;
+  default?: unknown;
+  format?: 'date' | 'date-time';
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+  items?: { type: 'string' | 'integer' | 'number'; enum?: Array<string | number> };
+  'x-itom-field-type'?: 'long_text' | 'person' | 'department';
+}
+
+export interface ServiceItemFormVersion {
+  id: string;
+  version: number;
+  status: 'draft' | 'published' | 'retired';
+  checksum: string;
+  published_at?: string | null;
+  schema: {
+    type: 'object';
+    required?: string[];
+    properties: Record<string, ServiceFormField>;
+  };
 }
 
 // ============ SLA ============

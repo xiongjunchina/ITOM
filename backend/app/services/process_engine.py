@@ -39,6 +39,26 @@ def _match_definition(db: Session, entity_type: str, entity: dict) -> ProcessDef
     return None
 
 
+def resolve_definition(
+    db: Session,
+    entity_type: str,
+    entity_attrs: dict,
+    definition_id: str | None = None,
+) -> ProcessDefinition | None:
+    """解析显式绑定流程；未绑定时兼容按实体触发条件匹配。"""
+    if not definition_id:
+        return _match_definition(db, entity_type, entity_attrs)
+    definition = db.get(ProcessDefinition, definition_id)
+    if (
+        not definition
+        or definition.is_deleted
+        or not definition.active
+        or definition.entity_type != entity_type
+    ):
+        raise AppError("PROCESS_DEFINITION_UNAVAILABLE", "服务项绑定流程不存在、未启用或类型不匹配")
+    return definition
+
+
 def _resolve_assignee(db: Session, step: ProcessStep, preferred: str | None) -> str | None:
     """指派解析：优先单据受理人；否则按步骤默认角色/用户组找一个在岗成员。
 
@@ -255,8 +275,15 @@ def _live_steps(definition: ProcessDefinition) -> list[ProcessStep]:
     return [s for s in definition.steps if not s.is_deleted]
 
 
-def start_instance(db: Session, entity_type: str, entity_id: str, entity_attrs: dict, preferred_assignee: str | None = None) -> ProcessInstance | None:
-    definition = _match_definition(db, entity_type, entity_attrs)
+def start_instance(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    entity_attrs: dict,
+    preferred_assignee: str | None = None,
+    definition_id: str | None = None,
+) -> ProcessInstance | None:
+    definition = resolve_definition(db, entity_type, entity_attrs, definition_id)
     if not definition or not _live_steps(definition):
         return None
     instance = ProcessInstance(

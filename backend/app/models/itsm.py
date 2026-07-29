@@ -34,9 +34,63 @@ class ServiceItem(GlidBase):
     target_audience_refs: Mapped[list | None] = mapped_column(
         JsonCol, default=list, comment="服务对象引用 [{type: department|member, id}]"
     )
+    search_keywords: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    search_synonyms: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    typical_scenarios: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    exclusion_scenarios: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    active_form_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey(
+            "service_item_form_version.id",
+            name="fk_service_item_active_form_version",
+            use_alter=True,
+        )
+    )
+    process_definition_id: Mapped[str | None] = mapped_column(
+        ForeignKey("process_definition.id")
+    )
+    default_priority: Mapped[str] = mapped_column(String(8), default="P3")
     status: Mapped[str] = mapped_column(String(16), default="上架")
 
-    catalog: Mapped[ServiceCatalog] = relationship()
+    catalog: Mapped[ServiceCatalog] = relationship(foreign_keys=[catalog_id])
+
+
+class ServiceItemFormVersion(GlidBase):
+    """服务项动态表单不可变发布版本；工单保存版本及提交时快照。"""
+
+    __tablename__ = "service_item_form_version"
+    __table_args__ = (UniqueConstraint("service_item_id", "version"),)
+
+    service_item_id: Mapped[str] = mapped_column(ForeignKey("service_item.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(
+        String(16), default="draft", index=True, comment="draft/published/retired"
+    )
+    schema: Mapped[dict] = mapped_column(JsonCol, default=dict)
+    published_by: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+    checksum: Mapped[str] = mapped_column(String(64))
+
+
+class ServiceDispatchRule(GlidBase):
+    """服务项、目录或全局派单规则；命中事实会快照到工单。"""
+
+    __tablename__ = "service_dispatch_rule"
+
+    name: Mapped[str] = mapped_column(String(128))
+    scope_type: Mapped[str] = mapped_column(
+        String(16), index=True, comment="service_item/catalog/global"
+    )
+    scope_id: Mapped[str | None] = mapped_column(String(26), index=True)
+    target_type: Mapped[str] = mapped_column(String(16), comment="group/member")
+    target_id: Mapped[str] = mapped_column(String(26))
+    strategy: Mapped[str] = mapped_column(
+        String(16), default="round_robin", comment="round_robin/fixed/manual_queue"
+    )
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    fallback: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_assigned_member_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
+    last_assigned_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class SlaPolicy(GlidBase):
@@ -74,6 +128,11 @@ class Ticket(GlidBase):
     # 服务请求表单兼容字段；历史工单允许为空
     service_category: Mapped[str | None] = mapped_column(String(128))
     other_info: Mapped[str | None] = mapped_column(Text)
+    request_data: Mapped[dict | None] = mapped_column(JsonCol)
+    request_form_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("service_item_form_version.id")
+    )
+    request_form_snapshot: Mapped[dict | None] = mapped_column(JsonCol)
     # 创建可选
     assignee: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), index=True)
     ci_id: Mapped[str | None] = mapped_column(String(26), comment="M3 接 CMDB 外键")
@@ -116,6 +175,12 @@ class Ticket(GlidBase):
     sla_response_met: Mapped[bool | None] = mapped_column(Boolean)
     sla_resolution_met: Mapped[bool | None] = mapped_column(Boolean)
     sla_warned: Mapped[bool] = mapped_column(Boolean, default=False, comment="临期升级已通知")
+    dispatch_rule_id: Mapped[str | None] = mapped_column(ForeignKey("service_dispatch_rule.id"))
+    dispatch_source: Mapped[str | None] = mapped_column(String(32))
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    confirmation_due_at: Mapped[datetime | None] = mapped_column(DateTime)
+    suspected_major_impact: Mapped[bool] = mapped_column(Boolean, default=False)
     # 关联
     problem_id: Mapped[str | None] = mapped_column(String(26), comment="M3 接问题外键")
     requirement_id: Mapped[str | None] = mapped_column(String(26), comment="M5 接需求外键")

@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Col,
   Alert,
   Empty,
@@ -48,7 +49,18 @@ import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
 import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
-import type { Catalog, CatalogTier, Department, Member, ServiceItem } from '../../api/types';
+import type {
+  Catalog,
+  CatalogTier,
+  Department,
+  Member,
+  ProcessDefinition,
+  ServiceFormField,
+  ServiceItem,
+  ServiceItemFormVersion,
+  TicketPriority,
+  UserGroup,
+} from '../../api/types';
 import { TIER_COLORS, TIER_LABELS } from '../../api/types';
 import SortableTable from '../../components/SortableTable';
 
@@ -70,6 +82,36 @@ interface ItemFormValues {
   sla_resolution_hours?: number | null;
   target_audience_mode?: 'all' | 'custom';
   status?: '上架' | '下架';
+  search_keywords?: string[];
+  search_synonyms?: string[];
+  typical_scenarios?: string[];
+  exclusion_scenarios?: string[];
+  process_definition_id?: string;
+  default_priority?: TicketPriority;
+}
+
+type DesignerKind = 'short_text' | 'long_text' | 'choice' | 'date' | 'number' | 'boolean' | 'person' | 'department';
+
+interface DesignerField {
+  code: string;
+  title: string;
+  kind: DesignerKind;
+  required?: boolean;
+  options?: string[];
+  max_length?: number;
+}
+
+interface ServiceConfigValues {
+  fields: DesignerField[];
+  dispatch_target?: string;
+  dispatch_strategy?: 'round_robin' | 'fixed' | 'manual_queue';
+}
+
+interface DispatchRuleView {
+  name: string;
+  target_type: 'group' | 'member';
+  target_id: string;
+  strategy: 'round_robin' | 'fixed' | 'manual_queue';
 }
 
 type AudienceRef = { type: 'department' | 'member'; id: string };
@@ -98,6 +140,8 @@ export default function CatalogPage() {
   const [itemStatus, setItemStatus] = useState<'全部' | '上架' | '下架'>('全部');
 
   const [members, setMembers] = useState<Member[]>([]);
+  const [processDefinitions, setProcessDefinitions] = useState<ProcessDefinition[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
 
   // 目录 Modal
   const [catalogModalOpen, setCatalogModalOpen] = useState(false);
@@ -110,6 +154,12 @@ export default function CatalogPage() {
   const [editingItem, setEditingItem] = useState<ServiceItem | null>(null);
   const [itemSaving, setItemSaving] = useState(false);
   const [itemForm] = Form.useForm<ItemFormValues>();
+
+  const [configItem, setConfigItem] = useState<ServiceItem | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configForm] = Form.useForm<ServiceConfigValues>();
+  const [loadedSchema, setLoadedSchema] = useState<ServiceItemFormVersion['schema'] | null>(null);
 
   // 服务对象范围选择器：结构化保存部门/员工引用，兼容旧版 target_audience 文本。
   const [audienceMode, setAudienceMode] = useState<'all' | 'custom'>('all');
@@ -178,12 +228,132 @@ export default function CatalogPage() {
 
   useEffect(() => {
     if (canManage) {
-      api
-        .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
-        .then((res) => setMembers(res.items))
-        .catch(() => undefined);
+      Promise.all([
+        api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }),
+        api.getList<ProcessDefinition>('/admin/process-definitions'),
+        api.getList<UserGroup>('/admin/groups'),
+      ]).then(([memberRes, processRes, groupRes]) => {
+        setMembers(memberRes.items);
+        setProcessDefinitions(processRes.items.filter((row) => row.active && row.entity_type === 'ticket'));
+        setGroups(groupRes.items);
+      }).catch(() => undefined);
     }
   }, [canManage]);
+
+  const kindOf = (definition: ServiceFormField): DesignerKind => {
+    if (definition['x-itom-field-type'] === 'long_text') return 'long_text';
+    if (definition['x-itom-field-type'] === 'person') return 'person';
+    if (definition['x-itom-field-type'] === 'department') return 'department';
+    if (definition.enum) return 'choice';
+    if (definition.format === 'date') return 'date';
+    if (definition.type === 'number' || definition.type === 'integer') return 'number';
+    if (definition.type === 'boolean') return 'boolean';
+    return 'short_text';
+  };
+
+  const openServiceConfig = async (item: ServiceItem) => {
+    setConfigItem(item);
+    setConfigLoading(true);
+    configForm.resetFields();
+    try {
+      const [formVersion, dispatchRule] = await Promise.all([
+        api.get<ServiceItemFormVersion>(`/service-items/${item.id}/form`),
+        api.get<DispatchRuleView | null>(`/service-items/${item.id}/dispatch-rule`),
+      ]);
+      setLoadedSchema(formVersion.schema);
+      configForm.setFieldsValue({
+        fields: Object.entries(formVersion.schema.properties).map(([code, definition]) => ({
+          code,
+          title: definition.title,
+          kind: kindOf(definition),
+          required: (formVersion.schema.required ?? []).includes(code),
+          options: definition.enum?.map(String),
+          max_length: definition.maxLength,
+        })),
+        dispatch_target: dispatchRule ? `${dispatchRule.target_type}:${dispatchRule.target_id}` : undefined,
+        dispatch_strategy: dispatchRule?.strategy ?? 'round_robin',
+      });
+    } catch {
+      setConfigItem(null);
+      setLoadedSchema(null);
+    } finally {
+      setConfigLoading(false);
+    }
+  };
+
+  const fieldDefinition = (field: DesignerField): ServiceFormField => {
+    const previous = loadedSchema?.properties[field.code] ?? {} as ServiceFormField;
+    const next: Record<string, unknown> = { ...previous, title: field.title };
+    delete next.enum;
+    delete next.format;
+    delete next['x-itom-field-type'];
+    delete next.minimum;
+    delete next.maximum;
+    delete next.maxLength;
+    if (field.kind === 'number') next.type = 'number';
+    else if (field.kind === 'boolean') next.type = 'boolean';
+    else {
+      next.type = 'string';
+      if (field.kind === 'long_text') next['x-itom-field-type'] = 'long_text';
+      if (field.kind === 'person') next['x-itom-field-type'] = 'person';
+      if (field.kind === 'department') next['x-itom-field-type'] = 'department';
+      if (field.kind === 'date') next.format = 'date';
+      if (field.kind === 'choice') next.enum = field.options ?? [];
+      if (field.max_length) next.maxLength = field.max_length;
+    }
+    return next as unknown as ServiceFormField;
+  };
+
+  const saveServiceConfig = async () => {
+    if (!configItem) return;
+    const values = await configForm.validateFields();
+    const codes = values.fields.map((field) => field.code);
+    if (new Set(codes).size !== codes.length) {
+      message.warning('字段代码不能重复');
+      return;
+    }
+    if (!codes.includes('title') || !codes.includes('description')) {
+      message.warning('表单必须保留 title 和 description 两个核心字段');
+      return;
+    }
+    const schema = {
+      ...(loadedSchema ?? {}),
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object' as const,
+      additionalProperties: false,
+      required: values.fields.filter((field) => field.required || ['title', 'description'].includes(field.code)).map((field) => field.code),
+      properties: Object.fromEntries(values.fields.map((field) => [field.code, fieldDefinition(field)])),
+    };
+    setConfigSaving(true);
+    try {
+      const draft = await api.post<ServiceItemFormVersion>(`/service-items/${configItem.id}/form-versions`, { schema });
+      await api.post(`/service-items/${configItem.id}/form-versions/${draft.version}/publish`);
+      if (values.dispatch_target) {
+        const [targetType, targetId] = values.dispatch_target.split(':') as ['group' | 'member', string];
+        const targetName = targetType === 'group'
+          ? groups.find((row) => row.id === targetId)?.name
+          : members.find((row) => row.id === targetId)?.name;
+        const strategy = values.dispatch_strategy ?? (targetType === 'member' ? 'fixed' : 'round_robin');
+        await api.put(`/service-items/${configItem.id}/dispatch-rule`, {
+          name: `${configItem.name} · ${targetName ?? '支持组'}`,
+          target_type: targetType,
+          target_id: targetId,
+          strategy: targetType === 'member' ? 'fixed' : strategy,
+          priority: 1,
+          active: true,
+          fallback: false,
+        });
+      }
+      message.success('服务表单与派单配置已发布');
+      setConfigItem(null);
+      setLoadedSchema(null);
+      void loadItems();
+    } catch {
+      // 已统一提示
+    } finally {
+      setConfigSaving(false);
+    }
+  };
 
   const audienceTreeData = useMemo<DataNode[]>(() => {
     const activeDepartments = audienceDepartments.filter((department) => department.active);
@@ -371,6 +541,8 @@ export default function CatalogPage() {
     itemForm.setFieldsValue({
       ...(selectedCatalog != null ? { catalog_id: selectedCatalog } : {}),
       target_audience_mode: 'all',
+      default_priority: 'P3',
+      process_definition_id: processDefinitions.find((row) => row.code === 'sr_flow')?.id,
     });
     setItemModalOpen(true);
   };
@@ -395,6 +567,12 @@ export default function CatalogPage() {
       sla_resolution_hours: it.sla_resolution_hours ?? undefined,
       target_audience_mode: mode,
       status: it.status,
+      search_keywords: it.search_keywords ?? [],
+      search_synonyms: it.search_synonyms ?? [],
+      typical_scenarios: it.typical_scenarios ?? [],
+      exclusion_scenarios: it.exclusion_scenarios ?? [],
+      process_definition_id: it.process_definition_id ?? undefined,
+      default_priority: it.default_priority ?? 'P3',
     });
     setItemModalOpen(true);
   };
@@ -500,9 +678,14 @@ export default function CatalogPage() {
                     </>
                   )}
                   {canManage && (
-                    <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openItemEdit(record)}>
-                      {t('common.edit')}
-                    </Button>
+                    <>
+                      <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openItemEdit(record)}>
+                        {t('common.edit')}
+                      </Button>
+                      <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openServiceConfig(record)}>
+                        表单/派单
+                      </Button>
+                    </>
                   )}
                   {canDelete && (
                     <Popconfirm
@@ -809,6 +992,24 @@ export default function CatalogPage() {
           <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={2} maxLength={500} />
           </Form.Item>
+          <Form.Item name="search_keywords" label="Aily 搜索关键词" extra="用户常用的产品名、系统名或服务名；输入后按回车确认。">
+            <Select mode="tags" tokenSeparators={[',', '，']} />
+          </Form.Item>
+          <Form.Item name="search_synonyms" label="同义表达" extra="例如“远程接入”与“VPN”。">
+            <Select mode="tags" tokenSeparators={[',', '，']} />
+          </Form.Item>
+          <Form.Item name="typical_scenarios" label="典型适用场景">
+            <Select mode="tags" tokenSeparators={[',', '，']} />
+          </Form.Item>
+          <Form.Item name="exclusion_scenarios" label="不适用场景" extra="命中这些描述时不应推荐此服务项。">
+            <Select mode="tags" tokenSeparators={[',', '，']} />
+          </Form.Item>
+          <Form.Item name="process_definition_id" label="提交后执行流程" rules={[{ required: true, message: '请选择服务请求流程' }]}>
+            <Select options={processDefinitions.map((row) => ({ value: row.id, label: `${row.name}（v${row.version}）` }))} />
+          </Form.Item>
+          <Form.Item name="default_priority" label="默认紧急程度">
+            <Select options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((value) => ({ value, label: value }))} />
+          </Form.Item>
           <Form.Item name="sort" label={t('itsm.f.sort')}>
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
@@ -822,6 +1023,112 @@ export default function CatalogPage() {
               />
             </Form.Item>
           )}
+        </Form>
+      </Modal>
+
+      <Modal
+        title={configItem ? `${configItem.name} · 表单与派单` : '表单与派单'}
+        open={!!configItem}
+        onOk={() => void saveServiceConfig()}
+        confirmLoading={configSaving}
+        onCancel={() => {
+          setConfigItem(null);
+          setLoadedSchema(null);
+        }}
+        width={920}
+        destroyOnClose
+      >
+        <Alert
+          type="info"
+          showIcon
+          message="发布后，新服务请求将使用这个表单版本；历史工单仍保留原版本和快照。"
+          style={{ marginBottom: 16 }}
+        />
+        <Form<ServiceConfigValues> form={configForm} layout="vertical" preserve={false} disabled={configLoading}>
+          <Typography.Title level={5}>申请表单</Typography.Title>
+          <Form.List name="fields">
+            {(fields, { add, remove }) => (
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {fields.map((field) => {
+                  const code = configForm.getFieldValue(['fields', field.name, 'code']) as string | undefined;
+                  const core = code === 'title' || code === 'description';
+                  return (
+                    <Card key={field.key} size="small">
+                      <Row gutter={12} align="middle">
+                        <Col span={5}>
+                          <Form.Item name={[field.name, 'code']} label="字段代码" rules={[{ required: true }, { pattern: /^[a-z][a-z0-9_]{0,63}$/, message: '使用小写字母、数字和下划线' }]}>
+                            <Input disabled={core} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={5}>
+                          <Form.Item name={[field.name, 'title']} label="显示名称" rules={[{ required: true }]}>
+                            <Input />
+                          </Form.Item>
+                        </Col>
+                        <Col span={5}>
+                          <Form.Item name={[field.name, 'kind']} label="字段类型" rules={[{ required: true }]}>
+                            <Select disabled={core} options={[
+                              ['short_text', '单行文字'], ['long_text', '多行文字'], ['choice', '单选'], ['date', '日期'],
+                              ['number', '数字'], ['boolean', '是/否'], ['person', '人员'], ['department', '部门'],
+                            ].map(([value, label]) => ({ value, label }))} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={3}>
+                          <Form.Item name={[field.name, 'required']} label="必填" valuePropName="checked">
+                            <Checkbox disabled={core} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={4}>
+                          <Form.Item noStyle shouldUpdate>
+                            {() => configForm.getFieldValue(['fields', field.name, 'kind']) === 'choice' ? (
+                              <Form.Item name={[field.name, 'options']} label="选项" rules={[{ required: true, message: '至少配置一个选项' }]}>
+                                <Select mode="tags" tokenSeparators={[',', '，']} />
+                              </Form.Item>
+                            ) : (
+                              <Form.Item name={[field.name, 'max_length']} label="最大长度">
+                                <InputNumber min={1} max={10000} style={{ width: '100%' }} />
+                              </Form.Item>
+                            )}
+                          </Form.Item>
+                        </Col>
+                        <Col span={2}>
+                          <Button danger type="text" disabled={core} onClick={() => remove(field.name)}>删除</Button>
+                        </Col>
+                      </Row>
+                    </Card>
+                  );
+                })}
+                <Button block type="dashed" icon={<PlusOutlined />} onClick={() => add({ kind: 'short_text', required: false })}>
+                  添加字段
+                </Button>
+              </Space>
+            )}
+          </Form.List>
+          <Typography.Title level={5} style={{ marginTop: 20 }}>派单</Typography.Title>
+          <Row gutter={12}>
+            <Col span={14}>
+              <Form.Item name="dispatch_target" label="受理人员或支持组">
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={[
+                    ...groups.map((row) => ({ value: `group:${row.id}`, label: `支持组：${row.name}` })),
+                    ...members.map((row) => ({ value: `member:${row.id}`, label: `人员：${row.name}` })),
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item name="dispatch_strategy" label="组内分配方式">
+                <Select options={[
+                  { value: 'round_robin', label: '轮询分配' },
+                  { value: 'fixed', label: '固定成员' },
+                  { value: 'manual_queue', label: '进入人工队列' },
+                ]} />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 

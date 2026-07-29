@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.events import notifier
 from app.events.bus import publish
-from app.models import AuthUser, OrgMember, ServiceItem, Ticket
-from app.services import process_engine, sla
+from app.models import AuthUser, OrgMember, ServiceItem, ServiceItemFormVersion, Ticket
+from app.services import dispatch, process_engine, service_forms, sla
 from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.workflow import transition as wf_transition
@@ -33,7 +33,7 @@ def _approver_person_ids(db: Session, entity_type: str) -> list[str]:
     return [u.person_id for u in users if u.person_id and (actor_keys(db, u) & allowed)]
 
 
-def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
+def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True) -> Ticket:
     if data["ticket_type"] not in TICKET_TYPES:
         raise AppError("INVALID_TYPE", "工单类型无效")
     item = db.get(ServiceItem, data["service_item_id"])
@@ -41,6 +41,58 @@ def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
         raise AppError("INVALID_ITEM", "服务项不存在或已下架")
     if data["ticket_type"] == CHANGE and not data.get("change_type"):
         raise AppError("STAGE_FIELD_REQUIRED", "变更工单必须选择变更类型")
+
+    data = dict(data)
+    process_definition_id = None
+    if data["ticket_type"] == "service_request":
+        form = None
+        if data.get("request_form_version_id"):
+            form = db.get(ServiceItemFormVersion, data["request_form_version_id"])
+            if (
+                not form
+                or form.is_deleted
+                or form.service_item_id != item.id
+                or form.status != "published"
+                or item.active_form_version_id != form.id
+            ):
+                raise AppError("SERVICE_FORM_CHANGED", "服务表单已更新，请刷新后重新填写", 409)
+        else:
+            form = service_forms.ensure_default_form(db, item, actor.id)
+        answers = dict(data.get("request_data") or {})
+        answers.setdefault("title", data.get("title"))
+        answers.setdefault("description", data.get("description"))
+        properties = form.schema.get("properties") or {}
+        if "priority" in properties:
+            answers.setdefault("priority", data.get("priority") or item.default_priority)
+        if "suspected_major_impact" in properties:
+            answers.setdefault(
+                "suspected_major_impact",
+                bool(data.get("suspected_major_impact", False)),
+            )
+        validation = service_forms.validate_answers(db, form.schema, answers)
+        if validation["missing"] or validation["errors"]:
+            raise AppError("FORM_VALIDATION_FAILED", "服务请求表单存在缺失或无效字段")
+        normalized = validation["normalized"]
+        data["request_data"] = normalized
+        data["request_form_version_id"] = form.id
+        data["request_form_snapshot"] = service_forms.form_row(form)
+        data["title"] = normalized["title"]
+        data["description"] = normalized["description"]
+        data["priority"] = normalized.get("priority") or data.get("priority") or item.default_priority
+        data["suspected_major_impact"] = bool(
+            normalized.get("suspected_major_impact", data.get("suspected_major_impact", False))
+        )
+        process_definition_id = item.process_definition_id
+        if not data.get("assignee"):
+            decision = dispatch.assign(db, item)
+            data["assignee"] = decision.assignee_id
+            data["dispatch_rule_id"] = decision.rule.id if decision.rule else None
+            data["dispatch_source"] = decision.source
+            if decision.assignee_id:
+                data["assigned_at"] = datetime.now()
+        else:
+            data["dispatch_source"] = data.get("dispatch_source") or "manual"
+            data["assigned_at"] = data.get("assigned_at") or datetime.now()
 
     now = datetime.now()
     resp_min, reso_hours = sla.resolve_targets(db, data["priority"], item)
@@ -67,6 +119,7 @@ def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
         ticket.id,
         {"ticket_type": ticket.ticket_type},
         preferred_assignee=ticket.assignee,
+        definition_id=process_definition_id,
     )
     audit(db, "ticket", ticket.id, "create", actor, {"code": ticket.ticket_code, "type": ticket.ticket_type})
     publish(db, "ticket.created", "ticket", ticket.id, {"code": ticket.ticket_code})
@@ -81,7 +134,10 @@ def create_ticket(db: Session, data: dict, actor: AuthUser) -> Ticket:
             f"新工单指派：{ticket.ticket_code} {ticket.title}",
             link=f"/itsm/tickets/{ticket.id}",
         )
-    db.commit()
+    if not ticket.assignee and ticket.ticket_type == "service_request":
+        publish(db, "ticket.dispatch_unassigned", "ticket", ticket.id, {"source": ticket.dispatch_source})
+    if commit:
+        db.commit()
     return ticket
 
 

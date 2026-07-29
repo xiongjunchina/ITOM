@@ -36,6 +36,12 @@ class ServiceItemCreate(BaseModel):
     target_audience: str | None = None
     target_audience_mode: Literal["all", "custom"] | None = None
     target_audience_refs: list[AudienceRef] | None = None
+    search_keywords: list[str] = []
+    search_synonyms: list[str] = []
+    typical_scenarios: list[str] = []
+    exclusion_scenarios: list[str] = []
+    process_definition_id: str | None = None
+    default_priority: Literal["P1", "P2", "P3", "P4"] = "P3"
 
 
 class ServiceItemUpdate(BaseModel):
@@ -49,7 +55,27 @@ class ServiceItemUpdate(BaseModel):
     target_audience: str | None = None
     target_audience_mode: Literal["all", "custom"] | None = None
     target_audience_refs: list[AudienceRef] | None = None
+    search_keywords: list[str] | None = None
+    search_synonyms: list[str] | None = None
+    typical_scenarios: list[str] | None = None
+    exclusion_scenarios: list[str] | None = None
+    process_definition_id: str | None = None
+    default_priority: Literal["P1", "P2", "P3", "P4"] | None = None
     status: str | None = None
+
+
+class ServiceItemFormVersionIn(BaseModel):
+    form_schema: dict = Field(alias="schema")
+
+
+class ServiceDispatchRuleIn(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    target_type: Literal["group", "member"]
+    target_id: str
+    strategy: Literal["round_robin", "fixed", "manual_queue"] = "round_robin"
+    priority: int = Field(default=100, ge=1, le=10000)
+    active: bool = True
+    fallback: bool = False
 
 
 class TicketCreate(BaseModel):
@@ -61,6 +87,8 @@ class TicketCreate(BaseModel):
     service_item_id: str
     service_category: str | None = None
     other_info: str | None = None
+    request_data: dict | None = None
+    request_form_version_id: str | None = None
     # 可选
     assignee: str | None = None
     ci_id: str | None = None

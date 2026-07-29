@@ -101,7 +101,7 @@ export default function FeishuIntegration() {
   const [messageTesting, setMessageTesting] = useState(false);
 
   const redirectUri = window.location.origin + '/login/feishu-callback';
-  const publicMcpUrl = window.location.origin + (ailyConfig?.mcp_path || '/mcp');
+  const publicMcpUrl = window.location.origin + (ailyConfig?.mcp_path || '/mcp/');
 
   const applyAilyConfig = (value: AilyConfig) => {
     setAilyConfig(value);

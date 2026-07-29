@@ -1,6 +1,6 @@
 # ITOM 飞书 Aily Agent + MCP Server 正式设计基线
 
-> 状态：**正式设计基线；P0 代码、自动化验证及真实 Aily/ngrok 身份链路已完成，真实机器人主动消息待验证**
+> 状态：**正式设计基线；P0 已完成真实身份链路；P1 代码、自动化验收、真实 Aily 查询及服务请求写入 UAT 已完成；需求写入 UAT 等待业务域配置，机器人主动消息待验证**
 > 确认日期：2026-07-29
 > 权威语言：中文；英文镜像见 `docs/en/10-aily-mcp-handoff-and-decision-context.md`
 
@@ -8,7 +8,7 @@
 
 本文是 `feature/aily-agent-mcp` 开发线的正式产品与架构基线，记录已经由用户确认的目标、边界、工具范围、数据设计、阶段和验收标准。后续实现不得重新使用飞书服务台方案，也不得把 Aily、MCP 或飞书平台变成第二套 ITOM 业务系统。
 
-本文同时记录目标契约与实际状态。当前分支已实现 P0 的 Helpdesk 清理、内嵌 MCP、Aily JWT/Origin/租户/Agent 校验、外部身份映射、工具审计和机器人可靠发件箱；P1–P3 仍是待实现目标。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
+本文同时记录目标契约与实际状态。当前分支已实现 P0 的 Helpdesk 清理、内嵌 MCP、Aily JWT/Origin/租户/Agent 校验、外部身份映射、工具审计和机器人可靠发件箱，以及 P1 的真实服务项检索、动态表单、预览确认、幂等服务请求提交、流程/派单、IT 需求登记和本人查询；P2–P3 仍是待实现目标。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
 
 新会话开始前必须完整阅读 `AGENTS.md`、本文、`docs/03-PRD.md`、`docs/04-数据模型设计.md`、`docs/05-API契约与架构设计.md` 和 `docs/06-用户身份与组织模型设计.md`，并检查真实代码和 Git 状态。
 
@@ -117,7 +117,7 @@ MCP 是 Aily 主动调用 ITOM 的工具通道，后台工单状态变化不会�
 
 ### 5.2 动态表单
 
-表单必须版本化，支持文本、长文本、单选、多选、数字、日期/日期时间、人员、部门、布尔项、附件及后续的资产/配置项。字段可配置必填、长度/数值范围、选项、日期范围、人员/部门范围、条件显示/必填和帮助文字。
+表单必须版本化。P1 当前支持文本、长文本、单选、多选、数字、日期/日期时间、人员、部门和布尔项；附件及资产/配置项字段在后续阶段扩展。字段可配置必填、长度/数值范围、选项、日期范围、人员/部门范围、条件显示/必填和帮助文字。
 
 工单保存表单版本、答案及定义快照；服务项后续改版不得改变历史工单解释。网页创建和 MCP 创建共用同一表单解析与校验服务。
 
@@ -165,6 +165,9 @@ new → processing → resolved → closed
 - `submit_service_request`
 - `get_my_service_request`
 - `list_my_service_requests`
+
+以上 6 个服务请求工具已在 P1 实现；以下 3 个闭环工具在 P2 实现：
+
 - `get_my_pending_confirmations`
 - `confirm_service_request_resolution`
 - `rate_service_request`
@@ -196,11 +199,11 @@ new → processing → resolved → closed
 
 ### 8.3 新增 ITSM 模型
 
-- `service_item_form_version`：服务项表单版本和 JSON Schema；
-- `service_dispatch_rule`：服务项/目录/全局派单规则；
-- `ticket_satisfaction`：评分、标签、意见、来源和审计时间，每张工单一条有效评价。
+- `service_item_form_version`：服务项表单版本和 JSON Schema [P1 已实现]；
+- `service_dispatch_rule`：服务项/目录/全局派单规则 [P1 已实现]；
+- `ticket_satisfaction`：评分、标签、意见、来源和审计时间，每张工单一条有效评价 [P2 目标]。
 
-扩展 `service_item` 保存搜索元数据和三个当前绑定；扩展 `ticket` 保存表单答案/快照、派单事实、受理时间、确认期限和疑似大范围影响标记。保留 `ticket.satisfaction` 作为兼容汇总字段，由有效评价记录回填。
+P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id` 分层解析，不重复保存当前规则 FK。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；`accepted_at`、`confirmation_due_at` 在 P2 写入。保留 `ticket.satisfaction` 作为兼容汇总字段，P2 再由有效评价记录回填。
 
 ## 9. 飞书服务台移除范围
 
@@ -212,25 +215,31 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 ### 阶段 0：协议与基础链路
 
-**当前状态：代码、自动化验证及真实 Aily 租户经 ngrok 调用 `/mcp` 的身份链路已完成；真实机器人主动消息收件验证待完成。**
+**当前状态：代码、自动化验证及真实 Aily 租户经 ngrok 调用 `/mcp/` 的身份链路已完成；真实机器人主动消息收件验证待完成。**
 
 - 清除 Helpdesk 运行路径和数据模型；
 - 内嵌 MCP，Nginx 暴露 `/mcp`；
 - 建立 Aily JWT、身份映射、工具审计和机器人主动消息；
 - 本地 Docker + ngrok 真实验证。
 
-已验证：Aily 自定义 MCP 已按 Streamable HTTP 指向 ngrok 暴露的 `/mcp`，P0 智能体配置已发布给当前测试账号；首次注册的协议发现可在尚未取得 Aily JWT Secret 时通过，但 `tools/call` 仍拒绝缺失 JWT、未映射用户、错误租户和错误 Origin。真实 Aily JWT 已完成签名、租户、Agent 和 `feishu_open_id` 校验，待确认身份可由 ITOM 管理员映射并启用；`get_current_user_context` 能映射正确账号并写脱敏审计，最终 Aily 回复只包含验证结果、账号状态和可读账号名，不返回 open_id、tenant_id、agent_id 或 ITOM 内部主键。机器人发件箱、幂等键和发送结果可测试；仓库无 Helpdesk 运行入口。待验证：真实飞书机器人主动消息收件。
+已验证：Aily 自定义 MCP 已按 Streamable HTTP 指向 ngrok 暴露、带末尾斜杠的 `/mcp/`；实测省略末尾斜杠会在 Aily 保存阶段提示配置校验失败。P0 智能体配置已发布给当前测试账号；首次注册的协议发现可在尚未取得 Aily JWT Secret 时通过，但 `tools/call` 仍拒绝缺失 JWT、未映射用户、错误租户和错误 Origin。真实 Aily JWT 已完成签名、租户、Agent 和 `feishu_open_id` 校验，待确认身份可由 ITOM 管理员映射并启用；`get_current_user_context` 能映射正确账号并写脱敏审计，最终 Aily 回复只包含验证结果、账号状态和可读账号名，不返回 open_id、tenant_id、agent_id 或 ITOM 内部主键。机器人发件箱、幂等键和发送结果可测试；仓库无 Helpdesk 运行入口。待验证：真实飞书机器人主动消息收件。
 
 2026-07-29 本地验收快照：后端完整回归 `260 passed`；P0 MCP 定向测试 `8 passed`；前端生产镜像构建成功；Docker Compose 的数据库、后端和 8180 前端均正常；模型元数据为 78 张表，数据库中 Helpdesk 表和字段均为 `NONE`；本地及 ngrok 公网 `/api/health` 返回 HTTP 200；真实 Aily 预览调用 `/mcp` 完成身份映射并通过无系统标识泄露检查。当前身份映射仅用于本地开发联调，正式环境必须重新绑定真实 ITOM 账号。该快照不替代 P1–P3 多角色业务闭环和 IDC 验收。
 
 ### 阶段 1：服务请求与需求登记
+
+**当前状态：代码、自动化 MCP/API 验收、前端生产构建、真实 Aily 查询和服务请求预览/确认/写入 UAT 已完成；IT 需求写入 UAT 等待本地环境配置至少一个有效业务域。**
 
 - 动态表单、服务项搜索、流程/派单绑定；
 - 服务请求搜索、取表单、预览、确认和提交；
 - IT 需求表单、预览、登记和本人查询；
 - 普通用户不能创建 IT 事件。
 
+2026-07-29 P1 本地验收快照：后端完整回归 `267 passed`，P1 Streamable HTTP 定向测试 `5 passed`，前端生产构建成功；Docker Compose 增量迁移成功，模型元数据和 PostgreSQL 均为 80 张表，32 个现有服务项均已绑定已发布表单和 `sr_flow`，8180 本地及 ngrok 公网 `/api/health` 均返回 HTTP 200。Aily 重新保存规范 `/mcp/` 地址后发现 12 个工具，并真实调用服务项搜索、表单读取、预览和确认提交；测试单 `TK-202607-0001` 以 `service_request`、P3、待受理状态唯一创建，表单版本/定义快照及运行中流程实例均已保存。当前无显式派单规则，因此该单按设计进入未分配的人工兜底队列。Aily 同时读取了真实 IT 需求表单并正确报告本地业务域列表为空；系统没有编造业务域或创建错误需求，需求写入 UAT 待管理员完成业务域配置后继续。
+
 验收：结果来自真实服务目录；可申请范围和表单校验生效；重复提交只产生一张单据；服务请求进入正确流程并派单；需求进入需求模块。
+
+2026-07-29 P1 自动化快照：完整后端回归 `267 passed`；P1 真实 Streamable HTTP MCP 契约测试 `5 passed`，覆盖工具发现、服务对象隔离、网页/MCP 共用动态表单校验、短期确认凭证、重复提交、流程绑定、派单、需求流程和跨用户拒绝；前端 TypeScript + Vite 生产镜像构建成功；模型元数据为 80 张表。该快照与上述真实 Aily 证据互补，但不替代 P2 多角色闭环或 IDC 最终验收。
 
 ### 阶段 2：服务闭环
 

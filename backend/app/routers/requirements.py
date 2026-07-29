@@ -26,7 +26,7 @@ from app.models import (
     RequirementTask,
 )
 from app.schemas.common import ok, paginate
-from app.services import process_engine, requirement_scoring
+from app.services import process_engine, requirement_intake, requirement_scoring
 from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
@@ -356,28 +356,7 @@ def _notify_pdm(db: Session, requirement: Requirement):
 
 @router.post("")
 def create_requirement(body: RequirementCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
-    if body.req_type not in REQ_TYPES:
-        raise AppError("INVALID_TYPE", f"需求类型必须为 {'/'.join(REQ_TYPES)}")
-    domain = db.get(BusinessDomain, body.business_domain_id)
-    if not domain or domain.is_deleted or not domain.active:
-        raise AppError("NOT_FOUND", "所属业务域不存在或已停用", 404)
-    person = db.get(OrgMember, user.person_id) if user.person_id else None
-    data = body.model_dump()
-    if data.get("expected_date"):
-        data["expected_date"] = _date.fromisoformat(str(data["expected_date"]))
-    r = Requirement(
-        **data,
-        requirement_code=gen_code(db, Requirement, "requirement_code", "RQ"),
-        status="registered", registered_at=datetime.now(),
-        requester=user.id, requester_name=person.name if person else user.username,
-    )
-    db.add(r)
-    db.flush()
-    process_engine.start_instance(db, "requirement", r.id, {})
-    _enter_evaluating(db, r)  # M16：登记即进入评审，按业务域指派服务线负责人
-    audit(db, "requirement", r.id, "create", user, {"code": r.requirement_code})
-    publish(db, "requirement.registered", "requirement", r.id, {})
-    db.commit()
+    r = requirement_intake.create_requirement(db, body.model_dump(), user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     return ok(_row(r, db, names, domains, status_names(db, "requirement"), requirement_scoring.get_config(db)))

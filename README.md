@@ -36,7 +36,7 @@ FastAPI（容器 backend:6800，uvicorn）
 PostgreSQL 16（容器 db，卷持久化）
 ```
 关键机制：单据（工单/问题/需求/项目）创建即挂接流程实例，状态由流程编排自动同步（详见「关键概念」）；
-权限=功能矩阵×数据范围×流程节点三层；飞书组织同步、扫码登录继续保留。`feature/aily-agent-mcp` 已完成 P0 底座：清除服务台运行路径、内嵌 `/mcp`、Aily JWT 与精确身份映射、脱敏工具审计和机器人可靠发件箱，并已通过真实 Aily + ngrok 身份调用。P1 的服务目录搜索、动态表单和正式建单工具尚未实现；ITOM 始终是服务目录、表单、流程和权限的唯一事实来源，详见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)。
+权限=功能矩阵×数据范围×流程节点三层；飞书组织同步、扫码登录继续保留。`feature/aily-agent-mcp` 已完成 P0 底座和 P1 服务入口：清除服务台运行路径、内嵌 `/mcp`、Aily JWT 与精确身份映射、脱敏工具审计、真实服务项检索、版本化动态表单、预览确认/幂等提交、服务项流程与派单，以及独立 IT 需求登记和本人单据查询。网页与 MCP 共用领域校验；ITOM 始终是服务目录、表单、流程和权限的唯一事实来源，详见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)。
 
 ### 本地启动（Docker）
 ```bash
@@ -44,7 +44,8 @@ cd deploy && docker compose up --build
 # 前端 http://localhost:8180   API 文档 http://localhost:8180/api/docs
 # 初始管理员 admin / 密码见 deploy 环境变量 ADMIN_INIT_PASSWORD（默认 admin123）
 # 全新数据库默认 SEED_INITIAL_CONFIG=1：自动初始化六条流程定义及当前登录页/Logo；已有品牌配置不会覆盖
-# Aily + MCP 开发期由 ngrok 暴露完整 127.0.0.1:8180；同一 HTTPS 根地址承载前端、/api、OAuth 回调和 /mcp
+# Aily + MCP 开发期由 ngrok 暴露完整 127.0.0.1:8180；同一 HTTPS 根地址承载前端、/api、OAuth 回调和 /mcp/
+# Aily 自定义 MCP 的“请求地址”必须使用带末尾斜杠的 https://公网域名/mcp/，否则保存校验会失败
 # 首次注册先启用 MCP 并配置 Origin；Aily 创建后再回填其 JWT Secret、租户/Agent 白名单和外部身份映射
 # 存量冻结版数据库先预览清理：docker compose exec backend python -m app.scripts.migrate_aily_mcp
 # 确认后执行：docker compose exec backend python -m app.scripts.migrate_aily_mcp --confirm
@@ -120,7 +121,7 @@ deploy/          docker-compose、Nginx、备份
 - **矩阵角色人效评分**：人效总览使用当前矩阵角色结果（角色职责结果 80% + 团队贡献 20%），支持 ITSM/需求/项目/流程自动取数、负责人分级初评、CIO 终审、外部原数据录入和发布后个人结果隔离；同一角色可配置多名评审人及独立权重，评审结果按权重汇总。外部满意度仅按业务服务域录入，外部指标采用白名单校验；团队贡献维度、目标积分及内外部满意度比例由 CIO/管理员配置，并在考核周期生成规则快照。旧版岗位计分方案接口仅保留历史客户端兼容，不再作为总览数据源。
 - **积分规则配置**：团队管理→活动积分→积分规则维护团队贡献活动的自动事件分值、启停状态、维度权重、目标积分和满意度组合；仅 admin/CIO 可修改。团队管理→人效评分→计分规则只维护岗位角色档案、角色维度、取数口径和权重，不混入团队贡献活动。规则修改写入审计日志，仅影响后续事件/考核周期，历史积分台账和已发布周期不自动重算。
 - **双语**：语言存 `auth_user.preferences.language`（zh/en）；登录即应用，用户可自行切换；飞书开通时由管理员设默认语言。
-- **Aily + MCP 正式基线**：P0 已完成 MCP 内嵌、首次注册协议发现、Aily JWT/Origin/租户/Agent 校验、精确 ITOM 用户映射与脱敏审计。协议发现不执行工具；任何 `tools/call` 仍必须完整验签和授权。P1 再实现普通员工只创建 IT 服务请求或登记 IT 需求，以及实时服务项、动态表单、SLA、流程和派单。
+- **Aily + MCP 正式基线**：P0 已完成 MCP 内嵌、首次注册协议发现、Aily JWT/Origin/租户/Agent 校验、精确 ITOM 用户映射与脱敏审计；P1 已实现普通员工只创建 IT 服务请求或登记 IT 需求，以及实时服务项、动态表单、SLA、流程、派单、预览确认、幂等提交和本人查询。协议发现不执行工具；任何 `tools/call` 仍必须完整验签、授权并经过 ITOM 领域服务。
 - **服务闭环与主动消息**：P0 已实现可靠 outbox 和 Aily 机器人测试发送；P2 再接入解决通知、确认关闭、未解决重开和评价。飞书服务台运行路径、配置、模型、页面和专用测试已全部移除，历史版由标签 `v1.0.0-feishu-helpdesk` 恢复。
 - **站内通知**：顶栏铃铛显示当前账号可见通知；弹窗提供“一键已读”和“清除已读”，前者批量写入已读回执，后者软删除当前账号已读通知，均不修改源业务单据。
 - **飞书扫码登录 + 开通审批**：管理员批准时生成 12 位高强度初始密码并加密保存，但不自动发信。管理员可在用户详情点击闭眼图标按需查看，或点击“邮件发送”手工投递；查看与发送均审计，用户改密/管理员重置后密文立即清除。
@@ -168,14 +169,15 @@ PostgreSQL 16 (container db, persistent volume)
 ```
 Key mechanics: every ticket/problem/requirement/project gets a process instance on creation and its
 status is synced by orchestration (see Key concepts); permissions = functional matrix × data scope ×
-process-step operator. Feishu org sync and QR sign-in remain. `feature/aily-agent-mcp` has implemented the P0 embedded-MCP, identity, audit, and bot-outbox foundation and passed a real Aily + ngrok identity call, while ITOM remains the sole source for catalog, forms, workflow, and authorization. P1 business tools are not implemented yet.
+process-step operator. Feishu org sync and QR sign-in remain. `feature/aily-agent-mcp` has implemented the P0 embedded-MCP/identity/audit/outbox foundation and the P1 live-catalog, versioned-form, confirmed/idempotent service-request, dispatch, requirement-intake, and own-record tools. Web and MCP use the same domain validation, while ITOM remains the sole source for catalog, forms, workflow, and authorization.
 
 ### Run locally (Docker)
 ```bash
 cd deploy && docker compose up --build
 # Web  http://localhost:8180   API docs http://localhost:8180/api/docs
 # Bootstrap admin: admin / password from the deploy env var ADMIN_INIT_PASSWORD (default admin123)
-# During Aily + MCP development, ngrok exposes the complete 127.0.0.1:8180 origin for the web app, /api, OAuth callback, and /mcp endpoint.
+# During Aily + MCP development, ngrok exposes the complete 127.0.0.1:8180 origin for the web app, /api, OAuth callback, and /mcp/ endpoint.
+# Enter the canonical https://public-host/mcp/ URL, including its trailing slash, in Aily; omitting it fails Aily's save validation.
 # For first registration, enable MCP with an Origin; after Aily creates it, copy back the JWT secret and configure tenant/agent allowlists and identity mappings.
 # Preview frozen-schema cleanup: docker compose exec backend python -m app.scripts.migrate_aily_mcp
 # Execute only after review: docker compose exec backend python -m app.scripts.migrate_aily_mcp --confirm
@@ -249,7 +251,7 @@ deploy/          docker-compose, Nginx, backups
 - **Closure policy**: submitters may close their own service requests / requirements / projects (reason ≥5 chars, audited); incidents/changes/problems must complete the flow; force close is admin-only.
 - **Matrix organization**: horizontal business domains (served departments are selected from Org Structure with optional descendant coverage; owner, backup owner, and service-team selectors use the administrator-defined digital-team scope) × vertical user groups. The scope is the union of selected department members and individually selected people, allowing a mixed vendor organization to contribute only named contractors. IT operational owners, reviewers, and group selectors load `GET /api/members?scope=it` with server-side revalidation; login-account linking uses all valid company people and is not restricted by that scope. Administrators may delete domains that have no requirement references.
 - **Feishu is the Source of Truth for people master data**: `org_sync` idempotently applies an org snapshot (external wins, missing → offboarded/inactive); locally only position/skills/remarks/dept-type are editable. Besides the remote sync scope, administrators can enable/disable scheduled sync and choose a 1/6/12/24-hour interval.
-- **Aily + MCP baseline**: P0 implements embedded MCP, first-registration protocol discovery, Aily JWT/origin/tenant/agent checks, exact ITOM-account mapping, and redacted audit. Discovery cannot execute tools; every `tools/call` still requires full authentication and authorization. P1 adds employee service-request/requirement tools backed by live catalog, forms, SLA, workflow, dispatch, and authorization.
+- **Aily + MCP baseline**: P0 implements embedded MCP, first-registration discovery, Aily JWT/origin/tenant/agent checks, exact account mapping, and redacted audit. P1 implements employee service-request and requirement tools backed by live catalog, versioned forms, SLA, workflow, dispatch, preview/confirmation, idempotency, and own-record scope. Discovery cannot execute tools; every `tools/call` still requires full authentication, authorization, and domain validation.
 - **Closure and proactive messaging**: P0 implements the reliable outbox and Aily-bot test delivery; P2 connects resolution updates, confirmation/reopen, and rating. All Helpdesk runtime/configuration/models/pages/tests are removed; the historical version remains under `v1.0.0-feishu-helpdesk`.
 - **Example data**: `GlidBase.is_example` (pinned to the top of lists); editing, workflow transitions, and business actions remain read-only, while administrators can explicitly delete examples from list pages; not seeded by default, enable with `SEED_EXAMPLES=1` (used by tests).
 - **Assessment period**: quarterly `YYYY-Q1/Q2/Q3`; Q4 runs the full-year assessment `YYYY-All` (statistics cover the whole calendar year).
