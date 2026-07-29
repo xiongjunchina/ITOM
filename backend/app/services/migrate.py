@@ -102,23 +102,14 @@ ENSURE_COLUMNS = {
         ("initial_password_ciphertext", "TEXT"),
         ("initial_password_sent_at", "TIMESTAMP"),
     ],
-    "feishu_config": [
-        ("helpdesk_id", "VARCHAR(64)"),
-        ("helpdesk_token_encrypted", "TEXT"),
-        ("helpdesk_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
-        ("helpdesk_event_verification_token_encrypted", "TEXT"),
-        ("helpdesk_event_url", "VARCHAR(500)"),
-        ("helpdesk_event_subscription_status", "VARCHAR(16) NOT NULL DEFAULT 'not_configured'"),
-        ("helpdesk_event_subscription_at", "TIMESTAMP"),
-        ("helpdesk_event_subscription_error", "TEXT"),
-    ],
-    "feishu_helpdesk_handoff": [
-        ("callback_event_id", "VARCHAR(128)"),
-    ],
-    "feishu_helpdesk_intake": [
-        ("routing_prompt_sent_at", "TIMESTAMP"),
-        ("routing_prompt_channel", "VARCHAR(24)"),
-        ("routing_prompt_message_id", "VARCHAR(128)"),
+    "notification_outbox": [
+        ("recipient_type", "VARCHAR(32)"),
+        ("recipient_id", "VARCHAR(128)"),
+        ("idempotency_key", "VARCHAR(255)"),
+        ("attempt_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("next_attempt_at", "TIMESTAMP"),
+        ("provider_message_id", "VARCHAR(128)"),
+        ("last_error_redacted", "TEXT"),
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
@@ -192,6 +183,18 @@ def ensure_columns(db: Session):
             if name not in existing:
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                 logger.info("added column %s.%s", table, name)
+    db.commit()
+
+
+def ensure_aily_indexes(db: Session):
+    """为存量库补齐 MCP/Aily 的幂等索引和待映射身份约束。"""
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_notification_outbox_idempotency_key "
+        "ON notification_outbox (idempotency_key) WHERE idempotency_key IS NOT NULL"
+    ))
+    db.execute(text(
+        "ALTER TABLE external_identity ALTER COLUMN auth_user_id DROP NOT NULL"
+    ))
     db.commit()
 
 
@@ -693,6 +696,7 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    ensure_aily_indexes(db)
     backfill_process_step_codes(db)
     separate_role_result_point_entries(db)
     backfill_password_set_m362(db)

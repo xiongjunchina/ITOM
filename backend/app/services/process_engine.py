@@ -230,8 +230,8 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
         )
     )
     # 流程任务才是“系统分派”的权威来源。工单创建时 Ticket.assignee 可能为空，
-    # 但服务请求的首个节点仍会按默认角色解析出实际处理人；发布领域事件后，
-    # 飞书同步层才能把这次分派回写到已经关联的服务台会话中。
+    # 但服务请求的首个节点仍会按默认角色解析出实际处理人；领域事件供站内通知
+    # 和后续可靠机器人发件箱消费，不改变流程与派单事实。
     if assignee and instance.entity_type == "ticket":
         from app.events.bus import publish
 

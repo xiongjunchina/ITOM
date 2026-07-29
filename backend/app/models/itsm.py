@@ -71,7 +71,7 @@ class Ticket(GlidBase):
     priority: Mapped[str] = mapped_column(String(8), index=True, comment="P1-P4")
     description: Mapped[str] = mapped_column(Text)
     service_item_id: Mapped[str] = mapped_column(ForeignKey("service_item.id"), index=True)
-    # 服务请求对齐飞书服务台询前单；历史工单允许为空
+    # 服务请求表单兼容字段；历史工单允许为空
     service_category: Mapped[str | None] = mapped_column(String(128))
     other_info: Mapped[str | None] = mapped_column(Text)
     # 创建可选

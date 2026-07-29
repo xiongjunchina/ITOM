@@ -14,6 +14,34 @@ Required checks before declaring work complete:
 
 The delivery definition of done is: **implementation + tests + affected documentation are mutually consistent**.
 
+## Aily Agent + MCP development line
+
+The `feature/aily-agent-mcp` branch is the dedicated development line for the
+Feishu Aily Agent + MCP Server version. Before designing or implementing work
+on this branch:
+
+1. Read `docs/10-Aily-MCP版本交接与决策上下文.md` completely and distinguish
+   confirmed baseline facts from proposals and pending decisions.
+2. Restate the intended architecture, security boundary, migration strategy,
+   and open decisions to the user. Do not start implementation until the user
+   confirms the proposed design.
+3. Treat ITOM domain services and APIs as the system of record. MCP tools must
+   not bypass business validation, workflow authorization, RBAC, audit, or
+   idempotency by writing directly to database tables.
+4. Verify the current official Feishu Aily and MCP documentation before fixing
+   transports, authentication, callbacks, or product capability claims in the
+   design; these external contracts are time-sensitive.
+5. Keep secrets out of URLs, logs, prompts, tool results, commits, and test
+   fixtures. Map Feishu identity to an ITOM account before authorizing any
+   user-scoped or mutating tool.
+6. Commit and push development changes only to `feature/aily-agent-mcp` (or a
+   child feature branch). Merge into `main` through a user-approved Pull
+   Request. Never rewrite the `v1.0.0-feishu-helpdesk` tag or use the frozen
+   `/Users/xjun/Gitrepo/ITOM` worktree for new-version development.
+
+The frozen Feishu Helpdesk baseline remains recoverable from the annotated tag
+`v1.0.0-feishu-helpdesk` at commit `f13f702`.
+
 ## Deployment and verification environment
 
 The IDC Kubernetes cluster is the sole delivery and acceptance environment. Do not deploy or validate changes with the local Docker environment unless the user explicitly asks for a temporary local investigation.

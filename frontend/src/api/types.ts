@@ -145,15 +145,6 @@ export interface FeishuConfig {
   app_id: string;
   app_secret_masked: string;
   has_secret: boolean;
-  helpdesk_id: string | null;
-  helpdesk_token_masked: string | null;
-  has_helpdesk_token: boolean;
-  helpdesk_enabled: boolean;
-  helpdesk_event_verification_token_configured: boolean;
-  helpdesk_event_url: string | null;
-  helpdesk_event_subscription_status: 'not_configured' | 'waiting_config' | 'subscribed' | 'failed' | string;
-  helpdesk_event_subscription_at: string | null;
-  helpdesk_event_subscription_error: string | null;
   /** 组织架构同步范围：open_department_id 列表（逗号分隔），0=全公司（M32） */
   sync_scope: string;
   enabled: boolean;
@@ -171,43 +162,47 @@ export interface OrgSettings {
   feishu_auto_sync_last_attempt_at: string | null;
 }
 
-/** 飞书服务台待分流记录（GET /integrations/feishu/helpdesk/intakes）。 */
-export interface FeishuHelpdeskIntake {
-  id: string;
-  ticket_id: string;
-  helpdesk_id: string;
-  guest_name?: string | null;
-  agent_name?: string | null;
-  classification: 'pending' | 'service_request' | 'requirement' | 'cancelled' | string;
-  linked_entity_type?: string | null;
-  linked_entity_id?: string | null;
-  feishu_status?: string | null;
-  feishu_stage?: string | null;
-  choice_card_sent_at?: string | null;
-  routing_prompt_sent_at?: string | null;
-  routing_prompt_channel?: 'helpdesk_post' | 'helpdesk_text' | 'im_card_fallback' | string | null;
-  routing_prompt_message_id?: string | null;
-  last_synced_at?: string | null;
-  last_error?: string | null;
+/** Aily MCP 集成配置；两类 Secret 均只写不读。 */
+export interface AilyConfig {
+  enabled: boolean;
+  mcp_auth_mode: 'aily_jwt' | string;
+  has_mcp_jwt_secret: boolean;
+  mcp_discovery_ready: boolean;
+  mcp_tool_calls_ready: boolean;
+  allowed_tenant_ids: string[];
+  allowed_agent_ids: string[];
+  allowed_origins: string[];
+  bot_app_id: string | null;
+  has_bot_app_secret: boolean;
+  api_base: string;
+  message_enabled: boolean;
+  last_test_at: string | null;
+  last_test_status: string | null;
+  last_error_redacted: string | null;
+  mcp_path: string;
 }
 
-/** 飞书事件入站队列记录（GET /integrations/feishu/helpdesk/sync-events）。 */
-export interface FeishuHelpdeskSyncEvent {
+/** 飞书外部身份到 ITOM 账号的精确映射。 */
+export interface AilyExternalIdentity {
   id: string;
-  event_id: string;
-  event_type: string;
-  ticket_id?: string | null;
-  status: 'pending' | 'processing' | 'processed' | 'failed' | string;
-  attempts: number;
-  next_attempt_at?: string | null;
-  last_error?: string | null;
-  processed_at?: string | null;
+  provider: 'feishu';
+  tenant_id: string;
+  app_id: string;
+  subject_type: 'open_id' | 'user_id' | 'union_id';
+  subject_id: string;
+  auth_user_id: string | null;
+  username: string | null;
+  display_name: string | null;
+  status: 'pending' | 'active' | 'disabled';
+  verified_at: string | null;
+  last_used_at: string | null;
 }
 
 /** 系统用户（管理端） */
 export interface AdminUser {
   id: string;
   username: string;
+  name?: string;
   roles: Role[];
   person_id: string | null;
   is_active: boolean;

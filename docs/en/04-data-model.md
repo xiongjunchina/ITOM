@@ -2,8 +2,9 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on [03-PRD.md](03-PRD.md) (v1.1, aligned through M46). **52 tables** in total: Support 18 (including org governance, system integrations, and Feishu Helpdesk reliable synchronization), ITSM 12, Project 6, Requirement 2, Process 4, Team 10.
-> Compared with SN-AOM's 106 tables; no pre-computed/snapshot tables at all.
+> Based on PRD v1.2 and the approved Aily + MCP baseline. P0 code currently maps **78 tables**: Support 29, ITSM 13, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 will add three ITSM tables, for a final target of **81 tables**.
+> Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
+> This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support models and outbox extensions are implemented in P0; dynamic-form, dispatch, and rating models remain P1/P2 targets. Database facts must be checked against real models and migrations.
 
 ## 0. Global Conventions
 
@@ -15,7 +16,7 @@
 
 ---
 
-## 1. Support Domain (17 tables)
+## 1. Support Domain (current 29; target 29)
 
 ### 1.1 auth_user — login account
 
@@ -87,7 +88,7 @@ entity_type, entity_id, action, actor, summary JSONB (before/after values of cha
 
 ### 1.7 notification_outbox — notification outbox
 
-event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu…), status (pending/sent/failed), sent_at. **The future hook for Feishu/n8n.**
+event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient_type/id, unique idempotency_key, attempt_count, next_attempt_at, provider_message_id, redacted last error, sent_at. In-app and Aily-bot messages share this reliable outbox.
 
 ### 1.8 in_app_notification — in-app notification
 
@@ -97,9 +98,25 @@ recipient FK→org_member, title, content, link (front-end route), read_at. The 
 
 entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, and original charter files.
 
+### 1.10 external_identity [implemented in P0]
+
+provider, tenant_id, app_id, subject type (open_id/user_id/union_id), subject ID, nullable auth_user_id FK while pending, status (pending/active/disabled), verified time, and last-used time. Unique `(provider, tenant_id, app_id, subject_type, subject_id)`. A JWT-verified but unapproved tenant/user is recorded only as a pending candidate and receives no tool access; it becomes authorized only after an administrator selects an ITOM account and activates it. One account may have OAuth-app and Aily-bot identities; cross-app `open_id` equality is never assumed.
+
+### 1.11 aily_integration_config [cfg][implemented in P0]
+
+Singleton: enabled, mcp_auth_mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, message enabled, last test status/time, and redacted error. Read APIs expose configured flags only, never plaintext or ciphertext.
+
+### 1.12 mcp_tool_call [audit][implemented in P0]
+
+Unique call_id, tool_name, tenant/agent, external subject as subject type plus SHA-256 (never the complete external user ID), auth_user_id, session-reference hash, request digest, result code, entity type/ID, duration, and time. It never stores JWTs, app secrets, full prompts, or sensitive form answers.
+
+### 1.13 mcp_operation_intent [P0 schema; used from P1]
+
+Unique intent_id, tool, auth_user_id, normalized payload, payload digest, token hash, idempotency key, status (prepared/consumed/expired/failed), expiry/consumption times, and result entity/snapshot. Unique `(auth_user_id, tool_name, idempotency_key)`; raw confirmation tokens are not stored.
+
 ---
 
-## 2. ITSM Domain (12 tables)
+## 2. ITSM Domain (13 in P0; 16 targeted for P1/P2)
 
 ### 2.1 service_catalog — service catalog [cfg]
 
@@ -117,9 +134,15 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | description | TEXT | |
 | sla_response_hours / sla_resolution_hours | FLOAT | Overrides the SLA policy default; nullable |
 | target_audience | VARCHAR(128) | |
+| search_keywords / search_synonyms | JSONB | Aily search terms [target] |
+| typical_scenarios / exclusion_scenarios | JSONB | Included/excluded scenarios [target] |
+| active_form_version_id | FK→service_item_form_version | Active form [target] |
+| process_definition_id | FK→process_definition | Bound process [target] |
+| dispatch_rule_id | FK→service_dispatch_rule | Dispatch rule [target] |
+| approval_required / default_priority_rule | BOOLEAN / JSONB | Approval/priority rules [target] |
 | status | VARCHAR(16) | Listed / Delisted |
 
-### 2.3 ticket — ticket (single table, multiple types; 40 columns, pre-consultation fields required for service requests)
+### 2.3 ticket — single-table ticket; normal users create service_request only
 
 | Group | Fields | Description |
 | --- | --- | --- |
@@ -131,8 +154,25 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | Approval [C] | approved_by, approved_at, approval_comment | written by change approval |
 | Derived [C] | ticket_code, status, submitter, submitter_dept, service_line, submitted_at, first_response_at, resolved_at, closed_at, paused_minutes (on-hold accumulation, deducted from SLA), reopen_count, first_time_fix, sla_response_min, sla_resolution_hours, sla_response_met, sla_resolution_met | |
 | Links | problem_id FK→problem (back-written after escalation), requirement_id FK→requirement, process_instance_id | |
+| Dynamic form [target] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
+| Dispatch facts [target] | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | Rule/source plus dispatch/acceptance times |
+| Confirmation [target] | confirmation_due_at, suspected_major_impact | Confirmation deadline and suspected broad impact |
 
 Indexes: status, assignee, service_item_id, submitted_at, (ticket_type, status).
+
+Normal-user creation fixes `ticket_type=service_request`; MCP does not accept the field. Incidents are created only by IT staff or monitoring identities. `ticket.satisfaction` remains a compatibility score populated from the effective rating row.
+
+### 2.13 service_item_form_version [cfg][target]
+
+service_item_id, version, status (draft/published/retired), schema JSONB, publisher/time, checksum. Schema covers field code/type/label, required/default, length/range/date/options, person/department scope, conditional rules, help text, and sensitivity. Unique `(service_item_id, version)`; referenced versions cannot be physically deleted.
+
+### 2.14 service_dispatch_rule [cfg][target]
+
+name, scope_type (service_item/catalog/global), scope_id, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. Execution results are snapshotted to the ticket.
+
+### 2.15 ticket_satisfaction [target]
+
+Unique ticket_id, score 1–5, tags, comment, source (web/aily), rater, rating time, version/update time. One effective rating per ticket; edits are audited. The score is copied to `ticket.satisfaction` for existing reporting.
 
 ### 2.4 problem — problem
 
@@ -224,11 +264,12 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 | Group | Fields |
 | --- | --- |
-| Required at registration | name, req_type (business/functional/data/integration/compliance), business_line (dictionary), description |
-| Optional at registration | source (dictionary), parent_requirement_id FK, service_item_id FK, doc_link, remarks |
-| Analysis stage | priority (MoSCoW), owner FK, target_date, solution, acceptance_criteria JSONB `[{text, checked, verified_by}]` |
+| Required at registration | title, req_type (business/functional/data/integration/compliance), business_domain_id FK, description |
+| Optional at registration | source, parent_requirement_id FK, department, expected_date, expected_effect, business_value_note |
+| Evaluation stage | six D1–D6 scores, decision, solution_type, PRD/dev effort |
+| Analysis stage | moscow, owner FK, target_date, solution, acceptance_criteria JSONB |
 | Implementation stage | project_id FK (optional attachment) |
-| Derived [C] | requirement_code, stage (Registration/Analysis/Implementation/Closure/On-Hold/Cancelled), requester, submitted_at, analysis_at, implement_at, closed_at, progress_pct (task roll-up), lead_time_days (delivery lead time) |
+| Derived [C] | requirement_code, status, requester/name, registered/evaluating/analyzing/implementing/closed timestamps, closure_note |
 
 ### 4.2 requirement_task — requirement task
 
@@ -242,7 +283,7 @@ requirement_id FK, name, assignee FK, planned_date, status (Not Started / In Pro
 
 ### 5.1 process_definition — process definition [cfg]
 
-code, name, entity_type (linked record type), trigger_condition JSONB (e.g. `{"ticket_type":"change"}`), version, active, description. Initially seeds 6–8 rows.
+code, name, entity_type, trigger_condition JSONB, version, active, description. The Aily + MCP target lets `service_item.process_definition_id` select a published process explicitly; unbound items fall back to entity type plus trigger condition.
 
 ### 5.2 process_step — process step [cfg]
 
@@ -331,7 +372,10 @@ period_id FK, person FK, version, business_role_score, professional_role_score, 
 ```mermaid
 erDiagram
     service_catalog ||--o{ service_item : "contains"
+    service_item ||--o{ service_item_form_version : "form versions"
+    service_item }o--|| service_dispatch_rule : "dispatch"
     service_item ||--o{ ticket : "ticket basis / carries SLA"
+    ticket ||--o| ticket_satisfaction : "effective rating"
     ticket }o--|| ci : "links"
     ci ||--o{ ci_relationship : "upstream/downstream"
     ticket }o--o{ problem : "problem_ticket"
@@ -353,6 +397,9 @@ erDiagram
     org_member ||--o{ point_entry : "points ledger"
     org_member }o--|| position : "position"
     ticket ||--o{ point_entry : "event scoring (source)"
+    auth_user ||--o{ external_identity : "external identity"
+    auth_user ||--o{ mcp_operation_intent : "confirmation"
+    auth_user ||--o{ mcp_tool_call : "tool audit"
 ```
 
 ## 8. Reconciliation Against the Design Principles
@@ -363,7 +410,7 @@ erDiagram
 | Minimal entry | Each table's "required on creation" group has ≤ 5 fields |
 | Event-driven | notification_outbox + point_entry are written by the same domain-event outlet |
 | Duplicate-proof | idea_like / knowledge_vote unique constraints |
-| Feishu reserved | org_member.feishu_user_id, outbox.channel |
+| Aily/Feishu boundary | external_identity isolates app-scoped identities; notification_outbox delivers reliably; mcp_operation_intent enforces confirmation/idempotency |
 
 ## 9. UI Branding Configuration (M38)
 
@@ -378,9 +425,8 @@ erDiagram
 
 `system_integration_config` stores global email and LDAP JSON settings. SMTP and LDAP bind passwords are Fernet-encrypted; read APIs expose only `has_secret`.
 
-### 1.10 feishu_config / feishu_helpdesk_handoff / feishu_helpdesk_intake — Feishu Helpdesk (M45/M46)
+### 1.14 feishu_config and Helpdesk cleanup (Aily + MCP baseline)
 
-`feishu_config` adds `helpdesk_id`, encrypted `helpdesk_token`, `helpdesk_enabled`, encrypted event Verification Token, `helpdesk_event_url`, and event-subscription status/time/error fields alongside organization sync and OAuth settings. Read APIs return only masks/configured flags; the status distinguishes saved credentials from a successfully registered Helpdesk event subscription.
+`feishu_config` retains only Feishu OAuth, workplace login, organization sync, and generic app credentials. All `helpdesk_*` fields are removed. The Aily bot may be a different app, so its credentials and tenant/agent allowlists live in `aily_integration_config`; its `open_id` is never assumed equal to the login app's value.
 
-`feishu_helpdesk_handoff` stores `ticket_id`, `action(service_request/requirement)`, source guest/agent open IDs, Helpdesk ID, `token_hash`, a sanitized `ticket_snapshot`, status (`issued/consumed/expired`), expiry, consumed entity metadata, and `callback_event_id` for card-callback idempotency. The raw token is never persisted, expires after ten minutes by default, and the current `auth_user.external_id` must match the Feishu guest open_id.
-`feishu_helpdesk_intake` is unique by `helpdesk_id + ticket_id` and stores the guest/agent open IDs, current Helpdesk state, sanitized snapshot, classification (`pending/service_request/requirement/cancelled`), linked ITOM record, plus the stable-entry delivery time, channel (`helpdesk_post/helpdesk_text/im_card_fallback`), and Feishu message ID. `feishu_helpdesk_sync_event` stores the unique event ID, type, ticket ID, payload, processing status, attempts, next retry time, and error. `feishu_helpdesk_outbox` stores only user-visible `routing_prompt`, compatible `choice_card`, and progress messages with a dedupe key, delivery state, and Feishu message ID. All three use soft deletion; Helpdesk credentials never enter event or outbox payloads.
+Remove `feishu_helpdesk_handoff`, `feishu_helpdesk_intake`, `feishu_helpdesk_sync_event`, and `feishu_helpdesk_outbox`. The user confirmed there is no valuable production history to migrate or archive. The migration safely drops those dedicated tables/fields while the frozen Git tag remains recoverable.

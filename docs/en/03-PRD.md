@@ -2,9 +2,10 @@
 
 > English translation of [../03-PRD.md](../03-PRD.md). For the authoritative version, the Chinese source prevails.
 
-> Version: v1.1 (2026-07-19, aligned with the M34–M37 implementation)
+> Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
+> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol and foundation code is implemented and passes automated tests, production builds, and real Aily/ngrok identity integration; P1–P3 remain target capabilities. The frozen Helpdesk implementation remains under `v1.0.0-feishu-helpdesk` and is not the current contract for the new branch.
 
 ---
 
@@ -29,7 +30,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 - ITSM Continual Service Improvement (CSI), the knowledge-review flow, the standalone CAB-review machinery, ISO 27001 security-incident fields.
 - Requirement version snapshots, multi-approver flows, elicitation sessions, three-dimension scoring.
 - Project stakeholder matrix, baseline management, quality-metrics page, full EVM entry.
-- AI Agent registration/orchestration/escalation machinery and the n8n external workflow engine (process capabilities are built in, with an event outlet reserved as a hook — see Chapter 8). Feishu org sync, QR authentication, workplace app login, and account binding were delivered in M11/M36–M37 and are no longer excluded.
+- A general AI-agent marketplace and the n8n external workflow engine. The approved Feishu Aily + MCP capability is an employee service channel, not a general agent platform. Feishu org sync, QR authentication, workplace login, and account binding remain.
 - Data migration (starts on an empty database).
 
 ---
@@ -85,8 +86,9 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 - Administrators with user-delete permission can soft-delete an account and unlink its person record without deleting personnel master data, department membership, or business history. The built-in `admin` and the current account cannot be deleted; the original username is released for later reprovisioning.
 - Browser QR OAuth and Feishu workplace JSAPI login share identity matching, first-time provisioning approval, and normal sign-in behavior.
-- **Feishu Helpdesk handoff (M45)**: after the pre-consultation form reaches human service, ITOM writes two stable choices into the original Helpdesk conversation: “Create IT service request” and “Register IT requirement.” The link carries only the pending-intake ID and action—never identity or a one-time token. After ITOM login, the backend compares the signed-in account's Feishu `open_id`, the stored intake guest, and a freshly read Helpdesk guest; only a three-way match issues a ten-minute token and opens the pre-filled form. The service category maps only to the ITSM catalog/item, never to a requirement business domain. Successful creation consumes the token; reopening the stable conversation link enters the already linked record. Requirement type and business domain remain explicit ITOM choices.
-- **Feishu Helpdesk reliable synchronization (M46)**: after human handoff, the ticket first becomes a Pending Routing intake. Its stable choices are delivered as rich content in the original conversation, downgraded to full-URL text when rich content is unsupported, and only after repeated original-conversation failures fall back to an independent application-bot card. Helpdesk create/update/message events are idempotent by event ID, processed asynchronously with retries, and resolved against current ticket detail. Only user-visible registered, assigned, processing, resolved, and closed milestones are posted back; internal notes, approval comments, and unpublished details are never exported. Administrators can inspect the entry-delivery channel, pending intakes, and failed retry records.
+- **Aily + MCP identity entry (implemented in P0)**: during first-time custom-MCP registration, read-only discovery calls such as `initialize` and `tools/list` are available only when MCP is enabled and Origin is allowlisted, because Aily reveals `identityJWTSecret` only after creation. Every `tools/call` must then pass `x-aily-jwt` HS256 signature/expiry and tenant/agent allowlists, map provider/tenant/app/subject to an active ITOM account, and only then apply RBAC, data scope, and process guards. The server accepts both the documented `user_id` and the `feishu_open_id` observed from the real tenant on 2026-07-29. `open_id` values from different Feishu apps are not assumed equal.
+- **Normal-user boundary (pending P1)**: Aily allows normal employees to create IT service requests or register IT requirements only. Service requests are fixed to `service_request`; requirements are separate `Requirement` records. Self-registration does not grant review or management rights.
+- **Mutation confirmation and audit**: P0 implements redacted tool audit and the `mcp_operation_intent` schema. P1 mutations use preview → explicit confirmation → confirmation intent plus idempotency key. Secrets, internal notes, and sensitive organization data never enter model context.
 - The profile center exposes account source, effective roles, timestamps, and read-only linked HR data. Users can set a local password, bind or unbind Feishu safely, inspect only their own audit activity, and persist avatar, bio, language, notification-category preferences, theme, and content density. Both the Scheme C workbench and Scheme F portal bind the active preference directly to their application shells. Dark mode consistently uses three charcoal surface levels for canvas, header, and modules instead of a white shell or pure-black canvas; navigation, tabs, segmented controls, and other interaction states use matching dark colors with clearly readable contrast.
 - The signed-in application header exposes a “User Manual” entry immediately to the left of the language switcher. Every signed-in role can use search, product categories, popular/recent guides, and article TOCs to read the current system overview, module logic, procedures, role boundaries, and troubleshooting notes; it is maintained alongside `docs/en/user-operation-manual.md`.
 - On approval, a 12-character strong initial password is stored as recoverable encrypted ciphertext without automatic delivery. User details hide it until an administrator clicks the eye control; email is sent only through the explicit action. Both are audited, and a password change/reset clears the ciphertext. System Integrations groups Feishu, SMTP, and AD/LDAP; LDAP supports connection testing and directory-password authentication for an existing same-name ITOM account.
@@ -107,7 +109,7 @@ The state transitions of each record type are driven by state-machine configurat
 ### 3.3 Notifications
 
 - Unified event outlet: events such as ticket creation/assignment/SLA-imminent/escalation, change pending approval, milestone overdue, requirement stage transition, and suggestion adopted are written to the notification outbox.
-- Initially only **in-app notifications** are implemented (top-bar bell + Dashboard alert area); later, adding a Feishu channel adapter connects it, with zero changes to business features.
+- Current business events primarily use **in-app notifications**. P0 implements the reliable Feishu-bot outbox, retries, and test delivery; P2 connects user-visible resolution events. User replies return through Aily and MCP for confirmation, reopen, or rating. MCP itself does not wake proactively.
 - Since M34, administrator accounts without a linked person can receive management notifications by account ID; the bell polls for updates and delivery honors the `work`, `workflow`, and `system` category preferences.
 - **Account/person unlinking**: clearing Linked Person in the user editor explicitly persists `person_id=null`, while PATCH requests that omit `person_id` retain the existing link.
 - The notification popover provides **Mark all as read** and **Clear read**. The former writes `read_at` for notifications visible to the current account; the latter soft-deletes that account's already-read notifications. Neither action changes source business records.
@@ -151,21 +153,21 @@ Login, Overview, Profile Center (account/security/preferences/activity), Service
 
 ### 5.1 Tickets (core, single table with multiple types)
 
-Ticket types: **Incident / Service Request / Change**. Problem is a standalone entity (5.2).
+ITOM still has **Incident / Service Request / Change** ticket types. Normal business users may create only service requests in the web app or Aily. Incidents are created only by IT staff or a monitoring integration; changes require authorized IT roles. A single user's software/device/network-access/account/usage problem is a service request, not an incident.
 
 #### Creation Form
 
-For business users, the service-request form follows the Feishu Helpdesk pre-consultation order: User (read-only, current ITOM user or the Feishu handoff requester), Service agent (read-only, populated on a handoff or shown as pending back-office assignment), Title, Urgency, Service Category, Specific Service Item, Problem Description, and Other Supplemental Information. Service Category maps to the ITSM service catalog only and never to a requirement business domain. If exactly one published item matches, it is selected automatically; otherwise the user selects a specific item. IT staff and administrators can expand Internal Handling Information to set an assignee and internal remarks.
+Service-request intake starts from live, published ITOM service items that the current user may request. Aily searches the catalog, asks the user to select when ambiguous, then obtains the selected item's active form version. It pre-fills facts supported by the natural-language request and asks only for missing required fields. Web and MCP intake share one form, validator, and creation domain service.
+
+Forms are service-item-specific instead of sharing a fixed Helpdesk questionnaire. The preview includes user, service item, title/description, normalized answers, response/resolution SLA, bound process, approval requirements, and expected support group. IT staff and administrators retain internal assignee and remark fields.
 
 | Field | Required | Description |
 | --- | --- | --- |
-| Title | ✔ | |
-| Type | ✔ | One of three, default "Service Request" |
-| Urgency | ✔ | P1 Critical / P2 High / P3 Normal / P4 Low, default P3 |
-| Service Category | ✔ | From the ITSM Service Catalog; never a requirement business domain |
-| Specific Service Item | ✔ | Auto-selected for a unique match, otherwise selected from the category; carries over the service line and SLA target |
-| Problem Description | ✔ | Same field semantics as the Feishu pre-consultation form |
-| Other Supplemental Information | Optional | Same field semantics as the Feishu pre-consultation form |
+| Title / summary | Per form | May be derived from the description but must be shown before submission |
+| Type | System-fixed | Normal-user creation is always `service_request`; Aily cannot change it |
+| Urgency | Per item | P1–P4; defaults and allowed values come from ITOM rules |
+| Catalog / service item | ✔ | Live catalog plus requester scope; supplies SLA, process, and dispatch |
+| Dynamic answers | Per form | Text, options, dates, people/departments, attachments, etc. |
 | Assignee | Optional | Available to IT staff/administrators under Internal Handling Information; if empty, defaults to the process assignment |
 | Linked CI | Optional | Collapsed under "More" |
 | Remarks | Optional | Collapsed under "More" |
@@ -192,7 +194,7 @@ Change: New → Pending Approval → Approved → Implementing → Resolved → 
 The change request and implementation tasks are handled by IT Operations. The approval task is assigned by default to the IT Operations leader; this is distinct from the full set of roles allowed by the state machine. The current `pending_approval → approved/rejected` transition allows `cio`, `it_tm`, and `it_op_leader`. The published runtime process definition, state-machine configuration, and version take precedence over `seed_itsm.py`; changes require a new process version and historical instances retain their original snapshots.
 
 - **At resolution** fill in: solution (required), root cause (optional).
-- **At closure** fill in: closure code (dropdown). After closure, an optional 1–5-star satisfaction control appears for the submitter at the right side of the ticket-detail header. It disappears after submission, while the result remains read-only in Basic Information.
+- **Resolution and closure**: IT staff submit the solution and move the request to `resolved`, which awaits requester confirmation. Confirmation closes it; rejection returns it to `processing` and increments reopen count. After closure, Aily/web asks for a 1–5 score with optional tags/comment. One effective rating exists per ticket; edits are audited.
 - Change approval: in the currently published `change_flow`, the “Change approval” task is assigned by default to `it_op_leader`; the state-machine `pending_approval → approved/rejected` transition allows `[cio, it_tm, it_op_leader]` (adjustable in configuration). Comments are recorded together with the approver and time; both the process-task guard and state-machine authorization must pass.
 - Escalation: an escalation notification is produced when a P1/P2 ticket exceeds 80% of its SLA target without being resolved.
 
@@ -202,6 +204,9 @@ The change request and implementation tasks are handled by IT Operations. The ap
 - [ ] A change ticket cannot enter Implementing without approval.
 - [ ] SLA attainment is auto-determined correctly (including deduction of on-hold time).
 - [ ] Resolving a ticket auto-produces a point event.
+- [ ] Normal users cannot create incidents or changes; the Aily submission tool has no `ticket_type` input.
+- [ ] Item, form, options, SLA, process, and person scope come from live ITOM data.
+- [ ] Retrying a confirmed submission creates one ticket; confirmation/reopen/rating affects the explicitly selected ticket.
 
 ### 5.2 Problem Management
 
@@ -216,7 +221,8 @@ Sources: manual creation, escalation from a ticket (one click; description and l
 
 Two-tier structure: **Catalog** (category, Gold/Silver/Bronze tiering) → **Service Item**.
 
-- Service item fields (10): name ✔, owning catalog ✔, service type, owner, description, SLA response deadline (hours), SLA resolution deadline (hours), target audience, status (automatic), code (automatic).
+- Base fields remain name, catalog, service type, owner, description, SLA, audience, status, and code. The Aily + MCP target adds search keywords/synonyms, typical/excluded scenarios, active form version, bound process, dispatch rule, approval, and default-priority rules.
+- Form versions support text, options, number, date, people/department, boolean, attachment, and later asset/CI fields. Tickets store answer and schema snapshots so later item changes do not rewrite history.
 - The target audience is structured: choose “All employees” or “Custom scope”. Custom scope selects departments and active employees from the organization tree; references are validated on save and a readable summary remains available for lists, search, and historical records. The requester portal and ticket-creation API enforce the scope server-side; administrators and internal IT roles retain the full catalog view.
 - A service item's annual ticket volume is displayed as a live statistic, not entered.
 - Admin/CIO can publish or unpublish catalogs and service items directly from the list using up/down actions. Unpublishing does not delete history; unpublished items are hidden from the requester service portal.
@@ -360,6 +366,8 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 - [ ] Closure is not allowed until all acceptance criteria are checked (otherwise hand off a problem or explain).
 - [ ] Handed-off problems/knowledge automatically carry the requirement code as a back-link.
 - [ ] Fully bilingual; weights / thresholds / rubric are admin-configurable.
+- [ ] Aily retrieves the real requirement form, asks only for missing fields, and writes a `Requirement` rather than a ticket after confirmation.
+- [ ] Normal users can register and read their own requirements but cannot review, assign, score, convert, or close them.
 
 ---
 
@@ -383,13 +391,13 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 | `requirement_flow` | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
 | `project_flow` | Project kickoff (it_pm, approval; CC cio, it_bm) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval; CC cio, it_tm) |
 
-Service requests do not add a separate ITOM routing step: Feishu Helpdesk handles the pre-consultation and type choice, and the final ITOM record enters the three steps above after the handoff token is consumed. Automatic task assignment/reassignment publishes `ticket.assigned`; completion of the final requester step publishes `ticket.user_confirmed`; the existing state machine then reaches `resolved` → `closed`, and a Feishu rating writes back to `Ticket.satisfaction`. These events are the internal facts for the five synchronization points; only user-visible progress is sent outward.
+Service requests do not add a separate Aily-routing process step. Aily handles intent, field collection, and confirmation; after MCP creates the record, ITOM immediately applies the service item's bound workflow and dispatch rule. Completion by IT moves only to `resolved`; the requester confirms through the web or Aily before closure, or rejects the resolution to return to `processing`. Only user-visible progress is sent outward.
 
 - **Process-node standard (M3.8, mandatory for all subsequent process features)**: each node can configure a **handler** (approve/execute; produces a task and blocks the process) and **CC parties** (in-app notification only; produces no task, does not block, and can be multiple roles/user groups); the process-definition page shows a **process diagram** (handler in blue, CC in gray), with live preview in the editor. See docs/06 §10 for details.
 - Pages: process-definition management (admin; includes enable/disable and step editing), process monitoring (instance list, stuck steps, overdue tasks).
 - The record detail page shows a process bar (current step highlighted).
 
-**About n8n**: the process engine is built into the backend code; n8n is not introduced. Rationale: of the four responsibilities n8n carried in the old system, document auto-generation has been cut, Feishu notifications are not connected initially, skill/load-based assignment is simplified to role-based assignment, and event orchestration is covered by the notification outbox; meanwhile, the deployment/maintenance of n8n as a standalone service and the cross-system troubleshooting cost were precisely one source of the old system's complexity. **Reserved**: the notification outbox's event stream is exactly the hook for an external orchestration tool; in the future, if cross-system automation is needed, n8n can subscribe to outbox events with zero changes to business code.
+**About n8n**: it is not introduced. Aily calls embedded MCP, while proactive communication uses a Feishu-bot outbox adapter. A future external orchestrator may subscribe to outbox events, but it can never become the source of ITOM business state.
 
 **Acceptance**: creating a ticket auto-creates the corresponding process instance; process monitoring shows how far each instance has progressed; reassignment takes effect.
 
@@ -490,7 +498,7 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | Item | Requirement |
 | --- | --- |
 | Tech stack | Backend FastAPI + SQLAlchemy + PostgreSQL; frontend React + Ant Design; single repository |
-| Deployment | IDC Kubernetes is the sole delivery and acceptance environment; release uses `push-images.sh` + `k8s-deploy.sh`; Docker Compose is temporary local troubleshooting only |
+| Deployment | IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes Docker Compose + ngrok on the full `8180` origin for Aily/MCP development and real-tenant integration; IDC acceptance remains mandatory after recovery |
 | Performance | List pages ≤ 1s; Dashboard ≤ 2s; sized for 100k tickets over 5 years |
 | Security | Hashed password storage, JWT sessions, interface-level RBAC, immutable audit logs |
 | API convention | Unified response `{success, data, total, page}`; RESTful; OpenAPI docs auto-generated |
@@ -513,5 +521,9 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | M36–37 Accounts and Personal Settings | 2.4, 3 | Safe account deletion, Feishu workplace login, profile center, self-service password, binding management, notification/theme/density preferences, personal activity |
 | M38 Interface & Branding | 10, 11 | Branding and login configuration, safe image assets, global appearance, role landing pages, banners/environment labels, publish history and rollback, built-in fallback |
 | M41 Role-specific Visual Redesign | 10, 11 | Scheme F service portal for requester-only users; Scheme C high-density workbench for all other roles; full-width horizontal logo above the sidebar title |
+| Aily-MCP P0 Protocol & Foundation (code and real identity path complete; proactive bot delivery pending) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
+| Aily-MCP P1 Intake | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
+| Aily-MCP P2 Closure Loop | 3, 5, 8 | Dispatch, accept, resolve, proactive notification, confirm/reopen, close, and rate across real roles |
+| Aily-MCP P3 Approval & Release | 8, 10, 11 | Feishu Approval idempotency, IDC security/performance/recovery/UAT, user-approved PR to `main` |
 
-**System-level overall acceptance**: all creation forms require ≤ 5 items; no page anywhere in the system "manually maintains statistics"; all six categories of point events are auto-triggered; one real business loop works end-to-end (business user submits a ticket → handled → captured as knowledge; requirement registered → analyzed → attached to a project for implementation → closed with hand-off).
+**System-level overall acceptance**: all creation forms require ≤ 5 items; no page manually maintains statistics; all six point-event categories trigger automatically; real acceptance covers “Aily request → MCP create → ITOM dispatch/accept/resolve → Aily proactive notification → requester confirm/reopen → close → rate” and “Aily requirement registration → ITOM evaluation → delivery/project → acceptance and closure.”

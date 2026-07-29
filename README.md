@@ -14,9 +14,9 @@ Design principles: ≤5 required fields per create form, zero manual entry for d
 ## 中文
 
 ### 技术栈
-- 后端：FastAPI + SQLAlchemy 2.0 + PostgreSQL 16（Python 3.11）
+- 后端：FastAPI + SQLAlchemy 2.0 + PostgreSQL 16（Python 3.12）+ MCP Python SDK 1.29
 - 前端：React 18 + TypeScript + Ant Design v5 + Zustand + Vite
-- 部署：Docker Compose（Nginx 托管前端 + 反代 `/api`）
+- 部署：Docker Compose / IDC Kubernetes（Nginx 托管前端，同时反代 `/api` 与 `/mcp`）
 - 主键：26 位 ULID（GLID）；业务编号 `前缀-YYYYMM-序号`（TK/PB/KB/PJ/RQ/ID…）
 
 ### 架构简介
@@ -24,18 +24,19 @@ Design principles: ≤5 required fields per create form, zero manual entry for d
 浏览器 SPA (React + AntD)
    │  /api/*（统一响应包 {success,data,error}）
    ▼
-Nginx（容器 frontend:80 → 宿主 8180）── 静态托管 dist + 反代 /api
+Nginx（容器 frontend:80 → 宿主 8180）── 静态托管 dist + 反代 /api、/mcp
    ▼
 FastAPI（容器 backend:6800，uvicorn）
    ├─ routers/   一域一文件（权限守卫 require_perm / 流程守卫）
    ├─ services/  领域逻辑（权限矩阵、流程引擎、SLA、评分、org_sync、seed、migrate）
-   ├─ events/    事件总线 + 通知（站内 + 发件箱 outbox，外部通道挂接点）
-   └─ lifespan   启动顺序：建表 → 增量迁移 → 幂等种子 → 事件订阅 → 调度器
+   ├─ mcp/       Aily JWT、外部身份映射、Streamable HTTP 与工具审计
+   ├─ events/    事件总线 + 通知（站内 + Aily 机器人可靠发件箱）
+   └─ lifespan   启动顺序：建表 → 增量迁移 → 幂等种子 → MCP 会话 → 调度器
    ▼
 PostgreSQL 16（容器 db，卷持久化）
 ```
 关键机制：单据（工单/问题/需求/项目）创建即挂接流程实例，状态由流程编排自动同步（详见「关键概念」）；
-权限=功能矩阵×数据范围×流程节点三层；飞书同一应用凭证驱动组织同步、扫码登录和服务台工单交接。
+权限=功能矩阵×数据范围×流程节点三层；飞书组织同步、扫码登录继续保留。`feature/aily-agent-mcp` 已完成 P0 底座：清除服务台运行路径、内嵌 `/mcp`、Aily JWT 与精确身份映射、脱敏工具审计和机器人可靠发件箱，并已通过真实 Aily + ngrok 身份调用。P1 的服务目录搜索、动态表单和正式建单工具尚未实现；ITOM 始终是服务目录、表单、流程和权限的唯一事实来源，详见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)。
 
 ### 本地启动（Docker）
 ```bash
@@ -43,6 +44,10 @@ cd deploy && docker compose up --build
 # 前端 http://localhost:8180   API 文档 http://localhost:8180/api/docs
 # 初始管理员 admin / 密码见 deploy 环境变量 ADMIN_INIT_PASSWORD（默认 admin123）
 # 全新数据库默认 SEED_INITIAL_CONFIG=1：自动初始化六条流程定义及当前登录页/Logo；已有品牌配置不会覆盖
+# Aily + MCP 开发期由 ngrok 暴露完整 127.0.0.1:8180；同一 HTTPS 根地址承载前端、/api、OAuth 回调和 /mcp
+# 首次注册先启用 MCP 并配置 Origin；Aily 创建后再回填其 JWT Secret、租户/Agent 白名单和外部身份映射
+# 存量冻结版数据库先预览清理：docker compose exec backend python -m app.scripts.migrate_aily_mcp
+# 确认后执行：docker compose exec backend python -m app.scripts.migrate_aily_mcp --confirm
 ```
 
 ### 本地开发
@@ -60,7 +65,7 @@ npm run build                          # tsc --noEmit + vite build（提交前�
 
 ### 生产部署
 
-> 当前唯一交付与验收环境为 IDC Kubernetes 集群。后续功能与问题修复必须在自动化测试通过后发布到 IDC，并以集群中的健康检查和实际功能验证作为完成标准；本地 Docker 不再作为默认调试或验收环境。
+> 正式发布仍以 IDC Kubernetes 为最终验收环境。当前 IDC 基础设施阻塞期间，用户已明确授权 Aily + MCP 使用本地 Docker + ngrok 开发和真实租户联调；这不替代 IDC 恢复后的最终发布验收。
 ```bash
 # 1) 准备环境变量（首次）
 cd deploy && cp .env.example .env
@@ -101,7 +106,7 @@ deploy/          docker-compose、Nginx、备份
 ### 关键概念
 - **统一响应包**：`{success, data, total?, page?, error?}`；错误经 `AppError(code, message, status)` 返回中文提示。
 - **权限三层**：① 功能矩阵（`role_permission` 表，模块 × 动作 view/create/edit/delete，`require_perm` 守卫，admin 隐式全权）；② 数据范围（业务代码内置，如 requester 仅见自己的工单/需求）；③ 流程权限（状态机 `allowed_roles` + 流程步骤 `default_role`）。
-- **流程驱动状态（M23–M31 定稿）**：六类单据（服务请求/事件/变更/问题/需求/项目）状态由流程编排自动同步（首步完成→处理中打首响 SLA、末步→已解决、流程走完→自动关闭）；处理人只操作「完成此步骤」，手动状态按钮按白名单收敛（SR/事件=挂起恢复、问题=已知错误、变更=审批链、需求=无、强关仅 admin）；列表页「当前节点」列标识「待我处理」并一键进详情。
+- **流程驱动状态**：现有 ITOM 仍按 M23–M31 自动同步；P2 将服务请求的“IT 人员标记已解决”和“提交人确认关闭”拆开，未解决时重回处理中。事件仍为 IT 内部/监控来源，普通用户不能创建。
 - **流程节点语义**：每个节点可配置为处理节点或审批节点，并分别配置处理人与知会人。审批节点支持详情右上角“同意/驳回”或流程图“完成此步骤”同意；同意理由可选，驳回理由必填并留痕。WBS 任务完成度支持管理员/负责人直接录入 0–100% 整数；显式将父项设为 100% 会向下级联，子项修改后父项按直接子项平均值递归回算，项目进度仅按末级任务工期加权汇总。
 - **全局表格交互**：所有超出内容区宽度的表格统一提供一条底部悬浮横向滚动条，页面纵向滚动时表头保持悬浮；WBS 额外支持前三列冻结。
 - **列表分页**：分页器的页大小为受控状态，统一支持 10/20/50/100 条；服务项等前端本地分页表格切换页大小不会被固定默认值覆盖，服务端分页列表同步传递 `page_size`。
@@ -115,21 +120,23 @@ deploy/          docker-compose、Nginx、备份
 - **矩阵角色人效评分**：人效总览使用当前矩阵角色结果（角色职责结果 80% + 团队贡献 20%），支持 ITSM/需求/项目/流程自动取数、负责人分级初评、CIO 终审、外部原数据录入和发布后个人结果隔离；同一角色可配置多名评审人及独立权重，评审结果按权重汇总。外部满意度仅按业务服务域录入，外部指标采用白名单校验；团队贡献维度、目标积分及内外部满意度比例由 CIO/管理员配置，并在考核周期生成规则快照。旧版岗位计分方案接口仅保留历史客户端兼容，不再作为总览数据源。
 - **积分规则配置**：团队管理→活动积分→积分规则维护团队贡献活动的自动事件分值、启停状态、维度权重、目标积分和满意度组合；仅 admin/CIO 可修改。团队管理→人效评分→计分规则只维护岗位角色档案、角色维度、取数口径和权重，不混入团队贡献活动。规则修改写入审计日志，仅影响后续事件/考核周期，历史积分台账和已发布周期不自动重算。
 - **双语**：语言存 `auth_user.preferences.language`（zh/en）；登录即应用，用户可自行切换；飞书开通时由管理员设默认语言。
-- **飞书服务台交接**：服务台配置页保存加密的服务台 ID/Token 与事件校验信息；转人工后，ITOM 优先在原服务台会话写入两个不含身份与令牌的稳定入口。员工点击并完成 ITOM 登录后，系统重新读取工单并核验同一飞书 `open_id`，随后才签发十分钟一次性令牌并打开预填的服务请求或需求页。服务类别只进入 ITSM 服务目录上下文，不自动映射需求业务域。
-- **飞书服务台可靠同步**：转人工工单先落为待分流记录；事件以唯一 ID 入队并由后台异步重试。原会话入口优先使用富文本，失败自动降级为含完整 URL 的文本，连续失败后才通过独立应用机器人动态卡片兜底。建单后只把登记、分派、处理中、完成、关闭等用户可见进展回写原飞书会话，内部备注和审批意见不外发；管理员可查看入口投递渠道、待分流和失败事件队列。
+- **Aily + MCP 正式基线**：P0 已完成 MCP 内嵌、首次注册协议发现、Aily JWT/Origin/租户/Agent 校验、精确 ITOM 用户映射与脱敏审计。协议发现不执行工具；任何 `tools/call` 仍必须完整验签和授权。P1 再实现普通员工只创建 IT 服务请求或登记 IT 需求，以及实时服务项、动态表单、SLA、流程和派单。
+- **服务闭环与主动消息**：P0 已实现可靠 outbox 和 Aily 机器人测试发送；P2 再接入解决通知、确认关闭、未解决重开和评价。飞书服务台运行路径、配置、模型、页面和专用测试已全部移除，历史版由标签 `v1.0.0-feishu-helpdesk` 恢复。
 - **站内通知**：顶栏铃铛显示当前账号可见通知；弹窗提供“一键已读”和“清除已读”，前者批量写入已读回执，后者软删除当前账号已读通知，均不修改源业务单据。
 - **飞书扫码登录 + 开通审批**：管理员批准时生成 12 位高强度初始密码并加密保存，但不自动发信。管理员可在用户详情点击闭眼图标按需查看，或点击“邮件发送”手工投递；查看与发送均审计，用户改密/管理员重置后密文立即清除。
 
 ### 分支与协作
 - `main`：稳定分支，受保护——只接受 Pull Request 合入，禁止直推（本地 pre-push 钩子拦截；紧急放行 `ALLOW_MAIN_PUSH=1 git push`）。
 - `develop`：日常开发集成分支；功能开发从 `develop` 拉 `feature/<名称>` 分支，完成后 PR 合回。
+- `release/feishu-helpdesk-v1` 与标签 `v1.0.0-feishu-helpdesk`：飞书服务台版本的冻结基线；标签固定在提交 `f13f702`，不得重写。
+- `feature/aily-agent-mcp`：基于上述冻结基线的新版本开发线；方案背景、架构边界和新会话启动要求见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)，完成后由用户确认并通过 Pull Request 合入 `main`。
 - 首次 clone 后启用钩子：`git config core.hooksPath scripts/git-hooks`。
 - 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误；按改动影响同步更新 `README.md`、`docs/03–06` 及对应英文译本。
 - **交付完成定义**：代码实现、测试与受影响说明文档必须相互一致；功能、接口、数据模型、配置、部署、权限或用户流程发生变化但文档未同步时，不得视为完整交付。仓库级执行规则见 [`AGENTS.md`](AGENTS.md)。
 
 ### 里程碑
 M1 骨架+RBAC → M2 工单+SLA+流程引擎 → M2.5 自配置 → M3 CMDB/问题/供应商/合同/知识 → M3.5–3.10 身份治理/权限矩阵/组织树/飞书 SoT/批量导入 → M4 项目 → M5 需求 → M6 团队（活动积分/人效/培训/文化/流程监控/Dashboard）→ M7 双语 i18n + 飞书扫码登录开通审批 → M9 甘特图 → M10 需求六维评分+四象限 → M11 飞书组织同步+真实扫码 OAuth → M12–15 项目管理实战打磨（行内操作/章程结构化/级联删除/流程版本管理）→ M16 需求路由闭环（评审→方案评估→转开发/转项目→验收自动闭环）→ M17 导航二级菜单+权限模块按页拆分 → M18–25 流程权限体系（任务处理人守卫/待办通知/流程完成自动闭环/状态-流程双向同步/操作权跟随节点处理人/未指派认领）→ M26–28 交互与关闭策略定稿（原路返回/登记人关单+理由审计/强关仅 admin）→ M29 SLA 优先级定义（ITIL 初稿可编辑）+ 问题管理专业线流程 → M30–31 状态按钮白名单+列表「待我处理」列 → M32 飞书同步范围可配置（多部门/全公司）→ M33 用户调试版流程与权限固化为出厂默认 → M34–35 通知直达+异步全员组织同步 → M36–36.2 账号治理、飞书免登与个人中心 → **M37 个人设置（通知偏好、个人操作记录、飞书绑定管理、明暗主题与内容密度）**。
-M45 增补飞书服务台一次性交接、服务请求/需求预填及同一 open_id 身份校验；服务类别不自动映射需求业务域。M46 增补待分流记录、事件幂等重试、原会话稳定入口（登录后签发短时令牌）、富文本/文本/独立机器人三级降级和只回写用户可见进展的可靠同步。
+M45–M46 是冻结版 Helpdesk 历史里程碑，仅保留在 `v1.0.0-feishu-helpdesk`。新开发线依次执行 Aily-MCP P0（移除 Helpdesk、协议/身份/消息）→ P1（真实服务目录、动态表单、服务请求/需求登记、派单）→ P2（解决通知、确认/重开、评价闭环）→ P3（飞书审批与 IDC 正式发布）。
 
 验收基准为 `docs/03-PRD.md` 对应章节 + 各里程碑提交说明；实现细节以代码与测试为准。
 
@@ -138,9 +145,9 @@ M45 增补飞书服务台一次性交接、服务请求/需求预填及同一 op
 ## English
 
 ### Tech stack
-- Backend: FastAPI + SQLAlchemy 2.0 + PostgreSQL 16 (Python 3.11)
+- Backend: FastAPI + SQLAlchemy 2.0 + PostgreSQL 16 (Python 3.12) + MCP Python SDK 1.29
 - Frontend: React 18 + TypeScript + Ant Design v5 + Zustand + Vite
-- Deploy: Docker Compose (Nginx serves the SPA and reverse-proxies `/api`)
+- Deploy: Docker Compose / IDC Kubernetes (Nginx serves the SPA and proxies both `/api` and `/mcp`)
 - Primary keys: 26-char ULID (GLID); business codes `PREFIX-YYYYMM-seq` (TK/PB/KB/PJ/RQ/ID…)
 
 ### Architecture at a glance
@@ -148,26 +155,30 @@ M45 增补飞书服务台一次性交接、服务请求/需求预填及同一 op
 Browser SPA (React + AntD)
    │  /api/* (uniform envelope {success,data,error})
    ▼
-Nginx (container frontend:80 → host 8180) ── serves dist + proxies /api
+Nginx (container frontend:80 → host 8180) ── serves dist + proxies /api and /mcp
    ▼
 FastAPI (container backend:6800, uvicorn)
    ├─ routers/   one file per domain (require_perm / process guards)
    ├─ services/  domain logic (permission matrix, process engine, SLA, scoring, org_sync, seed, migrate)
-   ├─ events/    event bus + notifier (in-app + outbox, external-channel hook point)
-   └─ lifespan   startup: create tables → incremental migrate → idempotent seed → subscribe → scheduler
+   ├─ mcp/       Aily JWT, external identity, Streamable HTTP, and tool audit
+   ├─ events/    event bus + notifier (in-app + reliable Aily-bot outbox)
+   └─ lifespan   startup: create tables → migrate → seed → MCP session → scheduler
    ▼
 PostgreSQL 16 (container db, persistent volume)
 ```
 Key mechanics: every ticket/problem/requirement/project gets a process instance on creation and its
 status is synced by orchestration (see Key concepts); permissions = functional matrix × data scope ×
-process-step operator; one Feishu app credential drives both org sync and QR sign-in.
+process-step operator. Feishu org sync and QR sign-in remain. `feature/aily-agent-mcp` has implemented the P0 embedded-MCP, identity, audit, and bot-outbox foundation and passed a real Aily + ngrok identity call, while ITOM remains the sole source for catalog, forms, workflow, and authorization. P1 business tools are not implemented yet.
 
 ### Run locally (Docker)
 ```bash
 cd deploy && docker compose up --build
 # Web  http://localhost:8180   API docs http://localhost:8180/api/docs
 # Bootstrap admin: admin / password from the deploy env var ADMIN_INIT_PASSWORD (default admin123)
-# For Feishu Helpdesk handoff links behind ngrok/reverse proxy, set `ITOM_PUBLIC_URL` in `deploy/.env` to the externally reachable HTTPS root.
+# During Aily + MCP development, ngrok exposes the complete 127.0.0.1:8180 origin for the web app, /api, OAuth callback, and /mcp endpoint.
+# For first registration, enable MCP with an Origin; after Aily creates it, copy back the JWT secret and configure tenant/agent allowlists and identity mappings.
+# Preview frozen-schema cleanup: docker compose exec backend python -m app.scripts.migrate_aily_mcp
+# Execute only after review: docker compose exec backend python -m app.scripts.migrate_aily_mcp --confirm
 # Fresh databases default to SEED_INITIAL_CONFIG=1, which initializes the six workflows and the verified login/Logo branding; existing branding is never overwritten.
 ```
 
@@ -186,7 +197,7 @@ npm run build                          # tsc --noEmit + vite build (must be 0 er
 
 ### Production deployment
 
-> The IDC Kubernetes cluster is now the sole delivery and acceptance environment. After automated checks pass, every feature or fix must be deployed and verified in IDC; local Docker is no longer the default development or acceptance target.
+> IDC Kubernetes remains the final release-acceptance environment. While the current IDC infrastructure is blocked, the user explicitly authorizes local Docker + ngrok for Aily + MCP development and real-tenant integration; final IDC acceptance is still required after recovery.
 ```bash
 # 1) Prepare env vars (first time)
 cd deploy && cp .env.example .env
@@ -230,7 +241,7 @@ deploy/          docker-compose, Nginx, backups
 ### Key concepts
 - **Response envelope**: `{success, data, total?, page?, error?}`; errors are raised as `AppError(code, message, status)`.
 - **Three permission layers**: (1) functional matrix (`role_permission` table, module × action view/create/edit/delete, guarded by `require_perm`; `admin` is implicitly all-powerful); (2) data scope (baked into business code, e.g. a `requester` only sees their own tickets/requirements); (3) process permissions (state-machine `allowed_roles` + process-step `default_role`).
-- **Process-driven status (finalized M23–M31)**: for all six flow-bound entities, ticket status is synced automatically by process orchestration (first step done → processing with first-response SLA, last step → resolved, flow complete → auto-closed). Operators only click "complete this step"; manual status buttons are reduced to a whitelist (SR/incident = pause/resume, problem = known-error, change = approval chain, requirement = none, force close = admin only). List pages show a "current step" column flagging "my turn" with a jump into the detail page.
+- **Process-driven status**: current ITOM still follows M23–M31 automation. P2 separates “resolved by IT” from “closed after requester confirmation” for service requests; rejection returns the request to processing. Incidents remain IT/monitoring-originated and cannot be created by normal users.
 - **Process-node semantics**: each node can be configured as processing or approval with separate handler and CC parties. Approval nodes support approve/reject from the detail-page actions or approve through the flow diagram; approval comments are optional, rejection reasons are mandatory and retained. WBS task completion accepts an integer percentage from 0–100; explicitly setting a parent to 100% cascades to all descendants, child changes roll up as direct-child averages, and project progress is duration-weighted over leaf tasks only.
 - **Global table interaction**: every table wider than the content area exposes one sticky bottom horizontal scrollbar and keeps its header visible during vertical page scrolling; the WBS table additionally freezes the first three columns.
 - **List pagination**: page-size selectors are controlled state everywhere and consistently support 10/20/50/100 rows; local-paginated tables such as Service Items no longer reset a selected size to a hard-coded default, while server-paginated lists pass the selected `page_size` to the API.
@@ -238,7 +249,8 @@ deploy/          docker-compose, Nginx, backups
 - **Closure policy**: submitters may close their own service requests / requirements / projects (reason ≥5 chars, audited); incidents/changes/problems must complete the flow; force close is admin-only.
 - **Matrix organization**: horizontal business domains (served departments are selected from Org Structure with optional descendant coverage; owner, backup owner, and service-team selectors use the administrator-defined digital-team scope) × vertical user groups. The scope is the union of selected department members and individually selected people, allowing a mixed vendor organization to contribute only named contractors. All operational person selectors (projects, requirements, tickets, problems, service items, CIs, contracts, groups, and account linking) load `GET /api/members?scope=it`, with server-side revalidation after the scope is configured. Administrators may delete domains that have no requirement references.
 - **Feishu is the Source of Truth for people master data**: `org_sync` idempotently applies an org snapshot (external wins, missing → offboarded/inactive); locally only position/skills/remarks/dept-type are editable. Besides the remote sync scope, administrators can enable/disable scheduled sync and choose a 1/6/12/24-hour interval.
-- **Feishu Helpdesk handoff**: a trusted bot/server creates a ten-minute one-time link after the pre-consultation and human-agent conversation. The employee must use the same Feishu `open_id` in ITOM; service requests receive service-catalog context, while requirements keep category/domain selection explicit. Tokens are encrypted/hashed and consumed after creation.
+- **Aily + MCP baseline**: P0 implements embedded MCP, first-registration protocol discovery, Aily JWT/origin/tenant/agent checks, exact ITOM-account mapping, and redacted audit. Discovery cannot execute tools; every `tools/call` still requires full authentication and authorization. P1 adds employee service-request/requirement tools backed by live catalog, forms, SLA, workflow, dispatch, and authorization.
+- **Closure and proactive messaging**: P0 implements the reliable outbox and Aily-bot test delivery; P2 connects resolution updates, confirmation/reopen, and rating. All Helpdesk runtime/configuration/models/pages/tests are removed; the historical version remains under `v1.0.0-feishu-helpdesk`.
 - **Example data**: `GlidBase.is_example` (pinned to the top of lists); editing, workflow transitions, and business actions remain read-only, while administrators can explicitly delete examples from list pages; not seeded by default, enable with `SEED_EXAMPLES=1` (used by tests).
 - **Assessment period**: quarterly `YYYY-Q1/Q2/Q3`; Q4 runs the full-year assessment `YYYY-All` (statistics cover the whole calendar year).
 - **Point-rule configuration**: Team Management → Activity Points → Point Rules controls team-contribution event values, activation, dimension weights, targets, and satisfaction mix; only admin/CIO can edit. Team Management → Performance → Scoring Rules owns role profiles, role dimensions, source mappings, and weights, with no team-activity rules mixed in. Changes are audited, affect future events/assessment periods, and never recalculate historical ledgers or published periods automatically.
@@ -250,10 +262,12 @@ deploy/          docker-compose, Nginx, backups
 ### Branching & collaboration
 - `main`: stable, protected — merged via Pull Request only; direct pushes are blocked by a local pre-push hook (override with `ALLOW_MAIN_PUSH=1 git push` in emergencies).
 - `develop`: day-to-day integration branch; cut `feature/<name>` branches from it and PR back.
+- `release/feishu-helpdesk-v1` and `v1.0.0-feishu-helpdesk`: immutable frozen Helpdesk baseline at `f13f702`.
+- `feature/aily-agent-mcp`: sole Aily + MCP development line; see the [final design baseline](docs/en/10-aily-mcp-handoff-and-decision-context.md) and merge to `main` only through a user-approved PR.
 - After cloning, enable the hooks once: `git config core.hooksPath scripts/git-hooks`.
 - Pre-commit checklist: backend `pytest -q` all green, frontend `npm run build` with zero errors, and affected sections in `README.md`, `docs/03–06`, and their English mirrors updated.
 - **Definition of done**: implementation, tests, and affected documentation must agree. A behavior, API, data-model, configuration, deployment, permission, or workflow change without synchronized docs is not a complete delivery. See [`AGENTS.md`](AGENTS.md).
 
 ### Milestones
-M1 skeleton+RBAC → M2 tickets+SLA+process engine → M2.5 self-configuration → M3 CMDB/problems/vendors/contracts/knowledge → M3.5–3.10 identity governance / permission matrix / org tree / Feishu SoT / bulk import → M4 projects → M5 requirements → M6 team → M7 bilingual i18n + Feishu QR sign-in with provisioning approval → M9 Gantt → M10 six-dimension requirement scoring + quadrants → M11 Feishu org sync + real QR OAuth → M12–15 project-management polish → M16 requirement routing loop → M17 second-level nav + per-page permissions → M18–35 workflow governance, interaction policy, Feishu sync and notifications → M36–36.2 account governance, Feishu free login and profile center → **M37 personal settings (notification preferences, personal activity, Feishu identity linking, theme and content density)** → **M45 Feishu Helpdesk handoff and service-request/requirement prefill** → **M46 reliable Helpdesk intake/event/outbox synchronization**.
-Acceptance baseline: the matching section of `docs/03-PRD.md` plus each milestone's commit message; code and the 240-case test suite are the source of truth.
+M1–M37 remain the existing platform history. M45–M46 are frozen Helpdesk history only. The new line proceeds through Aily-MCP P0 (remove Helpdesk; protocol, identity, messaging) → P1 (live catalog, dynamic forms, request/requirement intake, dispatch) → P2 (resolution notification, confirmation/reopen, rating loop) → P3 (Feishu Approval and IDC release).
+Acceptance baseline: the matching section of `docs/03-PRD.md` plus each milestone's commit message; real code and the currently executed test evidence are the implementation source of truth.

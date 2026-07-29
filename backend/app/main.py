@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.core.errors import AppError
 from app.db import Base, SessionLocal, engine
 from app.routers import (
+    aily,
     admin_misc,
     admin_org,
     admin_rbac,
@@ -35,8 +36,8 @@ from app.routers import (
     vendors_contracts,
     ui_branding,
     integrations,
-    feishu_helpdesk,
 )
+from app.mcp.server import mcp_runtime
 from app.services import scheduler
 from app.services.migrate import run_migrations
 from app.services.seed import run_seed, run_seed_perf, run_seed_perf_bplus
@@ -64,14 +65,13 @@ async def lifespan(app: FastAPI):
     from app.services.points import register_subscribers
 
     register_subscribers()
-    from app.services.feishu_helpdesk import register_subscribers as register_feishu_subscribers
-
-    register_feishu_subscribers()
-    task = asyncio.create_task(scheduler.run_forever())
-    sync_task = asyncio.create_task(scheduler.run_feishu_helpdesk_forever())
-    yield
-    task.cancel()
-    sync_task.cancel()
+    async with mcp_runtime.run():
+        task = asyncio.create_task(scheduler.run_forever())
+        outbox_task = asyncio.create_task(scheduler.run_aily_outbox_forever())
+        yield
+        task.cancel()
+        outbox_task.cancel()
+        await asyncio.gather(task, outbox_task, return_exceptions=True)
 
 
 app = FastAPI(title="IT运营管理平台 API", version="0.9.0-m9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -146,8 +146,10 @@ async def auditor_readonly_guard(request: Request, call_next):
 
 
 for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
-          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, team_activities, team_learning, team_mgmt, ui_branding, integrations, feishu_helpdesk):
+          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, team_activities, team_learning, team_mgmt, ui_branding, integrations, aily):
     app.include_router(r.router)
+
+app.mount("/mcp", mcp_runtime, name="aily-mcp")
 
 
 @app.get("/api/health")

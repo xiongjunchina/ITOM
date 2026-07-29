@@ -3,29 +3,31 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
+> P0 protocol, identity, audit, message foundation, and Helpdesk removal are implemented on `feature/aily-agent-mcp`; P1–P3 business tools remain approved targets. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
 ```text
-┌──────────────┐     HTTPS      ┌─────────────────────────────┐      ┌────────────┐
-│ React SPA    │ ─────────────▶ │ FastAPI monolith backend    │ ───▶ │ PostgreSQL │
-│ (AntD)       │   JWT Bearer   │ routers → services → models │      └────────────┘
-└──────────────┘                │        │                    │
-                                │        ▼ domain events (in-process)
-                                │  ┌─────────────────────┐    │
-                                │  │ event_bus           │    │
-                                │  │ ├─ point_engine     │──▶ point_entry
-                                │  │ ├─ notifier         │──▶ notification_outbox → in_app
-                                │  │ └─ process_engine   │──▶ process_instance/task
-                                │  └─────────────────────┘    │
-                                └─────────────────────────────┘
+Feishu user ⇄ Aily Agent ──HTTPStreaming + x-aily-jwt──▶ Nginx /mcp
+                                                         │
+React SPA ──JWT Bearer──▶ Nginx /api ────────────────────┤
+                                                         ▼
+                                        FastAPI monolith with embedded MCP
+                                          routers/MCP → domain services
+                                                         │
+                                       RBAC / workflow / audit / PostgreSQL
+                                                         │
+                                        event bus → notification outbox
+                                                         │
+                                         Aily-bot Feishu message → user
 ```
 
 **Key decisions**:
 
 1. **Monolith backend**, modularized by domain, no microservices — at a single-team scale, microservices only add complexity.
-2. **Domain events are dispatched in-process synchronously** (within the same transaction commit), with three subscribers: the point engine, the notifier, and the process engine. The outbox table is the asynchronous hook for future external systems (Feishu/n8n).
-3. Decoupled front end and back end in a single repository (monorepo), deployed as one unit.
+2. **MCP is embedded in FastAPI** and reuses domain services, transactions, RBAC, workflow, and audit; tools never write tables directly.
+3. **Domain events are dispatched in-process synchronously**; the reliable outbox asynchronously delivers in-app and Aily-bot messages.
+4. Front end and back end remain in one monorepo. Nginx proxies both `/api/` and `/mcp`.
 
 ## 2. Repository Structure
 
@@ -57,6 +59,8 @@ ITOM/
 - **Pagination**: `?page=1&page_size=20` (default 20, max 200); filter parameters are per-resource; sorting `?order_by=-submitted_at`.
 - **Unified state-transition pattern**: `POST /api/{resource}/{id}/transition` `{"to": "resolved", "fields": {...}}` — state-machine validation + the staged fields required by that transition (e.g. solution required at resolution) submitted in one call.
 - OpenAPI docs are auto-generated at `/api/docs`.
+- **MCP authentication**: Aily sends `x-aily-jwt`; MCP validates HS256, expiry, tenant/agent allowlists, and maps through `external_identity` to an active `AuthUser`.
+- **MCP mutation**: `prepare_*` creates a short-lived operation intent; `submit_*` requires its confirmation token and an idempotency key. MCP returns structured MCP content, not a fake REST envelope.
 
 ## 4. Route Inventory (by domain)
 
@@ -90,43 +94,71 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 
 A repeated trigger while running returns HTTP 409 / `SYNC_RUNNING`. The UI polls every three seconds for up to ten minutes. Completion or failure sends an in-app notification to the initiator, and the background worker uses an independent database session.
 
-### 4.1b Feishu Helpdesk handoff and reliable synchronization (M45/M46)
+### 4.1b Aily Agent + MCP (P0 implemented; P1 business tools pending)
 
 ```text
-POST /api/integrations/feishu/helpdesk/events
-    # Feishu event URL verification; checks the configured Verification Token
-POST /api/integrations/feishu/helpdesk/card-callback
-    # Feishu 2.0 interactive-card callback; token may be in header.token or event.token
-    # event.action.value={action:create_service_request|create_requirement,ticket_id}
-POST /api/integrations/feishu/helpdesk/cards
-    # compatibility/fallback endpoint; trusted bot caller sends a card to guest.open_id
-POST /api/integrations/feishu/helpdesk/handoffs
-    # trusted server/bot only; X-Lark-Helpdesk-Authorization=base64(helpdesk_id:helpdesk_token)
-    # body: {ticket_id, action: service_request|requirement}
-GET /api/integrations/feishu/helpdesk/handoffs/{token}
-    # authenticated user reads the one-time context; Feishu guest open_id must match
-    # issued returns prefill context; consumed returns linked entity_type/entity_id for idempotent navigation
-POST /api/integrations/feishu/helpdesk/handoffs/{token}/consume
-    # called after creation; body: {entity_type: ticket|requirement, entity_id}; duplicate consumption remains HTTP 409
-POST /api/integrations/feishu/helpdesk/intakes/{intake_id}/handoff
-    # authenticated stable-entry exchange; body: {action: service_request|requirement}
-    # issues a token only after account, intake guest, and fresh ticket guest open IDs match
-GET /api/integrations/feishu/helpdesk/intakes
-    # admin/CIO/IT managers inspect intake state and entry delivery channel/time/message ID
-GET /api/integrations/feishu/helpdesk/sync-events
-    # inspect processed/pending/failed inbound events and retry counts
-POST /api/admin/feishu-config/subscribe-helpdesk-events
-    # admin-only; registers the configured app for Helpdesk events
+GET/POST /mcp
+    # Implemented Streamable HTTP entry; exact allowlisted Origin is always required
+    # read-only initialize/tools-list discovery can complete first registration before the JWT secret is copied back
+    # tools/call requires a verifiable x-aily-jwt plus tenant/agent and identity mapping
+    # Nginx disables buffering, uses a 300-second read timeout, and forwards auth/Origin
+
+GET/PUT /api/admin/integrations/aily
+    # admin; reads only configured flags; writes encrypted MCP JWT and bot credentials
+GET/POST /api/admin/integrations/aily/identities
+PATCH/DELETE /api/admin/integrations/aily/identities/{id}
+    # exact provider+tenant+app+subject-type+subject-ID mapping to an ITOM account
+POST /api/admin/integrations/aily/test-message
+    # send a bot test message to a selected verified external identity
+
+get_current_user_context
+    # temporary P0 diagnostic: returns verification, account status, and readable account name only; no internal/external IDs; writes mcp_tool_call
 ```
 
-The primary path starts from `/feishu/helpdesk/entry?intake=...&action=...` in the original Helpdesk conversation. This stable URL contains no open_id, Helpdesk credential, or one-time token. The public entry sends unauthenticated users through login and then calls `POST /intakes/{intake_id}/handoff`; only a fresh ticket read and three-way open_id match returns a token-bearing `entry_url`. `POST /handoffs`, `POST /cards`, and card callbacks remain available for trusted middleware and independent-bot fallback.
+MCP is mounted inside FastAPI and does not create a second business API. P0 uses MCP Python SDK 1.29 with stateless Streamable HTTP. Each FastAPI lifespan creates an independent protocol session manager, supporting production startup, test restarts, and development reloads. Aily reveals `identityJWTSecret` only after a custom MCP has been saved, so registration allows only protocol discovery (`initialize`, `notifications/initialized`, `ping`, `tools/list`, and empty resource/prompt lists), still guarded by the enable switch and exact Origin allowlist. Every `tools/call` requires JWT, tenant/agent, external-identity, and account-status validation. The tool layer handles protocol, identity context, input/output, and audit. P1 search, form validation, creation, confirmation, reopen, and rating call the same ITOM domain services as the web application.
 
-Handoff reads are idempotent: an `issued` token returns its prefill context; after creation changes it to `consumed`, the same Feishu identity receives the linked entity and the frontend redirects there. Identity mismatch remains HTTP 403, expiration remains HTTP 410, and a second `POST /consume` remains HTTP 409, preserving duplicate-creation protection without treating a reopened link as an error.
+#### Service-request tools
 
-The Helpdesk token is encrypted and used only by the backend. Only a hash of `handoff_token` is stored, and the snapshot contains prefill fields only. ITOM supports the Helpdesk ticket-detail `customized_fields` shape (`key_name`/`display_name`/`value`) and maps title, urgency, service category, problem description, and supplemental information into `prefill`. Assigned agents may be returned as `agent`, `service_agent`, `assignee`, or an `agents` array; for an array ITOM uses the first agent ID for linkage and joins the names for display, allowing the human-service stage to be detected. When the service category is returned as a dropdown option UUID, the backend reads the Helpdesk field metadata and converts `dropdown_options` to the display label. `prefill.service_category` is used for ITSM catalog/item context; the requirement page preserves it as source metadata and never fills `business_domain_id` automatically.
-The public root comes from `ITOM_PUBLIC_URL` when set, otherwise from the scheme and host of the complete `helpdesk_event_url`. It must be an employee-reachable HTTPS root when local Docker is exposed through ngrok or a reverse proxy. Each successful stable-entry exchange expires older unconsumed tokens for the same Helpdesk ticket before issuing a fresh one. Compatible interactive-card callbacks still validate the Verification Token, action, and `event.operator.open_id`, and use callback event IDs for idempotency.
-The service-request creation API preserves the pre-consultation semantics: `service_category` stores the ITSM catalog name and `other_info` stores the pre-consultation supplemental information; both remain separate from internal `remarks`. Regular business users submit only the pre-consultation fields, while IT staff/administrators may additionally submit `assignee` and `remarks`. Service category is never written to requirement `business_domain_id`.
-Reliable synchronization uses three stages: inbound event queue, fresh Helpdesk-detail read, and outbound outbox. `helpdesk.ticket.created_v1`, `helpdesk.ticket.updated_v1`, and `helpdesk.ticket_message.created_v1` are persisted by unique `event_id`; a five-second worker consumes them with exponential backoff (up to eight attempts). Processing re-reads the current ticket, creates or updates the pending intake, and queues one `routing_prompt` once human service is detected. Delivery first attempts a rich post in the original Helpdesk conversation and immediately downgrades to full-URL text if rich content is unsupported. If the original conversation still fails through two retries, the third attempt sends the independent application-bot card. The selected channel, send time, and Feishu message ID are persisted on the intake for diagnostics. The ITOM record is linked only when the one-time handoff is consumed. Service requests retain the existing three-step `sr_flow` (intake confirmation → implementation and delivery → requester confirmation and closure); no separate ITOM routing step is introduced. Automatic task assignment and in-process reassignment publish `ticket.assigned`; handoff consumption replays the current assignment when the record was created before linkage. Completion of the final requester step publishes `ticket.user_confirmed`, after which the state machine emits `resolved` and `closed`. In the reverse direction, a Feishu user-confirmed detail event completes ITOM's pending requester task; a closed state follows the reachable closure path instead of directly writing status. Rating is refreshed from ticket details after an update event, updates `Ticket.satisfaction`, and emits `ticket.satisfaction_rated`. Internal notes, approval comments, and unpublished details never leave ITOM. Only user-visible milestones enter the outbox and are posted back into the original conversation. Before testing, an admin must configure the public callback URL, add the three Helpdesk events in Feishu and publish the app, then click “Subscribe Helpdesk events” in ITOM. Field-validation failures preserve `field_violations` and `log_id`; the configuration page exposes subscription state, entry channel, queue backlog, and last errors.
+```text
+search_service_items
+get_service_item_form
+prepare_service_request
+submit_service_request
+get_my_service_request
+list_my_service_requests
+get_my_pending_confirmations
+confirm_service_request_resolution
+rate_service_request
+```
+
+- Search returns only published service items eligible for the current user.
+- Form retrieval returns the published schema, SLA, process summary, and public instructions.
+- Prepare performs authoritative ITOM validation and returns normalized data, missing/errors, SLA, process, expected support group, and a short-lived operation intent without creating a ticket.
+- Submit does not accept `ticket_type`; the server fixes it to `service_request` and validates user, intent, form version, and idempotency key.
+- Resolution confirmation is requester-only and applies to an explicit `resolved` ticket. True closes it; false returns it to processing and increments reopen count.
+- Rating is requester-only for a closed ticket; score is 1–5 with optional tags/comment.
+
+#### IT-requirement tools
+
+```text
+get_it_requirement_form
+prepare_it_requirement
+register_it_requirement
+get_my_it_requirement
+list_my_it_requirements
+```
+
+Registration creates a separate `Requirement`, never a Ticket. Normal employees use constrained `requirements.self_create` plus own-record data scope; review, scoring, project conversion, and closure keep existing permissions.
+
+#### Forbidden tools
+
+V1 does not provide incident/change creation, arbitrary transitions, reassignment/approval/task completion, generic SQL/database access, or general HTTP. A suspected broad outage still creates a service request flag; IT staff or monitoring creates the incident.
+
+#### Proactive messaging
+
+MCP cannot wake Aily on a background transition. A user-visible event writes `notification_outbox(channel=feishu_aily)`; a worker sends through the Aily bot, and the user's reply returns through Aily and MCP. Delivery uses idempotency, retry/backoff, and redacted errors. Internal notes and approval details never leave ITOM.
+
+All `/api/integrations/feishu/helpdesk/*` routes, subscriptions, handoffs, queues, and Helpdesk-specific outbox have been removed from the new runtime. Existing PostgreSQL structures are previewed by `python -m app.scripts.migrate_aily_mcp` and are permanently removed only with explicit `--confirm`.
 
 ### 4.2 ITSM
 
@@ -138,6 +170,10 @@ POST /api/tickets/{id}/escalate-problem  # one-click escalation to a problem
 POST /api/tickets/{id}/to-knowledge      # one-click knowledge capture (draft)
 GET/POST/PATCH /api/problems | POST /api/problems/{id}/transition
 GET/POST/PATCH /api/catalogs | /api/service-items. The catalog list returns `item_count` plus `published_item_count` and `unpublished_item_count`; the service-item GET endpoint accepts `catalog_id`, `q` (code/name/type/audience/owner keyword), `status` (published/unpublished; omitted means all), `sort_by`, and `sort_dir` for list filtering and sorting.
+GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # target
+GET/PUT /api/service-items/{id}/dispatch-rule  # target; catalog/global fallback is managed by admin APIs
+POST /api/tickets/{id}/accept                  # target; actual acceptance timestamp and response SLA
+POST /api/tickets/{id}/confirm-resolution      # target; requester close or reopen, shared by web and MCP
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # impact analysis (upstream/downstream + linked tickets)
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # live attainment rate
@@ -163,6 +199,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
+# target: requirements.self_create plus own-record scope for normal employees; no second requirement entity
 ```
 
 ### 4.5 Process
@@ -222,6 +259,7 @@ Events are published by the service layer within the transaction; `→points` me
 | ticket.created | Ticket created | →notify (assignee/it_ops), →process (create instance) |
 | ticket.assigned | Assigned/reassigned | →notify |
 | ticket.resolved | Resolved | →points (ticket resolved), →notify (submitter) |
+| ticket.user_confirmed / ticket.reopened | Requester confirms / rejects resolution | →audit, →notify (handler) |
 | ticket.closed | Closed | →points (bonus when both SLAs met) |
 | ticket.satisfaction_rated | Rated ≥ 4 stars | →points |
 | ticket.sla_warning | Over 80% of SLA (scheduled scan) | →notify (escalation) |
@@ -240,7 +278,7 @@ Events are published by the service layer within the transaction; `→points` me
 | performance.review_submitted | Manager/CIO review submitted | →notify (next stage), →audit |
 | performance.published / unlocked | Performance published/new version created | →notify (evaluated employee), →audit |
 
-Scheduled tasks (a backend-built-in scheduler, every 15 minutes): SLA-imminent scan, contract-expiry scan, milestone-overdue scan, contract-status advancement.
+Scheduled tasks cover SLA, contracts, and milestones. P0 adds Aily outbox delivery/exponential retry and removes the Helpdesk scanner; pending-confirmation reminders arrive in P2.
 
 ## 6. Key Implementation Mechanisms
 
@@ -252,6 +290,10 @@ Scheduled tasks (a backend-built-in scheduler, every 15 minutes): SLA-imminent s
 6. **Matrix-role performance review**: the system first generates reference scores from ITSM, requirements, projects, processes, and points events. Business-line leads can write only business-role proposals; professional-line leads can write only professional-role proposals; platform roles and leaders' own scores are entered directly by the CIO. The backend enforces `performance_role_assignment.review_scope`; UI hiding is not an authorization boundary.
 7. **External-input and publication isolation**: external business satisfaction is stored in `performance_external_input` and must be submitted, verified, and locked before it affects scoring. `performance_score_component` keeps reference, stage proposal, and effective values separately. `/api/my/performance` returns published snapshots only.
 8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again.
+9. **MCP boundary (target)**: tools call domain services only. `x-aily-jwt` passes allowlist and `external_identity` mapping before creating request-scoped `AuthUser` context. Prompts are never the sole business validator.
+10. **Confirmation/idempotency (target)**: a preview stores `mcp_operation_intent`; submission validates token hash, user, tool, payload digest, expiry, and idempotency key. Retries return the first result.
+11. **Form snapshots (target)**: published versions are immutable; ticket creation stores version, answers, and schema. Person/department choices are revalidated at submit time.
+12. **Dispatch (target)**: service-item rule → catalog default → global fallback; round-robin selects only enabled active group members. Failure preserves the ticket and alerts administrators.
 
 ## 7. Deployment Architecture
 
@@ -260,11 +302,12 @@ Scheduled tasks (a backend-built-in scheduler, every 15 minutes): SLA-imminent s
 services:
   db:        postgres:16  (volume + daily pg_dump to a host backup directory)
   backend:   uvicorn, depends on db, runs alembic upgrade + seed (idempotent) on startup; with `SEED_INITIAL_CONFIG=1`, a fresh database also receives the six workflows and the verified login/Logo branding, while existing branding drafts/releases are preserved
-  frontend:  nginx serving the build output, /api reverse-proxied to the backend
+  frontend:  nginx serving the build output, /api and /mcp reverse-proxied to the backend
 ```
 
 - Environment variables: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_INIT_PASSWORD`, `TZ=Asia/Shanghai`.
-- IDC Kubernetes is the sole delivery and acceptance environment: run `deploy/k8s/push-images.sh` followed by `deploy/k8s/k8s-deploy.sh`, then verify the external health endpoint and user-visible pages. Docker Compose is retained only for temporary local troubleshooting.
+- IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes local Docker plus ngrok on the full `127.0.0.1:8180` origin for the web app, `/api`, OAuth callback, and `/mcp`.
+- `/mcp` preserves streaming and a suitable read timeout. Secrets belong in headers, never URLs, logs, or frontend build variables.
 - Logging: structured JSON to stdout (viewable via docker logs).
 
 ## 8. Milestone Mapping (development order)
@@ -277,6 +320,10 @@ services:
 | M4 Project | portfolios/projects/wbs/milestones/risks/costs/charter-import | project two tabs / detail 5 tabs / Gantt | PRD §6 |
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
+| Aily-MCP P0 (code/automation/real identity path complete; proactive bot delivery pending) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
+| Aily-MCP P1 | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
+| Aily-MCP P2 | accept, resolution message, confirm/reopen, rating | existing ticket detail collaboration | PRD §5.1 |
+| Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
 
 ## 8.1 Business-domain Service Department API (M41)
 

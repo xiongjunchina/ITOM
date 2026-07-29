@@ -1,9 +1,10 @@
-# User Identity & Organization Model Design (M3.5–M3.9 / M34–M37)
+# User Identity & Organization Model Design (M3.5–M3.9 / M34–M37 / Aily-MCP)
 
 > English translation of [../06-用户身份与组织模型设计.md](../06-用户身份与组织模型设计.md). For the authoritative version, the Chinese source prevails.
 
 > Finalized on the 2026-07-10/11 product decisions. The design is benchmarked against ServiceNow's four-axis user / group / role / organization model.
 > Three iron rules: **a user may always hold multiple roles and is never bound to one**; **membership is a field, not a role**; **roles are granted on groups first**.
+> The 2026-07-29 Aily + MCP identity model is implemented in P0 and covered by automated protocol/permission tests; P1 business-tool authorization remains pending. The frozen Helpdesk identity path has been removed from the new branch runtime.
 
 ## 1. The Four-Axis Model & Page Positioning
 
@@ -15,6 +16,7 @@
 | User group | `user_group` | Who you work with, and who tickets get assigned to | User Groups | **Group-granted roles**: a person joining the group inherits them automatically |
 | Role | `role` | What you can do in the system | Role Management | 10 built-in + custom (inheriting a built-in) |
 | Business domain | `business_domain` | Which business line you serve and who owns it | Business Domain | **None** (owner is a field, not a role) |
+| External identity | `external_identity` [implemented in P0] | Which ITOM account a Feishu tenant/app identity maps to | Aily/Feishu integration | **None** (identity mapping grants no role) |
 
 **Effective roles = direct roles ∪ the roles granted by the groups you belong to ∪ the built-in roles inherited by your custom roles.** The `roles` in the login response are the effective roles (the front-end menu renders from them), and `direct_roles` are the direct roles.
 
@@ -53,8 +55,9 @@ Auth-source adapter (AuthProvider) → on success returns a user profile (Provis
 - User updates distinguish an omitted `person_id` from an explicit `person_id: null`: omission preserves the current link, while explicit null unlinks the account without deleting personnel master data, department placement, user-group membership, or historical business records.
 - Browser QR login and Feishu workplace login share identity handling: an active bound account signs in directly, while a new identity enters the `login_request` approval flow.
 - A signed-in account may bind or rebind one Feishu open_id; the identity cannot be occupied by another active account. Unbinding requires a local password and does not unlink the person record.
-- The Feishu Helpdesk handoff reuses `auth_user.external_id=open_id`: the stable link written to the original Helpdesk conversation contains only an intake ID and action, never an open_id or one-time token. After ITOM login, the backend compares the signed-in account, stored intake, and freshly read Helpdesk guest open IDs; only a three-way match issues a ten-minute token, and a repeated click expires any older unconsumed token. The service category is used only for ITSM catalog/item context, never inferred as a requirement business domain, and the token is consumed after creation.
-- Reliable Helpdesk synchronization never puts identity in a browser URL: the server verifies the event token and idempotently queues events by `event_id`, while the pending intake stores guest/agent open IDs and a sanitized snapshot. The stable entry is delivered in the original Helpdesk conversation as rich post or fallback text; only repeated original-conversation failures use an independent application-bot card. Every path still requires the signed-in account's `external_id` to match the freshly read guest. Outbound updates contain only user-visible milestones, never internal notes or approval details.
+- Aily no longer uses a Helpdesk guest identity or handoff token. MCP validates `x-aily-jwt`, then maps provider, tenant, app, subject type, and subject ID through `external_identity` to one active `auth_user`. Missing mapping, disabled accounts, or non-allowlisted tenants/agents are rejected.
+- Existing `auth_user.external_id` remains for login/binding compatibility but cannot represent all identities from multiple apps. OAuth/org-sync and Aily-bot apps may produce different `open_id` values and therefore use separate verified identity rows.
+- MCP secrets, bot secrets, and JWTs never appear in browser URLs, frontend state, prompts, tool results, or normal audit text. Proactive messages use only encrypted server-side credentials and verified recipient identities.
 - Since M44, approval generates a 12-character initial password and stores recoverable encrypted ciphertext without automatic delivery. Reveal and manual email actions are audited, and changing/resetting the password clears the ciphertext.
 - `preferences` stores language, avatar, bio, notification categories, theme, and density. The personal audit view is isolated to the current account as actor.
 
@@ -114,7 +117,7 @@ The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it
 | Incident handling | Incident Management | Intake & prioritization (it_op_leader, approval) → Diagnosis & handling (it_ops) → Resolution & user confirmation (it_ops, approval) → Closure & retrospective (it_op_leader) |
 | Service-request delivery | Service Request Mgmt | Intake confirmation (it_ops) → Implementation & delivery (it_ops) → User confirmation & closure (requester, approval) |
 
-After a Feishu Helpdesk handoff, a service request enters these three steps directly; ITOM does not add another human-routing step. Automatic assignment/reassignment represents the system-assigned point, the final requester step represents user confirmation and closure, the state machine then reaches resolved and closed, and the Feishu rating is written back to `Ticket.satisfaction`.
+After Aily + MCP confirmed submission, a service request enters the service item's bound process directly; ITOM does not add an Aily-routing step. IT completion moves only to `resolved`; the requester confirms through web or Aily before closure, or rejects to reopen. Rating is stored in `ticket_satisfaction` and copied to `Ticket.satisfaction` for compatibility.
 | Change management | Change Enablement | Change request (it_ops) → Change approval (it_op_leader; CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr; CC cio) |
 | Problem analysis | Problem Management | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
 | Requirement delivery (pre-configured, attached in M5) | — | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
@@ -137,4 +140,29 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 - The record-detail process bar also shows the CC parties.
 - Current runtime change-management process: Change request (it_ops) → Change approval (it_op_leader, CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr, CC cio). Do not treat the old five-step “risk assessment → change approval” seed or its former CC relationships as the current process definition.
 - Task creation also stores the process version, `step_code`, and RACI snapshot. Changing a handler or CC relationship requires a new process version, so historical tasks and performance extraction remain stable.
+
+## 11. Aily + MCP identity and normal-user permissions (P0 identity implemented; P1 business permissions pending)
+
+### 11.1 From Aily JWT to ITOM user
+
+1. Nginx forwards `x-aily-jwt` to embedded MCP without logging the full value.
+2. Aily reveals `identityJWTSecret` only after custom-MCP creation. First registration therefore allows only read-only protocol discovery such as `initialize` and `tools/list`, still requiring MCP to be enabled and Origin allowlisted; it cannot execute a tool.
+3. `tools/call` validates configured HS256, `exp`, `tenant_id`, `agent_id`, and exact Origin. Aily documents the Feishu open ID as `user_id`, while the real tenant request observed on 2026-07-29 used `feishu_open_id`; the server accepts both and normalizes them to a string `open_id` subject.
+4. If signature verification succeeds but the tenant or user has not been approved, the server records only a `status=pending` external-identity candidate and rejects tool execution. An administrator must select the ITOM account, allowlist the tenant, and activate the mapping.
+5. The active external subject maps through `external_identity` to `auth_user`; IDs remain strings and security comparisons are constant-time where applicable.
+6. Only active accounts continue; existing role matrix, data scope, and process guards then authorize the operation.
+7. Every tool call writes a redacted `mcp_tool_call` linked to business audit by call ID. P0 exposes only `get_current_user_context`; its result contains verification/account status and a readable account name, never open_id, tenant_id, agent_id, or an internal ITOM primary key. Business tools begin in P1 under the permissions below.
+
+### 11.2 Normal employee capability
+
+- Search published service items eligible for the employee and retrieve their real forms.
+- Create `service_request`, read own requests, confirm/reject resolution, and rate closed requests.
+- Register/read own IT requirements through `requirements.self_create`.
+- Never create incidents/changes, read another user's records, or perform review, reassignment, approval, or internal process tasks.
+
+The service-request tool does not accept `ticket_type`; requirement registration calls the separate Requirement domain service. UI hiding is not authorization: web APIs, MCP tools, and domain services enforce the same server-side boundary.
+
+### 11.3 Confirmation, idempotency, and cross-ticket safety
+
+A mutation first creates `mcp_operation_intent` bound to the ITOM user, tool, normalized payload digest, and expiry. Submission validates both confirmation token and idempotency key. Resolution/rating requires an explicit ticket ID/code; when multiple tickets await confirmation, Aily asks the user to choose and never guesses the “latest” one. Retries return the first result without duplicate create, close, reopen, or rating.
 The digital-team population is an explicit shared department-tree scope in `org_settings`, optionally including descendants. It is authoritative for team metrics and business-domain owner, backup-owner, and service-team selectors; the legacy `dept_type`/role heuristic is used only until an administrator configures the scope.

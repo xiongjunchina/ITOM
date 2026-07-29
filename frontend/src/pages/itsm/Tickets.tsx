@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { isAxiosError } from 'axios';
 import {
   Badge,
   Button,
@@ -91,9 +90,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     isAdmin || (fixedType === 'service_request' && !!r.submitter && r.submitter === authUser?.id);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const handoffToken = searchParams.get('handoff');
   const createRequested = searchParams.get('create') === '1';
-  const isFeishuQuickMenu = searchParams.get('entry') === 'feishu_helpdesk';
   const t = useT();
   const et = useEnums();
   const [items, setItems] = useState<TicketRow[]>([]);
@@ -117,8 +114,6 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [serviceItemsLoading, setServiceItemsLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
-  const [handoffStarted, setHandoffStarted] = useState(false);
-  const [handoffSource, setHandoffSource] = useState<{ service_category?: string; agent_name?: string; guest_name?: string } | null>(null);
   const directCreateStarted = useRef(false);
 
   const isServiceRequest = fixedType === 'service_request';
@@ -128,18 +123,11 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     serviceItems.forEach((item) => {
       if (item.catalog_name) names.add(item.catalog_name);
     });
-    if (handoffSource?.service_category) names.add(handoffSource.service_category);
     return [...names].map((name) => ({ value: name, label: name }));
-  }, [serviceItems, handoffSource]);
+  }, [serviceItems]);
 
   const serviceItemsForCategory = (category?: string) =>
     serviceItems.filter((item) => item.catalog_name === category || item.name === category);
-
-  const clearHandoffParam = () => {
-    const next = new URLSearchParams(window.location.search);
-    next.delete('handoff');
-    navigate({ pathname: window.location.pathname, search: next.toString() }, { replace: true });
-  };
 
   // M20 行内编辑 / 关闭
   const [editing, setEditing] = useState<TicketRow | null>(null);
@@ -181,21 +169,8 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     void load();
   }, [load]);
 
-  const openCreate = (seed?: { title?: string; description?: string; priority?: string; service_category?: string; service_item_id?: string; other_info?: string; agent_name?: string; guest_name?: string }) => {
+  const openCreate = () => {
     form.resetFields();
-    if (seed) {
-      form.setFieldsValue({
-        title: seed.title,
-        description: seed.description,
-        priority: (seed.priority as TicketPriority) || 'P3',
-        service_category: seed.service_category,
-        service_item_id: seed.service_item_id,
-        other_info: seed.other_info,
-      });
-      setHandoffSource({ service_category: seed.service_category, agent_name: seed.agent_name, guest_name: seed.guest_name });
-    } else {
-      setHandoffSource(null);
-    }
     setDrawerOpen(true);
     if (serviceItems.length === 0) {
       setServiceItemsLoading(true);
@@ -204,7 +179,6 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         .then((res) => {
           const liveItems = res.items.filter((i) => i.status === '上架');
           setServiceItems(liveItems);
-          if (seed?.service_item_id) form.setFieldValue('service_item_id', seed.service_item_id);
         })
         .catch(() => undefined)
         .finally(() => setServiceItemsLoading(false));
@@ -217,42 +191,14 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
   };
 
-  // 飞书服务台快捷菜单使用 create=1 直达新建表单；一次性 guard 避免 React StrictMode 重复打开。
+  // create=1 直达新建表单；一次性 guard 避免 React StrictMode 重复打开。
   useEffect(() => {
-    if (fixedType !== 'service_request' || !createRequested || handoffToken || !canCreate || directCreateStarted.current) return;
+    if (fixedType !== 'service_request' || !createRequested || !canCreate || directCreateStarted.current) return;
     directCreateStarted.current = true;
     openCreate();
     // openCreate intentionally captures the current form/service-item loaders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fixedType, createRequested, handoffToken, canCreate]);
-
-  useEffect(() => {
-    if (!handoffToken || handoffStarted || !canCreate || fixedType !== 'service_request') return;
-    setHandoffStarted(true);
-    api
-      .get<{ status?: string; action: string; consumed_entity_type?: string; consumed_entity_id?: string; prefill?: { title?: string; description?: string; priority?: string; service_category?: string; service_item_id?: string; other_info?: string }; source?: { agent_name?: string; guest_name?: string } }>(
-        `/integrations/feishu/helpdesk/handoffs/${encodeURIComponent(handoffToken)}`,
-      )
-      .then((data) => {
-        if (data.status === 'consumed') {
-          if (data.consumed_entity_type === 'ticket' && data.consumed_entity_id) {
-            navigate(`/itsm/tickets/${data.consumed_entity_id}`, { replace: true });
-          } else if (data.consumed_entity_type === 'requirement' && data.consumed_entity_id) {
-            navigate(`/requirements/${data.consumed_entity_id}`, { replace: true });
-          } else {
-            clearHandoffParam();
-          }
-          return;
-        }
-        if (data.action !== 'service_request') throw new Error('该交接链接属于 IT 需求，请返回交接页选择正确入口');
-        openCreate({ ...(data.prefill ?? {}), agent_name: data.source?.agent_name, guest_name: data.source?.guest_name });
-      })
-      .catch((error: unknown) => {
-        if (isAxiosError(error) && [409, 410].includes(error.response?.status ?? 0)) clearHandoffParam();
-      });
-    // openCreate intentionally captures the current form/service-item loaders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handoffToken, handoffStarted, canCreate, fixedType]);
+  }, [fixedType, createRequested, canCreate]);
 
   const handleCreate = async () => {
     const values = await form.validateFields();
@@ -283,11 +229,6 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     setSaving(true);
     try {
       const created = await api.post<{ id: string }>('/tickets', payload);
-      if (handoffToken && created?.id) {
-        await api.post(`/integrations/feishu/helpdesk/handoffs/${encodeURIComponent(handoffToken)}/consume`, {
-          entity_type: 'ticket', entity_id: created.id,
-        }).catch(() => undefined);
-      }
       message.success(t('itsm.ticket.createdTyped', { type: et.ticketType(fixedType) }));
       setDrawerOpen(false);
       if (created?.id) {
@@ -567,11 +508,6 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           </Space>
         }
       >
-        {(handoffSource || isFeishuQuickMenu) && (
-          <Tag color="blue" style={{ marginBottom: 16 }}>
-            {isFeishuQuickMenu ? t('itsm.ticket.feishuQuickMenuSource') : t('itsm.ticket.feishuSource')}
-          </Tag>
-        )}
         <Form<TicketFormValues>
           form={form}
           layout="vertical"
@@ -581,7 +517,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           {isServiceRequest ? (
             <>
               <Form.Item label={t('itsm.ticket.user')}>
-                <Input disabled value={handoffSource?.guest_name || authUser?.name || authUser?.username || '-'} />
+                <Input disabled value={authUser?.name || authUser?.username || '-'} />
               </Form.Item>
               <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
                 <Input maxLength={200} placeholder={t('itsm.ticket.titlePlaceholder')} />
@@ -648,7 +584,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                 <Input.TextArea rows={3} maxLength={1000} placeholder={t('itsm.ticket.otherInfoPlaceholder')} />
               </Form.Item>
               <Form.Item label={t('itsm.ticket.agent')}>
-                <Input disabled value={handoffSource?.agent_name || t('itsm.ticket.agentPending')} />
+                <Input disabled value={t('itsm.ticket.agentPending')} />
               </Form.Item>
             </>
           ) : (

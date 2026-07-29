@@ -1,29 +1,31 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
+> Aily + MCP 的 P0 协议、身份、审计、消息底座和 Helpdesk 清理已在 `feature/aily-agent-mcp` 实现；P1–P3 业务工具仍是已确认目标。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
 ```text
-┌──────────────┐     HTTPS      ┌─────────────────────────────┐      ┌────────────┐
-│ React SPA    │ ─────────────▶ │ FastAPI 单体后端             │ ───▶ │ PostgreSQL │
-│ (AntD)       │   JWT Bearer   │ routers → services → models │      └────────────┘
-└──────────────┘                │        │                    │
-                                │        ▼ 领域事件(进程内)     │
-                                │  ┌─────────────────────┐    │
-                                │  │ event_bus           │    │
-                                │  │ ├─ point_engine     │──▶ point_entry
-                                │  │ ├─ notifier         │──▶ notification_outbox → in_app
-                                │  │ └─ process_engine   │──▶ process_instance/task
-                                │  └─────────────────────┘    │
-                                └─────────────────────────────┘
+飞书用户 ⇄ Aily Agent ──HTTPStreaming + x-aily-jwt──▶ Nginx /mcp
+                                                       │
+React SPA ──JWT Bearer──▶ Nginx /api ──────────────────┤
+                                                       ▼
+                                         FastAPI 单体后端（内嵌 MCP）
+                                           routers/MCP → domain services
+                                                       │
+                                       RBAC / workflow / audit / PostgreSQL
+                                                       │
+                                         event_bus → notification_outbox
+                                                       │
+                                         Aily 机器人飞书消息 → 用户
 ```
 
 **关键决策**：
 
 1. **单体后端**，按域分模块，不做微服务——单团队规模下微服务只增加复杂度。
-2. **领域事件为进程内同步分发**（同一事务提交），三个订阅者：积分引擎、通知器、流程引擎。发件箱表是未来外部系统（飞书/n8n）的异步挂接点。
-3. 前后端分离单仓库（monorepo），一次部署。
+2. **MCP 内嵌 FastAPI**，复用同一领域服务、数据库事务、RBAC、流程和审计；MCP 工具不得直接写表。
+3. **领域事件为进程内同步分发**（同一事务提交）；可靠发件箱异步投递站内通知和 Aily 机器人消息。
+4. 前后端分离单仓库（monorepo），一次部署。Nginx 同时代理 `/api/` 和 `/mcp`。
 
 ## 2. 仓库结构
 
@@ -55,6 +57,8 @@ ITOM/
 - **分页**：`?page=1&page_size=20`（默认 20，上限 200）；筛选参数各资源自定义；排序 `?order_by=-submitted_at`。
 - **状态流转统一模式**：`POST /api/{resource}/{id}/transition` `{"to": "resolved", "fields": {...}}`——状态机校验 + 该转换要求的阶段字段（如解决时必填 solution）一次提交。
 - OpenAPI 文档自动生成于 `/api/docs`。
+- **MCP 认证**：Aily 请求使用 `x-aily-jwt`；MCP 校验 HS256、有效期、租户/Agent 白名单并通过 `external_identity` 映射活动 `AuthUser`。MCP 入口不接受 ITOM Bearer Token 替代 Aily 身份。
+- **MCP 写操作**：`prepare_*` 生成短期确认意图；`submit_*` 必须携带确认凭证和幂等键。工具结果继续使用 MCP 结构化内容，不伪装为 REST 响应包。
 
 ## 4. 路由清单（按域）
 
@@ -88,43 +92,71 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 
 后台同步运行期间重复触发返回 HTTP 409 / `SYNC_RUNNING`。前端每 3 秒读取 `last_sync_stats`，最长等待 10 分钟；完成或失败后向触发人发送站内通知。后台任务使用独立数据库会话，不能复用请求会话。
 
-### 4.1b 飞书服务台交接与可靠同步（M45/M46）
+### 4.1b Aily Agent + MCP（P0 已实现；P1 业务工具待实现）
 
 ```text
-POST /api/integrations/feishu/helpdesk/events
-    # 飞书事件 URL verification；校验管理员配置的 Verification Token
-POST /api/integrations/feishu/helpdesk/card-callback
-    # 飞书 2.0 动态卡片回调；token 可能在 header.token 或 event.token
-    # event.action.value={action:create_service_request|create_requirement,ticket_id}
-POST /api/integrations/feishu/helpdesk/cards
-    # 兼容/兜底接口：受信任机器人调用，向工单 guest.open_id 发送分流选择卡片
-POST /api/integrations/feishu/helpdesk/handoffs
-    # 仅服务端/机器人调用；Header: X-Lark-Helpdesk-Authorization=base64(helpdesk_id:helpdesk_token)
-    # body: {ticket_id, action: service_request|requirement}
-GET /api/integrations/feishu/helpdesk/handoffs/{token}
-    # 当前登录用户读取一次性交接上下文；必须与工单 guest 的 Feishu open_id 一致
-    # issued 返回预填上下文；consumed 返回已关联 entity_type/entity_id，供前端幂等跳转
-POST /api/integrations/feishu/helpdesk/handoffs/{token}/consume
-    # 正常创建单据后消费，body: {entity_type: ticket|requirement, entity_id}；重复消费仍返回 409
-POST /api/integrations/feishu/helpdesk/intakes/{intake_id}/handoff
-    # 原会话稳定入口在用户登录后调用；body: {action: service_request|requirement}
-    # 校验登录账号、待分流记录与实时工单 guest 的 open_id 后才签发短时令牌
-GET /api/integrations/feishu/helpdesk/intakes
-    # admin/CIO/IT 管理角色查看分流状态及入口投递渠道/时间/消息 ID
-GET /api/integrations/feishu/helpdesk/sync-events
-    # 查看事件入站队列的 processed/pending/failed 与重试次数
-POST /api/admin/feishu-config/subscribe-helpdesk-events
-    # 仅管理员；为当前配置的应用注册服务台事件流
+GET/POST /mcp
+    # P0 已实现的 Streamable HTTP 主入口；Origin 必须命中白名单
+    # initialize/tools/list 等只读协议发现允许在尚未回填 JWT Secret 时完成首次注册
+    # tools/call 必须携带可验签 x-aily-jwt，并通过租户/Agent/身份映射
+    # Nginx 关闭缓冲、保留 300 秒读超时并透传鉴权/Origin；密钥不进入 URL
+
+GET/PUT /api/admin/integrations/aily
+    # admin；读取只返回 has_secret，保存 MCP JWT Secret 与机器人凭据时加密
+GET/POST /api/admin/integrations/aily/identities
+PATCH/DELETE /api/admin/integrations/aily/identities/{id}
+    # admin；按 provider+tenant+app+subject_type+subject_id 精确映射 ITOM 账号
+POST /api/admin/integrations/aily/test-message
+    # admin；向选定且已验证的外部身份发送机器人测试消息
+
+get_current_user_context
+    # P0 临时 MCP 联调工具：只返回验证成功、账号状态和可读账号名；不返回内外部 ID，并写 mcp_tool_call
 ```
 
-主路径由原服务台会话中的 `/feishu/helpdesk/entry?intake=...&action=...` 稳定链接开始。该链接不含 open_id、服务台凭据或一次性令牌；公开入口只负责引导登录，随后调用 `POST /intakes/{intake_id}/handoff`。服务端重新读取工单并完成三方 open_id 比对后，才返回带短时令牌的 `entry_url`。`POST /handoffs`、`POST /cards` 和卡片回调保留给受信任中间层与独立机器人兜底。
+MCP Server 作为 FastAPI 后端模块挂载，不建立第二套业务 API。P0 使用 MCP Python SDK 1.29 的无状态 Streamable HTTP；每次 FastAPI 生命周期创建独立会话管理器，兼容生产启动、测试重启和开发热重载。Aily 首次保存自定义 MCP 后才展示 `identityJWTSecret`，因此注册阶段只允许 `initialize`、`notifications/initialized`、`ping`、`tools/list` 及空资源/提示词列表等协议发现方法；这些请求仍须命中启用开关和 Origin 白名单。任何 `tools/call` 都必须完成 JWT、租户/Agent、身份映射和账号状态校验。工具层只负责协议、身份上下文、输入/输出和审计，P1 的搜索、表单校验、创建、确认、重开和评价必须调用与网页相同的 ITOM 领域服务。
 
-交接读取采用幂等查看语义：首次打开且令牌为 `issued` 时返回预填字段；成功建单后令牌变为 `consumed`，同一 Feishu 身份再次读取时返回已关联单据并由前端直接跳转。身份不匹配仍返回 403，过期返回 410，`POST /consume` 的二次消费仍返回 409，从而兼顾重复打开体验与防重复建单。
+#### 服务请求工具
 
-服务台 Token 只在后端加密保存和调用；`handoff_token` 只保存哈希，原始工单快照仅包含预填字段。ITOM 兼容飞书工单详情的 `customized_fields`（`key_name`/`display_name`/`value`），将标题、紧急程度、服务类别、问题描述和其他补充信息映射到 `prefill`；接单客服同时兼容单个 `agent`、`service_agent`、`assignee` 和多人 `agents` 数组，数组场景使用首个客服 ID 建立关联并汇总客服姓名展示，以正确触发人工服务阶段。服务类别返回下拉选项内部 UUID 时，后端读取服务台字段配置的 `dropdown_options` 将其转换为显示名称。服务类别写入 `prefill.service_category`，服务请求页可按服务目录/服务项匹配；需求页只保留来源信息，不能自动填充 `business_domain_id`。
-稳定入口的公网根地址优先取后端环境变量 `ITOM_PUBLIC_URL`，未配置时从完整的 `helpdesk_event_url` 提取协议与域名；本地通过 ngrok 或反向代理接入飞书时必须确保该根地址是员工可访问的 HTTPS 地址。稳定入口每次成功核验后会先使同一飞书工单此前未消费的令牌失效，再签发新令牌。兼容的动态卡片回调仍校验 Verification Token、卡片动作和点击人的 `event.operator.open_id`，并用回调事件 ID 做幂等。
-服务请求创建接口保留询前单语义：`service_category` 保存 ITSM 服务目录名称，`other_info` 保存询前单其他补充信息；两者与 `remarks`（内部备注）分开。普通业务用户仅提交询前单字段，IT 内部角色/管理员可额外提交 `assignee` 与 `remarks`。服务类别不写入需求 `business_domain_id`。
-可靠同步采用“事件入站 + 详情重读 + outbox 出站”三段式：`helpdesk.ticket.created_v1`、`helpdesk.ticket.updated_v1` 和 `helpdesk.ticket_message.created_v1` 先以唯一 `event_id` 入库，后台每 5 秒消费，按指数退避最多重试 8 次；消费时通过服务台 API 重读工单当前详情，创建/更新待分流记录，并在人工客服阶段入队一个 `routing_prompt`。出站先尝试通过服务台工单消息接口发送富文本链接，不兼容则立即降级为包含完整 URL 的文本；若返回 `99991672`/缺少 `helpdesk:all`，这是确定性的权限问题，不等待指数重试，立即改用应用机器人发送兜底卡片/文本；其他暂时性错误才保留两次重试，随后才使用独立应用机器人卡片。最终渠道、发送时间和飞书消息 ID 回写待分流记录或 outbox 供管理员审计。ITOM 单据只有在分流令牌消费后才与待分流记录关联；仅停留在“待分流”时，飞书关单或评价不会凭空生成正式 ITOM 单据。服务请求沿现有 `sr_flow` 三节点执行：受理确认 → 实施交付 → 用户确认关闭；无需新增“人工分流”节点。流程任务自动指派、流程内改派统一发布 `ticket.assigned`，改派同时更新工单展示字段与当前流程任务的权威处理人，并通知新处理人；若建单先于交接关联，消费交接令牌时会补发当前节点分派；最后一个 `requester` 节点完成时发布 `ticket.user_confirmed`，随后按既有状态机进入 `resolved`、`closed`。反向同步同样通过状态机完成：飞书 `status=51` 表示人工关闭，`status=50` 表示机器人关闭，`solve=2` 表示已解决；若详情事件表明用户已确认，ITOM 会完成当前 `requester` 任务；若飞书只发送已关闭状态，则 ITOM 沿可达闭环路径执行关单，不直接写状态，保留流程、审计和 SLA 记录。飞书没有独立的 rated 事件，评价通过工单更新/消息事件触发详情重读，再从满意度数字或“你的打分为：满意/一般/不满意”结果文案写入关联 `Ticket.satisfaction` 并发布 `ticket.satisfaction_rated`，不会把包含全部选项的评价提示误判为结果。内部备注、审批意见和未发布信息不出站；仅登记、分派、处理中、用户确认、已完成、关闭及评价确认等用户可见节点进入 outbox 并回写原会话。管理员须先在飞书开放平台配置公网回调地址、开通 `helpdesk:all`（用于原服务台会话消息）、添加上述三个服务台事件并发布应用，再在 ITOM 点击“订阅服务台事件”。订阅 API 的 `events` 请求体按飞书线上格式提交 `{type, subtype}` 对象数组，而不是完整事件 Key 字符串；字段校验失败时保留 `field_violations` 与 `log_id` 供排障。配置页会显示订阅成功/失败、入口渠道及最近错误，管理员可通过上述两个查询接口排查积压、失败和最后错误。
+```text
+search_service_items
+get_service_item_form
+prepare_service_request
+submit_service_request
+get_my_service_request
+list_my_service_requests
+get_my_pending_confirmations
+confirm_service_request_resolution
+rate_service_request
+```
+
+- `search_service_items` 只返回已上架且当前用户可申请的真实服务项；候选结果包含稳定 ID、名称、目录、简述和匹配理由，不返回内部派单细节。
+- `get_service_item_form` 返回发布表单版本、字段 JSON Schema、SLA、流程摘要和公开说明。
+- `prepare_service_request` 调用 ITOM 权威校验，返回规范化数据、缺失/错误字段、SLA、流程、预计支持组和短期确认意图；不落正式工单。
+- `submit_service_request` 不接受 `ticket_type`，服务端固定创建 `service_request`；确认意图、当前用户、表单版本和幂等键必须一致。
+- `confirm_service_request_resolution` 只允许提交人处理 `resolved` 工单；`resolved=true` 关闭，`false` 退回 `processing` 并增加重开次数。
+- `rate_service_request` 只允许提交人评价已关闭工单，评分 1–5，标签和文字可选。
+
+#### IT 需求工具
+
+```text
+get_it_requirement_form
+prepare_it_requirement
+register_it_requirement
+get_my_it_requirement
+list_my_it_requirements
+```
+
+需求登记写入独立 `Requirement`，不创建 Ticket。普通员工使用受限的 `requirements.self_create` 和本人数据范围；评审、评分、转项目和关闭继续由现有需求权限及流程控制。
+
+#### 禁止工具
+
+首期不提供 `create_incident`、`create_change`、任意状态流转、任务改派/审批/完成、通用 SQL、数据库和任意 HTTP 工具。普通用户描述疑似大范围故障时仍创建服务请求并标记，事件由 IT 人员或监控专用接口创建。
+
+#### 主动消息
+
+MCP 不能在后台状态变化时主动唤醒 Aily。工单进入 `resolved` 等用户可见节点后，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过 Aily 机器人应用发送消息；用户回复后由 Aily 调 MCP 完成确认/重开和评价。发送使用幂等键、指数退避和脱敏错误，内部备注、审批意见和敏感字段不出站。
+
+飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 
 ### 4.2 ITSM
 
@@ -136,6 +168,10 @@ POST /api/tickets/{id}/escalate-problem  # 一键升级为问题
 POST /api/tickets/{id}/to-knowledge      # 一键沉淀知识(草稿)
 GET/POST/PATCH /api/problems | POST /api/problems/{id}/transition
 GET/POST/PATCH /api/catalogs | /api/service-items。目录列表返回 `item_count` 及按状态拆分的 `published_item_count`、`unpublished_item_count`；服务项 GET 支持 `catalog_id`、`q`（编号/名称/类型/服务对象/负责人关键字）、`status`（上架/下架，未传表示全部）、`sort_by` 与 `sort_dir` 参数，列表页据此实现筛选和排序。
+GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # 目标：动态表单版本
+GET/PUT /api/service-items/{id}/dispatch-rule  # 目标：服务项派单规则；目录/全局兜底在管理 API 维护
+POST /api/tickets/{id}/accept                  # 目标：实际受理打点，响应 SLA 以此为准
+POST /api/tickets/{id}/confirm-resolution      # 目标：提交人确认关闭或未解决重开；网页与 MCP 共用服务
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # 影响分析(上下游+关联工单)
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # 实时达成率
@@ -161,6 +197,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
+# 目标：普通员工通过 requirements.self_create 受限登记，并由服务层强制本人数据范围；不新增第二套需求实体
 ```
 
 ### 4.5 流程
@@ -223,6 +260,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | ticket.created | 建单 | →通知(受理人/it_ops)、→流程(创建实例) |
 | ticket.assigned | 指派/改派 | →通知 |
 | ticket.resolved | 解决 | →积分(工单解决)、→通知(提交人) |
+| ticket.user_confirmed / ticket.reopened | 用户确认解决 / 未解决重开 | →审计、→通知(处理人) |
 | ticket.closed | 关闭 | →积分(SLA 双达成时加分) |
 | ticket.satisfaction_rated | 评价 ≥4 星 | →积分 |
 | ticket.sla_warning | 超 SLA 80%（定时任务扫描） | →通知(升级) |
@@ -241,7 +279,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | performance.review_submitted | 负责人初评/CIO终审提交 | →通知(下一评审阶段)、→审计 |
 | performance.published / unlocked | 绩效发布/生成新版本 | →通知(被评价者)、→审计 |
 
-定时任务（后端内置 scheduler，每 15 分钟）：SLA 临期扫描、合同到期扫描、里程碑逾期扫描、合同状态推进。
+定时任务（后端内置 scheduler）：SLA 临期扫描、合同到期扫描、里程碑逾期扫描、合同状态推进；P0 已增加 Aily 通知 outbox 消费/指数退避且不再运行 Helpdesk 扫描器，待用户确认提醒在 P2 接入。
 
 ## 6. 关键实现机制
 
@@ -253,6 +291,10 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。
 7. **外部原数据与发布隔离**：外部业务满意度先写入 `performance_external_input`，完成提交/核验/锁定后才参与折算；`performance_score_component` 保存系统参考分、阶段建议分和生效分，`/api/my/performance` 只返回已发布快照。
 8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。
+9. **MCP 适配边界（目标）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
+10. **确认与幂等（目标）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、payload digest、过期时间和 idempotency key；重复调用返回首次结果，不重复建单或启动流程。
+11. **动态表单快照（目标）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项由 ITOM 实时返回并在提交时二次校验。
+12. **服务派单（目标）**：服务项规则 → 目录默认组 → 全局兜底组；组内轮询只选择启用且在岗成员。派单失败保留工单并告警，禁止静默无处理人。
 
 ## 7. 部署架构
 
@@ -261,11 +303,12 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 services:
   db:        postgres:16  (volume + 每日 pg_dump 到宿主机备份目录)
   backend:   uvicorn, 依赖 db, 启动时 alembic upgrade + seed(幂等)；`SEED_INITIAL_CONFIG=1` 时在全新数据库初始化六条流程定义以及已验证的登录页/Logo 品牌配置，已有品牌草稿或发布版本不会覆盖
-  frontend:  nginx 托管构建产物, /api 反代 backend
+  frontend:  nginx 托管构建产物, /api 与 /mcp 反代 backend
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
-- IDC Kubernetes 是当前唯一交付与验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布；发布后通过外部域名健康检查和实际页面验证。Docker Compose 仅保留为本地临时排障环境。
+- 正式发布仍以 IDC Kubernetes 为最终验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布。当前 IDC 基础设施阻塞期间，用户已授权 Aily + MCP 使用本地 Docker 开发，并由 ngrok 暴露完整 `127.0.0.1:8180`；同一 HTTPS 根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp`。
+- `/mcp` 必须保留流式响应并设置合理读超时；密钥只放请求头，不放 URL、日志或前端构建变量。
 - 日志：结构化 JSON 到 stdout（docker logs 可查）。
 
 ## 8. 里程碑映射（开发顺序）
@@ -278,6 +321,10 @@ services:
 | M4 项目 | portfolios/projects/wbs/milestones/risks/costs/charter-import | 项目两标签页/详情 5 tab/甘特 | PRD §6 |
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
+| Aily-MCP P0（代码/自动化/真实身份链路已完成，机器人主动消息待验证） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
+| Aily-MCP P1 | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
+| Aily-MCP P2 | 受理、解决通知、确认/重开、评价 | 现有工单详情协同 | PRD §5.1 |
+| Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
 
 ## 8.1 业务域服务部门 API（M41）
 

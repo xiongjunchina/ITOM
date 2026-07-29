@@ -48,7 +48,7 @@ def test_create_auto_fields(client, ctx):
     assert [s["task_status"] for s in detail["process"]["steps"]][0] == "待处理"
 
 
-def test_service_request_preserves_helpdesk_fields(client, ctx):
+def test_service_request_preserves_request_form_fields(client, ctx):
     t = _create(
         client,
         ctx["ops"],

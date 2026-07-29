@@ -1,16 +1,39 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Button, Card, Divider, Input, Select, Space, Spin, Switch, Table, Tag, Typography, message } from 'antd';
-import { ApiOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
+import {
+  Alert,
+  Button,
+  Card,
+  Divider,
+  Form,
+  Input,
+  Modal,
+  Popconfirm,
+  Select,
+  Space,
+  Spin,
+  Switch,
+  Table,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
+import { ApiOutlined, DeleteOutlined, PlusOutlined, SaveOutlined, SyncOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { runOrgSyncAndWait } from '../../utils/orgSync';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
-import type { FeishuConfig, FeishuHelpdeskIntake, FeishuHelpdeskSyncEvent, FeishuSyncStats, OrgSettings } from '../../api/types';
+import type {
+  AdminUser,
+  AilyConfig,
+  AilyExternalIdentity,
+  FeishuConfig,
+  FeishuSyncStats,
+  OrgSettings,
+} from '../../api/types';
 
 const DEFAULT_API_BASE = 'https://open.feishu.cn';
 
-/** 同步统计字段 → 文案键 + Tag 颜色（新增绿 / 更新蓝 / 停用橙 / 离职红） */
 const STAT_META: { key: keyof FeishuSyncStats; label: string; color: string }[] = [
   { key: 'dept_created', label: 'feishu.statDeptCreated', color: 'green' },
   { key: 'dept_updated', label: 'feishu.statDeptUpdated', color: 'blue' },
@@ -20,67 +43,102 @@ const STAT_META: { key: keyof FeishuSyncStats; label: string; color: string }[] 
   { key: 'member_left', label: 'feishu.statMemberLeft', color: 'red' },
 ];
 
-/** POST /admin/feishu-config/test 结果 */
 interface FeishuTestResult {
   connected: boolean;
   scope_names?: string[] | null;
 }
 
+interface IdentityFormValues {
+  tenant_id: string;
+  app_id: string;
+  subject_type: 'open_id' | 'user_id' | 'union_id';
+  subject_id: string;
+  auth_user_id: string;
+}
+
+const lines = (value: string): string[] =>
+  value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 export default function FeishuIntegration() {
   const t = useT();
-  const user = useAuthStore((s) => s.user);
+  const user = useAuthStore((state) => state.user);
   const isAdmin = !!user?.permissions?.['*'] || !!user?.roles?.includes('admin');
+  const disabled = !isAdmin;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [config, setConfig] = useState<FeishuConfig | null>(null);
-
-  // 表单态（app_secret 仅本地输入：留空 = 保持后端已存密钥不变）
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE);
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
-  const [helpdeskId, setHelpdeskId] = useState('');
-  const [helpdeskToken, setHelpdeskToken] = useState('');
-  const [helpdeskEnabled, setHelpdeskEnabled] = useState(false);
-  const [helpdeskVerificationToken, setHelpdeskVerificationToken] = useState('');
-  const [helpdeskEventUrl, setHelpdeskEventUrl] = useState('');
-  const [helpdeskTicketId, setHelpdeskTicketId] = useState('');
-  const [helpdeskTesting, setHelpdeskTesting] = useState(false);
-  const [helpdeskSubscribing, setHelpdeskSubscribing] = useState(false);
   const [syncScope, setSyncScope] = useState('');
   const [enabled, setEnabled] = useState(false);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
   const [autoSyncInterval, setAutoSyncInterval] = useState(1440);
-  const [intakes, setIntakes] = useState<FeishuHelpdeskIntake[]>([]);
-  const [syncEvents, setSyncEvents] = useState<FeishuHelpdeskSyncEvent[]>([]);
-  const [queueLoading, setQueueLoading] = useState(false);
 
-  // 需在飞书开放平台登记的重定向 URL（动态取当前站点）
+  const [ailySaving, setAilySaving] = useState(false);
+  const [ailyConfig, setAilyConfig] = useState<AilyConfig | null>(null);
+  const [ailyEnabled, setAilyEnabled] = useState(false);
+  const [jwtSecret, setJwtSecret] = useState('');
+  const [tenantIds, setTenantIds] = useState('');
+  const [agentIds, setAgentIds] = useState('');
+  const [origins, setOrigins] = useState('https://aily.feishu.cn');
+  const [botAppId, setBotAppId] = useState('');
+  const [botAppSecret, setBotAppSecret] = useState('');
+  const [messageEnabled, setMessageEnabled] = useState(false);
+  const [identities, setIdentities] = useState<AilyExternalIdentity[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [identityOpen, setIdentityOpen] = useState(false);
+  const [identityEditingId, setIdentityEditingId] = useState<string>();
+  const [identitySaving, setIdentitySaving] = useState(false);
+  const [identityForm] = Form.useForm<IdentityFormValues>();
+  const [testIdentityId, setTestIdentityId] = useState<string>();
+  const [messageTesting, setMessageTesting] = useState(false);
+
   const redirectUri = window.location.origin + '/login/feishu-callback';
-  const defaultHelpdeskEventUrl = window.location.origin + '/api/integrations/feishu/helpdesk/events';
+  const publicMcpUrl = window.location.origin + (ailyConfig?.mcp_path || '/mcp');
+
+  const applyAilyConfig = (value: AilyConfig) => {
+    setAilyConfig(value);
+    setAilyEnabled(value.enabled);
+    setTenantIds(value.allowed_tenant_ids.join('\n'));
+    setAgentIds(value.allowed_agent_ids.join('\n'));
+    setOrigins(value.allowed_origins.join('\n'));
+    setBotAppId(value.bot_app_id || '');
+    setMessageEnabled(value.message_enabled);
+    setJwtSecret('');
+    setBotAppSecret('');
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, settings] = await Promise.all([
+      const [feishu, settings, aily, identityRows, userRows] = await Promise.all([
         api.get<FeishuConfig>('/admin/feishu-config'),
         api.get<OrgSettings>('/admin/org-settings'),
+        api.get<AilyConfig>('/admin/integrations/aily'),
+        api.get<AilyExternalIdentity[]>('/admin/integrations/aily/identities'),
+        api.getList<AdminUser>('/admin/users', { page: 1, page_size: 200 }),
       ]);
-      setConfig(c);
-      setApiBase(c.api_base || DEFAULT_API_BASE);
-      setAppId(c.app_id ?? '');
-      setHelpdeskId(c.helpdesk_id ?? '');
-      setHelpdeskEnabled(!!c.helpdesk_enabled);
-      setHelpdeskEventUrl(c.helpdesk_event_url || defaultHelpdeskEventUrl);
-      setSyncScope(c.sync_scope ?? '');
-      setEnabled(!!c.enabled);
+      setConfig(feishu);
+      setApiBase(feishu.api_base || DEFAULT_API_BASE);
+      setAppId(feishu.app_id || '');
+      setSyncScope(feishu.sync_scope || '');
+      setEnabled(feishu.enabled);
       setAutoSyncEnabled(settings.feishu_auto_sync_enabled);
       setAutoSyncInterval(settings.feishu_auto_sync_interval_minutes);
-      setAppSecret(''); // 密钥不回显，输入框留空
+      setAppSecret('');
+      applyAilyConfig(aily);
+      setIdentities(identityRows);
+      setUsers(userRows.items.filter((item) => item.is_active));
+      setTestIdentityId((current) => current || identityRows.find((item) => item.status === 'active')?.id);
     } catch {
-      // 已统一提示
+      // API 客户端已统一提示。
     } finally {
       setLoading(false);
     }
@@ -90,27 +148,6 @@ export default function FeishuIntegration() {
     void load();
   }, [load]);
 
-  const loadQueue = useCallback(async () => {
-    if (!isAdmin) return;
-    setQueueLoading(true);
-    try {
-      const [intakeResult, eventResult] = await Promise.all([
-        api.getList<FeishuHelpdeskIntake>('/integrations/feishu/helpdesk/intakes', { page: 1, page_size: 20 }),
-        api.getList<FeishuHelpdeskSyncEvent>('/integrations/feishu/helpdesk/sync-events', { page: 1, page_size: 20 }),
-      ]);
-      setIntakes(intakeResult.items);
-      setSyncEvents(eventResult.items);
-    } catch {
-      // 非 IT 管理角色无权查看队列时，配置页仍可正常使用。
-    } finally {
-      setQueueLoading(false);
-    }
-  }, [isAdmin]);
-
-  useEffect(() => {
-    void loadQueue();
-  }, [loadQueue]);
-
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -119,76 +156,30 @@ export default function FeishuIntegration() {
         app_id: appId.trim(),
         sync_scope: syncScope.trim(),
         enabled,
-        helpdesk_id: helpdeskId.trim() || null,
-        helpdesk_enabled: helpdeskEnabled,
-        helpdesk_event_url: helpdeskEventUrl.trim() || defaultHelpdeskEventUrl,
       };
-      const secret = appSecret.trim();
-      if (secret) body.app_secret = secret; // 留空不传 = 不修改已存密钥
-      const serviceDeskToken = helpdeskToken.trim();
-      if (serviceDeskToken) body.helpdesk_token = serviceDeskToken;
-      const verificationToken = helpdeskVerificationToken.trim();
-      if (verificationToken) body.helpdesk_event_verification_token = verificationToken;
+      if (appSecret.trim()) body.app_secret = appSecret.trim();
       await api.put('/admin/feishu-config', body);
       await api.patch('/admin/org-settings', {
         feishu_auto_sync_enabled: autoSyncEnabled,
         feishu_auto_sync_interval_minutes: autoSyncInterval,
       });
       message.success(t('feishu.saved'));
-      void load();
-      void loadQueue();
+      await load();
     } catch {
-      // FEISHU_CONFIG_INCOMPLETE 等后端错误已由拦截器统一提示
+      // API 客户端已统一提示。
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleHelpdeskTest = async () => {
-    const ticketId = helpdeskTicketId.trim();
-    if (!ticketId) {
-      message.warning('请输入飞书工单 ID');
-      return;
-    }
-    setHelpdeskTesting(true);
-    try {
-      const r = await api.post<{ title?: string; status?: string; stage?: string; guest?: { name?: string }; field_keys?: string[] }>(
-        '/admin/feishu-config/test-helpdesk',
-        { ticket_id: ticketId },
-      );
-      message.success(`服务台连接成功：${r.title || ticketId}（${r.guest?.name || '未知用户'}）`);
-    } catch {
-      // 统一错误提示
-    } finally {
-      setHelpdeskTesting(false);
-    }
-  };
-
-  const handleHelpdeskSubscribe = async () => {
-    setHelpdeskSubscribing(true);
-    try {
-      const result = await api.post<{ subscribed: boolean; status: string; error?: string }>(
-        '/admin/feishu-config/subscribe-helpdesk-events',
-      );
-      if (result.subscribed) {
-        message.success('服务台事件订阅成功；请确认飞书事件已添加并发布应用');
-      } else {
-        message.error(`服务台事件订阅未成功：${result.error || result.status}`);
-      }
-      await load();
-    } finally {
-      setHelpdeskSubscribing(false);
     }
   };
 
   const handleTest = async () => {
     setTesting(true);
     try {
-      const r = await api.post<FeishuTestResult>('/admin/feishu-config/test');
-      const scope = r.scope_names?.length ? t('feishu.testOkDept', { name: r.scope_names.join('、') }) : '';
+      const result = await api.post<FeishuTestResult>('/admin/feishu-config/test');
+      const scope = result.scope_names?.length ? t('feishu.testOkDept', { name: result.scope_names.join('、') }) : '';
       message.success(t('feishu.testOk') + scope);
     } catch {
-      // 失败已统一提示（msg 带飞书上游错误）
+      // API 客户端已统一提示。
     } finally {
       setTesting(false);
     }
@@ -198,100 +189,139 @@ export default function FeishuIntegration() {
     setSyncing(true);
     message.info(t('admin.org.syncStarted'));
     try {
-      // M35：后台执行+轮询完成（全公司同步耗时较长）
       await runOrgSyncAndWait('feishu');
       message.success(t('feishu.syncDone'));
-      void load(); // 刷新 last_sync_at / last_sync_stats 展示本次统计
-    } catch (e) {
-      message.error((e as Error).message || t('common.requestFailed'));
+      await load();
+    } catch (error) {
+      message.error((error as Error).message || t('common.requestFailed'));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleAilySave = async () => {
+    setAilySaving(true);
+    try {
+      const body: Record<string, unknown> = {
+        enabled: ailyEnabled,
+        allowed_tenant_ids: lines(tenantIds),
+        allowed_agent_ids: lines(agentIds),
+        allowed_origins: lines(origins),
+        bot_app_id: botAppId.trim() || null,
+        api_base: DEFAULT_API_BASE,
+        message_enabled: messageEnabled,
+      };
+      if (jwtSecret.trim()) body.mcp_jwt_secret = jwtSecret.trim();
+      if (botAppSecret.trim()) body.bot_app_secret = botAppSecret.trim();
+      const saved = await api.put<AilyConfig>('/admin/integrations/aily', body);
+      applyAilyConfig(saved);
+      message.success('Aily MCP 配置已保存');
+    } catch {
+      // API 客户端已统一提示。
+    } finally {
+      setAilySaving(false);
+    }
+  };
+
+  const handleIdentityCreate = async () => {
+    const values = await identityForm.validateFields();
+    setIdentitySaving(true);
+    try {
+      if (identityEditingId) {
+        await api.patch(`/admin/integrations/aily/identities/${identityEditingId}`, {
+          auth_user_id: values.auth_user_id,
+          status: 'active',
+        });
+        message.success('待映射身份已关联到 ITOM 账号；请确认其租户 ID 已加入白名单');
+      } else {
+        await api.post('/admin/integrations/aily/identities', { provider: 'feishu', ...values });
+        message.success('外部身份映射已创建');
+      }
+      setIdentityOpen(false);
+      setIdentityEditingId(undefined);
+      identityForm.resetFields();
+      await load();
+    } catch {
+      // 表单或 API 错误已由组件/API 客户端提示。
+    } finally {
+      setIdentitySaving(false);
+    }
+  };
+
+  const openIdentityModal = (row?: AilyExternalIdentity) => {
+    setIdentityEditingId(row?.id);
+    if (row) {
+      identityForm.setFieldsValue({
+        tenant_id: row.tenant_id,
+        app_id: row.app_id,
+        subject_type: row.subject_type,
+        subject_id: row.subject_id,
+        auth_user_id: row.auth_user_id || undefined,
+      });
+    } else {
+      identityForm.resetFields();
+      identityForm.setFieldValue('subject_type', 'user_id');
+    }
+    setIdentityOpen(true);
+  };
+
+  const handleIdentityDelete = async (identityId: string) => {
+    try {
+      await api.delete(`/admin/integrations/aily/identities/${identityId}`);
+      message.success('外部身份映射已删除');
+      await load();
+    } catch {
+      // API 客户端已统一提示。
+    }
+  };
+
+  const handleMessageTest = async () => {
+    if (!testIdentityId) {
+      message.warning('请先选择一个有效身份映射');
+      return;
+    }
+    setMessageTesting(true);
+    try {
+      await api.post('/admin/integrations/aily/test-message', { identity_id: testIdentityId });
+      message.success('Aily 主动消息发送成功');
+      await load();
+    } catch {
+      // API 客户端已统一提示。
+    } finally {
+      setMessageTesting(false);
     }
   };
 
   if (loading) {
     return (
       <Card title={t('feishu.title')}>
-        <div style={{ textAlign: 'center', padding: 60 }}>
-          <Spin size="large" />
-        </div>
+        <div style={{ textAlign: 'center', padding: 60 }}><Spin size="large" /></div>
       </Card>
     );
   }
 
-  const disabled = !isAdmin;
   const stats = config?.last_sync_stats;
 
   return (
-    <Card
-      title={t('feishu.title')}
-      extra={
-        isAdmin && (
-          <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void handleSave()}>
-            {t('common.save')}
-          </Button>
-        )
-      }
-    >
-      {!isAdmin && <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('feishu.readonly')} />}
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      {!isAdmin && <Alert type="info" showIcon message={t('feishu.readonly')} />}
 
-      {/* 应用配置 */}
-      <Typography.Title level={5}>{t('feishu.appConfig')}</Typography.Title>
-      <Alert type="info" showIcon style={{ marginBottom: 12, maxWidth: 720 }} message={t('feishu.sharedHint')} />
-      <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 480 }}>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <Card
+        title="飞书基础应用与组织同步"
+        extra={isAdmin && <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={() => void handleSave()}>{t('common.save')}</Button>}
+      >
+        <Alert type="info" showIcon style={{ marginBottom: 12 }} message="此处管理飞书登录、通讯录与组织同步；Aily + MCP 使用下方独立配置。" />
+        <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 720 }}>
           <Typography.Text>{t('feishu.apiBase')}</Typography.Text>
-          <Input
-            value={apiBase}
-            disabled={disabled}
-            placeholder={DEFAULT_API_BASE}
-            onChange={(e) => setApiBase(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <Input value={apiBase} disabled={disabled} onChange={(event) => setApiBase(event.target.value)} />
           <Typography.Text>App ID</Typography.Text>
-          <Input
-            value={appId}
-            disabled={disabled}
-            placeholder="cli_xxx"
-            onChange={(e) => setAppId(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <Input value={appId} disabled={disabled} placeholder="cli_xxx" onChange={(event) => setAppId(event.target.value)} />
           <Typography.Text>App Secret</Typography.Text>
-          <Input.Password
-            value={appSecret}
-            disabled={disabled}
-            placeholder={config?.has_secret ? t('feishu.secretConfigured') : 'App Secret'}
-            onChange={(e) => setAppSecret(e.target.value)}
-            autoComplete="new-password"
-          />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <Input.Password value={appSecret} disabled={disabled} placeholder={config?.has_secret ? t('feishu.secretConfigured') : 'App Secret'} onChange={(event) => setAppSecret(event.target.value)} autoComplete="new-password" />
           <Typography.Text>{t('feishu.syncScope')}</Typography.Text>
-          <Input.TextArea
-            value={syncScope}
-            disabled={disabled}
-            placeholder="od-xxx, od-yyy 或 0"
-            autoSize={{ minRows: 1, maxRows: 3 }}
-            onChange={(e) => setSyncScope(e.target.value)}
-          />
-          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
-            {t('feishu.syncScopeHint')}
-          </Typography.Text>
-        </div>
-        <Space>
-          <Switch checked={enabled} disabled={disabled} onChange={setEnabled} />
-          <Typography.Text>{t('feishu.enabled')}</Typography.Text>
-        </Space>
-        <Space>
-          <Switch checked={autoSyncEnabled} disabled={disabled || !enabled} onChange={setAutoSyncEnabled} />
-          <Typography.Text>{t('feishu.autoSync')}</Typography.Text>
-        </Space>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography.Text>{t('feishu.syncFrequency')}</Typography.Text>
+          <Input.TextArea value={syncScope} disabled={disabled} placeholder="od-xxx, od-yyy 或 0" autoSize={{ minRows: 1, maxRows: 3 }} onChange={(event) => setSyncScope(event.target.value)} />
+          <Space><Switch checked={enabled} disabled={disabled} onChange={setEnabled} /><Typography.Text>{t('feishu.enabled')}</Typography.Text></Space>
+          <Space><Switch checked={autoSyncEnabled} disabled={disabled || !enabled} onChange={setAutoSyncEnabled} /><Typography.Text>{t('feishu.autoSync')}</Typography.Text></Space>
           <Select
             value={autoSyncInterval}
             disabled={disabled || !autoSyncEnabled || !enabled}
@@ -303,188 +333,112 @@ export default function FeishuIntegration() {
               { value: 1440, label: t('feishu.everyDay') },
             ]}
           />
-        </div>
-      </Space>
-
-      <Divider />
-
-      {/* 服务台接入 */}
-      <Typography.Title level={5}>飞书 IT 服务台</Typography.Title>
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 12, maxWidth: 720 }}
-        message="服务台 Token 仅保存于后端并加密，不会返回浏览器；事件回调地址需在飞书开放平台配置。"
-      />
-      <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 720 }}>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography.Text>服务台 ID</Typography.Text>
-          <Input value={helpdeskId} disabled={disabled} placeholder="例如 7667139085051383050" onChange={(e) => setHelpdeskId(e.target.value)} />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography.Text>服务台 Token</Typography.Text>
-          <Input.Password
-            value={helpdeskToken}
-            disabled={disabled}
-            placeholder={config?.has_helpdesk_token ? '已配置，留空表示不修改' : 'Helpdesk Token'}
-            onChange={(e) => setHelpdeskToken(e.target.value)}
-            autoComplete="new-password"
-          />
-        </div>
-        <Space>
-          <Switch checked={helpdeskEnabled} disabled={disabled} onChange={setHelpdeskEnabled} />
-          <Typography.Text>启用服务台 API 接入</Typography.Text>
-        </Space>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography.Text>事件回调地址</Typography.Text>
-          <Input value={helpdeskEventUrl} disabled={disabled} placeholder={defaultHelpdeskEventUrl} onChange={(e) => setHelpdeskEventUrl(e.target.value)} />
-          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
-            ITOM 已按当前访问域名生成默认地址；如通过反向代理对外提供服务，请确认该地址能从飞书公网访问。
-          </Typography.Text>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <Typography.Text>事件订阅 Verification Token</Typography.Text>
-          <Input.Password value={helpdeskVerificationToken} disabled={disabled} placeholder="已配置时留空表示不修改" onChange={(e) => setHelpdeskVerificationToken(e.target.value)} autoComplete="new-password" />
-        </div>
-        <Space.Compact style={{ width: '100%' }}>
-          <Input value={helpdeskTicketId} disabled={disabled} placeholder="输入一张真实飞书工单 ID 进行连接测试" onChange={(e) => setHelpdeskTicketId(e.target.value)} />
-          <Button icon={<ApiOutlined />} loading={helpdeskTesting} disabled={disabled || !helpdeskEnabled} onClick={() => void handleHelpdeskTest()}>测试服务台</Button>
-        </Space.Compact>
-        <Space wrap>
-          <Button icon={<ApiOutlined />} loading={helpdeskSubscribing} disabled={disabled || !helpdeskEnabled} onClick={() => void handleHelpdeskSubscribe()}>
-            订阅服务台事件
-          </Button>
-          <Tag color={config?.helpdesk_event_subscription_status === 'subscribed' ? 'green' : config?.helpdesk_event_subscription_status === 'failed' ? 'red' : 'default'}>
-            事件订阅：{config?.helpdesk_event_subscription_status === 'subscribed' ? '已成功' : config?.helpdesk_event_subscription_status === 'failed' ? '失败' : config?.helpdesk_event_subscription_status === 'waiting_config' ? '等待应用配置' : '未注册'}
-          </Tag>
-          {config?.helpdesk_event_subscription_at && <Typography.Text type="secondary">{dayjs(config.helpdesk_event_subscription_at).format('YYYY-MM-DD HH:mm:ss')}</Typography.Text>}
-        </Space>
-        {config?.helpdesk_event_subscription_error && (
-          <Alert type="warning" showIcon style={{ maxWidth: 720 }} message={config.helpdesk_event_subscription_error} />
-        )}
-        <Typography.Text type="secondary" style={{ fontSize: 12, maxWidth: 720 }}>
-          订阅成功后，还需在飞书开放平台添加并发布：helpdesk.ticket.created_v1、helpdesk.ticket.updated_v1、helpdesk.ticket_message.created_v1。飞书目前没有独立的 rated 事件，评价会随工单更新事件重新读取。
-        </Typography.Text>
-      </Space>
-
-      <Divider />
-
-      {/* 连接与同步 */}
-      <Typography.Title level={5}>{t('feishu.connSync')}</Typography.Title>
-      <Space wrap>
-        <Button icon={<ApiOutlined />} loading={testing} disabled={disabled} onClick={() => void handleTest()}>
-          {t('feishu.test')}
-        </Button>
-        <Button
-          icon={<SyncOutlined />}
-          loading={syncing}
-          disabled={disabled || !config?.enabled}
-          onClick={() => void handleSync()}
-        >
-          {t('feishu.syncNow')}
-        </Button>
-        {!config?.enabled && <Typography.Text type="secondary">{t('feishu.syncNeedEnabled')}</Typography.Text>}
-      </Space>
-      <div style={{ marginTop: 12 }}>
-        <Typography.Text type="secondary">
-          {config?.last_sync_at
-            ? t('feishu.lastSyncAt', { time: dayjs(config.last_sync_at).format('YYYY-MM-DD HH:mm:ss') })
-            : t('feishu.neverSynced')}
-        </Typography.Text>
-        {stats && (
-          <div style={{ marginTop: 8 }}>
-            <Space wrap size={8}>
-              {STAT_META.map((m) => (
-                <Tag key={m.key} color={m.color}>
-                  {t(m.label)} {stats[m.key] ?? 0}
-                </Tag>
-              ))}
-            </Space>
-          </div>
-        )}
-      </div>
-
-      <Divider />
-
-      {/* 待分流与可靠同步队列：只对 IT 管理角色展示，便于运营人员处理人工客服后的分流。 */}
-      {isAdmin && (
-        <>
-          <Typography.Title level={5}>待分流记录与同步队列</Typography.Title>
-          <Alert
-            type="info"
-            showIcon
-            style={{ marginBottom: 12, maxWidth: 900 }}
-            message="人工客服完成初步沟通后，记录保持为“待分流”；员工在飞书选择创建服务请求或登记 IT 需求后，才会建立 ITOM 正式单据。队列失败会自动重试。"
-          />
-          <Space style={{ marginBottom: 12 }}>
-            <Button icon={<SyncOutlined />} loading={queueLoading} onClick={() => void loadQueue()}>刷新队列</Button>
-            <Typography.Text type="secondary">待分流 {intakes.filter((item) => item.classification === 'pending').length} 条 · 入站事件 {syncEvents.length} 条</Typography.Text>
+          <Space wrap>
+            <Button icon={<ApiOutlined />} loading={testing} disabled={disabled} onClick={() => void handleTest()}>{t('feishu.test')}</Button>
+            <Button icon={<SyncOutlined />} loading={syncing} disabled={disabled || !config?.enabled} onClick={() => void handleSync()}>{t('feishu.syncNow')}</Button>
           </Space>
-          <Table<FeishuHelpdeskIntake>
-            rowKey="id"
-            size="small"
-            loading={queueLoading}
-            dataSource={intakes}
-            pagination={false}
-            scroll={{ x: 1160 }}
-            columns={[
-              { title: '飞书工单', dataIndex: 'ticket_id', width: 180 },
-              { title: '申请人', dataIndex: 'guest_name', width: 120, render: (value: string | null) => value || '-' },
-              { title: '客服', dataIndex: 'agent_name', width: 120, render: (value: string | null) => value || '待分派' },
-              {
-                title: '分流状态', dataIndex: 'classification', width: 120,
-                render: (value: string) => <Tag color={value === 'pending' ? 'gold' : value === 'cancelled' ? 'default' : 'green'}>{value === 'pending' ? '待分流' : value === 'service_request' ? '服务请求' : value === 'requirement' ? 'IT需求' : value === 'cancelled' ? '已取消' : value}</Tag>,
-              },
-              { title: '飞书阶段', dataIndex: 'feishu_stage', width: 120, render: (value: string | null) => value || '-' },
-              {
-                title: '分流入口', dataIndex: 'routing_prompt_channel', width: 190,
-                render: (value: string | null, row) => {
-                  const label = value === 'helpdesk_post' ? '原会话富文本' : value === 'helpdesk_text' ? '原会话文本' : value === 'im_card_fallback' ? '独立机器人兜底' : '待发送';
-                  return <Space direction="vertical" size={0}><Tag color={value === 'im_card_fallback' ? 'orange' : value ? 'blue' : 'default'}>{label}</Tag><Typography.Text type="secondary">{row.routing_prompt_sent_at ? dayjs(row.routing_prompt_sent_at).format('YYYY-MM-DD HH:mm:ss') : '-'}</Typography.Text></Space>;
-                },
-              },
-              { title: 'ITOM关联单据', dataIndex: 'linked_entity_id', width: 220, render: (value: string | null, row) => value ? `${row.linked_entity_type === 'ticket' ? '服务请求' : 'IT需求'} · ${value}` : '-' },
-              { title: '最近同步', dataIndex: 'last_synced_at', width: 180, render: (value: string | null) => value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-' },
-            ]}
-          />
-          <Typography.Title level={5} style={{ marginTop: 20 }}>最近入站事件</Typography.Title>
-          <Table<FeishuHelpdeskSyncEvent>
-            rowKey="id"
-            size="small"
-            loading={queueLoading}
-            dataSource={syncEvents}
-            pagination={false}
-            scroll={{ x: 980 }}
-            columns={[
-              { title: '事件类型', dataIndex: 'event_type', width: 260 },
-              { title: '飞书工单', dataIndex: 'ticket_id', width: 180, render: (value: string | null) => value || '-' },
-              { title: '状态', dataIndex: 'status', width: 120, render: (value: string) => <Tag color={value === 'processed' ? 'green' : value === 'failed' ? 'red' : 'blue'}>{value}</Tag> },
-              { title: '重试次数', dataIndex: 'attempts', width: 100 },
-              { title: '错误', dataIndex: 'last_error', render: (value: string | null) => value || '-' },
-            ]}
-          />
-          <Divider />
-        </>
-      )}
+          <Typography.Text type="secondary">
+            {config?.last_sync_at ? t('feishu.lastSyncAt', { time: dayjs(config.last_sync_at).format('YYYY-MM-DD HH:mm:ss') }) : t('feishu.neverSynced')}
+          </Typography.Text>
+          {stats && <Space wrap>{STAT_META.map((meta) => <Tag key={meta.key} color={meta.color}>{t(meta.label)} {stats[meta.key] ?? 0}</Tag>)}</Space>}
+          <Typography.Text type="secondary">飞书登录回调：<Typography.Text code copyable={{ text: redirectUri }}>{redirectUri}</Typography.Text></Typography.Text>
+        </Space>
+      </Card>
 
-      {/* 接入说明 */}
-      <Typography.Title level={5}>{t('feishu.guide')}</Typography.Title>
-      <Alert
-        type="info"
-        message={
-          <ol style={{ margin: 0, paddingInlineStart: 20 }}>
-            <li>{t('feishu.guide1')}</li>
-            <li>{t('feishu.guide2')}</li>
-            <li>
-              {t('feishu.guide3')}{' '}
-              <Typography.Text code copyable={{ text: redirectUri }}>
-                {redirectUri}
-              </Typography.Text>
-            </li>
-            <li>{t('feishu.guide4')}</li>
-          </ol>
-        }
-      />
-    </Card>
+      <Card
+        title="Aily Agent + MCP Server"
+        extra={isAdmin && <Button type="primary" icon={<SaveOutlined />} loading={ailySaving} onClick={() => void handleAilySave()}>保存 MCP 配置</Button>}
+      >
+        <Alert
+          type={ailyConfig?.mcp_tool_calls_ready ? 'success' : 'warning'}
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={ailyConfig?.mcp_tool_calls_ready
+            ? 'MCP 协议发现与用户工具调用均已就绪。'
+            : '首次接入可只启用 MCP 并配置 Origin，让 Aily 完成协议校验；Aily 创建后再回填 JWT 密钥、租户/Agent 白名单和身份映射。密钥只写入后端，不会回显。'}
+        />
+        <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 760 }}>
+          <Typography.Text>MCP 公网地址</Typography.Text>
+          <Typography.Text code copyable={{ text: publicMcpUrl }}>{publicMcpUrl}</Typography.Text>
+          <Space><Switch checked={ailyEnabled} disabled={disabled} onChange={setAilyEnabled} /><Typography.Text>启用 Aily MCP</Typography.Text></Space>
+          <Typography.Text>x-aily-jwt HS256 Secret</Typography.Text>
+          <Input.Password value={jwtSecret} disabled={disabled} placeholder={ailyConfig?.has_mcp_jwt_secret ? '已配置，留空表示不修改' : '至少 16 个字符'} onChange={(event) => setJwtSecret(event.target.value)} autoComplete="new-password" />
+          <Typography.Text>允许的飞书租户 ID（每行一个）</Typography.Text>
+          <Input.TextArea value={tenantIds} disabled={disabled} rows={3} onChange={(event) => setTenantIds(event.target.value)} />
+          <Typography.Text>允许的 Aily Agent ID（每行一个）</Typography.Text>
+          <Input.TextArea value={agentIds} disabled={disabled} rows={3} onChange={(event) => setAgentIds(event.target.value)} />
+          <Typography.Text>允许的 Origin（每行一个，仅协议与主机）</Typography.Text>
+          <Input.TextArea value={origins} disabled={disabled} rows={3} onChange={(event) => setOrigins(event.target.value)} />
+          <Divider style={{ margin: '8px 0' }} />
+          <Typography.Text strong>主动消息机器人（P0 联调）</Typography.Text>
+          <Input value={botAppId} disabled={disabled} placeholder="Bot App ID" onChange={(event) => setBotAppId(event.target.value)} />
+          <Input.Password value={botAppSecret} disabled={disabled} placeholder={ailyConfig?.has_bot_app_secret ? 'Bot App Secret 已配置，留空表示不修改' : 'Bot App Secret'} onChange={(event) => setBotAppSecret(event.target.value)} autoComplete="new-password" />
+          <Space><Switch checked={messageEnabled} disabled={disabled} onChange={setMessageEnabled} /><Typography.Text>启用主动消息</Typography.Text></Space>
+          <Space.Compact style={{ width: '100%' }}>
+            <Select
+              style={{ flex: 1 }}
+              value={testIdentityId}
+              disabled={disabled || !messageEnabled}
+              placeholder="选择接收测试消息的身份映射"
+              onChange={setTestIdentityId}
+              options={identities.filter((item) => item.status === 'active').map((item) => ({ value: item.id, label: `${item.display_name || item.username || item.subject_id} · ${item.subject_type}` }))}
+            />
+            <Button icon={<ApiOutlined />} loading={messageTesting} disabled={disabled || !messageEnabled} onClick={() => void handleMessageTest()}>发送测试消息</Button>
+          </Space.Compact>
+          {ailyConfig?.last_test_status && (
+            <Typography.Text type={ailyConfig.last_test_status === 'success' ? 'success' : 'danger'}>
+              最近测试：{ailyConfig.last_test_status}{ailyConfig.last_test_at ? ` · ${dayjs(ailyConfig.last_test_at).format('YYYY-MM-DD HH:mm:ss')}` : ''}{ailyConfig.last_error_redacted ? ` · ${ailyConfig.last_error_redacted}` : ''}
+            </Typography.Text>
+          )}
+        </Space>
+
+        <Divider />
+        <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }}>
+          <Typography.Title level={5} style={{ margin: 0 }}>外部身份映射</Typography.Title>
+          {isAdmin && <Button icon={<PlusOutlined />} onClick={() => openIdentityModal()}>新增映射</Button>}
+        </Space>
+        <Table<AilyExternalIdentity>
+          rowKey="id"
+          size="small"
+          dataSource={identities}
+          pagination={false}
+          scroll={{ x: 1050 }}
+          columns={[
+            { title: 'ITOM 用户', key: 'user', width: 180, render: (_, row) => row.display_name || row.username || row.auth_user_id },
+            { title: '租户 ID', dataIndex: 'tenant_id', width: 180, ellipsis: true },
+            { title: '应用 ID', dataIndex: 'app_id', width: 180, ellipsis: true },
+            { title: '标识类型', dataIndex: 'subject_type', width: 110 },
+            { title: '飞书用户标识', dataIndex: 'subject_id', width: 200, ellipsis: true },
+            { title: '状态', dataIndex: 'status', width: 100, render: (value: string) => <Tag color={value === 'active' ? 'green' : value === 'pending' ? 'orange' : 'default'}>{value === 'active' ? '有效' : value === 'pending' ? '待映射' : '停用'}</Tag> },
+            { title: '最近使用', dataIndex: 'last_used_at', width: 170, render: (value: string | null) => value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-' },
+            {
+              title: '操作', key: 'actions', width: 150, fixed: 'right',
+              render: (_, row) => isAdmin ? (
+                <Space size={4}>
+                  {row.status === 'pending' && <Button type="link" size="small" onClick={() => openIdentityModal(row)}>确认映射</Button>}
+                  <Popconfirm title="确认删除该身份映射？" onConfirm={() => void handleIdentityDelete(row.id)}>
+                    <Button type="text" danger icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Space>
+              ) : null,
+            },
+          ]}
+        />
+      </Card>
+
+      <Modal title={identityEditingId ? '确认 Aily 外部身份映射' : '新增 Aily 外部身份映射'} open={identityOpen} confirmLoading={identitySaving} onOk={() => void handleIdentityCreate()} onCancel={() => { setIdentityOpen(false); setIdentityEditingId(undefined); }} destroyOnClose>
+        <Form form={identityForm} layout="vertical" preserve={false} initialValues={{ subject_type: 'open_id' }}>
+          <Form.Item name="tenant_id" label="飞书租户 ID" rules={[{ required: true }]}><Input disabled={!!identityEditingId} /></Form.Item>
+          <Form.Item name="app_id" label="Aily 应用 ID" rules={[{ required: true }]}><Input disabled={!!identityEditingId} /></Form.Item>
+          <Form.Item name="subject_type" label="用户标识类型" rules={[{ required: true }]}>
+            <Select disabled={!!identityEditingId} options={['open_id', 'user_id', 'union_id'].map((value) => ({ value, label: value }))} />
+          </Form.Item>
+          <Form.Item name="subject_id" label="飞书用户标识" rules={[{ required: true }]}><Input disabled={!!identityEditingId} /></Form.Item>
+          <Form.Item name="auth_user_id" label="映射到 ITOM 账号" rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={users.map((item) => ({ value: item.id, label: `${item.name || item.username}（${item.username}）` }))} />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </Space>
   );
 }

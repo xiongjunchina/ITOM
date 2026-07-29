@@ -248,13 +248,21 @@ class LoginRequest(GlidBase):
 
 class NotificationOutbox(GlidBase):
     __tablename__ = "notification_outbox"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_notification_outbox_idempotency_key"),)
 
     event_type: Mapped[str] = mapped_column(String(64), index=True)
     entity_type: Mapped[str | None] = mapped_column(String(32))
     entity_id: Mapped[str | None] = mapped_column(String(26))
     payload: Mapped[dict | None] = mapped_column(JsonCol)
     channel: Mapped[str] = mapped_column(String(16), default="in_app", comment="in_app/feishu…")
-    status: Mapped[str] = mapped_column(String(16), default="pending", comment="pending/sent/failed")
+    status: Mapped[str] = mapped_column(String(16), default="pending", comment="pending/sending/sent/failed")
+    recipient_type: Mapped[str | None] = mapped_column(String(32), comment="open_id/user_id/union_id")
+    recipient_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    provider_message_id: Mapped[str | None] = mapped_column(String(128))
+    last_error_redacted: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
@@ -307,141 +315,102 @@ class UiBrandingAsset(GlidBase):
 
 
 class FeishuConfig(GlidBase):
-    """飞书集成单行配置（M11/M32）：组织同步（按配置范围）+ 扫码登录 OAuth + 服务台。
-
-    app_secret 与 helpdesk_token 仅在 PUT 时写入，GET 返回掩码；
-    enabled=False 时扫码登录退回模拟入口（开发用）。
-    """
+    """飞书基础集成单行配置：组织同步、通讯录和扫码登录 OAuth。"""
 
     __tablename__ = "feishu_config"
 
     api_base: Mapped[str] = mapped_column(String(100), default="https://open.feishu.cn", comment="飞书开放平台 API 基址")
     app_id: Mapped[str | None] = mapped_column(String(64), comment="自建应用 App ID")
     app_secret: Mapped[str | None] = mapped_column(String(128), comment="自建应用 App Secret")
-    helpdesk_id: Mapped[str | None] = mapped_column(String(64), comment="服务台 ID")
-    helpdesk_token_encrypted: Mapped[str | None] = mapped_column(Text, comment="服务台 Token 加密密文")
-    helpdesk_enabled: Mapped[bool] = mapped_column(Boolean, default=False, comment="启用服务台 API 接入")
-    helpdesk_event_verification_token_encrypted: Mapped[str | None] = mapped_column(
-        Text, comment="事件订阅 Verification Token 加密密文"
-    )
-    helpdesk_event_url: Mapped[str | None] = mapped_column(String(500), comment="事件订阅回调地址")
-    helpdesk_event_subscription_status: Mapped[str] = mapped_column(
-        String(16), default="not_configured", comment="服务台事件订阅状态"
-    )
-    helpdesk_event_subscription_at: Mapped[datetime | None] = mapped_column(
-        DateTime, comment="最近一次服务台事件订阅成功时间"
-    )
-    helpdesk_event_subscription_error: Mapped[str | None] = mapped_column(
-        Text, comment="最近一次服务台事件订阅错误"
-    )
     sync_scope: Mapped[str | None] = mapped_column(String(512), comment="组织架构同步范围：open_department_id 列表（逗号分隔），0=全公司（M32）")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, comment="启用真实飞书（同步+扫码）")
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_sync_stats: Mapped[dict | None] = mapped_column(JsonCol, comment="上次同步统计")
 
 
-class FeishuHelpdeskHandoff(GlidBase):
-    """飞书服务台到 ITOM 的一次性交接上下文。
+class ExternalIdentity(GlidBase):
+    """应用级外部身份到 ITOM 账号的显式映射。"""
 
-    令牌只保存哈希；原始工单快照用于在员工打开 ITOM 创建页时预填，
-    不把服务台 Token 或飞书身份放进浏览器 URL。交接记录默认短期有效，
-    创建服务请求/需求后标记为 consumed，便于审计和防重放。
-    """
+    __tablename__ = "external_identity"
+    __table_args__ = (
+        UniqueConstraint("provider", "tenant_id", "app_id", "subject_type", "subject_id"),
+    )
 
-    __tablename__ = "feishu_helpdesk_handoff"
-    __table_args__ = (UniqueConstraint("token_hash"),)
+    provider: Mapped[str] = mapped_column(String(32), default="feishu", index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    app_id: Mapped[str] = mapped_column(String(128), index=True)
+    subject_type: Mapped[str] = mapped_column(String(32))
+    subject_id: Mapped[str] = mapped_column(String(128), index=True)
+    auth_user_id: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    ticket_id: Mapped[str] = mapped_column(String(128), index=True, comment="飞书服务台工单 ID")
-    action: Mapped[str] = mapped_column(String(32), comment="service_request/requirement")
-    source_user_open_id: Mapped[str] = mapped_column(String(128), index=True, comment="飞书 guest open_id")
-    source_agent_open_id: Mapped[str | None] = mapped_column(String(128), comment="飞书客服 open_id")
-    helpdesk_id: Mapped[str] = mapped_column(String(64), comment="服务台 ID")
-    token_hash: Mapped[str] = mapped_column(String(128), index=True)
-    ticket_snapshot: Mapped[dict] = mapped_column(JsonCol, default=dict, comment="脱敏后的工单字段快照")
-    status: Mapped[str] = mapped_column(String(16), default="issued", index=True, comment="issued/consumed/expired")
+    auth_user: Mapped[AuthUser | None] = relationship()
+
+
+class AilyIntegrationConfig(GlidBase):
+    """Aily MCP 入站认证和机器人出站消息的单行配置。"""
+
+    __tablename__ = "aily_integration_config"
+
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    mcp_auth_mode: Mapped[str] = mapped_column(String(16), default="hs256")
+    mcp_jwt_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    allowed_tenant_ids: Mapped[list] = mapped_column(JsonCol, default=list)
+    allowed_agent_ids: Mapped[list] = mapped_column(JsonCol, default=list)
+    allowed_origins: Mapped[list] = mapped_column(JsonCol, default=list)
+    bot_app_id: Mapped[str | None] = mapped_column(String(64))
+    bot_app_secret_encrypted: Mapped[str | None] = mapped_column(Text)
+    api_base: Mapped[str] = mapped_column(String(100), default="https://open.feishu.cn")
+    message_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_test_status: Mapped[str | None] = mapped_column(String(16))
+    last_error_redacted: Mapped[str | None] = mapped_column(Text)
+
+
+class McpToolCall(GlidBase):
+    """不包含秘密、提示词和完整表单答案的 MCP 工具审计。"""
+
+    __tablename__ = "mcp_tool_call"
+    __table_args__ = (UniqueConstraint("call_id"),)
+
+    call_id: Mapped[str] = mapped_column(String(64), index=True)
+    tool_name: Mapped[str] = mapped_column(String(128), index=True)
+    tenant_id: Mapped[str] = mapped_column(String(128), index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    external_subject: Mapped[str] = mapped_column(String(255))
+    auth_user_id: Mapped[str] = mapped_column(ForeignKey("auth_user.id"), index=True)
+    session_ref_hash: Mapped[str | None] = mapped_column(String(64))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    result_code: Mapped[str] = mapped_column(String(64), index=True)
+    entity_type: Mapped[str | None] = mapped_column(String(32))
+    entity_id: Mapped[str | None] = mapped_column(String(26))
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class McpOperationIntent(GlidBase):
+    """写工具预览、确认凭证和幂等执行结果。"""
+
+    __tablename__ = "mcp_operation_intent"
+    __table_args__ = (
+        UniqueConstraint("intent_id"),
+        UniqueConstraint("auth_user_id", "tool_name", "idempotency_key"),
+    )
+
+    intent_id: Mapped[str] = mapped_column(String(64), index=True)
+    tool_name: Mapped[str] = mapped_column(String(128), index=True)
+    auth_user_id: Mapped[str] = mapped_column(ForeignKey("auth_user.id"), index=True)
+    normalized_payload: Mapped[dict] = mapped_column(JsonCol, default=dict)
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="prepared", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime)
-    consumed_entity_type: Mapped[str | None] = mapped_column(String(32))
-    consumed_entity_id: Mapped[str | None] = mapped_column(String(26))
-    callback_event_id: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, comment="飞书卡片回调事件 ID，防重复处理")
-
-
-class FeishuHelpdeskIntake(GlidBase):
-    """飞书服务台与 ITOM 的待分流记录。
-
-    一条记录对应一个飞书工单。人工客服完成初步沟通后，员工从卡片选择
-    服务请求或 IT 需求，ITOM 才创建正式单据；在此之前只保存脱敏快照和
-    外部身份，避免重复建单并保留跨系统关联。
-    """
-
-    __tablename__ = "feishu_helpdesk_intake"
-    __table_args__ = (UniqueConstraint("helpdesk_id", "ticket_id"),)
-
-    helpdesk_id: Mapped[str] = mapped_column(String(64), index=True)
-    ticket_id: Mapped[str] = mapped_column(String(128), index=True)
-    guest_open_id: Mapped[str | None] = mapped_column(String(128), index=True)
-    guest_name: Mapped[str | None] = mapped_column(String(128))
-    agent_open_id: Mapped[str | None] = mapped_column(String(128))
-    agent_name: Mapped[str | None] = mapped_column(String(128))
-    feishu_status: Mapped[str | None] = mapped_column(String(64))
-    feishu_stage: Mapped[str | None] = mapped_column(String(64))
-    classification: Mapped[str] = mapped_column(
-        String(24), default="pending", index=True,
-        comment="pending/service_request/requirement/cancelled",
-    )
-    snapshot: Mapped[dict] = mapped_column(JsonCol, default=dict)
-    linked_entity_type: Mapped[str | None] = mapped_column(String(32))
-    linked_entity_id: Mapped[str | None] = mapped_column(String(26), index=True)
-    choice_card_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
-    routing_prompt_sent_at: Mapped[datetime | None] = mapped_column(
-        DateTime, comment="原服务台会话分流入口发送时间",
-    )
-    routing_prompt_channel: Mapped[str | None] = mapped_column(
-        String(24), comment="helpdesk_post/helpdesk_text/im_card_fallback",
-    )
-    routing_prompt_message_id: Mapped[str | None] = mapped_column(
-        String(128), comment="分流入口对应的飞书消息 ID",
-    )
-    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
-    last_error: Mapped[str | None] = mapped_column(Text)
-
-
-class FeishuHelpdeskSyncEvent(GlidBase):
-    """飞书事件入站 outbox：先快速确认，再由后台幂等消费并重试。"""
-
-    __tablename__ = "feishu_helpdesk_sync_event"
-    __table_args__ = (UniqueConstraint("event_id"),)
-
-    event_id: Mapped[str] = mapped_column(String(128), index=True)
-    event_type: Mapped[str] = mapped_column(String(128), index=True)
-    ticket_id: Mapped[str | None] = mapped_column(String(128), index=True)
-    payload: Mapped[dict] = mapped_column(JsonCol, default=dict)
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True,
-                                        comment="pending/processing/processed/failed")
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
-    last_error: Mapped[str | None] = mapped_column(Text)
-    processed_at: Mapped[datetime | None] = mapped_column(DateTime)
-
-
-class FeishuHelpdeskOutbox(GlidBase):
-    """向飞书回写的可靠 outbox，仅承载用户可见消息或分流入口。"""
-
-    __tablename__ = "feishu_helpdesk_outbox"
-    __table_args__ = (UniqueConstraint("dedupe_key"),)
-
-    helpdesk_id: Mapped[str] = mapped_column(String(64), index=True)
-    ticket_id: Mapped[str] = mapped_column(String(128), index=True)
-    kind: Mapped[str] = mapped_column(String(24), comment="routing_prompt/choice_card/public_message")
-    dedupe_key: Mapped[str] = mapped_column(String(255), index=True)
-    payload: Mapped[dict] = mapped_column(JsonCol, default=dict)
-    status: Mapped[str] = mapped_column(String(16), default="pending", index=True,
-                                        comment="pending/sending/sent/failed")
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
-    last_error: Mapped[str | None] = mapped_column(Text)
-    message_id: Mapped[str | None] = mapped_column(String(128))
-    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    result_entity_type: Mapped[str | None] = mapped_column(String(32))
+    result_entity_id: Mapped[str | None] = mapped_column(String(26))
+    result_snapshot: Mapped[dict | None] = mapped_column(JsonCol)
 
 
 class SystemIntegrationConfig(GlidBase):

@@ -12,7 +12,7 @@ from app.services import sla
 logger = logging.getLogger("aom.scheduler")
 
 INTERVAL_SECONDS = 15 * 60
-FEISHU_SYNC_INTERVAL_SECONDS = 5
+AILY_OUTBOX_INTERVAL_SECONDS = 5
 WARN_RATIO = 0.8  # PRD §5.1：超 SLA 目标 80% 未解决触发升级
 
 
@@ -157,14 +157,13 @@ async def run_forever():
         await asyncio.sleep(INTERVAL_SECONDS)
 
 
-async def run_feishu_helpdesk_forever():
-    """高频消费飞书事件和出站消息；回调接口只入队，避免超过飞书 3 秒响应窗口。"""
-    from app.services.feishu_helpdesk import scan_outbox, scan_sync_events
+async def run_aily_outbox_forever():
+    """高频消费 Aily 机器人可靠消息发件箱。"""
+    from app.services.aily import scan_aily_outbox
 
     while True:
         try:
-            scan_sync_events()
-            scan_outbox()
+            scan_aily_outbox()
         except Exception:
-            logger.exception("feishu helpdesk sync scan failed")
-        await asyncio.sleep(FEISHU_SYNC_INTERVAL_SECONDS)
+            logger.exception("Aily outbox scan failed")
+        await asyncio.sleep(AILY_OUTBOX_INTERVAL_SECONDS)
