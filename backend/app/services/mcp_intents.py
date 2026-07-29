@@ -75,6 +75,51 @@ def prepare(
     return row, token
 
 
+def begin_direct_action(
+    db: Session,
+    user: AuthUser,
+    tool_name: str,
+    payload: dict,
+    idempotency_key: str,
+) -> tuple[McpOperationIntent, bool]:
+    """为无需二次预览的用户动作建立同事务幂等边界。
+
+    P2 的确认、重开和评价本身就是用户在 Aily 中的明确动作，因此不再签发
+    第二个确认令牌；幂等记录与领域变更在同一事务提交，成功后可安全重放。
+    """
+    key = validate_idempotency_key(idempotency_key)
+    digest = payload_digest(payload)
+    row = (
+        db.query(McpOperationIntent)
+        .filter(
+            McpOperationIntent.auth_user_id == user.id,
+            McpOperationIntent.tool_name == tool_name,
+            McpOperationIntent.idempotency_key == key,
+            McpOperationIntent.is_deleted.is_(False),
+        )
+        .with_for_update()
+        .first()
+    )
+    if row and row.payload_digest != digest:
+        raise AppError("IDEMPOTENCY_CONFLICT", "同一幂等键不能用于不同内容", 409)
+    if row:
+        return row, row.status == "executed"
+    row = McpOperationIntent(
+        intent_id=new_glid(),
+        tool_name=tool_name,
+        auth_user_id=user.id,
+        normalized_payload=payload,
+        payload_digest=digest,
+        token_hash=_token_hash(secrets.token_urlsafe(32)),
+        idempotency_key=key,
+        status="prepared",
+        expires_at=datetime.now() + timedelta(days=3650),
+    )
+    db.add(row)
+    db.flush()
+    return row, False
+
+
 def require_prepared(
     db: Session,
     user: AuthUser,

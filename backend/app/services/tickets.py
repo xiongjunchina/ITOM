@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.events import notifier
 from app.events.bus import publish
-from app.models import AuthUser, OrgMember, ServiceItem, ServiceItemFormVersion, Ticket
+from app.models import AuthUser, OrgMember, ServiceItem, ServiceItemFormVersion, Ticket, TicketSatisfaction
 from app.services import dispatch, process_engine, service_forms, sla
 from app.services.audit import audit
 from app.services.codes import gen_code
@@ -141,7 +141,15 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
     return ticket
 
 
-def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: AuthUser, system: bool = False) -> Ticket:
+def do_transition(
+    db: Session,
+    ticket: Ticket,
+    to: str,
+    fields: dict,
+    actor: AuthUser,
+    system: bool = False,
+    commit: bool = True,
+) -> Ticket:
     now = datetime.now()
     etype = entity_type_of(ticket)
     from_code, _ = wf_transition(db, ticket, etype, to, fields, actor, system=system)
@@ -149,6 +157,10 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     # 打点与派生
     if from_code == "new" and to != "new":
         sla.mark_first_response(ticket, now)
+    if ticket.ticket_type == "service_request" and from_code == "new" and to == "processing":
+        if not ticket.accepted_at:
+            ticket.accepted_at = now
+        publish(db, "ticket.accepted", "ticket", ticket.id, {"accepted_at": now.isoformat()})
     if to == "processing" and from_code != "processing":
         publish(db, "ticket.processing", "ticket", ticket.id, {})
     if to == "paused":
@@ -159,7 +171,21 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
             ticket.paused_started_at = None
     if to == "resolved":
         sla.mark_resolved(ticket, now)
-        publish(db, "ticket.resolved", "ticket", ticket.id, {})
+        pending = process_engine.current_pending_task(db, etype, ticket.id)
+        ticket.confirmation_due_at = pending.due_at if pending else None
+        publish(
+            db,
+            "ticket.resolved",
+            "ticket",
+            ticket.id,
+            {
+                "resolved_at": now.isoformat(),
+                "confirmation_due_at": (
+                    ticket.confirmation_due_at.isoformat() if ticket.confirmation_due_at else None
+                ),
+                "reopen_count": ticket.reopen_count or 0,
+            },
+        )
         if ticket.submitter:
             submitter_user = db.get(AuthUser, ticket.submitter)
             if submitter_user and submitter_user.person_id:
@@ -172,8 +198,16 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
     if from_code == "resolved" and to == "processing":  # 重开
         ticket.reopen_count = (ticket.reopen_count or 0) + 1
         ticket.resolved_at = None
+        ticket.confirmation_due_at = None
         ticket.sla_resolution_met = None
         ticket.first_time_fix = False
+        publish(
+            db,
+            "ticket.reopened",
+            "ticket",
+            ticket.id,
+            {"reopen_count": ticket.reopen_count},
+        )
     if to == "closed":
         ticket.closed_at = now
         publish(db, "ticket.closed", "ticket", ticket.id, {"sla_met": bool(ticket.sla_resolution_met)})
@@ -197,7 +231,8 @@ def do_transition(db: Session, ticket: Ticket, to: str, fields: dict, actor: Aut
         ticket.approval_comment = fields.get("approval_comment") or ticket.approval_comment
         publish(db, f"change.{to}", "ticket", ticket.id, {})
 
-    db.commit()
+    if commit:
+        db.commit()
     return ticket
 
 
@@ -267,7 +302,11 @@ def on_ticket_advanced(db: Session, ticket_id: str, actor: AuthUser) -> None:
     last_seq = max(s.seq for s in live) if live else None
     cur_seq = task.step.seq if task.step else None
     if cur_seq is not None and last_seq is not None and cur_seq == last_seq and t.status not in ("resolved",):
-        if not t.solution:
+        # 首次解决时尊重处理人已显式填写的解决方案；服务请求被用户重开后，
+        # 则用本轮最新有效处理任务的说明刷新 solution，避免再次进入待确认时
+        # 仍向用户展示上一次未能解决问题的旧说明。流程回退产生的历史任务已
+        # 软删除，不参与本轮解决说明选择。
+        if not t.solution or (t.ticket_type == "service_request" and (t.reopen_count or 0) > 0):
             from app.models import ProcessTask
 
             done = (
@@ -277,7 +316,9 @@ def on_ticket_advanced(db: Session, ticket_id: str, actor: AuthUser) -> None:
                 .order_by(ProcessTask.completed_at.desc())
                 .all()
             )
-            t.solution = next((x.comment for x in done if x.comment), None) or "详见流程处理记录"
+            latest_comment = next((x.comment for x in done if x.comment), None)
+            if latest_comment or not t.solution:
+                t.solution = latest_comment or "详见流程处理记录"
         path = closure_path(db, etype, t.status, actor, dst="resolved", ignore_roles=True)
         for to in path or []:
             do_transition(db, t, to, {}, actor, system=True)
@@ -311,16 +352,88 @@ def auto_close_on_process_complete(db: Session, ticket_id: str, actor: AuthUser)
     return True
 
 
-def rate_satisfaction(db: Session, ticket: Ticket, score: int, actor: AuthUser) -> Ticket:
+def rate_satisfaction(
+    db: Session,
+    ticket: Ticket,
+    score: int,
+    actor: AuthUser,
+    *,
+    tags: list[str] | None = None,
+    comment: str = "",
+    source: str = "web",
+    commit: bool = True,
+) -> TicketSatisfaction:
     if ticket.status != "closed":
         raise AppError("NOT_CLOSED", "工单关闭后才能评价")
     if ticket.submitter != actor.id:
         raise AppError("FORBIDDEN", "只有提交人可以评价", 403)
     if not 1 <= score <= 5:
         raise AppError("INVALID_SCORE", "评分须为 1-5")
+    if source not in {"web", "aily"}:
+        raise AppError("INVALID_SOURCE", "评价来源无效")
+    normalized_tags: list[str] = []
+    for raw in tags or []:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        if len(value) > 32:
+            raise AppError("INVALID_TAG", "评价标签不能超过 32 个字符")
+        if value not in normalized_tags:
+            normalized_tags.append(value)
+    if len(normalized_tags) > 5:
+        raise AppError("TOO_MANY_TAGS", "评价标签最多 5 个")
+    normalized_comment = str(comment or "").strip()
+    if len(normalized_comment) > 500:
+        raise AppError("COMMENT_TOO_LONG", "评价意见不能超过 500 个字符")
+
+    rating = (
+        db.query(TicketSatisfaction)
+        .filter(
+            TicketSatisfaction.ticket_id == ticket.id,
+            TicketSatisfaction.is_deleted.is_(False),
+        )
+        .with_for_update()
+        .first()
+    )
+    previous_score = rating.score if rating else None
+    now = datetime.now()
+    if rating:
+        rating.score = score
+        rating.tags = normalized_tags
+        rating.comment = normalized_comment or None
+        rating.source = source
+        rating.rated_by = actor.id
+        rating.rated_at = now
+    else:
+        rating = TicketSatisfaction(
+            ticket_id=ticket.id,
+            score=score,
+            tags=normalized_tags,
+            comment=normalized_comment or None,
+            source=source,
+            rated_by=actor.id,
+            rated_at=now,
+        )
+        db.add(rating)
+        db.flush()
     ticket.satisfaction = score
-    audit(db, "ticket", ticket.id, "satisfaction", actor, {"score": score})
-    if score >= 4:
+    audit(
+        db,
+        "ticket",
+        ticket.id,
+        "satisfaction_update" if previous_score is not None else "satisfaction_create",
+        actor,
+        {"score": score, "tags": normalized_tags, "source": source},
+    )
+    publish(
+        db,
+        "ticket.satisfaction_saved",
+        "ticket",
+        ticket.id,
+        {"score": score, "rated_at": now.isoformat()},
+    )
+    if score >= 4 and (previous_score is None or previous_score < 4):
         publish(db, "ticket.satisfaction_rated", "ticket", ticket.id, {"score": score})
-    db.commit()
-    return ticket
+    if commit:
+        db.commit()
+    return rating

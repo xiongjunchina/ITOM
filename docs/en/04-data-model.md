@@ -2,9 +2,9 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on PRD v1.2 and the approved Aily + MCP baseline. P1 code maps **80 tables**: Support 29, ITSM 15, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 adds form-version and dispatch-rule tables. P2's rating-detail table brings the target to **81 tables**.
+> Based on PRD v1.2 and the approved Aily + MCP baseline. P2 code maps **81 tables**: Support 29, ITSM 16, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 added form-version and dispatch-rule tables; P2 adds one ticket-rating detail table.
 > Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
-> This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, and dispatch models are implemented; rating detail remains a P2 target. Database facts must be checked against real models and migrations.
+> This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, dispatch, and rating-detail models are implemented. Database facts must be checked against real models and migrations.
 
 ## 0. Global Conventions
 
@@ -116,7 +116,7 @@ Unique intent_id, tool, auth_user_id, normalized payload, payload digest, token 
 
 ---
 
-## 2. ITSM Domain (15 in P1; 16 targeted for P2)
+## 2. ITSM Domain (16 in P2)
 
 ### 2.1 service_catalog — service catalog [cfg]
 
@@ -154,8 +154,8 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | Derived [C] | ticket_code, status, submitter, submitter_dept, service_line, submitted_at, first_response_at, resolved_at, closed_at, paused_minutes (on-hold accumulation, deducted from SLA), reopen_count, first_time_fix, sla_response_min, sla_resolution_hours, sla_response_met, sla_resolution_met | |
 | Links | problem_id FK→problem (back-written after escalation), requirement_id FK→requirement, process_instance_id | |
 | Dynamic form [P1] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
-| Dispatch facts [P1 model] | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records rule/source/dispatch; P2 records actual acceptance |
-| Confirmation | confirmation_due_at [P2], suspected_major_impact [P1] | Confirmation deadline and suspected broad impact |
+| Dispatch/acceptance facts | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records rule/source/dispatch; P2 stamps actual acceptance on first entry to processing |
+| Confirmation | confirmation_due_at, suspected_major_impact | P2 takes the deadline from the active requester-confirmation task; broad impact remains a service-request flag |
 
 Indexes: status, assignee, service_item_id, submitted_at, (ticket_type, status).
 
@@ -169,9 +169,9 @@ service_item_id, version, status (draft/published/retired), schema JSONB, publis
 
 name, scope_type (service_item/catalog/global), scope_id, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. A service item does not duplicate a current-rule FK; resolution uses `scope_type + scope_id` in item → catalog → global order, and records the execution facts on the ticket.
 
-### 2.15 ticket_satisfaction [target]
+### 2.15 ticket_satisfaction [implemented in P2]
 
-Unique ticket_id, score 1–5, tags, comment, source (web/aily), rater, rating time, version/update time. One effective rating per ticket; edits are audited. The score is copied to `ticket.satisfaction` for existing reporting.
+Unique ticket_id, database-checked score 1–5, tags, comment, source (web/aily), rater, rating time, and update time. One effective rating exists per ticket; a later rating updates the same row and writes `satisfaction_create/satisfaction_update` audit. The score is copied to `ticket.satisfaction` for existing reporting.
 
 ### 2.4 problem — problem
 

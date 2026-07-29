@@ -1,7 +1,7 @@
 """ITSM 域模型 M2 部分（docs/04 §2.1-2.3, 2.8）。"""
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -186,3 +186,23 @@ class Ticket(GlidBase):
     requirement_id: Mapped[str | None] = mapped_column(String(26), comment="M5 接需求外键")
 
     service_item: Mapped[ServiceItem] = relationship()
+
+
+class TicketSatisfaction(GlidBase):
+    """工单评价明细；每张工单保留一条可更新且可审计的有效评价。"""
+
+    __tablename__ = "ticket_satisfaction"
+    __table_args__ = (
+        UniqueConstraint("ticket_id", name="uq_ticket_satisfaction_ticket"),
+        CheckConstraint("score >= 1 AND score <= 5", name="ck_ticket_satisfaction_score"),
+    )
+
+    ticket_id: Mapped[str] = mapped_column(ForeignKey("ticket.id"), index=True)
+    score: Mapped[int] = mapped_column(Integer)
+    tags: Mapped[list] = mapped_column(JsonCol, default=list)
+    comment: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(16), default="web", comment="web/aily")
+    rated_by: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"), index=True)
+    rated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
+
+    ticket: Mapped[Ticket] = relationship()

@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份底座和 P1 服务入口已在 `feature/aily-agent-mcp` 实现；P2–P3 仍是已确认目标。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份底座、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 真实 Aily 多角色 UAT 与 P3 仍待完成。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -92,7 +92,7 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 
 后台同步运行期间重复触发返回 HTTP 409 / `SYNC_RUNNING`。前端每 3 秒读取 `last_sync_stats`，最长等待 10 分钟；完成或失败后向触发人发送站内通知。后台任务使用独立数据库会话，不能复用请求会话。
 
-### 4.1b Aily Agent + MCP（P0/P1 已实现；P2 闭环工具待实现）
+### 4.1b Aily Agent + MCP（P0/P1/P2 已实现）
 
 ```text
 GET/POST /mcp/
@@ -114,7 +114,7 @@ get_current_user_context
     # P0 临时 MCP 联调工具：只返回验证成功、账号状态和可读账号名；不返回内外部 ID，并写 mcp_tool_call
 ```
 
-MCP Server 作为 FastAPI 后端模块挂载，不建立第二套业务 API。P0 使用 MCP Python SDK 1.29 的无状态 Streamable HTTP；每次 FastAPI 生命周期创建独立会话管理器，兼容生产启动、测试重启和开发热重载。Aily 首次保存自定义 MCP 后才展示 `identityJWTSecret`，因此注册阶段只允许协议发现方法，且仍须命中启用开关和 Origin 白名单。任何 `tools/call` 都必须完成 JWT、租户/Agent、身份映射和账号状态校验。P1 工具层只负责协议、身份上下文、结构化输入/输出和脱敏审计；服务项检索、表单校验、建单、派单、流程启动与需求登记均调用与网页相同的 ITOM 领域服务。
+MCP Server 作为 FastAPI 后端模块挂载，不建立第二套业务 API。P0 使用 MCP Python SDK 1.29 的无状态 Streamable HTTP；每次 FastAPI 生命周期创建独立会话管理器。Aily 首次保存自定义 MCP 后才展示 `identityJWTSecret`，因此注册阶段只允许协议发现方法，任何 `tools/call` 仍必须完成 JWT、租户/Agent、身份映射和账号状态校验。P1/P2 工具层只负责协议、身份上下文、结构化输入/输出和脱敏审计；服务项检索、表单校验、建单、派单、流程、用户确认/重开与评价均调用与网页相同的 ITOM 领域服务。
 
 #### 服务请求工具
 
@@ -127,20 +127,22 @@ get_my_service_request
 list_my_service_requests
 ```
 
-以上 6 个服务请求工具已在 P1 实现。以下闭环工具属于 P2：
+以上 6 个服务请求工具已在 P1 实现。以下闭环工具已在 P2 实现：
 
 ```text
 get_my_pending_confirmations
-confirm_service_request_resolution
-rate_service_request
+confirm_service_request_resolution(ticket_code, resolved, idempotency_key, feedback="")
+rate_service_request(ticket_code, score, idempotency_key, tags=[], comment="")
 ```
 
 - `search_service_items` 只返回已上架且当前用户可申请的真实服务项；候选结果包含稳定 ID、名称、目录、简述和匹配理由，不返回内部派单细节。
 - `get_service_item_form` 返回发布表单版本、字段 JSON Schema、SLA、流程摘要和公开说明。
 - `prepare_service_request` 调用 ITOM 权威校验，返回规范化数据、缺失/错误字段、SLA、流程、预计支持组和短期确认意图；不落正式工单。
 - `submit_service_request` 不接受 `ticket_type`，服务端固定创建 `service_request`；确认意图、当前用户、表单版本和幂等键必须一致。
-- `confirm_service_request_resolution` 只允许提交人处理 `resolved` 工单；`resolved=true` 关闭，`false` 退回 `processing` 并增加重开次数。
-- `rate_service_request` 只允许提交人评价已关闭工单，评分 1–5，标签和文字可选。
+- `get_my_pending_confirmations` 只列当前账号本人、状态为 `resolved` 的服务请求；返回公开工单编号、标题、服务项、解决说明和确认期限，不返回根因、内部备注或审批信息。
+- `confirm_service_request_resolution` 必须携带明确 `ticket_code`；只允许提交人处理其 `resolved` 工单。`resolved=true` 完成最终用户确认任务并关闭；`false` 要求反馈原因，退回最近实际处理节点、增加重开次数并通知处理人。回退会软删除本轮目标节点及之后的旧任务；再次解决时从最新未删除的已完成任务刷新 `ticket.solution`。网页最终确认节点使用同一语义，管理员不能代替提交人确认。
+- `rate_service_request` 只允许提交人评价已关闭工单，评分 1–5，最多 5 个不超过 32 字的标签，意见最多 500 字。同一工单更新唯一评价行并保留审计。
+- 三个直接用户动作都要求 8–128 字符幂等键；相同用户/工具/键和相同载荷返回首次结果，载荷不同时返回 `IDEMPOTENCY_CONFLICT`。它们本身已是用户明确动作，不再签发第二个确认令牌。
 
 #### IT 需求工具
 
@@ -160,7 +162,7 @@ list_my_it_requirements
 
 #### 主动消息
 
-MCP 不能在后台状态变化时主动唤醒 Aily。工单进入 `resolved` 等用户可见节点后，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过 Aily 机器人应用发送消息；用户回复后由 Aily 调 MCP 完成确认/重开和评价。发送使用幂等键、指数退避和脱敏错误，内部备注、审批意见和敏感字段不出站。
+MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过 Aily 机器人应用发送消息；用户回复后由 Aily 调 MCP 完成确认/重开和评价。发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 
@@ -266,9 +268,11 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | --- | --- | --- |
 | ticket.created | 建单 | →通知(受理人/it_ops)、→流程(创建实例) |
 | ticket.assigned | 指派/改派 | →通知 |
+| ticket.accepted | 服务请求首次进入处理中 | →Aily 发件箱(提交人) |
 | ticket.resolved | 解决 | →积分(工单解决)、→通知(提交人) |
 | ticket.user_confirmed / ticket.reopened | 用户确认解决 / 未解决重开 | →审计、→通知(处理人) |
 | ticket.closed | 关闭 | →积分(SLA 双达成时加分) |
+| ticket.satisfaction_saved | 评价新增或更新 | →Aily 发件箱(提交人) |
 | ticket.satisfaction_rated | 评价 ≥4 星 | →积分 |
 | ticket.sla_warning | 超 SLA 80%（定时任务扫描） | →通知(升级) |
 | change.approval_requested / approved / rejected | 变更审批 | →通知 |
@@ -286,7 +290,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | performance.review_submitted | 负责人初评/CIO终审提交 | →通知(下一评审阶段)、→审计 |
 | performance.published / unlocked | 绩效发布/生成新版本 | →通知(被评价者)、→审计 |
 
-定时任务（后端内置 scheduler）：SLA 临期扫描、合同到期扫描、里程碑逾期扫描、合同状态推进；P0 已增加 Aily 通知 outbox 消费/指数退避且不再运行 Helpdesk 扫描器，待用户确认提醒在 P2 接入。
+定时任务（后端内置 scheduler）：SLA 临期扫描、合同到期扫描、里程碑逾期扫描、合同状态推进、待用户确认期限 80% 单次提醒，以及 Aily 通知 outbox 消费/指数退避；不再运行 Helpdesk 扫描器。P2 在进入待确认时立即发送解决通知，`confirmation_due_at` 来自最终用户确认任务的 SLA 截止时间；每次重开后的新确认周期使用独立幂等提醒键。
 
 ## 6. 关键实现机制
 
@@ -330,7 +334,7 @@ services:
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份链路已完成，机器人主动消息待验证） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
-| Aily-MCP P2 | 受理、解决通知、确认/重开、评价 | 现有工单详情协同 | PRD §5.1 |
+| Aily-MCP P2（代码、自动化与真实 Aily 对话闭环完成；主动机器人送达待配置） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
 
 ## 8.1 业务域服务部门 API（M41）

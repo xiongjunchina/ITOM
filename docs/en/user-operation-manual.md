@@ -1,6 +1,6 @@
 # IT Operations Platform — User Manual
 
-> Applies to the current code version (2026-07-23).
+> Applies to the current code version (2026-07-29, Aily-MCP P2).
 > Audience: business users, IT team members, line owners, CIO, and system administrators.
 
 ## Using the help center
@@ -43,7 +43,7 @@ Business tables provide keyword search, core-field filters, clickable sortable h
 
 After the requester selects a service item, ITOM loads that item's currently published form version and renders its dynamic fields. The web form and Aily MCP share the same required, type, length, option, date, person/department scope, and conditional-rule validation. Only published, non-example items within the requester's audience are selectable. On submission, ITOM stores the form version and schema snapshot, starts the process bound to the item, and dispatches by item rule, catalog rule, then global fallback. If no eligible handler exists, the record enters a manual queue instead of being silently dropped. IT staff and administrators can still use Internal Handling Information where permitted.
 
-**End-to-end flow:** submit a published service item → assign by service item/domain → process by the current handler → requester acceptance → close and capture SLA, audit, and performance inputs. For a closed, unrated ticket, the submitter uses the 1–5-star control at the right side of the detail header; after submission the control disappears and the result remains read-only in Basic Information. A processor cannot bypass the terminal state; a failed acceptance returns the record to processing with a reason.
+**End-to-end flow:** submit a published service item → dispatch → IT acceptance/processing → pending requester confirmation → close → rate. IT completion moves only to `resolved`; only the submitter may confirm closure, and an administrator cannot confirm on the submitter's behalf. “Not resolved” returns the workflow to the nearest real handling step and increments reopen count; the next resolution shows the latest active handling note. A closed request can be rated with 1–5 stars, up to five tags, and an optional 500-character comment; the result remains in Basic Information and is audited.
 
 If more information is needed, explain it at the current step instead of changing fields to bypass the workflow. When an SLA is at risk, confirm the current handler/node before escalating or reassigning within the permission scope.
 
@@ -104,7 +104,7 @@ Process Definitions configure versions, processing/approval node types, handlers
 - **System Integrations**: configure Feishu, SMTP, and AD/LDAP. Feishu application credentials, sign-in, organization scope, automatic sync, and frequency serve login and organization identity only; this version no longer configures or subscribes to Feishu Helpdesk. Aily calls ITOM business capabilities through the MCP Server.
 - **Aily + MCP identity and authorization**: `/mcp/` requires a server-issued JWT. ITOM validates its signature, lifetime, tenant, Agent, and origin, then maps the Feishu user to an enabled ITOM account. Unmapped users, out-of-audience items, and missing module permissions are rejected. MCP never writes tables directly or bypasses workflow validation.
 - **P1 user intake**: Aily can search the current user's eligible service items, read a published form, produce a masked preview and one-time confirmation token, and idempotently create a `service_request` only after explicit confirmation. New-system/new-feature requests use the separate IT requirement form and requirement workflow. Ordinary users cannot create incidents, changes, or problems through Aily.
-- **P1 query and later closure**: users can query their own service requests and requirements through Aily. Proactive handler updates, requester confirmation/closure, and rating write-back are P2 capabilities; until those MCP tools ship, complete those actions in the ITOM web UI.
+- **P2 closure loop**: Aily can list every pending confirmation owned by the current user. When more than one exists, it must ask for an explicit ticket code rather than guess the latest. The user can confirm closure or reopen with a reason, then rate a closed request with stars, tags, and comment. Acceptance/resolution/reopen/closure/rating messages come from ITOM's reliable outbox and never include internal notes, root cause, or approval details.
 - **Local validation**: while IDC is unavailable, run ITOM in Docker and expose the full port-`8180` frontend through ngrok. Enter `/mcp/` under the same HTTPS root, including the trailing slash, as Aily's custom-MCP request URL; live validation showed that omitting the slash fails Aily's save-time configuration check. Never put secrets in URLs, prompts, logs, or screenshots. When the ngrok host changes, update both Aily's MCP configuration and `ITOM_PUBLIC_URL`.
 - **Interface & Branding**: configure names, descriptions, logos, favicon, theme, density, sidebar, landing pages, announcements, and environment markers. Images are cropped before saving.
 - **Audit Log**: search changes by entity, action, actor, and time.

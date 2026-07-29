@@ -459,7 +459,9 @@ export interface TicketDetail extends TicketRow {
   approved_at?: string | null;
   approval_comment?: string | null;
   first_response_at?: string | null;
+  accepted_at?: string | null;
   resolved_at?: string | null;
+  confirmation_due_at?: string | null;
   closed_at?: string | null;
   paused_minutes?: number | null;
   reopen_count: number;
@@ -475,6 +477,13 @@ export interface TicketDetail extends TicketRow {
   /** 当前流程节点处理人姓名（M25） */
   flow_operator_name?: string | null;
   process?: TicketProcess | null;
+  satisfaction_detail?: {
+    score: number;
+    tags: string[];
+    comment?: string | null;
+    source: 'web' | 'aily';
+    rated_at: string;
+  } | null;
 }
 
 // ============ M2.5 自配置：角色 / 用户组 ============

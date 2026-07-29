@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity foundations and P1 intake are implemented on `feature/aily-agent-mcp`; P2–P3 remain approved targets. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity foundations, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`; real-Aily P2 multi-role UAT and P3 remain pending. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -94,7 +94,7 @@ GET /api/admin/feishu-config             # last_sync_stats.status: running|done|
 
 A repeated trigger while running returns HTTP 409 / `SYNC_RUNNING`. The UI polls every three seconds for up to ten minutes. Completion or failure sends an in-app notification to the initiator, and the background worker uses an independent database session.
 
-### 4.1b Aily Agent + MCP (P0/P1 implemented; P2 closure tools pending)
+### 4.1b Aily Agent + MCP (P0/P1/P2 implemented)
 
 ```text
 GET/POST /mcp/
@@ -116,7 +116,7 @@ get_current_user_context
     # temporary P0 diagnostic: returns verification, account status, and readable account name only; no internal/external IDs; writes mcp_tool_call
 ```
 
-MCP is mounted inside FastAPI and does not create a second business API. P0 uses MCP Python SDK 1.29 with stateless Streamable HTTP. First registration permits protocol discovery only and remains guarded by enablement and the exact Origin allowlist. Every `tools/call` requires JWT, tenant/agent, external identity, and account status. P1 tools handle protocol, identity context, structured I/O, and redacted audit only; catalog search, form validation, ticket creation, dispatch, process start, and requirement registration use the same ITOM domain services as the web application.
+MCP is mounted inside FastAPI and does not create a second business API. P0 uses MCP Python SDK 1.29 with stateless Streamable HTTP. First registration permits protocol discovery only; every `tools/call` still requires JWT, tenant/agent, external identity, and account status. P1/P2 tools handle protocol, identity context, structured I/O, and redacted audit only; intake, dispatch, workflow, requester confirmation/reopen, and rating use the same ITOM domain services as the web application.
 
 #### Service-request tools
 
@@ -129,20 +129,22 @@ get_my_service_request
 list_my_service_requests
 ```
 
-The six tools above are implemented in P1. The following closure tools belong to P2:
+The six tools above are implemented in P1. The following closure tools are implemented in P2:
 
 ```text
 get_my_pending_confirmations
-confirm_service_request_resolution
-rate_service_request
+confirm_service_request_resolution(ticket_code, resolved, idempotency_key, feedback="")
+rate_service_request(ticket_code, score, idempotency_key, tags=[], comment="")
 ```
 
 - Search returns only published service items eligible for the current user.
 - Form retrieval returns the published schema, SLA, process summary, and public instructions.
 - Prepare performs authoritative ITOM validation and returns normalized data, missing/errors, SLA, process, expected support group, and a short-lived operation intent without creating a ticket.
 - Submit does not accept `ticket_type`; the server fixes it to `service_request` and validates user, intent, form version, and idempotency key.
-- Resolution confirmation is requester-only and applies to an explicit `resolved` ticket. True closes it; false returns it to processing and increments reopen count.
-- Rating is requester-only for a closed ticket; score is 1–5 with optional tags/comment.
+- Pending confirmations list only the current user's `resolved` requests and return public ticket code/title/item/solution/deadline without root cause, internal notes, or approval data.
+- Resolution confirmation requires an explicit ticket code and the submitter. True completes the requester task and closes; false requires feedback, rewinds to the nearest real handling step, increments reopen count, and notifies the handler. Rewind soft-deletes obsolete tasks at and after the target; the next resolution refreshes `ticket.solution` from the latest non-deleted completed task. Web confirmation uses the same semantics, and administrators cannot confirm for the submitter.
+- Rating is submitter-only for a closed request: score 1–5, at most five 32-character tags, and an optional 500-character comment. A later rating updates the one effective row and remains audited.
+- Direct confirmation/reopen/rating actions require an 8–128-character idempotency key. Same payload replays the first result; a different payload returns `IDEMPOTENCY_CONFLICT`. These are already explicit user actions and do not issue a second confirmation token.
 
 #### IT-requirement tools
 
@@ -162,7 +164,7 @@ V1 does not provide incident/change creation, arbitrary transitions, reassignmen
 
 #### Proactive messaging
 
-MCP cannot wake Aily on a background transition. A user-visible event writes `notification_outbox(channel=feishu_aily)`; a worker sends through the Aily bot, and the user's reply returns through Aily and MCP. Delivery uses idempotency, retry/backoff, and redacted errors. Internal notes and approval details never leave ITOM.
+MCP cannot wake Aily on a background transition. First acceptance, resolution, reopen, closure, and rating-save events write `notification_outbox(channel=feishu_aily)`; a worker sends through the Aily bot, and replies return through Aily and MCP. Delivery uses event idempotency, retry/backoff, and redacted errors. Disabled/incomplete bot configuration preserves pending rows without consuming attempts. The most recently used active Feishu identity is selected; internal notes, root cause, approval details, and sensitive fields never leave ITOM.
 
 All `/api/integrations/feishu/helpdesk/*` routes, subscriptions, handoffs, queues, and Helpdesk-specific outbox have been removed from the new runtime. Existing PostgreSQL structures are previewed by `python -m app.scripts.migrate_aily_mcp` and are permanently removed only with explicit `--confirm`.
 
@@ -265,9 +267,11 @@ Events are published by the service layer within the transaction; `→points` me
 | --- | --- | --- |
 | ticket.created | Ticket created | →notify (assignee/it_ops), →process (create instance) |
 | ticket.assigned | Assigned/reassigned | →notify |
+| ticket.accepted | Service request first enters processing | →Aily outbox (submitter) |
 | ticket.resolved | Resolved | →points (ticket resolved), →notify (submitter) |
 | ticket.user_confirmed / ticket.reopened | Requester confirms / rejects resolution | →audit, →notify (handler) |
 | ticket.closed | Closed | →points (bonus when both SLAs met) |
+| ticket.satisfaction_saved | Rating created or updated | →Aily outbox (submitter) |
 | ticket.satisfaction_rated | Rated ≥ 4 stars | →points |
 | ticket.sla_warning | Over 80% of SLA (scheduled scan) | →notify (escalation) |
 | change.approval_requested / approved / rejected | Change approval | →notify |
@@ -285,7 +289,7 @@ Events are published by the service layer within the transaction; `→points` me
 | performance.review_submitted | Manager/CIO review submitted | →notify (next stage), →audit |
 | performance.published / unlocked | Performance published/new version created | →notify (evaluated employee), →audit |
 
-Scheduled tasks cover SLA, contracts, and milestones. P0 adds Aily outbox delivery/exponential retry and removes the Helpdesk scanner; pending-confirmation reminders arrive in P2.
+Scheduled tasks cover SLA, contracts, milestones, one reminder at 80% of the requester-confirmation window, and Aily outbox delivery/exponential retry; the Helpdesk scanner is removed. P2 sends immediately on entry to pending confirmation, while `confirmation_due_at` comes from the final requester task SLA. Each post-reopen confirmation cycle uses its own reminder idempotency key.
 
 ## 6. Key Implementation Mechanisms
 
@@ -329,7 +333,7 @@ services:
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path complete; proactive bot delivery pending) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
 | Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
-| Aily-MCP P2 | accept, resolution message, confirm/reopen, rating | existing ticket detail collaboration | PRD §5.1 |
+| Aily-MCP P2 (code/automation and real-Aily conversational loop complete; proactive bot delivery awaits configuration) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
 | Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
 
 ## 8.1 Business-domain Service Department API (M41)

@@ -4,7 +4,7 @@
 
 > Finalized on the 2026-07-10/11 product decisions. The design is benchmarked against ServiceNow's four-axis user / group / role / organization model.
 > Three iron rules: **a user may always hold multiple roles and is never bound to one**; **membership is a field, not a role**; **roles are granted on groups first**.
-> The 2026-07-29 Aily + MCP identity model is implemented in P0. P1 business tools reuse existing feature permissions, enforce own-record scope, and pass automated protocol, permission, and cross-user isolation tests. The frozen Helpdesk identity path has been removed from the new branch runtime.
+> The 2026-07-29 Aily + MCP identity model is implemented in P0. P1/P2 business tools reuse existing feature permissions, enforce own-record scope, and pass automated protocol, permission, cross-user isolation, confirmation/reopen, and rating tests. The frozen Helpdesk identity path has been removed from the new branch runtime.
 
 ## 1. The Four-Axis Model & Page Positioning
 
@@ -157,7 +157,7 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 ### 11.2 Normal employee capability
 
 - Search published service items eligible for the employee and retrieve their real forms.
-- Create `service_request` and read own requests; resolution confirmation/rejection and rating are enabled in P2.
+- Create `service_request` and read own requests; P2 lists the user's pending confirmations, confirms or reopens an explicit own ticket, and rates an own closed request.
 - Register/read own IT requirements through existing `requirements.create/view`, with `requester == current auth_user.id` enforced by the service.
 - Never create incidents/changes, read another user's records, or perform review, reassignment, approval, or internal process tasks.
 
@@ -165,5 +165,7 @@ The service-request tool does not accept `ticket_type`; requirement registration
 
 ### 11.3 Confirmation, idempotency, and cross-ticket safety
 
-A mutation first creates `mcp_operation_intent` bound to the ITOM user, tool, normalized payload digest, and expiry. Submission validates both confirmation token and idempotency key. Resolution/rating requires an explicit ticket ID/code; when multiple tickets await confirmation, Aily asks the user to choose and never guesses the “latest” one. Retries return the first result without duplicate create, close, reopen, or rating.
+Create/register mutations first create `mcp_operation_intent` and validate a confirmation token plus idempotency key at submission. Confirmation/reopen/rating is already an explicit user action, so it creates a same-transaction idempotency intent without issuing a second token. Every intent binds the ITOM user, tool, and normalized payload digest. An explicit ticket code is mandatory; when multiple tickets await confirmation, Aily asks the user to choose and never guesses the latest. Retries return the first result, while the same key with different parameters is rejected.
+
+The final requester-confirmation task is submitter-only; even administrators cannot confirm for the submitter. Web and MCP use the same domain semantics: confirmation closes, while rejection with a reason rewinds to the nearest real handling step. Proactive messages select the account's most recently used active Feishu identity and include user-visible progress only, never internal notes, root cause, or approval data.
 The digital-team population is an explicit shared department-tree scope in `org_settings`, optionally including descendants. It is authoritative for team metrics and business-domain owner, backup-owner, and service-team selectors; the legacy `dept_type`/role heuristic is used only until an administrator configures the scope.

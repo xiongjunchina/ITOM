@@ -62,9 +62,11 @@ async def lifespan(app: FastAPI):
             run_seed_team_examples(db)
         run_seed_perf(db)
         run_seed_perf_bplus(db)
+    from app.services.aily_ticket_notifications import register_subscribers as register_aily_subscribers
     from app.services.points import register_subscribers
 
     register_subscribers()
+    register_aily_subscribers()
     async with mcp_runtime.run():
         task = asyncio.create_task(scheduler.run_forever())
         outbox_task = asyncio.create_task(scheduler.run_aily_outbox_forever())

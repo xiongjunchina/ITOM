@@ -1,4 +1,4 @@
-"""P1 Aily MCP 业务工具；所有入口统一鉴权、审计和事务提交。"""
+"""Aily MCP 业务工具；所有入口统一鉴权、审计和事务提交。"""
 
 from dataclasses import dataclass
 import hashlib
@@ -11,7 +11,7 @@ from app.core.glid import new_glid
 from app.db import SessionLocal
 from app.mcp.context import require_aily_principal
 from app.models import AuthUser, McpToolCall, Requirement, Ticket
-from app.services import requirement_intake, service_request_intake
+from app.services import requirement_intake, service_request_closure, service_request_intake
 from app.services.mcp_intents import payload_digest
 from app.services.permissions import has_perm
 
@@ -164,6 +164,76 @@ def list_my_service_requests(limit: int = 20) -> dict:
     return _execute("list_my_service_requests", {"limit": limit}, handler)
 
 
+def get_my_pending_confirmations() -> dict:
+    """列出当前 Aily 用户本人所有待确认解决结果的服务请求。"""
+    def handler(db, user):
+        _require_perm(db, user, "ticket_sr", "view")
+        return ToolOutcome({"items": service_request_closure.pending_confirmations(db, user)})
+
+    return _execute("get_my_pending_confirmations", {}, handler)
+
+
+def confirm_service_request_resolution(
+    ticket_code: str,
+    resolved: bool,
+    idempotency_key: str,
+    feedback: str = "",
+) -> dict:
+    """对本人待确认服务请求明确选择“已解决关闭”或“仍未解决重开”。"""
+    params = {
+        "ticket_code": ticket_code,
+        "resolved": resolved,
+        "feedback": feedback,
+        "idempotency_key": idempotency_key,
+    }
+
+    def handler(db, user):
+        _require_perm(db, user, "ticket_sr", "view")
+        result, ticket = service_request_closure.confirm_resolution(
+            db,
+            user,
+            ticket_code,
+            resolved,
+            feedback,
+            idempotency_key,
+        )
+        return ToolOutcome(result, "ticket" if ticket else None, ticket.id if ticket else None)
+
+    return _execute("confirm_service_request_resolution", params, handler)
+
+
+def rate_service_request(
+    ticket_code: str,
+    score: int,
+    idempotency_key: str,
+    tags: list[str] | None = None,
+    comment: str = "",
+) -> dict:
+    """为本人已关闭的服务请求记录 1-5 星、可选标签和意见。"""
+    params = {
+        "ticket_code": ticket_code,
+        "score": score,
+        "tags": tags or [],
+        "comment": comment,
+        "idempotency_key": idempotency_key,
+    }
+
+    def handler(db, user):
+        _require_perm(db, user, "ticket_sr", "view")
+        result, ticket = service_request_closure.rate_request(
+            db,
+            user,
+            ticket_code,
+            score,
+            tags,
+            comment,
+            idempotency_key,
+        )
+        return ToolOutcome(result, "ticket" if ticket else None, ticket.id if ticket else None)
+
+    return _execute("rate_service_request", params, handler)
+
+
 def get_it_requirement_form() -> dict:
     """返回 ITOM 的 IT 需求登记字段和当前有效业务域。"""
     def handler(db, user):
@@ -250,3 +320,13 @@ P1_TOOLS = (
     get_my_it_requirement,
     list_my_it_requirements,
 )
+
+
+P2_TOOLS = (
+    get_my_pending_confirmations,
+    confirm_service_request_resolution,
+    rate_service_request,
+)
+
+
+BUSINESS_TOOLS = P1_TOOLS + P2_TOOLS

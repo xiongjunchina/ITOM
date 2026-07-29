@@ -7,7 +7,7 @@ from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_
 from app.core.rbac import REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import AuthUser, OrgMember, ServiceItem, Ticket
+from app.models import AuthUser, OrgMember, ServiceItem, Ticket, TicketSatisfaction
 from app.schemas.common import ok, paginate
 from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, TicketUpdate, TransitionIn
 from app.services import process_engine
@@ -147,6 +147,14 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
     etype = svc.entity_type_of(t)
     names = status_names(db, etype)
     detail = _row(t, db, names)
+    rating = (
+        db.query(TicketSatisfaction)
+        .filter(
+            TicketSatisfaction.ticket_id == t.id,
+            TicketSatisfaction.is_deleted.is_(False),
+        )
+        .first()
+    )
     # M18：无该类型编辑权限（如业务用户看自己的单）不下发流转按钮，与 transition 接口守卫一致
     can_edit = has_perm(db, user, _ticket_module(t.ticket_type), "edit")
     # M25：流程驱动——普通流转按钮只给当前节点处理人（或 admin）；审批类（显式授权）保留
@@ -167,6 +175,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "dispatch_source": t.dispatch_source,
             "assigned_at": t.assigned_at,
             "accepted_at": t.accepted_at,
+            "confirmation_due_at": t.confirmation_due_at,
             "suspected_major_impact": t.suspected_major_impact,
             "approved_at": t.approved_at, "approval_comment": t.approval_comment,
             "first_response_at": t.first_response_at, "resolved_at": t.resolved_at, "closed_at": t.closed_at,
@@ -189,6 +198,17 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "can_edit": can_edit and not t.is_example,
             "flow_operator_name": flow_assignee,  # 前端可提示"由谁处理中"
             "process": process_engine.instance_view(db, etype, t.id),
+            "satisfaction_detail": (
+                {
+                    "score": rating.score,
+                    "tags": rating.tags or [],
+                    "comment": rating.comment,
+                    "source": rating.source,
+                    "rated_at": rating.rated_at,
+                }
+                if rating
+                else None
+            ),
         }
     )
     return ok(detail)
@@ -314,8 +334,23 @@ def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser 
 def rate(ticket_id: str, body: SatisfactionIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
     ensure_not_example(t)
-    svc.rate_satisfaction(db, t, body.score, user)
-    return ok({"id": t.id, "satisfaction": t.satisfaction})
+    rating = svc.rate_satisfaction(
+        db,
+        t,
+        body.score,
+        user,
+        tags=body.tags,
+        comment=body.comment,
+        source="web",
+    )
+    return ok({
+        "id": t.id,
+        "satisfaction": t.satisfaction,
+        "tags": rating.tags or [],
+        "comment": rating.comment,
+        "source": rating.source,
+        "rated_at": rating.rated_at,
+    })
 
 
 @router.post("/{ticket_id}/escalate-problem")

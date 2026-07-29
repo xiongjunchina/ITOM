@@ -144,7 +144,19 @@ def scan_feishu_org_sync():
         run_sync(db, "feishu")
 
 
-SCANNERS = [scan_sla_warnings, scan_contract_expiry, scan_overdue_milestones, scan_feishu_org_sync]
+def scan_aily_confirmation_reminders():
+    from app.services.aily_ticket_notifications import scan_pending_confirmation_reminders
+
+    scan_pending_confirmation_reminders()
+
+
+SCANNERS = [
+    scan_sla_warnings,
+    scan_contract_expiry,
+    scan_overdue_milestones,
+    scan_feishu_org_sync,
+    scan_aily_confirmation_reminders,
+]
 
 
 async def run_forever():

@@ -1,6 +1,6 @@
 # ITOM Feishu Aily Agent + MCP Server Final Design Baseline
 
-> Status: **formal baseline; P0 real identity is complete; P1 code, automation, and real Aily write UAT for both service requests and IT requirements are complete; proactive bot delivery remains pending**
+> Status: **formal baseline; P0/P1 complete; P2 code, automated closure, and frontend build complete; real-Aily multi-role closure and proactive bot delivery pending UAT**
 > Approval date: 2026-07-29
 > The Chinese document is authoritative. This file is its English mirror.
 
@@ -8,7 +8,7 @@
 
 This document is the approved product and architecture baseline for the `feature/aily-agent-mcp` development line. It defines the goals, boundaries, tools, target data model, phases, and acceptance criteria. The implementation must not reintroduce Feishu Helpdesk or turn Aily, MCP, or Feishu into a second ITOM business system.
 
-This document records both target contracts and actual status. The branch implements P0 Helpdesk removal, embedded MCP, Aily JWT/origin/tenant/agent checks, identity mapping, audit, and reliable bot outbox, plus P1 live catalog search, dynamic forms, preview/confirmation, idempotent service-request submission, process/dispatch, requirement registration, and own-record queries. P2–P3 remain targets.
+This document records both target contracts and actual status. The branch implements P0 protocol/identity/messaging foundations, P1 service-request and requirement intake, and P2 acceptance/confirmation timestamps, three closure MCP tools, shared web/MCP confirmation semantics, reliable user messages, and rating detail. Real-Aily P2 multi-role closure and P3 remain incomplete.
 
 Before starting work, a new chat must read `AGENTS.md`, this document, `docs/03-PRD.md`, `docs/04-数据模型设计.md`, `docs/05-API契约与架构设计.md`, and `docs/06-用户身份与组织模型设计.md`, then inspect the real code and Git status.
 
@@ -201,9 +201,9 @@ Extend `notification_outbox` with recipient, idempotency key, retry count, next 
 
 - `service_item_form_version`: versioned form and JSON Schema [implemented in P1];
 - `service_dispatch_rule`: item/catalog/global dispatch rules [implemented in P1];
-- `ticket_satisfaction`: one effective rating with score/tags/comment/source/audit [P2 target].
+- `ticket_satisfaction`: one effective rating with score/tags/comment/source/audit [implemented in P2].
 
-P1 extends `service_item` with search metadata, active form, bound process, and default priority. Dispatch resolves through `scope_type + scope_id` without a duplicate current-rule FK. P1 extends `ticket` with form answers/schema snapshot, dispatch facts, and suspected-major-impact; P2 writes acceptance/confirmation timing and rating detail.
+P1 extends `service_item` with search metadata, active form, bound process, and default priority. Dispatch resolves through `scope_type + scope_id`. P1 extends `ticket` with form answers/schema snapshot, dispatch facts, and suspected-major-impact. P2 stamps `accepted_at` on first processing entry and derives `confirmation_due_at` from the final requester task SLA. The effective rating also updates the compatibility `ticket.satisfaction` score.
 
 ## 9. Feishu Helpdesk removal
 
@@ -245,8 +245,18 @@ P1 automated snapshot on 2026-07-29: full backend regression reported `267 passe
 
 ### Phase 2: service closure loop
 
-- acceptance/resolution timestamps, reliable messages, requester confirmation/reopen, and rating;
-- reminders, escalation, retries, idempotency, and observability.
+**Current state: code, P1/P2 automation, the production frontend build, local Docker/ngrok, and the real-Aily conversational closure loop under the current development identity mapping are complete; proactive bot delivery and final normal-user identity UAT await configuration.**
+
+- actual acceptance and confirmation deadlines come from workflow execution;
+- `get_my_pending_confirmations`, `confirm_service_request_resolution`, and `rate_service_request` enforce own-record scope and an explicit ticket code;
+- unresolved feedback rewinds to the nearest handling step; obsolete tasks are soft-deleted for audit, and the next resolution refreshes the user-visible `solution` from the latest active handling note; web and MCP share semantics, and administrators cannot confirm for the submitter;
+- acceptance, resolution, reopen, closure, and rating write the reliable Aily outbox; each confirmation cycle sends one reminder at 80% of its deadline window; disabled bot configuration preserves pending messages without consuming retries;
+- one effective `ticket_satisfaction` row stores score/tags/comment/source/audit and updates the compatibility score;
+- direct confirmation/reopen/rating uses same-transaction idempotency: identical replay succeeds, while same-key/different-payload conflicts.
+
+P2 automated snapshot on 2026-07-29: the full backend suite reports `270 passed`; focused P1+P2 regression reports `8 passed` (three P2 tests), covering discovery, acceptance/resolution timing, pending lists, idempotent 80% deadline reminders, cross-user denial, explicit-ticket reopen, workflow rewind and latest-solution refresh, replay, closure, rating create/update, key conflict, shared web/MCP semantics, no administrator proxy confirmation, outbox counts, and non-disclosure of internal information. The TypeScript/Vite production image builds successfully. Local Docker model metadata and PostgreSQL both contain 81 tables including `ticket_satisfaction`; local 8180 and ngrok-public health checks pass, and public `/mcp/` returns 15 tools.
+
+P2 real-Aily conversational UAT on 2026-07-29: Aily reloaded and displayed 15 tools. `get_my_pending_confirmations` first returned an empty list, then returned `TK-202607-0001`, its solution, and confirmation deadline after the IT role accepted and resolved it through the application workflow. The user invoked `confirm_service_request_resolution(resolved=false)` through Aily, moving the ticket back to `processing` with reopen count 1. After another IT handling cycle, Aily confirmed resolution and closure, then `rate_service_request` saved five stars, the “Timely response / Professional resolution” tags, and a comment. ITOM ended with `closed`, one `ticket_satisfaction(source=aily)` row, and acceptance/resolution/reopen/closure/rating events in the reliable outbox. Regression ticket `TK-202607-0002` further proved that the pre-reopen “first handling” note was excluded: Aily returned only “second handling: internal routing added and access restored,” then closed and rated the ticket successfully. The Aily external identity still maps to the local `admin` test account and the IT handler is `it_op1`; `message_enabled=false` with no bot application credentials, so proactive rows remain `pending` and actual delivery is not claimed. Final acceptance must map Aily to a normal-user account and configure bot credentials, unless the user explicitly retains the development mapping.
 
 Acceptance: a business user and IT staff complete request → dispatch → accept → resolve → notify → confirm/reopen → close → rate. Multiple pending confirmations do not cross-link, and internal information is not sent externally.
 

@@ -135,6 +135,8 @@ class TicketCloseIn(BaseModel):
 
 class SatisfactionIn(BaseModel):
     score: int = Field(ge=1, le=5)
+    tags: list[str] = Field(default_factory=list, max_length=5)
+    comment: str = Field(default="", max_length=500)
 
 
 class SlaPolicyIn(BaseModel):

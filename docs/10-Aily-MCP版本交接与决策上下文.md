@@ -1,6 +1,6 @@
 # ITOM 飞书 Aily Agent + MCP Server 正式设计基线
 
-> 状态：**正式设计基线；P0 已完成真实身份链路；P1 代码、自动化验收及真实 Aily 服务请求/IT 需求写入 UAT 已完成；机器人主动消息待验证**
+> 状态：**正式设计基线；P0/P1 已完成；P2 代码、自动化闭环与前端构建已完成，真实 Aily 多角色闭环及机器人主动消息待 UAT**
 > 确认日期：2026-07-29
 > 权威语言：中文；英文镜像见 `docs/en/10-aily-mcp-handoff-and-decision-context.md`
 
@@ -8,7 +8,7 @@
 
 本文是 `feature/aily-agent-mcp` 开发线的正式产品与架构基线，记录已经由用户确认的目标、边界、工具范围、数据设计、阶段和验收标准。后续实现不得重新使用飞书服务台方案，也不得把 Aily、MCP 或飞书平台变成第二套 ITOM 业务系统。
 
-本文同时记录目标契约与实际状态。当前分支已实现 P0 的 Helpdesk 清理、内嵌 MCP、Aily JWT/Origin/租户/Agent 校验、外部身份映射、工具审计和机器人可靠发件箱，以及 P1 的真实服务项检索、动态表单、预览确认、幂等服务请求提交、流程/派单、IT 需求登记和本人查询；P2–P3 仍是待实现目标。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
+本文同时记录目标契约与实际状态。当前分支已实现 P0 的协议/身份/消息底座、P1 的服务请求与 IT 需求入口，以及 P2 的受理/待确认打点、3 个闭环 MCP 工具、网页/MCP 共用确认语义、可靠用户消息和评价明细；P2 真实 Aily 多角色闭环与 P3 尚未完成。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
 
 新会话开始前必须完整阅读 `AGENTS.md`、本文、`docs/03-PRD.md`、`docs/04-数据模型设计.md`、`docs/05-API契约与架构设计.md` 和 `docs/06-用户身份与组织模型设计.md`，并检查真实代码和 Git 状态。
 
@@ -201,9 +201,9 @@ new → processing → resolved → closed
 
 - `service_item_form_version`：服务项表单版本和 JSON Schema [P1 已实现]；
 - `service_dispatch_rule`：服务项/目录/全局派单规则 [P1 已实现]；
-- `ticket_satisfaction`：评分、标签、意见、来源和审计时间，每张工单一条有效评价 [P2 目标]。
+- `ticket_satisfaction`：评分、标签、意见、来源和审计时间，每张工单一条有效评价 [P2 已实现]。
 
-P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id` 分层解析，不重复保存当前规则 FK。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；`accepted_at`、`confirmation_due_at` 在 P2 写入。保留 `ticket.satisfaction` 作为兼容汇总字段，P2 再由有效评价记录回填。
+P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id` 分层解析。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；P2 在首次进入处理中时写 `accepted_at`，在进入最终用户确认节点时从流程任务 SLA 写 `confirmation_due_at`。`ticket.satisfaction` 由有效评价记录同步回填，兼容既有统计。
 
 ## 9. 飞书服务台移除范围
 
@@ -245,8 +245,18 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 ### 阶段 2：服务闭环
 
-- 受理/解决打点、可靠消息、用户确认/重开和评价；
-- 提醒、升级、重试、幂等和可观测性。
+**当前状态：代码、P1/P2 自动化回归、前端生产构建、本地 Docker/ngrok 和当前开发身份映射下的真实 Aily 对话闭环已完成；主动机器人送达和最终普通用户身份 UAT 待配置。**
+
+- `accepted_at` 与 `confirmation_due_at` 已由实际流程节点打点；IT 完成只进入 `resolved`，提交人确认后才关闭；
+- 已实现 `get_my_pending_confirmations`、`confirm_service_request_resolution`、`rate_service_request`，全部要求本人范围和明确工单编号；
+- 未解决携带原因回退最近处理节点；旧任务软删除保留审计，再次解决以本轮最新有效处理说明刷新用户可见 `solution`；网页与 MCP 语义一致，管理员不能代提交人确认；
+- 受理、解决、重开、关闭和评价写可靠 Aily 发件箱；确认期限使用到 80% 时每周期提醒一次；未启用机器人时保留待发记录，不消耗重试；
+- `ticket_satisfaction` 每单一条有效记录，保存评分、标签、意见、来源和审计，兼容星级同步到工单；
+- 直接确认/重开/评价使用同事务幂等意图，相同载荷安全重放，同键不同载荷拒绝。
+
+2026-07-29 P2 自动化快照：完整后端回归 `270 passed`；P1+P2 定向回归 `8 passed`（其中 P2 `3 passed`），覆盖工具发现、受理/解决时间、待确认列表、80% 期限提醒幂等、跨用户拒绝、明确工单重开、流程回退与最新解决说明、重复调用、关闭、评价新增/更新、同键冲突、网页/MCP 同语义、管理员不可代确认、发件箱事件数量及内部信息不外发；前端 TypeScript + Vite 生产镜像构建成功；本地 Docker 模型元数据和 PostgreSQL 均为 81 张表并包含 `ticket_satisfaction`，8180 本地及 ngrok 公网健康检查通过，公网 `/mcp/` 返回 15 个工具。
+
+2026-07-29 P2 真实 Aily 对话 UAT：Aily 重新读取并展示 15 个工具；`get_my_pending_confirmations` 先返回空列表，在 IT 角色通过应用流程入口完成受理和解决后，真实返回 `TK-202607-0001`、解决说明和确认期限。用户随后经 Aily 调 `confirm_service_request_resolution(resolved=false)` 将工单重开为 `processing`、重开次数 1；IT 再处理后，经 Aily 确认已解决并关闭，最后由 `rate_service_request` 保存 5 星、“响应及时/解决专业”和文字意见。ITOM 最终记录为 `closed`、一条 `ticket_satisfaction(source=aily)`，受理/解决/重开/关闭/评价事件均进入可靠发件箱。回归单 `TK-202607-0002` 进一步验证重开前“第一轮处理”已被排除，Aily 只返回“第二轮处理：补充内网路由策略，内部系统访问恢复”，随后关闭和评价成功。当前 Aily 外部身份仍映射本地 `admin` 测试账号，IT 处理角色为 `it_op1`；机器人 `message_enabled=false` 且未配置应用凭据，因此主动消息保持 `pending`，未宣称已真实送达。正式验收前须将 Aily 身份改为普通用户账号并配置机器人凭据，或由用户明确保留当前开发映射。
 
 验收：以业务用户、IT 人员完成“诉求 → 建单 → 派单 → 受理 → 解决 → 通知 → 确认/重开 → 关闭 → 评价”真实闭环，多张待确认单据不串单，内部信息不外发。
 

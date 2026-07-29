@@ -6,6 +6,7 @@ from app.models.itsm import (
     SlaPolicy,
     SlaPriorityDefinition,
     Ticket,
+    TicketSatisfaction,
 )
 from app.models.itsm_assets import (
     Ci,
@@ -152,6 +153,7 @@ __all__ = [
     "SlaPriorityDefinition",
     "TeamCharter",
     "Ticket",
+    "TicketSatisfaction",
     "Risk",
     "Role",
     "RolePermission",

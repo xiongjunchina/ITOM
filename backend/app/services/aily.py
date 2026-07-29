@@ -133,6 +133,16 @@ def scan_aily_outbox(limit: int = 50) -> int:
 
     processed = 0
     with SessionLocal() as db:
+        cfg = get_aily_config(db)
+        if not (
+            cfg.enabled
+            and cfg.message_enabled
+            and cfg.bot_app_id
+            and cfg.bot_app_secret_encrypted
+        ):
+            # 配置未就绪时保留 pending，不消耗重试次数；启用后由下一轮继续投递。
+            db.commit()
+            return 0
         query = (
             db.query(NotificationOutbox)
             .filter(

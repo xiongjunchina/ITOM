@@ -113,10 +113,11 @@ def p1(client, admin_headers):
     other_person, other_user = create_account(
         "P1 其他用户", "p1_other", ["requester"], business_department["id"]
     )
-    support_person, _ = create_account(
+    support_person, support_user = create_account(
         "P1 支持工程师", "p1_supporter", ["it_ops"], support_department["id"]
     )
     requester_headers = _login(client, "p1_requester")
+    support_headers = _login(client, "p1_supporter")
 
     for subject, user in ((REQUESTER_SUBJECT, requester_user), (OTHER_SUBJECT, other_user)):
         response = client.post(
@@ -264,6 +265,8 @@ def p1(client, admin_headers):
         "requester_headers": requester_headers,
         "other_user": other_user,
         "support_person": support_person,
+        "support_user": support_user,
+        "support_headers": support_headers,
         "item": item,
         "hidden_item": hidden_item,
         "form_version": form_version,

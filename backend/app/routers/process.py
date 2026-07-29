@@ -71,6 +71,24 @@ def _require_task_operator(db: Session, user: AuthUser, task_id: str) -> None:
         raise AppError("FORBIDDEN", "仅该任务的当前处理人可执行此操作", 403)
 
 
+def _requester_confirmation_ticket(db: Session, user: AuthUser, task_id: str):
+    """识别服务请求最终用户确认节点，并禁止管理员代替提交人确认。"""
+    from app.models import Ticket
+
+    task = db.get(ProcessTask, task_id)
+    if not task or not task.step or task.step.default_role != "requester":
+        return None
+    instance = db.get(ProcessInstance, task.instance_id)
+    if not instance or instance.entity_type != "ticket":
+        return None
+    ticket = db.get(Ticket, instance.entity_id)
+    if not ticket or ticket.ticket_type != "service_request":
+        return None
+    if ticket.submitter != user.id:
+        raise AppError("FORBIDDEN", "只有服务请求提交人可以确认解决结果", 403)
+    return ticket
+
+
 def _after_task_advanced(db: Session, instance: ProcessInstance, user: AuthUser) -> None:
     """完成/审批同意共用的实体编排回调。"""
     if instance.entity_type == "requirement":
@@ -103,6 +121,7 @@ def _after_task_advanced(db: Session, instance: ProcessInstance, user: AuthUser)
 @router.post("/api/process-tasks/{task_id}/complete")
 def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     _require_task_operator(db, user, task_id)
+    _requester_confirmation_ticket(db, user, task_id)
     # 审批节点的流程图入口与右上角“同意”语义完全一致：
     # 变更审批等状态机联动必须走 approve_task，不能只把任务标成已完成。
     task = db.get(ProcessTask, task_id)
@@ -121,6 +140,7 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
 def approve(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """审批节点右上角「同意」按钮；审批理由可选。"""
     _require_task_operator(db, user, task_id)
+    _requester_confirmation_ticket(db, user, task_id)
     instance = process_engine.approve_task(db, task_id, user, body.comment)
     audit(db, "process_task", task_id, "approve", user, {"comment": body.comment})
     _after_task_advanced(db, instance, user)
@@ -132,6 +152,21 @@ def approve(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user:
 def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """审批节点右上角「驳回」按钮；驳回理由必填并保留在流程任务记录。"""
     _require_task_operator(db, user, task_id)
+    requester_ticket = _requester_confirmation_ticket(db, user, task_id)
+    if requester_ticket:
+        from app.services import service_request_closure
+
+        task = db.get(ProcessTask, task_id)
+        result = service_request_closure.reopen_from_confirmation(
+            db,
+            user,
+            requester_ticket,
+            task,
+            body.reason,
+            source="web",
+        )
+        db.commit()
+        return ok(result)
     instance = process_engine.reject_task(db, task_id, user, body.reason)
     audit(db, "process_task", task_id, "reject", user, {"reason": body.reason})
     db.commit()

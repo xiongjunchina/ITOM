@@ -98,6 +98,8 @@ export default function TicketDetail() {
 
   // 满意度
   const [rating, setRating] = useState(0);
+  const [ratingTags, setRatingTags] = useState<string[]>([]);
+  const [ratingComment, setRatingComment] = useState('');
   const [ratingSaving, setRatingSaving] = useState(false);
 
   // M3：升级为问题 / 沉淀为知识
@@ -253,7 +255,11 @@ export default function TicketDetail() {
     }
     setRatingSaving(true);
     try {
-      await api.post(`/tickets/${id}/satisfaction`, { score: rating });
+      await api.post(`/tickets/${id}/satisfaction`, {
+        score: rating,
+        tags: ratingTags,
+        comment: ratingComment,
+      });
       message.success(t('itsm.ticket.thanksRating'));
       void load();
     } catch {
@@ -317,8 +323,29 @@ export default function TicketDetail() {
                 style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}
               >
                 <Typography.Text strong>{t('itsm.ticket.ratingCard')}</Typography.Text>
-                <Space size={12} wrap>
+                <Space direction="vertical" size={8} style={{ alignItems: 'flex-end' }}>
                   <Rate value={rating} onChange={setRating} />
+                  <Select
+                    mode="tags"
+                    value={ratingTags}
+                    onChange={(values) => setRatingTags(values.slice(0, 5))}
+                    tokenSeparators={[',', '，']}
+                    placeholder={t('itsm.ticket.ratingTagsPlaceholder')}
+                    style={{ width: 300 }}
+                    options={[
+                      t('itsm.ticket.ratingTagResponsive'),
+                      t('itsm.ticket.ratingTagProfessional'),
+                      t('itsm.ticket.ratingTagClear'),
+                    ].map((value) => ({ value, label: value }))}
+                  />
+                  <Input.TextArea
+                    value={ratingComment}
+                    onChange={(event) => setRatingComment(event.target.value)}
+                    maxLength={500}
+                    autoSize={{ minRows: 2, maxRows: 4 }}
+                    placeholder={t('itsm.ticket.ratingCommentPlaceholder')}
+                    style={{ width: 300 }}
+                  />
                   <Button type="primary" loading={ratingSaving} onClick={() => void submitRating()}>
                     {t('itsm.ticket.submitRating')}
                   </Button>
@@ -442,7 +469,9 @@ export default function TicketDetail() {
           </Descriptions.Item>
           <Descriptions.Item label={t('itsm.f.submittedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.submitted_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.firstResponse')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.first_response_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.acceptedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.accepted_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.resolvedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.resolved_at)}</Descriptions.Item>
+          <Descriptions.Item label={t('itsm.ticket.confirmationDueAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.confirmation_due_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.closedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.closed_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.slaResponseTarget')}>
             {detail.sla_response_min != null ? t('itsm.unit.minutes', { n: detail.sla_response_min }) : '-'}
@@ -483,7 +512,19 @@ export default function TicketDetail() {
             {detail.paused_minutes != null ? t('itsm.unit.minutes', { n: detail.paused_minutes }) : '-'}
           </Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.satisfaction')}>
-            {detail.satisfaction != null ? <Rate disabled value={detail.satisfaction} /> : '-'}
+            {detail.satisfaction != null ? (
+              <Space direction="vertical" size={4}>
+                <Rate disabled value={detail.satisfaction} />
+                {!!detail.satisfaction_detail?.tags?.length && (
+                  <Space size={4} wrap>
+                    {detail.satisfaction_detail.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
+                  </Space>
+                )}
+                {detail.satisfaction_detail?.comment && (
+                  <Typography.Text type="secondary">{detail.satisfaction_detail.comment}</Typography.Text>
+                )}
+              </Space>
+            ) : '-'}
           </Descriptions.Item>
           <Descriptions.Item label={t('itsm.f.description')} span={2}>
             <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>

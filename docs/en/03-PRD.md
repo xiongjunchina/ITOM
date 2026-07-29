@@ -5,7 +5,7 @@
 > Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
-> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol/identity foundations and P1 intake are implemented. P1 passes automated MCP/API regression, a production frontend build, and real Aily preview, confirmation, write, and own-record-query UAT for both service requests and IT requirements. P2–P3 remain target capabilities.
+> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 foundations, P1 intake, and P2 service-closure code are implemented. P1 passed real-Aily write UAT; P2 passes automated MCP/API closure regression and a production frontend build, while real-Aily multi-role/proactive-message UAT remains pending. P3 is not implemented.
 
 ---
 
@@ -110,7 +110,7 @@ The state transitions of each record type are driven by state-machine configurat
 ### 3.3 Notifications
 
 - Unified event outlet: events such as ticket creation/assignment/SLA-imminent/escalation, change pending approval, milestone overdue, requirement stage transition, and suggestion adopted are written to the notification outbox.
-- Current business events primarily use **in-app notifications**. P0 implements the reliable Feishu-bot outbox, retries, and test delivery; P2 connects user-visible resolution events. User replies return through Aily and MCP for confirmation, reopen, or rating. MCP itself does not wake proactively.
+- Current business events primarily use **in-app notifications**. P2 connects service-request acceptance, resolution, reopen, closure, and rating to the reliable Feishu-bot outbox. Replies return through Aily and MCP for confirmation, reopen, or rating; MCP itself does not wake proactively. Disabled bot configuration preserves pending messages without consuming attempts.
 - Since M34, administrator accounts without a linked person can receive management notifications by account ID; the bell polls for updates and delivery honors the `work`, `workflow`, and `system` category preferences.
 - **Account/person unlinking**: clearing Linked Person in the user editor explicitly persists `person_id=null`, while PATCH requests that omit `person_id` retain the existing link.
 - The notification popover provides **Mark all as read** and **Clear read**. The former writes `read_at` for notifications visible to the current account; the latter soft-deletes that account's already-read notifications. Neither action changes source business records.
@@ -195,7 +195,7 @@ Change: New → Pending Approval → Approved → Implementing → Resolved → 
 The change request and implementation tasks are handled by IT Operations. The approval task is assigned by default to the IT Operations leader; this is distinct from the full set of roles allowed by the state machine. The current `pending_approval → approved/rejected` transition allows `cio`, `it_tm`, and `it_op_leader`. The published runtime process definition, state-machine configuration, and version take precedence over `seed_itsm.py`; changes require a new process version and historical instances retain their original snapshots.
 
 - **At resolution** fill in: solution (required), root cause (optional).
-- **Resolution and closure**: IT staff submit the solution and move the request to `resolved`, which awaits requester confirmation. Confirmation closes it; rejection returns it to `processing` and increments reopen count. After closure, Aily/web asks for a 1–5 score with optional tags/comment. One effective rating exists per ticket; edits are audited.
+- **Resolution and closure**: IT staff submit the solution and move the request to `resolved`, which awaits requester confirmation. Confirmation closes it; rejection returns it to `processing` and increments reopen count. The next resolution after a reopen refreshes the user-visible solution from the latest active handling task; soft-deleted historical tasks are excluded. After closure, Aily/web asks for a 1–5 score with optional tags/comment. One effective rating exists per ticket; edits are audited.
 - Change approval: in the currently published `change_flow`, the “Change approval” task is assigned by default to `it_op_leader`; the state-machine `pending_approval → approved/rejected` transition allows `[cio, it_tm, it_op_leader]` (adjustable in configuration). Comments are recorded together with the approver and time; both the process-task guard and state-machine authorization must pass.
 - Escalation: an escalation notification is produced when a P1/P2 ticket exceeds 80% of its SLA target without being resolved.
 
@@ -208,7 +208,8 @@ The change request and implementation tasks are handled by IT Operations. The ap
 - [x] Normal users cannot create incidents or changes; the Aily submission tool has no `ticket_type` input.
 - [x] Item, form, options, SLA, process, and person scope come from live ITOM data.
 - [x] Retrying a confirmed submission creates one ticket and starts the bound process and dispatch rule.
-- [ ] Confirmation/reopen/rating affects the explicitly selected ticket (P2).
+- [x] Confirmation/reopen/rating requires an explicit ticket code, affects only the submitter's record, is idempotent, and uses the same web/MCP closure semantics (P2 automation).
+- [ ] Real-Aily proactive delivery, reply handling, and the complete multi-role closure loop pass UAT (P2 live environment).
 
 ### 5.2 Problem Management
 
@@ -525,7 +526,7 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | M41 Role-specific Visual Redesign | 10, 11 | Scheme F service portal for requester-only users; Scheme C high-density workbench for all other roles; full-width horizontal logo above the sidebar title |
 | Aily-MCP P0 Protocol & Foundation (code and real identity path complete; proactive bot delivery pending) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
 | Aily-MCP P1 Intake (real Aily write UAT complete for service requests and IT requirements) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
-| Aily-MCP P2 Closure Loop | 3, 5, 8 | Dispatch, accept, resolve, proactive notification, confirm/reopen, close, and rate across real roles |
+| Aily-MCP P2 Closure Loop (code/automation and real-Aily conversational loop complete; proactive bot delivery awaits configuration) | 3, 5, 8 | Dispatch, accept, resolve, reliable outbox, confirm/reopen, close, and rate across real roles |
 | Aily-MCP P3 Approval & Release | 8, 10, 11 | Feishu Approval idempotency, IDC security/performance/recovery/UAT, user-approved PR to `main` |
 
 **System-level overall acceptance**: all creation forms require ≤ 5 items; no page manually maintains statistics; all six point-event categories trigger automatically; real acceptance covers “Aily request → MCP create → ITOM dispatch/accept/resolve → Aily proactive notification → requester confirm/reopen → close → rate” and “Aily requirement registration → ITOM evaluation → delivery/project → acceptance and closure.”
