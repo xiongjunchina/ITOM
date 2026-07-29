@@ -522,21 +522,18 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
         raise AppError("INVALID_ROLE", f"未知角色: {','.join(bad)}")
     if "admin" in body.roles:
         raise AppError("ADMIN_NOT_GRANTABLE", "开通时不可直接授予 admin 角色")
+    from app.services.account_linking import get_linkable_person
+
+    person = get_linkable_person(db, body.person_id)
     roles = body.roles
     if not roles:  # 未指定则按开通规则取默认
         from app.services.provisioning import default_roles_for
 
-        person = db.get(OrgMember, body.person_id) if body.person_id else None
         roles = default_roles_for(db, person.department_id if person else None)
-    if body.person_id and not db.get(OrgMember, body.person_id):
-        raise AppError("NOT_FOUND", "关联人员不存在", 404)
-    from app.services.team_scope import require_it_member_if_configured
-    require_it_member_if_configured(db, body.person_id, "账号关联人员")
 
     import secrets
     import string
 
-    person = db.get(OrgMember, body.person_id) if body.person_id else None
     alphabet = string.ascii_letters + string.digits + "!@#$%"
     initial_password = "".join([
         secrets.choice(string.ascii_uppercase), secrets.choice(string.ascii_lowercase),
@@ -548,7 +545,7 @@ def approve_request(request_id: str, body: ApproveIn, db: Session = Depends(get_
         username=body.username,
         password_hash=hash_password(initial_password),
         auth_source="feishu", external_id=req.external_id,
-        roles=roles, person_id=body.person_id, is_active=True,
+        roles=roles, person=person, is_active=True,
         preferences={"language": body.language},
         password_set_at=datetime.now(),
     )

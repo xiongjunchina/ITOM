@@ -76,8 +76,8 @@ export default function Onboarding({ onChanged }: { onChanged?: () => void }) {
       .then((res) => setRoles(res.items.filter((r) => r.code !== 'admin')))
       .catch(() => undefined);
     api
-      .getList<Member>('/members', { page_size: 2000, scope: 'it' })
-      .then((res) => setMembers(res.items))
+      .getList<Member>('/members', { page_size: 2000 })
+      .then((res) => setMembers(res.items.filter((member) => member.status !== '离职')))
       .catch(() => undefined);
   }, []);
 

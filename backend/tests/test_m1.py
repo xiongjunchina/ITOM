@@ -67,6 +67,78 @@ def test_user_crud_and_rbac(client, admin_headers):
     assert client.get("/api/dashboard", headers=biz_headers).status_code == 403
 
 
+def test_user_account_can_link_any_active_org_person(client, admin_headers):
+    """账号覆盖全员，关联人员不能被数字化 IT 团队范围误过滤。"""
+    it_department = client.post(
+        "/api/admin/departments",
+        json={"code": "m1_account_it", "name": "M1 账号测试 IT 部门", "dept_type": "it"},
+        headers=admin_headers,
+    ).json()["data"]
+    business_department = client.post(
+        "/api/admin/departments",
+        json={"code": "m1_account_biz", "name": "M1 账号测试业务部门", "dept_type": "business"},
+        headers=admin_headers,
+    ).json()["data"]
+    client.patch(
+        "/api/admin/org-settings",
+        json={"digital_team_department_ids": [it_department["id"]]},
+        headers=admin_headers,
+    )
+    try:
+        first_person = client.post(
+            "/api/members",
+            json={"name": "M1 业务账号人员甲", "department_id": business_department["id"]},
+            headers=admin_headers,
+        ).json()["data"]
+        second_person = client.post(
+            "/api/members",
+            json={"name": "M1 业务账号人员乙", "department_id": business_department["id"]},
+            headers=admin_headers,
+        ).json()["data"]
+
+        scoped_ids = {
+            row["id"] for row in client.get(
+                "/api/members?scope=it&page_size=2000", headers=admin_headers,
+            ).json()["data"]
+        }
+        assert first_person["id"] not in scoped_ids
+
+        created = client.post(
+            "/api/admin/users",
+            json={
+                "username": "m1_business_account",
+                "password": "pass123",
+                "roles": ["requester"],
+                "person_id": first_person["id"],
+            },
+            headers=admin_headers,
+        )
+        assert created.status_code == 200, created.text
+        row = created.json()["data"]
+        assert row["person_name"] == "M1 业务账号人员甲"
+        assert row["person_department_name"] == "M1 账号测试业务部门"
+
+        updated = client.patch(
+            f"/api/admin/users/{row['id']}",
+            json={"person_id": second_person["id"]},
+            headers=admin_headers,
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["data"]["person_name"] == "M1 业务账号人员乙"
+
+        listed = client.get(
+            "/api/admin/users?q=m1_business_account", headers=admin_headers,
+        ).json()["data"][0]
+        assert listed["person_name"] == "M1 业务账号人员乙"
+        assert listed["person_department_name"] == "M1 账号测试业务部门"
+    finally:
+        client.patch(
+            "/api/admin/org-settings",
+            json={"digital_team_department_ids": [], "digital_team_member_ids": []},
+            headers=admin_headers,
+        )
+
+
 def test_user_can_clear_linked_person(client, admin_headers):
     dept_id = client.post(
         "/api/admin/departments",

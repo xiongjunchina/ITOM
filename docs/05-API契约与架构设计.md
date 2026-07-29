@@ -347,9 +347,9 @@ PUT /api/admin/business-domains/{domain_id}/members
 
 M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队范围和飞书自动同步策略。范围请求包含 `digital_team_department_ids`、`digital_team_member_ids` 与 `digital_team_include_children`；服务端分别校验有效部门和人员并去重，实际口径取部门成员与指定人员并集。新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
 
-人员选择器统一约定：涉及业务负责人、项目经理/任务负责人、需求负责人/评审人/开发负责人、工单/问题/服务项/配置项/合同负责人、用户组负责人/成员及账号关联人员的前端下拉，统一调用 `GET /api/members?scope=it`。管理员配置任一数字化团队部门或指定人员后，相关写接口也通过 `require_it_member_if_configured`（批量成员使用同等校验）复核；未配置范围时兼容历史数据，但不改变 `scope=it` 的返回口径。
+人员选择器分为两个口径：涉及业务负责人、项目经理/任务负责人、需求负责人/评审人/开发负责人、工单/问题/服务项/配置项/合同负责人及用户组负责人/成员的 IT 工作选择器调用 `GET /api/members?scope=it`，配置数字化团队范围后由写接口再次校验。用户管理和飞书开通审批的“关联人员”面向全公司账号，调用不带 `scope` 的 `GET /api/members`；服务端只校验人员存在且未删除，不得套用数字化团队限制。
 
-`PATCH /api/admin/users/{id}` 对可空字段采用显式 PATCH 语义：请求省略 `person_id` 时不改变关联人员，提交 `person_id: null` 时解除关联并在响应、审计及后续列表查询中立即体现。
+`GET /api/admin/users` 的每行同时返回 `person_id`、`person_name` 和 `person_department_name`，前端必须优先显示可读姓名，不能回退展示内部 GLID。`PATCH /api/admin/users/{id}` 对可空字段采用显式 PATCH 语义：请求省略 `person_id` 时不改变关联人员，提交 `person_id: null` 时解除关联并在响应、审计及后续列表查询中立即体现。
 
 ## 9. UI 品牌配置 API（M38）
 

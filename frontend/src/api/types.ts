@@ -205,6 +205,8 @@ export interface AdminUser {
   name?: string;
   roles: Role[];
   person_id: string | null;
+  person_name?: string | null;
+  person_department_name?: string | null;
   is_active: boolean;
   auth_source: AuthSource;
   last_login_at?: string | null;

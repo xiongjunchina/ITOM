@@ -1,26 +1,29 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.errors import AppError
 from app.core.security import hash_password
 from app.db import get_db
 from app.deps import require_perm
-from app.models import AuthUser
+from app.models import AuthUser, OrgMember
 from app.schemas.common import ok, paginate
 from app.schemas.support import UserCreate, UserUpdate
 from app.services.audit import audit
-from app.services.team_scope import require_it_member_if_configured
+from app.services.account_linking import get_linkable_person
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin"])
 
 
 def _row(u: AuthUser) -> dict:
+    person = u.person
     return {
         "id": u.id,
         "username": u.username,
-        "name": u.person.name if u.person else u.username,
+        "name": person.name if person else u.username,
         "roles": u.roles or [],
         "person_id": u.person_id,
+        "person_name": person.name if person else None,
+        "person_department_name": person.department.name if person and person.department else None,
         "auth_source": u.auth_source,
         "is_active": u.is_active,
         "last_login_at": u.last_login_at,
@@ -39,7 +42,9 @@ def _check_roles(db: Session, roles: list[str]):
 
 @router.get("")
 def list_users(page: int = 1, page_size: int = 20, q: str = "", db: Session = Depends(get_db), _=Depends(require_perm("admin_users", "view"))):
-    query = db.query(AuthUser).filter(AuthUser.is_deleted.is_(False))
+    query = db.query(AuthUser).options(
+        joinedload(AuthUser.person).joinedload(OrgMember.department)
+    ).filter(AuthUser.is_deleted.is_(False))
     if q:
         query = query.filter(AuthUser.username.ilike(f"%{q}%"))
     items, total = paginate(query.order_by(AuthUser.created_at.desc()), page, page_size)
@@ -49,15 +54,13 @@ def list_users(page: int = 1, page_size: int = 20, q: str = "", db: Session = De
 @router.post("")
 def create_user(body: UserCreate, db: Session = Depends(get_db), actor=Depends(require_perm("admin_users", "create"))):
     _check_roles(db, body.roles)
-    require_it_member_if_configured(db, body.person_id, "账号关联人员")
+    person = get_linkable_person(db, body.person_id)
     if db.query(AuthUser).filter(AuthUser.username == body.username).first():
         raise AppError("USERNAME_TAKEN", "用户名已存在")
     roles = body.roles
     if not roles:  # 未指定角色时按开通规则取默认（仅创建时，之后自由增减）
-        from app.models import OrgMember
         from app.services.provisioning import default_roles_for
 
-        person = db.get(OrgMember, body.person_id) if body.person_id else None
         roles = default_roles_for(db, person.department_id if person else None)
     from datetime import datetime
 
@@ -65,7 +68,7 @@ def create_user(body: UserCreate, db: Session = Depends(get_db), actor=Depends(r
         username=body.username,
         password_hash=hash_password(body.password),
         roles=roles,
-        person_id=body.person_id,
+        person=person,
         is_active=body.is_active,
         password_set_at=datetime.now(),  # 初始口令由管理员告知本人，本人改密时需验当前密码
     )
@@ -97,9 +100,9 @@ def update_user(user_id: str, body: UserUpdate, db: Session = Depends(get_db), a
     # PATCH 中 `person_id: null` 表示管理员明确要求解绑；字段未提交才表示保持原值。
     # 不能只判断值是否为 None，否则会把“清空”和“未修改”混为一谈。
     if "person_id" in body.model_fields_set:
-        require_it_member_if_configured(db, body.person_id or None, "账号关联人员")
+        person = get_linkable_person(db, body.person_id or None)
         changes["person_id"] = {"from": user.person_id, "to": body.person_id or None}
-        user.person_id = body.person_id or None
+        user.person = person
     if body.is_active is not None:
         changes["is_active"] = body.is_active
         user.is_active = body.is_active

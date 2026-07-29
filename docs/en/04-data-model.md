@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | username | VARCHAR(64) UNIQUE | Login name |
 | password_hash | VARCHAR(255) | bcrypt |
-| person_id | FK→org_member | Links to personnel master data (requester may have none) |
+| person_id | FK→org_member | Links any company person (requester may have none; not limited by the digital-team scope) |
 | roles | JSONB | Array of roles, e.g. `["it_dev","manager"]` (one person, many roles) |
 | auth_source | VARCHAR(16) | local/ad/feishu/sms/wechat |
 | external_id | VARCHAR(128) | External authentication identity; Feishu uses open_id |

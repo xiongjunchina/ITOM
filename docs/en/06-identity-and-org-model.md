@@ -52,6 +52,7 @@ Auth-source adapter (AuthProvider) → on success returns a user profile (Provis
 ## 4-A. Account Lifecycle and Personal Identity (M36–M37)
 
 - `auth_user` and `org_member` have separate lifecycles. Deleting an account only soft-deletes, disables, and unlinks it; personnel master data and historical references remain. The built-in admin and current account cannot be deleted.
+- Account provisioning is company-wide: user management and Feishu approval load people without `scope` and may link any non-deleted `org_member`. The digital-team scope applies only to IT operational owners, user groups, and performance subjects; it must not block a business user account. List responses provide readable person and department names instead of exposing the internal GLID as display text.
 - User updates distinguish an omitted `person_id` from an explicit `person_id: null`: omission preserves the current link, while explicit null unlinks the account without deleting personnel master data, department placement, user-group membership, or historical business records.
 - Browser QR login and Feishu workplace login share identity handling: an active bound account signs in directly, while a new identity enters the `login_request` approval flow.
 - A signed-in account may bind or rebind one Feishu open_id; the identity cannot be occupied by another active account. Unbinding requires a local password and does not unlink the person record.
@@ -78,7 +79,7 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 | Organizational concept | System carrier |
 | --- | --- |
 | Horizontal · service line (business domain) | `business_domain`: owner/backup owner and service-team members use the `org_settings` digital-team union (department members plus individually selected people); `business_domain_department` stores the served organization scope |
-| Operational person-selector scope | Project/requirement/ticket/problem/service-item/CI/contract/user-group/account-linking dropdowns load `GET /api/members?scope=it`; the scope can combine departments and specific people, so selecting one person from a mixed Test organization does not include their colleagues; write APIs re-check the configured union |
+| IT operational person-selector scope | Project/requirement/ticket/problem/service-item/CI/contract/user-group selectors load `GET /api/members?scope=it`; account linking is excluded and must allow every non-deleted company person |
 | Vertical · technical line (resource pool: a TM centrally manages personnel in a technical direction) | `user_group`: owner = TM (field) + roles group-granted roles (e.g. the development resource pool grants it_dev) + members |
 | Professional identity | Roles: it_pdm/it_pm/it_dev/it_ops/is_mgr/it_bp + custom additions (data governance, AI, etc.) |
 | Management layer | cio (IT Head) / it_bm / it_tm, three built-in roles (manager was removed on 2026-07-11) |

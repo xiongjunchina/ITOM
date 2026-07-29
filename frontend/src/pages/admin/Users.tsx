@@ -85,8 +85,8 @@ export default function Users() {
 
   useEffect(() => {
     api
-      .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
-      .then((res) => setMembers(res.items))
+      .getList<Member>('/members', { page: 1, page_size: 2000 })
+      .then((res) => setMembers(res.items.filter((member) => member.status !== '离职')))
       .catch(() => undefined);
     api
       .getList<RoleDef>('/admin/roles')
@@ -100,6 +100,24 @@ export default function Users() {
     members.forEach((m) => map.set(m.id, m.name));
     return map;
   }, [members]);
+
+  const memberOptions = useMemo(() => {
+    const options = members.map((member) => ({
+      value: member.id,
+      label: member.department_name
+        ? `${member.name}（${member.department_name}）`
+        : member.name,
+    }));
+    if (editing?.person_id && !options.some((option) => option.value === editing.person_id)) {
+      const label = editing.person_name
+        ? editing.person_department_name
+          ? `${editing.person_name}（${editing.person_department_name}）`
+          : editing.person_name
+        : t('admin.users.linkedPersonUnavailable');
+      options.unshift({ value: editing.person_id, label });
+    }
+    return options;
+  }, [editing, members, t]);
 
   /** 人员 → 所属组名列表（由组成员数据反推，用于列表列展示） */
   const personGroups = useMemo(() => {
@@ -242,7 +260,11 @@ export default function Users() {
       title: t('admin.users.linkedPerson'),
       dataIndex: 'person_id',
       width: 140,
-      render: (id: string | null) => (id != null ? memberName.get(id) ?? id : "-"),
+      render: (id: string | null, record) => (
+        id != null
+          ? record.person_name ?? memberName.get(id) ?? t('admin.users.linkedPersonUnavailable')
+          : '-'
+      ),
     },
     {
       title: t('admin.users.authSource'),
@@ -411,10 +433,7 @@ export default function Users() {
               showSearch
               optionFilterProp="label"
               placeholder={t('admin.common.selectFromPeople')}
-              options={members.map((m) => ({
-                value: m.id,
-                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-              }))}
+              options={memberOptions}
             />
           </Form.Item>
           {editing?.initial_password_available && (

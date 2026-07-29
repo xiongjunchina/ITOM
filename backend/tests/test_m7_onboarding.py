@@ -88,6 +88,54 @@ def test_approve_then_employee_enters(client, admin_headers, member):
     assert any(x["id"] == d["request_id"] for x in reqs)
 
 
+def test_approve_business_person_outside_it_scope(client, admin_headers):
+    """飞书开通面向全员，业务部门人员不受数字化 IT 团队范围限制。"""
+    it_department = client.post(
+        "/api/admin/departments",
+        json={"code": "m7_scope_it", "name": "M7 数字化团队", "dept_type": "it"},
+        headers=admin_headers,
+    ).json()["data"]
+    business_department = client.post(
+        "/api/admin/departments",
+        json={"code": "m7_scope_biz", "name": "M7 业务团队", "dept_type": "business"},
+        headers=admin_headers,
+    ).json()["data"]
+    business_person = client.post(
+        "/api/members",
+        json={"name": "M7 飞书业务用户", "department_id": business_department["id"]},
+        headers=admin_headers,
+    ).json()["data"]
+    client.patch(
+        "/api/admin/org-settings",
+        json={"digital_team_department_ids": [it_department["id"]]},
+        headers=admin_headers,
+    )
+    try:
+        pending = scan(client, external_id="fs_business_person", name="飞书业务用户")
+        approved = client.post(
+            f"/api/auth/onboarding/requests/{pending['request_id']}/approve",
+            json={
+                "username": "feishu_business_user",
+                "roles": ["requester"],
+                "language": "zh",
+                "person_id": business_person["id"],
+            },
+            headers=admin_headers,
+        )
+        assert approved.status_code == 200, approved.text
+        linked = client.get(
+            "/api/admin/users?q=feishu_business_user", headers=admin_headers,
+        ).json()["data"][0]
+        assert linked["person_id"] == business_person["id"]
+        assert linked["person_name"] == "M7 飞书业务用户"
+    finally:
+        client.patch(
+            "/api/admin/org-settings",
+            json={"digital_team_department_ids": [], "digital_team_member_ids": []},
+            headers=admin_headers,
+        )
+
+
 def test_approve_guards(client, admin_headers):
     d = scan(client, external_id="fs_guard", name="王五")
     rid = d["request_id"]
