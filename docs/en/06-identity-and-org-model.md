@@ -122,7 +122,10 @@ After Aily + MCP confirmed submission, a service request enters the service item
 | Change management | Change Enablement | Change request (it_ops) → Change approval (it_op_leader; CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr; CC cio) |
 | Problem analysis | Problem Management | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
 | Requirement delivery (pre-configured, attached in M5) | — | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
+
 | Project key milestones | Project Management | Project kickoff (it_pm, approval) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval) |
+
+Implementation-task permission supplement: after the workflow writes the requirement owner to `requirement.owner`, that owner may maintain multiple task rows while the requirement is `implementing`. This is a record-scope rule based on the document owner; it does not grant global `requirements.edit` or `req_tasks.edit`. Without global edit permission, a task assignee may update only the status and actual effort of their own task, while deletion still requires global Requirement/Task Tracking edit permission. The server evaluates the current account and live requirement status; front-end capability flags are not authorization.
 
 Current published runtime: the change approval/rejection transition has `allowed_roles = [cio, it_tm, it_op_leader]`; the approval task defaults to `it_op_leader` and CCs `it_bm`; the PIR task is handled by `is_mgr` and CCs `cio`. Approval recipients are resolved dynamically from `allowed_roles` (including groups and inheritance). All of this remains adjustable on the state-machine-config / process-definition pages; the published runtime version takes precedence over code seeds.
 

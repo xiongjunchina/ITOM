@@ -69,7 +69,7 @@ WBS supports 0/50/100% presets and custom 0–100% integers. Setting a parent to
 
 ## 5. Requirement management
 
-Business users register requirements. IT teams clarify, score, evaluate solutions, and route them to development, project delivery, deferment, or rejection. Task Tracking shows the resulting tasks, owners, dates, and completion. Scoring Rules defines dimensions, weights, and score bands. The process and its assignees/CC recipients are controlled by workflow configuration.
+Business users register requirements. IT teams clarify, score, evaluate solutions, and route them to development, project delivery, deferment, or rejection. Task Tracking shows the resulting tasks, owners, dates, and completion. While a requirement is in Implementation, its owner can repeatedly add task rows from the requirement detail or Task Tracking page and maintain the task description, assignee, planned date, and planned/actual effort. A handler can update only the status and actual effort of their own task; deletion still requires Requirement/Task Tracking edit permission. Buttons reflect current capability, but the server rechecks authorization, so existing task and requirement data is not overwritten by the UI change. Scoring Rules defines dimensions, weights, and score bands. The process and its assignees/CC recipients are controlled by workflow configuration.
 
 At least one active business domain must be configured before registration. The web UI and Aily MCP select only from that live list and never invent a domain. When the list is empty, MCP returns an explicit submission blocker and an administrator must first configure a domain under **System Management → Organization → Business Domains**.
 

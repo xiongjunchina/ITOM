@@ -339,8 +339,10 @@ Registration → Evaluation → Analysis → Implementation → Closure (any act
 | ① Registration | requester / it_bp / any team member | Title ✔, type ✔ (business/functional/data/integration/compliance), owning business ✔, description ✔; source / channel dept / expected date / expected effect / operational value optional | Code, requester, registration time automatic; notify it_pdm |
 | ② Evaluation | it_pdm + review (CIO/it_bm cc'd) | Six scores D1-D6 (1-5), decision (Approved/On hold/Rejected), comment | **Auto-computes weighted total & quadrant** (never typed); stamps evaluation-start time; enforces the evaluation gate |
 | ③ Analysis | it_pdm | Owner, scheduled target date, solution, acceptance criteria (checklist), PRD/dev person-days; MoSCoW demoted to an optional auxiliary tag | Stamps the analysis-start time |
-| ④ Implementation | Owner | Task breakdown (task name / assignee / planned date / planned·actual person-days), optionally attach a project | Progress = completed tasks / total tasks; task completion produces points |
+| ④ Implementation | Owner | Task breakdown (multiple rows allowed: task name / assignee / planned date / planned·actual person-days), optionally attach a project | Progress = completed tasks / total tasks; task completion produces points |
 | ⑤ Closure | Owner | Check off acceptance criteria one by one; **one-click hand-off**: legacy problem → ITSM Problem, lessons → Knowledge Base | Stamps the completion date; computes lead time; closure produces points |
+
+Implementation-task permissions: while a requirement is in Implementation, its owner may add multiple task rows and maintain task name, description, assignee, planned date, and planned/actual effort. A task assignee may update only the status and actual effort of their own task. Deletion remains restricted to the Requirement/Task Tracking edit permissions so ordinary executors cannot accidentally remove delivery records. Both the task list and requirement detail return capability flags; the server rechecks permission, requirement stage, and example-data protection on every write. This fix adds backward-compatible capability fields and authorization checks only; it does not rewrite or migrate existing requirements or tasks.
 
 ### 7.2 Six-Dimension Weighted Scoring & Four Quadrants
 

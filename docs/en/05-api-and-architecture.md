@@ -160,6 +160,17 @@ list_my_it_requirements
 
 Registration creates a separate `Requirement`, never a Ticket. Normal employees reuse existing `requirements.create/view` permissions with enforced own-record scope; review, scoring, project conversion, and closure retain existing edit/process permissions.
 
+#### Requirement implementation-task APIs
+
+```text
+POST /api/requirements/{requirement_id}/tasks
+PATCH /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/{task_id}
+GET /api/requirements/tasks/active
+```
+
+The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. No database migration is involved; existing tasks remain readable under their original IDs and soft-delete state.
+
 #### Forbidden tools
 
 V1 does not provide incident/change creation, arbitrary transitions, reassignment/approval/task completion, generic SQL/database access, or general HTTP. A suspected broad outage still creates a service request flag; IT staff or monitoring creates the incident.

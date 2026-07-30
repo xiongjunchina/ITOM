@@ -158,6 +158,17 @@ list_my_it_requirements
 
 需求登记写入独立 `Requirement`，不创建 Ticket。普通员工复用现有 `requirements.create/view` 功能权限并强制本人数据范围；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
 
+#### 需求实现任务接口
+
+```text
+POST /api/requirements/{requirement_id}/tasks
+PATCH /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/{task_id}
+GET /api/requirements/tasks/active
+```
+
+同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。该接口变更不涉及数据库迁移，存量任务按原主键和软删除状态继续可读。
+
 #### 禁止工具
 
 首期不提供 `create_incident`、`create_change`、任意状态流转、任务改派/审批/完成、通用 SQL、数据库和任意 HTTP 工具。普通用户描述疑似大范围故障时仍创建服务请求并标记，事件由 IT 人员或监控专用接口创建。

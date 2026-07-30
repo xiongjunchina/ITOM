@@ -622,6 +622,8 @@ export default function RequirementDetail() {
 
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
+  const canManageTasks = detail?.can_manage_tasks ?? canEdit;
+  const canDeleteTasks = detail?.can_delete_tasks ?? canEdit;
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   // M28 主动关闭（登记人/admin）
   const [closeOpen, setCloseOpen] = useState(false);
@@ -926,7 +928,7 @@ export default function RequirementDetail() {
   const pendingAcceptance = criteria.length - checkedCount;
 
   const canChangeTaskStatus = (t: RequirementTask): boolean =>
-    !isExample && !isFinal && (canEdit || (!!user?.person_id && user.person_id === t.assignee));
+    !isExample && !isFinal && (canManageTasks || (!!user?.person_id && user.person_id === t.assignee));
 
   // ----- 阶段进度条 -----
   const currentStep = st === 'closed'
@@ -1013,7 +1015,7 @@ export default function RequirementDetail() {
         ),
     },
     { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => fmtDt(v) ?? '-' },
-    ...(canEditNow
+    ...(canDeleteTasks
       ? [
           {
             title: t('common.actions'),
@@ -1356,7 +1358,7 @@ export default function RequirementDetail() {
           title={t('req.implementation')}
           size="small"
           extra={
-            canEditNow && (
+            canManageTasks && (
               <Button
                 size="small"
                 type="primary"

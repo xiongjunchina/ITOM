@@ -51,6 +51,7 @@ export default function ActiveTaskList() {
   const canEdit = user?.permissions
     ? hasPermission(user, 'requirements', 'edit') || hasPermission(user, 'req_tasks', 'edit')
     : true;
+  const [canAddTasks, setCanAddTasks] = useState(canEdit);
 
   const [rows, setRows] = useState<ActiveTaskRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -64,6 +65,17 @@ export default function ActiveTaskList() {
   const [reqOptions, setReqOptions] = useState<{ value: string; label: string }[]>([]);
   const [memberOptions, setMemberOptions] = useState<{ value: string; label: string }[]>([]);
 
+  useEffect(() => {
+    if (canEdit || !user?.person_id) {
+      setCanAddTasks(canEdit);
+      return;
+    }
+    api
+      .getList<RequirementRow>('/requirements', { status: 'implementing', scope: 'mine', page: 1, page_size: 200 })
+      .then((res) => setCanAddTasks(res.items.some((r) => r.can_manage_tasks === true && !r.project_id)))
+      .catch(() => setCanAddTasks(false));
+  }, [canEdit, user?.person_id]);
+
   const openAdd = async () => {
     addForm.resetFields();
     setAddOpen(true);
@@ -74,7 +86,7 @@ export default function ActiveTaskList() {
       ]);
       setReqOptions(
         reqs.items
-          .filter((r) => !r.is_example && !r.project_id)  // 转项目的需求由项目侧交付，不在此录任务
+          .filter((r) => !r.is_example && !r.project_id && (canEdit || r.can_manage_tasks === true))  // 转项目的需求由项目侧交付，不在此录任务
           .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
       );
       setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
@@ -276,7 +288,7 @@ export default function ActiveTaskList() {
       width: 100,
       render: (v: RequirementTaskStatus) => <Tag color={REQ_TASK_STATUS_COLORS[v]}>{et.reqTaskStatus(v)}</Tag>,
     },
-    ...(canEdit
+    ...(canEdit || rows.some((row) => row.can_manage_tasks)
       ? [
           {
             title: t('common.actions'),
@@ -285,12 +297,16 @@ export default function ActiveTaskList() {
             fixed: 'right' as const,
             render: (_: unknown, row: ActiveTaskRow) => (
               <span style={{ whiteSpace: 'nowrap' }}>
-                <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => void openEdit(row)}>
-                  {t('common.edit')}
-                </Button>
-                <Button type="link" size="small" danger style={{ paddingInline: 4 }} onClick={() => removeTask(row)}>
-                  {t('common.delete')}
-                </Button>
+                {(canEdit || row.can_manage_tasks) && (
+                  <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => void openEdit(row)}>
+                    {t('common.edit')}
+                  </Button>
+                )}
+                {canEdit && (
+                  <Button type="link" size="small" danger style={{ paddingInline: 4 }} onClick={() => removeTask(row)}>
+                    {t('common.delete')}
+                  </Button>
+                )}
               </span>
             ),
           } as ColumnsType<ActiveTaskRow>[number],
@@ -315,7 +331,7 @@ export default function ActiveTaskList() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
-        {canEdit && (
+        {canAddTasks && (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => void openAdd()}>
             {t('req.activeTask.add')}
           </Button>

@@ -1468,6 +1468,8 @@ export interface ActiveTaskRow {
   quadrant: string | null;
   /** 所属需求加权总分（列表已按其降序返回） */
   weighted_total: number | null;
+  /** 当前用户是否可维护该实现中需求的任务 */
+  can_manage_tasks?: boolean;
 }
 
 /** 需求列表行 */
@@ -1510,6 +1512,8 @@ export interface RequirementRow {
   prd_effort?: number | null;
   /** 开发人天 */
   dev_effort?: number | null;
+  /** 当前用户是否可维护该实现中需求的任务 */
+  can_manage_tasks?: boolean;
   // ---- M16 需求评审分流 ----
   /** 方案类型（中文权威值：二次开发/新购系统；方案评估阶段填写） */
   solution_type: string | null;
@@ -1610,6 +1614,10 @@ export interface RequirementDetail extends RequirementRow {
   process: TicketProcess | null;
   /** 当前用户是否有 requirements.edit 权限 */
   can_edit: boolean;
+  /** 当前用户是否可维护该需求的任务 */
+  can_manage_tasks: boolean;
+  /** 当前用户是否可删除该需求的任务 */
+  can_delete_tasks: boolean;
   /** 可主动/强制关闭（M28）：admin 或需求提出人本人 */
   can_close?: boolean;
 }

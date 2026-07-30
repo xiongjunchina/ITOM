@@ -139,6 +139,20 @@ def _is_requester_only(db: Session, user: AuthUser) -> bool:
     return effective_roles(db, user) == {REQUESTER}
 
 
+def _can_manage_requirement_tasks(db: Session, user: AuthUser, requirement: Requirement) -> bool:
+    """任务维护权：全局任务/需求编辑者，或当前实现中需求的负责人。"""
+    if requirement.is_example or requirement.status != "implementing":
+        return False
+    if has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit"):
+        return True
+    return bool(user.person_id and requirement.owner == user.person_id)
+
+
+def _can_delete_requirement_tasks(db: Session, user: AuthUser) -> bool:
+    """删除仍保持原有管理权限，不因需求负责人身份自动扩大。"""
+    return has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit")
+
+
 def _task_progress(db: Session, requirement_id: str) -> dict:
     tasks = db.query(RequirementTask).filter(
         RequirementTask.requirement_id == requirement_id, RequirementTask.is_deleted.is_(False)
@@ -208,7 +222,14 @@ def list_requirements(
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     cfg = requirement_scoring.get_config(db)
-    return ok([{**_row(r, db, names, domains, status_map, cfg), "pending_step": pend.get(r.id)} for r in items], total=total, page=page)
+    return ok([
+        {
+            **_row(r, db, names, domains, status_map, cfg),
+            "pending_step": pend.get(r.id),
+            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
+        }
+        for r in items
+    ], total=total, page=page)
 
 
 def _current_process_task(db: Session, requirement_id: str):
@@ -569,6 +590,8 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
         "process": process_engine.instance_view(db, "requirement", r.id),
         "can_edit": (not r.is_example) and has_perm(db, user, "requirements", "edit"),
+        "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
+        "can_delete_tasks": _can_delete_requirement_tasks(db, user),
     })
     return ok(detail)
 
@@ -962,6 +985,7 @@ def active_tasks(
                 requirement_scoring.requirement_scores(r), cfg.weights),
             "quadrant": requirement_scoring.compute_quadrant(
                 requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights),
+            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
         }
         for t, r in rows
     ])
@@ -969,19 +993,17 @@ def active_tasks(
 
 # ---------- 实现阶段：任务分解 ----------
 
-def _require_task_perm(db: Session, user: AuthUser):
-    """任务维护权限：需求编辑 或 任务跟踪编辑 任一即可（详情页/任务跟踪页两个入口）。"""
-    from app.services.permissions import has_perm
-
-    if not (has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit")):
-        raise AppError("FORBIDDEN", "无任务维护权限（需 需求管理编辑 或 任务跟踪编辑）", 403)
+def _require_task_perm(db: Session, user: AuthUser, requirement: Requirement | None = None):
+    """任务维护权限：全局编辑者或实现中需求负责人。"""
+    if not requirement or not _can_manage_requirement_tasks(db, user, requirement):
+        raise AppError("FORBIDDEN", "无任务维护权限（需需求/任务编辑权限，或为实现中需求负责人）", 403)
 
 
 @router.post("/{requirement_id}/tasks")
 def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_perm(db, user)
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
+    _require_task_perm(db, user, r)
     from datetime import date as _date
 
     task = RequirementTask(
@@ -1004,16 +1026,15 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    ensure_not_example(db.get(Requirement, task.requirement_id))
+    requirement = db.get(Requirement, task.requirement_id)
+    ensure_not_example(requirement)
     data = body.model_dump(exclude_unset=True)
     if data.get("assignee"):
         require_it_member_if_configured(db, data["assignee"], "需求任务负责人")
     is_assignee = user.person_id and task.assignee == user.person_id
-    from app.services.permissions import has_perm as _hp
-
-    if not (_hp(db, user, "requirements", "edit") or _hp(db, user, "req_tasks", "edit")):
-        if not (is_assignee and set(data) <= {"status"}):
-            raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的状态；其他修改需 需求管理/任务跟踪 编辑权限", 403)
+    can_manage = _can_manage_requirement_tasks(db, user, requirement)
+    if not can_manage and not (is_assignee and set(data) <= {"status", "actual_effort"}):
+        raise AppError("FORBIDDEN", "仅需求负责人可维护任务；任务负责人只能更新自己的状态和实际工时", 403)
     if data.get("status") and data["status"] not in ("待处理", "进行中", "已完成"):
         raise AppError("INVALID_STATUS", "状态必须为 待处理/进行中/已完成")
     if "plan_date" in data and data["plan_date"]:
@@ -1032,7 +1053,8 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
 
 @router.delete("/tasks/{task_id}")
 def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_perm(db, user)
+    if not _can_delete_requirement_tasks(db, user):
+        raise AppError("FORBIDDEN", "无任务删除权限（需 需求管理编辑 或 任务跟踪编辑）", 403)
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)

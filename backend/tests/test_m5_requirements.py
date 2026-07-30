@@ -81,11 +81,13 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 
-    # 任务分解 + 负责人自更新状态
+    # 任务分解 + 负责人自更新状态/实际工时
     t1 = client.post(f"/api/requirements/{rid}/tasks", json={"name": "建模", "assignee": ctx["dev_p"]}, headers=ctx["pdm"]).json()["data"]
     client.post(f"/api/requirements/{rid}/tasks", json={"name": "报表开发", "assignee": ctx["dev_p"]}, headers=ctx["pdm"])
     r1 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"status": "已完成"}, headers=ctx["dev"])
     assert r1.json()["success"], r1.text
+    r_effort = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"actual_effort": 1.5}, headers=ctx["dev"])
+    assert r_effort.json()["success"], r_effort.text
     r2 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"name": "改名"}, headers=ctx["dev"])
     assert r2.status_code == 403  # 负责人只能改状态
 
@@ -104,6 +106,41 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     assert resp.json()["data"]["status"] == "closed"
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
     assert detail["lead_days"] is not None
+
+
+def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers):
+    """转开发后，需求负责人可登记多条任务并修改任务内容；普通任务负责人权限不被扩大。"""
+    r = _register(client, ctx["pdm"], ctx["domain"], title="开发负责人任务维护")
+    rid = r["id"]
+    resp = client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
+        "decision": "通过",
+    }, headers=ctx["pdm"])
+    assert resp.json()["data"]["status"] == "analyzing"
+    client.patch(f"/api/requirements/{rid}", json={
+        "moscow": "M", "owner": ctx["dev_p"], "solution": "开发实现方案",
+    }, headers=ctx["pdm"])
+    resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
+    assert resp.json()["data"]["status"] == "implementing"
+
+    detail = client.get(f"/api/requirements/{rid}", headers=ctx["dev"]).json()["data"]
+    assert detail["can_manage_tasks"] is True
+    first = client.post(f"/api/requirements/{rid}/tasks", json={
+        "name": "接口开发", "assignee": ctx["dev_p"], "plan_effort": 2,
+    }, headers=ctx["dev"])
+    second = client.post(f"/api/requirements/{rid}/tasks", json={
+        "name": "自测与联调", "assignee": ctx["dev_p"], "plan_effort": 1,
+    }, headers=ctx["dev"])
+    assert first.status_code == 200 and second.status_code == 200
+    task_id = first.json()["data"]["id"]
+    updated = client.patch(f"/api/requirements/tasks/{task_id}", json={
+        "name": "接口开发（已调整）", "actual_effort": 2.5,
+    }, headers=ctx["dev"])
+    assert updated.status_code == 200, updated.text
+
+    detail = client.get(f"/api/requirements/{rid}", headers=ctx["dev"]).json()["data"]
+    assert detail["task_total"] == 2
+    assert {task["name"] for task in detail["tasks"]} == {"接口开发（已调整）", "自测与联调"}
 
 
 def test_handover_problem_and_knowledge(client, ctx):
