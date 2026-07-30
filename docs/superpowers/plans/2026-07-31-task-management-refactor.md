@@ -69,21 +69,21 @@
 - Produces permission modules `task_development`, `task_bug`, and `task_delegated`, while retaining `req_tasks`.
 - Produces a versioned `bug_flow` with five steps and approval/processing node semantics.
 
-- [ ] **Step 1: Write failing permission and flow tests**
+- [x] **Step 1: Write failing permission and flow tests**
 
   Cover IT-member visibility, requester denial, administrator management, product-manager confirmation, developer-task execution, and product-manager verification assignment.
 
-- [ ] **Step 2: Run the tests and verify the expected failure**
+- [x] **Step 2: Run the tests and verify the expected failure**
 
   Run: `cd backend && python -m pytest tests/test_m82_task_management_permissions.py tests/test_m82_bug_flow_definition.py -q`
 
-- [ ] **Step 3: Implement permission defaults and idempotent workflow seeding**
+- [x] **Step 3: Implement permission defaults and idempotent workflow seeding**
 
   Ensure an existing administrator-edited permission row is not overwritten. Use a new process-definition version instead of mutating an active definition used by historical instances.
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
+- [x] **Step 4: Run the focused tests and verify they pass**
 
-- [ ] **Step 5: Commit the permission and workflow slice**
+- [x] **Step 5: Commit the permission and workflow slice**
 
   Commit with `feat(task): add task permissions and bug workflow`.
 

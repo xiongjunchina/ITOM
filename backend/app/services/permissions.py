@@ -33,6 +33,9 @@ MODULES = [
     ("requirements", "需求总览（登记/评审/方案）", "需求管理"),
     ("req_tasks", "任务跟踪", "需求管理"),
     ("req_scoring", "评分规则", "需求管理"),
+    ("task_development", "开发任务", "任务管理"),
+    ("task_bug", "Bug 修复", "任务管理"),
+    ("task_delegated", "委派任务", "任务管理"),
     ("process_definitions", "流程定义", "流程中心"),
     ("process_monitor", "流程监控", "流程中心"),
     ("team_overview", "团队总览", "团队管理"),
@@ -88,13 +91,16 @@ _BUSINESS_VIEW = [
     "dashboard", "ticket_sr", "ticket_incident", "ticket_change", "catalog", "cmdb", "sla",
     "problems", "vendors", "contracts", "knowledge", "projects", "requirements",
     "req_tasks", "req_scoring", "team_overview", "activities", "ideas", "charter",
+    "task_development", "task_bug", "task_delegated",
 ]
 
 def _staff_base() -> dict[str, str]:
     matrix = {m: "v" for m in _BUSINESS_VIEW}
     matrix.update({"ticket_sr": "vce", "ticket_incident": "vce", "ticket_change": "vce",
                    "knowledge": "vce", "requirements": "vc", "performance_result": "v",
-    "activities": "vc", "learning_growth": "vced", "ideas": "vc"})
+    "activities": "vc", "learning_growth": "vced", "ideas": "vc",
+    # IT 团队成员均可登记 Bug/委派任务；具体编辑、分派和删除仍由业务服务按数据范围控制。
+    "task_bug": "vc", "task_delegated": "vc"})
     return matrix
 
 
@@ -115,9 +121,12 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     ),
     "it_dev": _staff_base(),
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
-    "it_pdm": _merge(_staff_base(), {"requirements": "e"}),
-    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v", "performance_review": "vce"}),
-    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "process_monitor": "v", "performance_review": "vce"}),
+    "it_pdm": _merge(_staff_base(), {"requirements": "e", "task_bug": "vce"}),
+    "it_pdm_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "task_bug": "vce",
+                                             "process_monitor": "v", "performance_review": "vce"}),
+    "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "task_development": "vce",
+                                             "task_bug": "vce", "task_delegated": "vce",
+                                             "process_monitor": "v", "performance_review": "vce"}),
     "it_pm": _merge(_staff_base(), {"projects": "ce"}),
     "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),

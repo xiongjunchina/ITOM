@@ -225,6 +225,19 @@ PROCESS_DEFS = [
         ],
     },
     {
+        # M82：Bug 修复独立于需求开发，产品经理确认后由开发负责人生成/分派修复任务，
+        # 所属系统产品经理最终验证关闭。产品经理节点由 Bug 的产品经理快照动态指派。
+        "code": "bug_flow", "name": "Bug 修复流程", "entity_type": "bug",
+        "trigger": None,
+        "steps": [
+            ("登记 Bug", None, "L3", None),
+            ("Bug 确认", None, "L3", 24, [], "由 Bug 所属系统的产品经理确认是否为有效 Bug；驳回必须登记原因", "approval"),
+            ("生成修复任务", IT_DEV_LEADER, "L3", 24, [], "开发负责人拆分并分派一个或多个修复任务"),
+            ("开发修复", IT_DEV_LEADER, "L3", None, [], "由指派的开发人员完成全部修复任务后进入产品经理验证"),
+            ("验证关闭", None, "L3", 24, [], "由 Bug 所属系统的产品经理验证修复结果并关闭或退回", "approval"),
+        ],
+    },
+    {
         "code": "project_flow", "name": "项目关键节点流程", "entity_type": "project",
         "trigger": None,
         "steps": [
