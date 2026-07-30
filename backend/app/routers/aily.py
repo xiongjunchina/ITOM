@@ -33,6 +33,11 @@ class AilyConfigIn(BaseModel):
     bot_app_secret: str | None = Field(default=None, max_length=512)
     api_base: str | None = Field(default=None, max_length=100)
     message_enabled: bool | None = None
+    card_action_skill_id: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^skill_[A-Za-z0-9_-]+$",
+    )
 
 
 class ExternalIdentityIn(BaseModel):
@@ -98,6 +103,14 @@ def _config_payload(cfg) -> dict:
         "has_bot_app_secret": bool(cfg.bot_app_secret_encrypted),
         "api_base": cfg.api_base,
         "message_enabled": cfg.message_enabled,
+        "card_action_skill_id": cfg.card_action_skill_id,
+        "interactive_cards_ready": bool(
+            cfg.enabled
+            and cfg.message_enabled
+            and cfg.bot_app_id
+            and cfg.bot_app_secret_encrypted
+            and cfg.card_action_skill_id
+        ),
         "last_test_at": cfg.last_test_at,
         "last_test_status": cfg.last_test_status,
         "last_error_redacted": cfg.last_error_redacted,

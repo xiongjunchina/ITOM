@@ -88,7 +88,7 @@ entity_type, entity_id, action, actor, summary JSONB (before/after values of cha
 
 ### 1.7 notification_outbox — notification outbox
 
-event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient_type/id, unique idempotency_key, attempt_count, next_attempt_at, provider_message_id, redacted last error, sent_at. In-app and Aily-bot messages share this reliable outbox.
+event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient type/ID, unique idempotency key, attempt count, next attempt, provider message ID, redacted last error, and sent time. `feishu_aily` payloads are either the legacy-compatible `{text}` form or `{message_type: interactive, card, fallback_text}`. Card callbacks carry only public ticket codes, actions, scores, and idempotency keys—never secrets, JWTs, internal primary keys, or sensitive payloads.
 
 ### 1.8 in_app_notification — in-app notification
 
@@ -104,7 +104,7 @@ provider, tenant_id, app_id, subject type (open_id/user_id/union_id), subject ID
 
 ### 1.11 aily_integration_config [cfg][implemented in P0]
 
-Singleton: enabled, mcp_auth_mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, message enabled, last test status/time, and redacted error. Read APIs expose configured flags only, never plaintext or ciphertext.
+Singleton: enabled, MCP auth mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, message enabled, `card_action_skill_id`, last test status/time, and redacted error. The card field accepts an enabled Aily card-action Skill `skill_*` identifier; when absent, proactive delivery stays text-only. Read APIs expose configured flags only, never plaintext or ciphertext.
 
 ### 1.12 mcp_tool_call [audit][implemented in P0]
 

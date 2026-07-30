@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 has separately passed the real-Aily multi-role conversational loop and bot-receipt checks; a normal-user same-ticket end-to-end run and P3 remain pending. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. The P2.1 server-side interactive-card contract is implemented; the card-action Skill is uploaded, enabled, and configured in local ITOM, while agent publication and live-button UAT remain. P3 is not implemented. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -164,7 +164,9 @@ V1 does not provide incident/change creation, arbitrary transitions, reassignmen
 
 #### Proactive messaging
 
-MCP cannot wake Aily on a background transition. First acceptance, resolution, reopen, closure, and rating-save events write `notification_outbox(channel=feishu_aily)`; a worker sends through the Aily bot, and replies return through Aily and MCP. Delivery uses event idempotency, retry/backoff, and redacted errors. Disabled/incomplete bot configuration preserves pending rows without consuming attempts. The most recently used active Feishu identity is selected; internal notes, root cause, approval details, and sensitive fields never leave ITOM.
+MCP cannot wake Aily on a background transition. First acceptance, resolution, reopen, closure, and rating-save events write `notification_outbox(channel=feishu_aily)` and a worker sends through the Aily bot. When `aily_integration_config.card_action_skill_id` contains an enabled Aily card-action Skill `skill_*`, resolution/deadline reminders are interactive close/reopen cards and closure notifications are 1–5-star cards; otherwise delivery remains text-compatible. Card actions follow Feishu's `x_aily_forbid_forward_callback=true`, `aily_action=trigger_skill`, `skill_id`, JSON-string `skill_input`, and per-action `update_card` contract. Buttons never call an ITOM API or database directly: they invoke the Aily Skill, which calls `confirm_service_request_resolution` or `rate_service_request` as the clicking user, preserving MCP/ITOM own-record, state, and idempotency enforcement. Delivery uses event idempotency, retry/backoff, and redacted errors. Disabled/incomplete bot configuration preserves pending rows without consuming attempts. The most recently used active Feishu identity is selected; internal notes, root cause, approval details, and sensitive fields never leave ITOM.
+
+Administrators maintain the Skill ID through `GET/PUT /api/admin/integrations/aily`. The response adds `interactive_cards_ready`, true only when bot credentials, message enablement, and the Skill ID are all ready. Startup migration idempotently adds the configuration column to existing PostgreSQL databases; no business table is added.
 
 All `/api/integrations/feishu/helpdesk/*` routes, subscriptions, handoffs, queues, and Helpdesk-specific outbox have been removed from the new runtime. Existing PostgreSQL structures are previewed by `python -m app.scripts.migrate_aily_mcp` and are permanently removed only with explicit `--confirm`.
 

@@ -10,7 +10,8 @@ from app.db import SessionLocal
 from app.mcp.identity import resolve_aily_principal
 from app.models import ExternalIdentity, McpToolCall, NotificationOutbox
 from app.scripts.migrate_aily_mcp import render_plan
-from app.services.aily import queue_aily_text
+from app.services.aily import deliver_aily_outbox_row, queue_aily_card, queue_aily_text
+from app.services.aily_cards import build_rating_card, build_resolution_confirmation_card
 from app.services.feishu import FeishuClient
 
 
@@ -113,6 +114,17 @@ def test_config_never_returns_secrets(client, admin_headers):
     assert data["has_mcp_jwt_secret"] is True
     assert data["mcp_tool_calls_ready"] is True
     assert JWT_SECRET not in str(data)
+
+    response = client.put("/api/admin/integrations/aily", json={
+        "card_action_skill_id": "skill_itom_closure_p0",
+    }, headers=admin_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["card_action_skill_id"] == "skill_itom_closure_p0"
+    assert response.json()["data"]["interactive_cards_ready"] is False
+    invalid = client.put("/api/admin/integrations/aily", json={
+        "card_action_skill_id": "agent_not_a_skill",
+    }, headers=admin_headers)
+    assert invalid.status_code == 422
 
 
 def test_verified_but_unapproved_aily_identity_is_recorded_pending(client, admin_headers):
@@ -255,6 +267,65 @@ def test_bot_message_is_reliable_and_idempotent(client, admin_headers, aily_read
         assert db.query(NotificationOutbox).filter(
             NotificationOutbox.idempotency_key == "p0-fixed-idempotency-key"
         ).count() == 1
+
+
+def test_interactive_card_outbox_and_aily_skill_contract(client, admin_headers, monkeypatch):
+    config = client.put("/api/admin/integrations/aily", json={
+        "enabled": True,
+        "bot_app_id": "cli_bot_p0",
+        "bot_app_secret": BOT_SECRET,
+        "message_enabled": True,
+        "card_action_skill_id": "skill_itom_closure_p0",
+    }, headers=admin_headers)
+    assert config.status_code == 200, config.text
+    assert config.json()["data"]["interactive_cards_ready"] is True
+    resolved_card = build_resolution_confirmation_card(
+        skill_id="skill_itom_closure_p0",
+        ticket_code="TK-P0-CARD",
+        title="交互卡片验证",
+        solution="已恢复服务",
+        confirmation_due_at="2026-07-31 12:00",
+        reopen_count=1,
+    )
+    rating_card = build_rating_card(
+        skill_id="skill_itom_closure_p0",
+        ticket_code="TK-P0-CARD",
+        title="交互卡片验证",
+    )
+    confirm_actions = resolved_card["elements"][1]["actions"]
+    assert len(confirm_actions) == 2
+    assert confirm_actions[0]["value"]["aily_action"] == "trigger_skill"
+    assert confirm_actions[0]["value"]["x_aily_forbid_forward_callback"] is True
+    assert '"operation":"confirm_resolved"' in confirm_actions[0]["value"]["skill_input"]
+    assert '"operation":"reopen"' in confirm_actions[1]["value"]["skill_input"]
+    assert confirm_actions[1]["value"]["update_card"] is False
+    assert len(rating_card["elements"][1]["actions"]) == 5
+    assert '"score":5' in rating_card["elements"][1]["actions"][4]["value"]["skill_input"]
+
+    calls = []
+    monkeypatch.setattr(
+        FeishuClient,
+        "send_interactive_card",
+        lambda self, recipient_id, recipient_type, card: calls.append(
+            (recipient_id, recipient_type, card)
+        ) or "om_card_p0",
+    )
+    with SessionLocal() as db:
+        row = queue_aily_card(
+            db,
+            recipient_type="open_id",
+            recipient_id=SUBJECT_ID,
+            card=resolved_card,
+            fallback_text="交互卡片回退文本",
+            idempotency_key="p0-card-idempotency-key",
+            event_type="ticket.resolved",
+        )
+        deliver_aily_outbox_row(db, row)
+        db.commit()
+        assert row.status == "sent"
+        assert row.provider_message_id == "om_card_p0"
+        assert row.payload["message_type"] == "interactive"
+    assert calls == [(SUBJECT_ID, "open_id", resolved_card)]
 
 
 def test_cleanup_is_preview_only_without_confirm():

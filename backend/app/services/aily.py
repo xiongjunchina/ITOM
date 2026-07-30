@@ -1,5 +1,6 @@
 """Aily MCP 配置与机器人可靠消息服务。"""
 from datetime import datetime, timedelta
+import json
 import logging
 
 from sqlalchemy.orm import Session
@@ -86,6 +87,59 @@ def queue_aily_text(
     return row
 
 
+def queue_aily_card(
+    db: Session,
+    *,
+    recipient_type: str,
+    recipient_id: str,
+    card: dict,
+    fallback_text: str,
+    idempotency_key: str,
+    event_type: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> NotificationOutbox:
+    """幂等写入 Aily 交互卡片发件箱。"""
+    recipient_type = recipient_type.strip()
+    recipient_id = recipient_id.strip()
+    fallback_text = fallback_text.strip()
+    if recipient_type not in {"open_id", "user_id", "union_id"}:
+        raise AppError("AILY_RECIPIENT_TYPE_INVALID", "飞书接收人标识类型无效", 422)
+    if not recipient_id or not fallback_text or not idempotency_key.strip():
+        raise AppError("AILY_MESSAGE_INVALID", "Aily 卡片缺少接收人、回退文本或幂等键", 422)
+    if not isinstance(card, dict) or not card.get("header") or not card.get("elements"):
+        raise AppError("AILY_CARD_INVALID", "Aily 交互卡片结构无效", 422)
+    if len(json.dumps(card, ensure_ascii=False)) > 30000:
+        raise AppError("AILY_CARD_TOO_LARGE", "Aily 交互卡片内容过大", 422)
+    existing = (
+        db.query(NotificationOutbox)
+        .filter(NotificationOutbox.idempotency_key == idempotency_key)
+        .first()
+    )
+    if existing:
+        return existing
+    row = NotificationOutbox(
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        payload={
+            "message_type": "interactive",
+            "card": card,
+            "fallback_text": fallback_text,
+        },
+        channel="feishu_aily",
+        status="pending",
+        recipient_type=recipient_type,
+        recipient_id=recipient_id,
+        idempotency_key=idempotency_key,
+        attempt_count=0,
+        next_attempt_at=datetime.now(),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def _redacted_error(exc: Exception) -> str:
     if isinstance(exc, AppError):
         return f"{exc.code}: {exc.message}"[:500]
@@ -107,11 +161,19 @@ def deliver_aily_outbox_row(db: Session, row: NotificationOutbox) -> Notificatio
     try:
         cfg = get_aily_config(db)
         client = build_aily_bot_client(cfg)
-        message_id = client.send_app_text(
-            row.recipient_id or "",
-            row.recipient_type or "open_id",
-            str((row.payload or {}).get("text") or ""),
-        )
+        payload = row.payload or {}
+        if payload.get("message_type") == "interactive":
+            message_id = client.send_interactive_card(
+                row.recipient_id or "",
+                row.recipient_type or "open_id",
+                payload.get("card") or {},
+            )
+        else:
+            message_id = client.send_app_text(
+                row.recipient_id or "",
+                row.recipient_type or "open_id",
+                str(payload.get("text") or ""),
+            )
     except Exception as exc:
         row.status = "failed"
         row.last_error_redacted = _redacted_error(exc)

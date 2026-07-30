@@ -5,7 +5,8 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models import AilyIntegrationConfig, ExternalIdentity, Ticket
-from app.services.aily import queue_aily_text
+from app.services.aily import queue_aily_card, queue_aily_text
+from app.services.aily_cards import build_rating_card, build_resolution_confirmation_card
 
 
 _REGISTERED = False
@@ -41,6 +42,7 @@ def _queue(
     ticket_id: str,
     text: str,
     idempotency_suffix: str,
+    card: dict | None = None,
 ) -> None:
     ticket = db.get(Ticket, ticket_id)
     if not ticket or ticket.is_deleted or ticket.is_example or ticket.ticket_type != "service_request":
@@ -53,15 +55,38 @@ def _queue(
     identity = _recipient_identity(db, ticket, cfg)
     if not identity:
         return
-    queue_aily_text(
-        db,
-        recipient_type=identity.subject_type,
-        recipient_id=identity.subject_id,
-        text=text,
-        idempotency_key=f"aily:ticket:{ticket.id}:{idempotency_suffix}",
-        event_type=event_type,
-        entity_type="ticket",
-        entity_id=ticket.id,
+    common = {
+        "recipient_type": identity.subject_type,
+        "recipient_id": identity.subject_id,
+        "idempotency_key": f"aily:ticket:{ticket.id}:{idempotency_suffix}",
+        "event_type": event_type,
+        "entity_type": "ticket",
+        "entity_id": ticket.id,
+    }
+    if card:
+        queue_aily_card(db, card=card, fallback_text=text, **common)
+    else:
+        queue_aily_text(db, text=text, **common)
+
+
+def _resolution_card(
+    ticket: Ticket,
+    cfg: AilyIntegrationConfig | None,
+    solution: str,
+) -> dict | None:
+    if not cfg or not cfg.card_action_skill_id:
+        return None
+    return build_resolution_confirmation_card(
+        skill_id=cfg.card_action_skill_id,
+        ticket_code=ticket.ticket_code,
+        title=ticket.title,
+        solution=solution,
+        confirmation_due_at=(
+            ticket.confirmation_due_at.strftime("%Y-%m-%d %H:%M")
+            if ticket.confirmation_due_at
+            else None
+        ),
+        reopen_count=ticket.reopen_count or 0,
     )
 
 
@@ -71,6 +96,11 @@ def scan_pending_confirmation_reminders() -> None:
 
     now = datetime.now()
     with SessionLocal() as db:
+        cfg = (
+            db.query(AilyIntegrationConfig)
+            .filter(AilyIntegrationConfig.is_deleted.is_(False))
+            .first()
+        )
         rows = (
             db.query(Ticket)
             .filter(
@@ -101,6 +131,11 @@ def scan_pending_confirmation_reminders() -> None:
                     f"请在 {due_text} 前确认是否已经解决；如仍未解决，请说明情况以便重新处理。"
                 ),
                 f"confirmation-reminder:{ticket.reopen_count or 0}",
+                card=_resolution_card(
+                    ticket,
+                    cfg,
+                    str(ticket.solution or "详见服务请求处理记录").strip()[:300],
+                ),
             )
         db.commit()
 
@@ -133,15 +168,22 @@ def register_subscribers() -> None:
         if not ticket:
             return
         solution = str(ticket.solution or "详见服务请求处理记录").strip()[:300]
+        text = (
+            f"服务请求待您确认：{ticket.ticket_code} {ticket.title}。"
+            f"解决说明：{solution}。请在 Aily 中明确回复是否已经解决。"
+        )
+        cfg = (
+            db.query(AilyIntegrationConfig)
+            .filter(AilyIntegrationConfig.is_deleted.is_(False))
+            .first()
+        )
         _queue(
             db,
             event_type,
             entity_id,
-            (
-                f"服务请求待您确认：{ticket.ticket_code} {ticket.title}。"
-                f"解决说明：{solution}。请在 Aily 中明确回复是否已经解决。"
-            ),
+            text,
             f"resolved:{ticket.reopen_count or 0}",
+            card=_resolution_card(ticket, cfg, solution),
         )
 
     @subscribe("ticket.reopened")
@@ -162,12 +204,26 @@ def register_subscribers() -> None:
         ticket = db.get(Ticket, entity_id)
         if not ticket:
             return
+        text = f"服务请求已关闭：{ticket.ticket_code} {ticket.title}。请对本次 IT 服务进行 1-5 星评价。"
+        cfg = (
+            db.query(AilyIntegrationConfig)
+            .filter(AilyIntegrationConfig.is_deleted.is_(False))
+            .first()
+        )
+        card = None
+        if cfg and cfg.card_action_skill_id:
+            card = build_rating_card(
+                skill_id=cfg.card_action_skill_id,
+                ticket_code=ticket.ticket_code,
+                title=ticket.title,
+            )
         _queue(
             db,
             event_type,
             entity_id,
-            f"服务请求已关闭：{ticket.ticket_code} {ticket.title}。请对本次 IT 服务进行 1-5 星评价。",
+            text,
             "closed",
+            card=card,
         )
 
     @subscribe("ticket.satisfaction_saved")

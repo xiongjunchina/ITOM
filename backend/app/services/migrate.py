@@ -111,6 +111,9 @@ ENSURE_COLUMNS = {
         ("provider_message_id", "VARCHAR(128)"),
         ("last_error_redacted", "TEXT"),
     ],
+    "aily_integration_config": [
+        ("card_action_skill_id", "VARCHAR(128)"),
+    ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         ("owner_id", "VARCHAR(26)"),

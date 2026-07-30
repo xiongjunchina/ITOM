@@ -91,6 +91,7 @@ export default function FeishuIntegration() {
   const [botAppId, setBotAppId] = useState('');
   const [botAppSecret, setBotAppSecret] = useState('');
   const [messageEnabled, setMessageEnabled] = useState(false);
+  const [cardActionSkillId, setCardActionSkillId] = useState('');
   const [identities, setIdentities] = useState<AilyExternalIdentity[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [identityOpen, setIdentityOpen] = useState(false);
@@ -111,6 +112,7 @@ export default function FeishuIntegration() {
     setOrigins(value.allowed_origins.join('\n'));
     setBotAppId(value.bot_app_id || '');
     setMessageEnabled(value.message_enabled);
+    setCardActionSkillId(value.card_action_skill_id || '');
     setJwtSecret('');
     setBotAppSecret('');
   };
@@ -210,6 +212,7 @@ export default function FeishuIntegration() {
         bot_app_id: botAppId.trim() || null,
         api_base: DEFAULT_API_BASE,
         message_enabled: messageEnabled,
+        card_action_skill_id: cardActionSkillId.trim() || null,
       };
       if (jwtSecret.trim()) body.mcp_jwt_secret = jwtSecret.trim();
       if (botAppSecret.trim()) body.bot_app_secret = botAppSecret.trim();
@@ -374,6 +377,18 @@ export default function FeishuIntegration() {
           <Input value={botAppId} disabled={disabled} placeholder="Bot App ID" onChange={(event) => setBotAppId(event.target.value)} />
           <Input.Password value={botAppSecret} disabled={disabled} placeholder={ailyConfig?.has_bot_app_secret ? 'Bot App Secret 已配置，留空表示不修改' : 'Bot App Secret'} onChange={(event) => setBotAppSecret(event.target.value)} autoComplete="new-password" />
           <Space><Switch checked={messageEnabled} disabled={disabled} onChange={setMessageEnabled} /><Typography.Text>启用主动消息</Typography.Text></Space>
+          <Typography.Text>Aily 卡片动作 Skill ID</Typography.Text>
+          <Input
+            value={cardActionSkillId}
+            disabled={disabled}
+            placeholder="skill_xxx；留空时继续发送纯文本通知"
+            onChange={(event) => setCardActionSkillId(event.target.value)}
+          />
+          <Typography.Text type={ailyConfig?.interactive_cards_ready ? 'success' : 'secondary'}>
+            {ailyConfig?.interactive_cards_ready
+              ? '交互卡片已就绪：解决确认与星级评价将使用按钮。'
+              : '交互卡片未就绪：需先在 Aily 上传并启用卡片动作技能，再填写其 Skill ID。'}
+          </Typography.Text>
           <Space.Compact style={{ width: '100%' }}>
             <Select
               style={{ flex: 1 }}

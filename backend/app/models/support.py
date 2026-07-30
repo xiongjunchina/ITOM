@@ -364,6 +364,7 @@ class AilyIntegrationConfig(GlidBase):
     bot_app_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     api_base: Mapped[str] = mapped_column(String(100), default="https://open.feishu.cn")
     message_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    card_action_skill_id: Mapped[str | None] = mapped_column(String(128))
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_test_status: Mapped[str | None] = mapped_column(String(16))
     last_error_redacted: Mapped[str | None] = mapped_column(Text)

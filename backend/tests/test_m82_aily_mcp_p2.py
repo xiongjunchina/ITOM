@@ -3,7 +3,14 @@
 from datetime import datetime, timedelta
 
 from app.db import SessionLocal
-from app.models import NotificationOutbox, ProcessInstance, ProcessTask, Ticket, TicketSatisfaction
+from app.models import (
+    AilyIntegrationConfig,
+    NotificationOutbox,
+    ProcessInstance,
+    ProcessTask,
+    Ticket,
+    TicketSatisfaction,
+)
 from app.services import process_engine
 from app.services.aily_ticket_notifications import scan_pending_confirmation_reminders
 
@@ -76,6 +83,12 @@ def test_p2_tool_discovery_is_narrow_and_user_scoped(client, p1):
 
 
 def test_p2_service_request_reopen_confirm_rate_and_outbox(client, p1):
+    with SessionLocal() as db:
+        cfg = db.query(AilyIntegrationConfig).filter(
+            AilyIntegrationConfig.is_deleted.is_(False)
+        ).one()
+        cfg.card_action_skill_id = "skill_itom_closure_p2"
+        db.commit()
     ticket_code = _create_request(client, p1, "p2-closure-001")
 
     _complete_current_task(client, p1, ticket_code, "已受理，开始排查证书")
@@ -287,6 +300,16 @@ def test_p2_service_request_reopen_confirm_rate_and_outbox(client, p1):
         serialized = str([row.payload for row in outbox])
         assert "root_cause" not in serialized
         assert "用户反馈仍未解决" not in serialized
+        resolved_rows = [row for row in outbox if row.event_type == "ticket.resolved"]
+        assert all(row.payload.get("message_type") == "interactive" for row in resolved_rows)
+        first_buttons = resolved_rows[0].payload["card"]["elements"][1]["actions"]
+        assert first_buttons[0]["value"]["skill_id"] == "skill_itom_closure_p2"
+        assert '"operation":"confirm_resolved"' in first_buttons[0]["value"]["skill_input"]
+        closed_row = next(row for row in outbox if row.event_type == "ticket.closed")
+        assert closed_row.payload.get("message_type") == "interactive"
+        assert len(closed_row.payload["card"]["elements"][1]["actions"]) == 5
+        reminder = next(row for row in outbox if row.event_type == "ticket.confirmation_reminder")
+        assert reminder.payload.get("message_type") == "interactive"
 
 
 def test_web_requester_confirmation_uses_same_reopen_and_close_semantics(client, p1, admin_headers):

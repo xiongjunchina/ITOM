@@ -176,6 +176,8 @@ export interface AilyConfig {
   has_bot_app_secret: boolean;
   api_base: string;
   message_enabled: boolean;
+  card_action_skill_id: string | null;
+  interactive_cards_ready: boolean;
   last_test_at: string | null;
   last_test_status: string | null;
   last_error_redacted: string | null;

@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已分别通过真实 Aily 多角色对话闭环与机器人收件验证，普通用户同单端到端验收及 P3 仍待完成。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 交互卡片服务端契约已实现，卡片动作 Skill 已上传、启用并回填本地 ITOM；智能体发布与真实按钮 UAT 待完成。P3 尚未实现。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -162,7 +162,9 @@ list_my_it_requirements
 
 #### 主动消息
 
-MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过 Aily 机器人应用发送消息；用户回复后由 Aily 调 MCP 完成确认/重开和评价。发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。
+MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过 Aily 机器人应用发送消息。`aily_integration_config.card_action_skill_id` 配置为已启用的 Aily 卡片动作 Skill `skill_*` 后，解决/确认期限提醒发送交互卡片（已解决并关闭、仍未解决），关单发送 1–5 星评价卡片；未配置时发送兼容纯文本。卡片 action 按飞书官方约定使用 `x_aily_forbid_forward_callback=true`、`aily_action=trigger_skill`、`skill_id`、JSON 字符串 `skill_input` 和按动作设置的 `update_card`。按钮不直接调用 ITOM API 或数据库，只唤起 Aily Skill；该 Skill 使用当前点击用户身份调用 `confirm_service_request_resolution` / `rate_service_request`，因此本人范围、状态校验和幂等仍由 MCP 与 ITOM 领域服务执行。发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。
+
+管理员通过 `GET/PUT /api/admin/integrations/aily` 读取/维护该 Skill ID；响应增加 `interactive_cards_ready`，仅在机器人凭据、消息开关和 Skill ID 同时就绪时为真。存量 PostgreSQL 由启动迁移为 `aily_integration_config` 幂等补列，不新增业务表。
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 

@@ -163,14 +163,14 @@ const ZH_SECTIONS: ManualSection[] = [
       '组织管理维护部门树、人员主数据和业务服务域；数字化团队范围可组合部门与指定人员，并决定人员下拉和绩效对象。',
       '用户与组管理维护账号、角色、用户组、登录开通和初始密码。',
       '角色与权限按模块设置查看/新建/编辑/删除；admin 隐式全权，auditor 只读。',
-      '系统集成统一配置飞书登录/组织同步、SMTP 和 AD/LDAP；Aily 通过独立 MCP Server 调用 ITOM 业务能力，不再经过飞书服务台。',
+      '系统集成统一配置飞书登录/组织同步、SMTP 和 AD/LDAP；Aily 通过独立 MCP Server 调用 ITOM 业务能力，不再经过飞书服务台。配置已启用的卡片动作 Skill ID 后，解决确认和星级评价通知可显示按钮，按钮业务动作仍经 MCP 校验。',
       '审计日志记录用户、权限、流程、绩效、外部原数据和品牌发布等关键操作。',
     ],
     steps: [
       '组织管理：同步组织架构后，选择数字化团队部门及需要额外纳入的具体人员；再创建业务服务域并选择服务部门。',
       '用户与组：关联人员、配置角色/用户组并审批飞书登录申请。',
       '角色与权限：维护角色定义、预分配规则和模块动作权限。',
-      '系统集成：分别保存飞书登录/组织同步、SMTP、AD/LDAP 配置并执行连接测试；Aily MCP 的公网地址和身份参数由部署配置维护。',
+      '系统集成：分别保存飞书登录/组织同步、SMTP、AD/LDAP 配置并执行连接测试；维护 Aily MCP 公网地址、身份参数、机器人凭据和已启用的卡片动作 Skill ID。',
       '界面与品牌：上传并裁剪 Logo，配置名称、主题、侧栏、公告和默认首页。',
       '审计日志：按实体、动作、操作人和时间检索变更。',
     ],
@@ -229,8 +229,8 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'admin', title: 'System administration', summary: 'Organization, users, permissions, dictionaries, integrations, branding, and audit.',
-    logic: ['Organization scope controls every operational person selector.', 'Users/groups manage accounts, roles, resource pools, provisioning, and initial passwords.', 'System Integrations groups Feishu sign-in/organization sync, SMTP, and AD/LDAP; Aily uses the separate MCP Server instead of Feishu Helpdesk.', 'Branding controls login and post-login visual settings; audit records important changes.'],
-    steps: ['Sync organization data, select digital-team departments, and add any individually included people.', 'Manage users/groups and approve Feishu provisioning.', 'Maintain roles, provisioning rules, and module actions.', 'Save/test Feishu sign-in/sync, SMTP, and AD/LDAP settings; maintain Aily MCP public endpoint and identity parameters in deployment configuration.', 'Configure names, logos, theme, sidebar, announcements, and landing pages.', 'Search audit logs.'],
+    logic: ['Organization scope controls every operational person selector.', 'Users/groups manage accounts, roles, resource pools, provisioning, and initial passwords.', 'System Integrations groups Feishu sign-in/organization sync, SMTP, and AD/LDAP; Aily uses the separate MCP Server instead of Feishu Helpdesk. An enabled card-action Skill ID enables close/reopen and rating buttons while all mutations remain MCP-validated.', 'Branding controls login and post-login visual settings; audit records important changes.'],
+    steps: ['Sync organization data, select digital-team departments, and add any individually included people.', 'Manage users/groups and approve Feishu provisioning.', 'Maintain roles, provisioning rules, and module actions.', 'Save/test Feishu sign-in/sync, SMTP, and AD/LDAP settings; maintain the Aily MCP public endpoint, identity parameters, bot credentials, and enabled card-action Skill ID.', 'Configure names, logos, theme, sidebar, announcements, and landing pages.', 'Search audit logs.'],
     role: 'Most system pages are admin-only; other access follows the permission matrix.',
   },
   {
