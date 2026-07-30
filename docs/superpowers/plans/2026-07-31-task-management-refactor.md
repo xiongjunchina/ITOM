@@ -33,25 +33,25 @@
 - Produces SQLAlchemy models and startup migration columns used by later API tasks.
 - New status values are persisted as Chinese UI states with stable English entity/process codes where the existing module uses codes.
 
-- [ ] **Step 1: Write failing model/migration tests**
+- [x] **Step 1: Write failing model/migration tests**
 
   Assert that the new tables are created in the test metadata, `ci.product_manager_id` is nullable, and the existing `requirement_task` rows remain queryable after migration setup.
 
-- [ ] **Step 2: Run the focused tests and verify the expected failure**
+- [x] **Step 2: Run the focused tests and verify the expected failure**
 
   Run: `cd backend && python -m pytest tests/test_m82_task_management_models.py -q`
 
   Expected: failure because the new models and migration column do not exist.
 
-- [ ] **Step 3: Implement the additive model and migration definitions**
+- [x] **Step 3: Implement the additive model and migration definitions**
 
   Add only new tables and nullable columns. Do not add a delete operation, data rewrite, or destructive column migration.
 
-- [ ] **Step 4: Run the focused tests and verify they pass**
+- [x] **Step 4: Run the focused tests and verify they pass**
 
   Run: `cd backend && python -m pytest tests/test_m82_task_management_models.py -q`
 
-- [ ] **Step 5: Update model documentation and commit**
+- [x] **Step 5: Update model documentation and commit**
 
   Document fields, soft-delete behavior, historical snapshot fields, and compatibility guarantees in both language versions, then commit with `feat(task): add compatible task domain models`.
 

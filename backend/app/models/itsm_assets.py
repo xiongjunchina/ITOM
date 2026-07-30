@@ -48,6 +48,9 @@ class Ci(GlidBase):
     category: Mapped[str] = mapped_column(String(32), index=True, comment="应用/服务器/云资源/网络/安全/协作/终端/基础设施/咨询")
     status: Mapped[str] = mapped_column(String(16), default="运行中", comment="运行中/维护中/已下线")
     owner: Mapped[str] = mapped_column(ForeignKey("org_member.id"))
+    product_manager_id: Mapped[str | None] = mapped_column(
+        ForeignKey("org_member.id"), comment="应用系统产品经理，可被 Bug 登记时快照"
+    )
     environment: Mapped[str | None] = mapped_column(String(16), comment="生产/测试/开发")
     business_owner: Mapped[str | None] = mapped_column(String(64))
     vendor_id: Mapped[str | None] = mapped_column(ForeignKey("vendor.id"))

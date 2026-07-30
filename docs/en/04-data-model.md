@@ -196,6 +196,8 @@ problem_id + ticket_id, UNIQUE composite. Supports "multiple tickets with the sa
 | description / launch_date / remarks | | |
 | attrs | JSONB | Category-specific attributes (attribute names defined by master_data per category) |
 
+`product_manager_id` FK is optional and identifies the product manager of an application system. Bug registration snapshots this person; later CI product-manager changes do not rewrite historical Bugs.
+
 ### 2.7 ci_relationship
 
 source_ci_id, target_ci_id, relation_type (runs-on / depends-on / connects-to), UNIQUE(source, target, type).
@@ -257,7 +259,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ---
 
-## 4. Requirement Domain (2 tables)
+## 4. Requirement and task domain (5 tables)
 
 ### 4.1 requirement — requirement
 
@@ -273,6 +275,20 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 ### 4.2 requirement_task — requirement task
 
 `requirement_id` FK, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C]. A requirement may have multiple task rows. Tasks continue to use `GlidBase.is_deleted` soft deletion; this permission fix does not rebuild, overwrite, or migrate existing records.
+
+### 4.3 bug — defect record
+
+`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK, `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, evidence, resolution and verification notes, rejection reason, and reopen/close timestamps. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
+
+### 4.4 bug_fix_task — Bug repair task
+
+`bug_id` FK, `name`, `task_type` (development/testing/other), `description`, `assignee` FK, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed), `done_at`, and `completion_note`. A Bug may have multiple development or testing rows; all required child tasks must be closed before product-manager verification.
+
+### 4.5 work_task — delegated work task
+
+`task_code` [C], `title`, `description`, `task_type`, `source_type/source_id`, `registrar` FK, `assignee` FK, `priority`, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed / Aborted), `performance_bucket`, pause/abort reasons, completion note, and close time. Sources may be tickets, problems, incidents, Bugs, manual technical research, or other IT work.
+
+Only the registrar may delete an unassigned task still in Registered status. After assignment and before closure, deletion is administrator-only. Deletion is soft and audited; administrators can edit, pause, abort, and close from the list.
 
 > No separate table is needed for closure hand-off: `problem.source_requirement_id` and `knowledge_article.source_requirement_id` are queryable both ways.
 

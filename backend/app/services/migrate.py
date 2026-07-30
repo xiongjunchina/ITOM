@@ -34,6 +34,9 @@ ENSURE_COLUMNS = {
     "org_settings": [
         ("digital_team_member_ids", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
     ],
+    "ci": [
+        ("product_manager_id", "VARCHAR(26)"),
+    ],
     "wbs_task": [
         ("stage", "VARCHAR(64)"),
         ("wbs_dict", "TEXT"),
