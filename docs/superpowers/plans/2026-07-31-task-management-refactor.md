@@ -150,23 +150,25 @@
 - New menu routes `/task-management/development` and `/task-management/delegated`.
 - Legacy `/requirements/tasks` redirects to the requirement-development tab without losing bookmarks.
 
-- [ ] **Step 1: Add frontend contract fixtures/tests for tabs and capability fields**
+- [x] **Step 1: Add frontend contract types for tabs and capability fields**
 
-- [ ] **Step 2: Run the frontend typecheck/build and verify the missing-route failure**
+  The frontend package has no standalone test runner; `types.ts` now models the backend capability/status contract and the production TypeScript build is the frontend contract check.
+
+- [x] **Step 2: Run the frontend typecheck/build and verify the missing-route failure**
 
   Run: `cd frontend && npm run build`
 
-- [ ] **Step 3: Implement the menu, router, tabs, list filters, search, and action visibility**
+- [x] **Step 3: Implement the menu, router, tabs, list filters, search, and action visibility**
 
   Keep requirement task editing semantics unchanged. Add Bug and delegated-task forms only for fields validated by the backend.
 
-- [ ] **Step 4: Implement admin list actions and ordinary-user restrictions**
+- [x] **Step 4: Implement admin list actions and ordinary-user restrictions**
 
   Render edit/pause/abort/close/delete only from backend capability fields; failed API authorization remains visible as a handled error.
 
-- [ ] **Step 5: Run the frontend build**
+- [x] **Step 5: Run the frontend build**
 
-- [ ] **Step 6: Commit the frontend slice**
+- [x] **Step 6: Commit the frontend slice**
 
   Commit with `feat(task): add task management pages`.
 
@@ -184,23 +186,23 @@
 - New role-result metrics `bug_fix_delivery` and `delegated_work_delivery`.
 - New idempotent events for BugFixTask completion and accepted delegated-task completion.
 
-- [ ] **Step 1: Write failing performance tests**
+- [x] **Step 1: Write failing performance tests**
 
   Assert requirement-task scoring remains unchanged, BugFixTask on-time completion is counted once, delegated work defaults to role result, and team-contribution mappings require the explicit eligible category.
 
-- [ ] **Step 2: Run the focused tests and verify the expected failure**
+- [x] **Step 2: Run the focused tests and verify the expected failure**
 
   Run: `cd backend && python -m pytest tests/test_m82_task_performance.py -q`
 
-- [ ] **Step 3: Implement event subscribers and metric extraction**
+- [x] **Step 3: Implement event subscribers and metric extraction**
 
   Preserve existing role-result/team-contribution buckets and use source entity IDs for idempotency.
 
-- [ ] **Step 4: Run focused performance and existing performance tests**
+- [x] **Step 4: Run focused performance and existing performance tests**
 
   Run: `cd backend && python -m pytest tests/test_m82_task_performance.py tests/test_m61_perf.py tests/test_m62_perf.py tests/test_bplus_performance.py -q`
 
-- [ ] **Step 5: Commit the performance slice**
+- [x] **Step 5: Commit the performance slice**
 
   Commit with `feat(task): include bug and delegated work in performance metrics`.
 

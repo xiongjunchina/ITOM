@@ -69,6 +69,23 @@ def award_by_rule(db: Session, rule_code: str, person_id: str | None, source_ref
     )
 
 
+def award_by_rule_once(db: Session, rule_code: str, person_id: str | None, source_ref: str | None, note: str | None = None):
+    """幂等自动积分：同一规则和来源单据只能产生一条有效流水。"""
+    if not person_id or not source_ref:
+        return
+    # 领域事件可能在同一事务内连续投递；先 flush 让本事务已新增的流水
+    # 参与查询，避免同一 session 内重复生成。
+    db.flush()
+    exists = db.query(PointEntry.id).filter(
+        PointEntry.source_type == rule_code,
+        PointEntry.source_ref == source_ref,
+        PointEntry.is_deleted.is_(False),
+    ).first()
+    if exists:
+        return
+    award_by_rule(db, rule_code, person_id, source_ref, note)
+
+
 def _person_of_user(db: Session, user_id: str | None) -> str | None:
     if not user_id:
         return None
@@ -88,7 +105,7 @@ def register_subscribers():
         return
     _REGISTERED = True
     from app.events.bus import subscribe
-    from app.models import KnowledgeArticle, Milestone, Requirement, RequirementTask, Ticket, WbsTask
+    from app.models import BugFixTask, KnowledgeArticle, Milestone, Requirement, RequirementTask, Ticket, WbsTask, WorkTask
 
     @subscribe("ticket.resolved")
     def _on_ticket_resolved(db: Session, event_type, entity_type, entity_id, payload):
@@ -143,6 +160,27 @@ def register_subscribers():
         if not r or r.is_example or not r.owner:
             return
         award_by_rule(db, "requirement_closed", r.owner, r.id, f"需求交付 {r.requirement_code}")
+
+    @subscribe("bug_fix_task.completed")
+    def _on_bug_fix_task_completed(db: Session, event_type, entity_type, entity_id, payload):
+        task = db.get(BugFixTask, payload.get("task_id", entity_id))
+        if not task or task.is_deleted or task.status != "关闭":
+            return
+        award_by_rule_once(db, "bug_fix_task_done", task.assignee, task.id, f"Bug 修复任务完成 {task.name[:30]}")
+
+    @subscribe("work_task.closed")
+    def _on_work_task_closed(db: Session, event_type, entity_type, entity_id, payload):
+        task = db.get(WorkTask, entity_id)
+        if not task or task.is_deleted or task.status != "关闭" or not task.assignee:
+            return
+        if task.performance_bucket == "team_contribution":
+            from app.services.task_management import TEAM_CONTRIBUTION_TASK_RULES
+
+            rule_code = TEAM_CONTRIBUTION_TASK_RULES.get(task.task_type)
+            if rule_code:
+                award_by_rule_once(db, rule_code, task.assignee, task.id, f"团队贡献任务完成 {task.title[:30]}")
+        else:
+            award_by_rule_once(db, "delegated_work_done", task.assignee, task.id, f"委派任务完成 {task.title[:30]}")
 
     @subscribe("knowledge.published")
     def _on_kb_published(db: Session, event_type, entity_type, entity_id, payload):

@@ -173,6 +173,8 @@ The same implementing requirement may call `POST` repeatedly to register multipl
 
 #### Task-management APIs (M82)
 
+The frontend routes are `/task-management/development` and `/task-management/delegated`; `tab=requirement|bug` only selects the Development Tasks view and does not change backend resources. Historical requirement-task routes redirect to the Requirement Development tab so existing bookmarks and data remain compatible.
+
 ```text
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
@@ -190,6 +192,8 @@ DELETE /api/task-management/work-tasks/{id}
 ```
 
 Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
+
+Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
 
 #### Forbidden tools
 

@@ -348,9 +348,13 @@ Implementation-task permissions: while a requirement is in Implementation, its o
 
 Task Management is separate from Requirement Management and has two second-level pages: “Development Tasks” and “Delegated Tasks.” Development Tasks contains “Requirement Development” and “Bug Fix” tabs. Requirement Development continues to display the existing `RequirementTask` records; Bug Fix uses dedicated Bug and fix-task models and is not mixed with ITIL Problem records.
 
+The web entry points are **Task Management → Development Tasks** (with `?tab=requirement` or `?tab=bug`) and **Task Management → Delegated Tasks**. The historical `/requirements/tasks` and `/requirements?tab=tasks` URLs remain as redirects; the existing requirement-task APIs and data are unchanged.
+
 The Bug loop is fixed as: **Register Bug (IT team member) → Bug Confirmation (affected-system product manager, approval) → Generate Fix Tasks (development leader) → Development Fix (assigned developer, execution) → Verification & Closure (affected-system product manager, approval)**. Registration snapshots the product manager from the CMDB CI; one Bug may generate multiple development/test child tasks, and only after all child tasks close does the Bug enter product verification. Confirmation rejection, failed verification, and reopening require a reason and retain an audit trail.
 
 Delegated Tasks cover work originating from tickets, problems, incidents, technical research, and other non-project work. They use the lightweight lifecycle “Register → Schedule → Execute → Close,” plus “Pause/Abort.” The registrar may delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Administrators can edit, pause, abort, and close from the list page. Both task types use independent permission modules and server-side record scope; front-end buttons never replace authorization. Existing requirement tasks, problems, performance, and point history remain readable without rewriting.
+
+Performance ownership is explicit: Bug-fix child tasks and ordinary delegated tasks default to job-result evidence, measured by `bug_fix_delivery` and `delegated_work_delivery`, with completion points recorded idempotently. Only a delegated task explicitly marked as team contribution and typed as Technical Research, Cross-team Support, or Knowledge Sharing enters the corresponding team-contribution dimension.
 
 ### 7.2 Six-Dimension Weighted Scoring & Four Quadrants
 

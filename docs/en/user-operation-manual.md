@@ -73,6 +73,8 @@ Business users register requirements. IT teams clarify, score, evaluate solution
 
 ### 5.3 Task Management
 
+Open **Task Management** from the left navigation. Development Tasks has the “Requirement Development” and “Bug Fix” tabs, while Delegated Tasks is a separate page. Historical Task Tracking bookmarks redirect to “Development Tasks → Requirement Development” without changing existing requirement tasks.
+
 The Development Tasks page has “Requirement Development” and “Bug Fix” tabs. Requirement Development shows the existing requirement-decomposition tasks. Bug Fix follows registration, product-manager confirmation, development-leader creation of multiple fix/test tasks, developer execution, and product-manager verification/closure. Any IT team member may register a Bug; only the affected-system product manager confirms and verifies it, while developers maintain execution fields for tasks assigned to them.
 
 Delegated Tasks record work from tickets, problems, incidents, technical research, and other non-project work. The lifecycle is “Register → Schedule → Execute → Close,” with Pause/Abort as additional actions. The registrar may delete an unassigned registered task; once assigned, only an administrator may delete it before closure. List-page edit, pause, abort, and close buttons use server-returned capabilities, and the server still rechecks authorization.

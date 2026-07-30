@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     AuthUser,
+    BugFixTask,
     PerfAdjustment,
     PerfOverride,
     BusinessDomain,
@@ -25,6 +26,7 @@ from app.models import (
     PointEntry,
     RequirementTask,
     Ticket,
+    WorkTask,
     WbsTask,
 )
 
@@ -41,6 +43,10 @@ DIMENSIONS = [
      "未到期任务不参与。期内无到期任务 → 不计入。"),
     ("requirement_delivery", "需求交付", False,
      "考核期内计划到期的需求任务按期完成率（口径同项目交付）。期内无到期任务 → 不计入。"),
+    ("bug_fix_delivery", "Bug 修复交付", False,
+     "考核期内计划到期的 Bug 开发/测试子任务按期完成率；关闭时间不晚于计划完成日视为按期。期内无到期任务 → 不计入。"),
+    ("delegated_work_delivery", "委派任务交付", False,
+     "考核期内计划到期且已关闭的委派任务按期完成率；中止或未关闭任务按逾期未完成计。期内无到期任务 → 不计入。"),
     ("domain_satisfaction", "业务域满意度", False,
      "本人所在业务域全体成员经办工单的满意度均分（百分制）——服务线共担指标。"
      "未加入业务域或域内期内无评价 → 不计入。"),
@@ -169,6 +175,42 @@ def _score_requirement_delivery(db: Session, member_ids: list[str], start, end) 
         if done and t.done_at and t.done_at.date() <= t.plan_date:
             d["ok"] += 1
     return {pid: _rate(d["ok"], d["n"]) for pid, d in per.items() if d["n"]}
+
+
+def _score_bug_fix_delivery(db: Session, member_ids: list[str], start, end) -> dict[str, float]:
+    """按 Bug 修复子任务负责人统计按期关闭率，不读取流程节点作为完成事实。"""
+    today = date.today()
+    rows = db.query(BugFixTask).filter(
+        BugFixTask.assignee.in_(member_ids), BugFixTask.is_deleted.is_(False),
+        BugFixTask.plan_date.isnot(None), BugFixTask.plan_date >= start.date(), BugFixTask.plan_date <= end.date(),
+    ).all()
+    per: dict[str, dict[str, int]] = {}
+    for task in rows:
+        if task.status != "关闭" and task.plan_date >= today:
+            continue
+        data = per.setdefault(task.assignee, {"ok": 0, "n": 0})
+        data["n"] += 1
+        if task.status == "关闭" and task.done_at and task.done_at.date() <= task.plan_date:
+            data["ok"] += 1
+    return {pid: _rate(data["ok"], data["n"]) for pid, data in per.items() if data["n"]}
+
+
+def _score_delegated_work_delivery(db: Session, member_ids: list[str], start, end) -> dict[str, float]:
+    """按委派任务负责人统计按期关闭率；只把负责人作为交付证据归属人。"""
+    today = date.today()
+    rows = db.query(WorkTask).filter(
+        WorkTask.assignee.in_(member_ids), WorkTask.is_deleted.is_(False),
+        WorkTask.plan_date.isnot(None), WorkTask.plan_date >= start.date(), WorkTask.plan_date <= end.date(),
+    ).all()
+    per: dict[str, dict[str, int]] = {}
+    for task in rows:
+        if task.status != "关闭" and task.plan_date >= today:
+            continue
+        data = per.setdefault(task.assignee, {"ok": 0, "n": 0})
+        data["n"] += 1
+        if task.status == "关闭" and task.closed_at and task.closed_at.date() <= task.plan_date:
+            data["ok"] += 1
+    return {pid: _rate(data["ok"], data["n"]) for pid, data in per.items() if data["n"]}
 
 
 def _score_domain_satisfaction(db: Session, member_ids: list[str], start, end) -> dict[str, float]:

@@ -889,6 +889,8 @@ export interface CiRow {
   status: string;
   owner: string | null;
   owner_name: string | null;
+  product_manager_id?: string | null;
+  product_manager_name?: string | null;
   environment: string | null;
   business_owner: string | null;
   vendor_id: string | null;
@@ -899,6 +901,93 @@ export interface CiRow {
   remarks: string | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+}
+
+// ============ M82 任务管理 ============
+
+export type BugStatus = 'registered' | 'confirmed' | 'fixing' | 'resolved' | 'closed' | 'rejected';
+export type BugFixTaskStatus = '登记' | '排期' | '执行' | '暂停' | '关闭';
+export type WorkTaskStatus = '登记' | '排期' | '执行' | '暂停' | '关闭' | '中止';
+
+export interface TaskCapabilities {
+  edit?: boolean;
+  delete?: boolean;
+  transition?: boolean;
+  confirm?: boolean;
+  generate_fix_tasks?: boolean;
+  verify?: boolean;
+  reopen?: boolean;
+}
+
+export interface BugFixTaskRow {
+  id: string;
+  bug_id: string;
+  name: string;
+  task_type: string;
+  description: string | null;
+  assignee: string;
+  assignee_name: string | null;
+  plan_start: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: BugFixTaskStatus;
+  done_at: string | null;
+  completion_note: string | null;
+}
+
+export interface BugRow {
+  id: string;
+  bug_code: string;
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  status: BugStatus;
+  ci_id: string;
+  ci_name: string | null;
+  product_manager_id: string | null;
+  product_manager_name: string | null;
+  dev_leader_id: string | null;
+  dev_leader_name: string | null;
+  reporter_id: string;
+  reproduction: string | null;
+  expected_result: string | null;
+  actual_result: string | null;
+  environment: string | null;
+  evidence: string | null;
+  resolution_note: string | null;
+  verification_note: string | null;
+  rejection_reason: string | null;
+  reopened_at: string | null;
+  closed_at: string | null;
+  fix_tasks: BugFixTaskRow[];
+  capabilities: TaskCapabilities;
+}
+
+export interface WorkTaskRow {
+  id: string;
+  task_code: string;
+  title: string;
+  description: string;
+  task_type: string;
+  source_type: string;
+  source_id: string | null;
+  registrar: string;
+  registrar_name: string | null;
+  assignee: string | null;
+  assignee_name: string | null;
+  priority: TicketPriority;
+  plan_start: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: WorkTaskStatus;
+  performance_bucket: string;
+  pause_reason: string | null;
+  abort_reason: string | null;
+  completion_note: string | null;
+  closed_at: string | null;
+  capabilities: TaskCapabilities;
 }
 
 /** CI 摘要（影响分析中的关联方） */

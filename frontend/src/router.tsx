@@ -37,7 +37,8 @@ import Knowledge from './pages/itsm/Knowledge';
 import KnowledgeDetail from './pages/itsm/KnowledgeDetail';
 import KnowledgeEdit from './pages/itsm/KnowledgeEdit';
 import Projects from './pages/projects/Projects';
-import TaskTrackingPage from './pages/requirements/TaskTrackingPage';
+import DevelopmentTasksPage from './pages/task-management/DevelopmentTasksPage';
+import DelegatedTasksPage from './pages/task-management/DelegatedTasksPage';
 import RequirementScoring from './pages/admin/RequirementScoring';
 import ProjectDetail from './pages/projects/ProjectDetail';
 import Requirements from './pages/requirements/Requirements';
@@ -68,7 +69,7 @@ function LegacyProjectsRedirect() {
 function LegacyRequirementsRedirect() {
   const [sp] = useSearchParams();
   const tab = sp.get('tab');
-  const to = tab === 'tasks' ? '/requirements/tasks' : tab === 'scoring' ? '/requirements/scoring' : '/requirements/overview';
+  const to = tab === 'tasks' ? '/task-management/development?tab=requirement' : tab === 'scoring' ? '/requirements/scoring' : '/requirements/overview';
   return <Navigate to={to} replace />;
 }
 
@@ -113,9 +114,13 @@ export const router = createBrowserRouter([
       // 需求管理（M5 交付）
       { path: 'requirements', element: <LegacyRequirementsRedirect /> },
       { path: 'requirements/overview', element: <Requirements /> },
-      { path: 'requirements/tasks', element: <TaskTrackingPage /> },
+      { path: 'requirements/tasks', element: <Navigate to="/task-management/development?tab=requirement" replace /> },
       { path: 'requirements/scoring', element: <RequirementScoring /> },
       { path: 'requirements/:id', element: <RequirementDetail /> },
+
+      // 任务管理（M82）：开发任务分为需求开发/Bug 修复，委派任务覆盖轻量化 IT 工作。
+      { path: 'task-management/development', element: <DevelopmentTasksPage /> },
+      { path: 'task-management/delegated', element: <DelegatedTasksPage /> },
 
       // 流程中心
       { path: 'process/definitions', element: <Definitions /> },

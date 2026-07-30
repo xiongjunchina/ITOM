@@ -5,6 +5,7 @@ import {
   DashboardOutlined,
   FileTextOutlined,
   ProjectOutlined,
+  ScheduleOutlined,
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
@@ -30,6 +31,7 @@ export interface MenuNode {
 const STAFF: Role[] = [
   'admin', 'cio', 'it_bm', 'it_tm',
   'it_pdm', 'it_pm', 'it_dev', 'it_ops', 'is_mgr', 'it_bp',
+  'it_pdm_leader', 'it_dev_leader', 'it_op_leader', 'it_pmo',
 ];
 
 export const MENU_TREE: MenuNode[] = [
@@ -67,8 +69,16 @@ export const MENU_TREE: MenuNode[] = [
     icon: <FileTextOutlined />,
     children: [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
-      { key: '/requirements/tasks', path: '/requirements/tasks', label: '任务跟踪', module: 'req_tasks' },
       { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'req_scoring' },
+    ],
+  },
+  {
+    key: 'task-management',
+    label: '任务管理',
+    icon: <ScheduleOutlined />,
+    children: [
+      { key: '/task-management/development', path: '/task-management/development', label: '开发任务', modules: ['task_development', 'task_bug'], roles: STAFF },
+      { key: '/task-management/delegated', path: '/task-management/delegated', label: '委派任务', module: 'task_delegated', roles: STAFF },
     ],
   },
   {

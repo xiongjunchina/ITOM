@@ -34,6 +34,8 @@ from app.models import (
 )
 from app.services.perf import (
     _score_change_compliance,
+    _score_bug_fix_delivery,
+    _score_delegated_work_delivery,
     _score_domain_satisfaction,
     _score_knowledge_contrib,
     _score_project_delivery,
@@ -139,6 +141,18 @@ METRIC_DEFINITIONS = {
         "source_type": "system",
         "collection_mode": "auto",
         "description": "按考核期内到期需求任务的按期完成率计算。",
+    },
+    "bug_fix_delivery": {
+        "name": "Bug 修复交付",
+        "source_type": "system",
+        "collection_mode": "auto",
+        "description": "按 Bug 开发/测试子任务的计划完成日期与实际关闭日期计算按期交付率。",
+    },
+    "delegated_work_delivery": {
+        "name": "委派任务交付",
+        "source_type": "system",
+        "collection_mode": "auto",
+        "description": "按委派任务的计划完成日期与实际关闭日期计算按期交付率；中止任务不计为完成。",
     },
     "domain_satisfaction": {
         "name": "业务域满意度",
@@ -569,6 +583,8 @@ def _system_scores(db: Session, period: str, member_ids: list[str], period_row: 
         "change_compliance": _score_change_compliance(db, member_ids, start, end),
         "project_delivery": _score_project_delivery(db, member_ids, start, end),
         "requirement_delivery": _score_requirement_delivery(db, member_ids, start, end),
+        "bug_fix_delivery": _score_bug_fix_delivery(db, member_ids, start, end),
+        "delegated_work_delivery": _score_delegated_work_delivery(db, member_ids, start, end),
         "domain_satisfaction": _score_domain_satisfaction(db, member_ids, start, end),
         "knowledge_contrib": _score_knowledge_contrib(db, member_ids, start, end),
         "requirement_owner_delivery": _score_requirement_owner_delivery(db, member_ids, start, end),

@@ -88,6 +88,8 @@ The first release should use current system data rather than introduce duplicate
 | `change_compliance` | Change fields and approval history | Approved, normally closed, non-cancelled/non-rolled-back changes. |
 | `project_delivery` | WBS assignee, planned and completed dates | On-time completion of due WBS tasks. |
 | `requirement_delivery` | Requirement-task assignee, planned and completed dates | On-time completion of due requirement tasks. |
+| `bug_fix_delivery` | Bug-fix-task assignee, planned date, and close time | On-time closure rate for due Bug development/test child tasks; open or late tasks fail. |
+| `delegated_work_delivery` | Work-task assignee, planned date, and close time | On-time closure rate for due delegated tasks; aborted or open tasks do not count as completed. |
 | `domain_satisfaction` | Business-domain membership and ticket satisfaction | Internal ITSM satisfaction for the relevant business domain. |
 | `knowledge_contrib` | Knowledge articles and votes | Standardized publication/usefulness score. |
 | `process_task_timeliness` | Process task assignee, due/completed timestamps | On-time process-governance completion. |
@@ -105,7 +107,7 @@ Recommended first-release combinations are:
 | Role | Reference-score composition |
 |---|---|
 | `it_ops` | `ticket_service` 60% + `change_compliance` 30% + `domain_satisfaction` 10%. |
-| `it_dev` | `requirement_delivery` 45% + `project_delivery` 45% + change quality 10%. |
+| `it_dev` | `requirement_delivery` 35% + `project_delivery` 25% + `bug_fix_delivery` 20% + `delegated_work_delivery` 10% + change quality 10%. |
 | `it_pdm` | `requirement_owner_delivery` 45% + `domain_satisfaction` 30% + linked project result 25%. |
 | `it_pm` | `project_manager_delivery` 55% + project WBS/milestones 25% + linked requirement closure 20%. |
 | `it_pmo` | `process_task_timeliness` 40% + project governance 35% + requirement/project closure 25%. |
@@ -115,6 +117,8 @@ Recommended first-release combinations are:
 | Platform roles | Existing facts are reference evidence; platform-specific professional dimensions are entered and finalized directly by the CIO. |
 
 For data governance, AI, security, architecture, and similar platform roles, system facts remain useful evidence when the person participates in tickets, requirements, or projects. The CIO directly scores dimensions such as data standards, model safety, security governance, responsible AI, or architecture governance that current modules cannot measure.
+
+Task-management performance boundary: Bug-fix child tasks and ordinary delegated work are job-result evidence, measured through `bug_fix_delivery` and `delegated_work_delivery` in the professional role. Fresh `it_dev` profiles use the 35%/25%/20%/10%/10% composition above. Existing configured profiles are not silently rebalanced; newly added dimensions receive zero weight for compatibility until the CIO/administrator enables them. A delegated task enters `team_contribution` only when it explicitly selects `performance_bucket=team_contribution` and its type is Technical Research, Cross-team Support, or Knowledge Sharing; the server rejects other categories.
 
 ## 6. Role scoring profiles
 
@@ -148,6 +152,10 @@ The points ledger must distinguish two buckets:
 - `team_contribution`: activities outside normal role results, learning, knowledge sharing, improvement, and cross-team support. These facts enter the fixed 20% only.
 
 `PointRule` and `PointEntry` therefore require `contribution_bucket` and `contribution_dimension`. Existing ticket, requirement, and project events may remain in the ledger for traceability, but are `role_result` by default when they already drive a role metric. Bonus and penalty remain separate.
+
+Bug-fix completion and delegated-task closure use `bug_fix_task_done` and `delegated_work_done` rules and are `role_result` by default. The same source record can create only one point entry. Only server-approved team-contribution task types use the corresponding team-contribution rule and dimension.
+
+`bug_fix_delivery` and `delegated_work_delivery` use the assignee, planned completion date, and actual close date. An open task is excluded before its due date; a task still open at due date or aborted is included in the denominator but not the on-time numerator. Explicit Technical Research, Cross-team Support, and Knowledge Sharing delegated tasks map to `learning_growth`, `cross_team_support`, and `training_knowledge`, respectively.
 
 ### Learning and growth goals
 

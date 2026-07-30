@@ -23,6 +23,20 @@ from app.services.team_scope import require_it_member_if_configured
 BUG_STATUSES = ("registered", "confirmed", "fixing", "resolved", "closed", "rejected")
 FIX_TASK_STATUSES = ("登记", "排期", "执行", "暂停", "关闭")
 WORK_TASK_STATUSES = ("登记", "排期", "执行", "暂停", "关闭", "中止")
+# 只有明确属于团队贡献的类别，才允许把委派任务计入固定 20% 团队贡献；
+# 其他委派工作默认归入岗位结果，避免普通工作被错误计入团队贡献。
+TEAM_CONTRIBUTION_TASK_RULES = {
+    "技术研究": "work_task_learning_growth",
+    "跨团队支持": "work_task_cross_team_support",
+    "知识分享": "work_task_training_knowledge",
+}
+
+
+def _validate_performance_bucket(task_type: str, performance_bucket: str):
+    if performance_bucket not in {"role_result", "team_contribution"}:
+        raise AppError("INVALID_PERFORMANCE_BUCKET", "绩效归属必须为岗位结果或团队贡献")
+    if performance_bucket == "team_contribution" and task_type not in TEAM_CONTRIBUTION_TASK_RULES:
+        raise AppError("INVALID_PERFORMANCE_CATEGORY", "团队贡献必须选择技术研究、跨团队支持或知识分享任务类型")
 
 
 def _is_admin(db: Session, user: AuthUser) -> bool:
@@ -282,11 +296,14 @@ def update_fix_task(db: Session, task: BugFixTask, data: dict, actor: AuthUser) 
         }
         if status != task.status and status not in allowed.get(task.status, set()) and not is_admin:
             raise AppError("INVALID_TRANSITION", f"不允许从「{task.status}」流转到「{status}」")
+    old_status = task.status
     for key, value in data.items():
         if key in {"name", "task_type", "description", "assignee", "plan_start", "plan_date", "plan_effort", "actual_effort", "status", "completion_note"}:
             setattr(task, key, value)
     if data.get("status") == "关闭":
         task.done_at = task.done_at or datetime.now()
+        if old_status != "关闭":
+            publish(db, "bug_fix_task.completed", "bug_fix_task", task.id, {"task_id": task.id, "bug_id": bug.id})
     audit(db, "bug_fix_task", task.id, "update", actor, {"fields": list(data)})
     db.flush()
     live_tasks = db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)).all()
@@ -407,6 +424,7 @@ def list_work_tasks(db: Session, user: AuthUser, q: str = "", status: str = "", 
 def create_work_task(db: Session, data: dict, actor: AuthUser) -> WorkTask:
     _require_module(db, actor, "task_delegated", "create")
     registrar = _require_person(actor)
+    _validate_performance_bucket(data.get("task_type") or "其他", data.get("performance_bucket") or "role_result")
     if data.get("assignee"):
         require_it_member_if_configured(db, data["assignee"], "委派任务负责人")
     task = WorkTask(
@@ -437,6 +455,10 @@ def update_work_task(db: Session, task: WorkTask, data: dict, actor: AuthUser) -
     is_registrar_unassigned = bool(actor.person_id and task.registrar == actor.person_id and task.assignee is None and task.status == "登记")
     if not is_admin and not is_registrar_unassigned:
         raise AppError("FORBIDDEN", "委派任务分配后仅管理员可以编辑", 403)
+    _validate_performance_bucket(
+        data.get("task_type", task.task_type),
+        data.get("performance_bucket", task.performance_bucket),
+    )
     if "assignee" in data and data["assignee"]:
         require_it_member_if_configured(db, data["assignee"], "委派任务负责人")
     for key, value in data.items():
@@ -464,6 +486,7 @@ def transition_work_task(db: Session, task: WorkTask, to: str, reason: str, acto
         raise AppError("INVALID_TRANSITION", f"不允许从「{task.status}」流转到「{to}」")
     if to in {"暂停", "中止"} and len(reason.strip()) < 2:
         raise AppError("REASON_REQUIRED", "暂停或中止必须填写原因")
+    old = task.status
     if to == "暂停":
         task.pause_reason = reason.strip()
     elif to == "中止":
@@ -471,9 +494,9 @@ def transition_work_task(db: Session, task: WorkTask, to: str, reason: str, acto
     elif to == "关闭":
         task.completion_note = reason.strip() or task.completion_note
         task.closed_at = datetime.now()
-        publish(db, "work_task.closed", "work_task", task.id, {"task_code": task.task_code})
-    old = task.status
     task.status = to
+    if to == "关闭" and old != "关闭":
+        publish(db, "work_task.closed", "work_task", task.id, {"task_code": task.task_code})
     audit(db, "work_task", task.id, "transition", actor, {"from": old, "to": to, "reason": reason})
     return task
 

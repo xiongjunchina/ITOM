@@ -171,6 +171,8 @@ GET /api/requirements/tasks/active
 
 #### 任务管理接口（M82）
 
+前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
+
 ```text
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
@@ -188,6 +190,8 @@ DELETE /api/task-management/work-tasks/{id}
 ```
 
 Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+
+绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
 
 #### 禁止工具
 
