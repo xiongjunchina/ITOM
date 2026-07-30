@@ -169,6 +169,26 @@ GET /api/requirements/tasks/active
 
 同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。该接口变更不涉及数据库迁移，存量任务按原主键和软删除状态继续可读。
 
+#### 任务管理接口（M82）
+
+```text
+GET/POST/PATCH /api/task-management/bugs
+GET /api/task-management/bugs/{id}
+POST /api/task-management/bugs/{id}/confirm
+POST /api/task-management/bugs/{id}/reject-confirm
+POST /api/task-management/bugs/{id}/fix-tasks
+PATCH /api/task-management/bug-fix-tasks/{id}
+POST /api/task-management/bugs/{id}/verify
+POST /api/task-management/bugs/{id}/reopen
+
+GET/POST/PATCH /api/task-management/work-tasks
+GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/transition
+DELETE /api/task-management/work-tasks/{id}
+```
+
+Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+
 #### 禁止工具
 
 首期不提供 `create_incident`、`create_change`、任意状态流转、任务改派/审批/完成、通用 SQL、数据库和任意 HTTP 工具。普通用户描述疑似大范围故障时仍创建服务请求并标记，事件由 IT 人员或监控专用接口创建。
@@ -303,6 +323,11 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | requirement.stage_changed | 四阶段流转 | →通知 |
 | requirement.task_completed | 需求任务完成 | →积分 |
 | requirement.closed | 需求关闭 | →积分 |
+| bug.registered / confirmed | Bug 登记/产品经理确认 | →通知、→流程 |
+| bug.fix_tasks_created | 生成 Bug 开发/测试子任务 | →通知 |
+| bug.ready_for_verification | 全部 Bug 子任务关闭 | →通知、→流程 |
+| bug.reopened / closed | Bug 验证不通过/重新打开或验证关闭 | →审计、→通知、→积分（后续指标） |
+| work_task.created / closed | 委派任务登记/关闭 | →通知、→积分（后续指标） |
 | knowledge.published | 发表 | →积分 |
 | knowledge.voted | 被点有用 | →积分(作者) |
 | activity.registered | 培训登记 | →积分(主讲/组织/参与分别计) |

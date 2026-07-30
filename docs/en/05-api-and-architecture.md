@@ -171,6 +171,26 @@ GET /api/requirements/tasks/active
 
 The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. No database migration is involved; existing tasks remain readable under their original IDs and soft-delete state.
 
+#### Task-management APIs (M82)
+
+```text
+GET/POST/PATCH /api/task-management/bugs
+GET /api/task-management/bugs/{id}
+POST /api/task-management/bugs/{id}/confirm
+POST /api/task-management/bugs/{id}/reject-confirm
+POST /api/task-management/bugs/{id}/fix-tasks
+PATCH /api/task-management/bug-fix-tasks/{id}
+POST /api/task-management/bugs/{id}/verify
+POST /api/task-management/bugs/{id}/reopen
+
+GET/POST/PATCH /api/task-management/work-tasks
+GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/transition
+DELETE /api/task-management/work-tasks/{id}
+```
+
+Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
+
 #### Forbidden tools
 
 V1 does not provide incident/change creation, arbitrary transitions, reassignment/approval/task completion, generic SQL/database access, or general HTTP. A suspected broad outage still creates a service request flag; IT staff or monitoring creates the incident.
@@ -302,6 +322,11 @@ Events are published by the service layer within the transaction; `→points` me
 | requirement.stage_changed | Four-stage transition | →notify |
 | requirement.task_completed | Requirement task completed | →points |
 | requirement.closed | Requirement closed | →points |
+| bug.registered / confirmed | Bug registered / product-manager confirmation | →notify, →process |
+| bug.fix_tasks_created | Bug development/test child tasks generated | →notify |
+| bug.ready_for_verification | All Bug child tasks closed | →notify, →process |
+| bug.reopened / closed | Bug verification rejected/reopened or verified closed | →audit, →notify, →points (future metric) |
+| work_task.created / closed | Delegated task registered/closed | →notify, →points (future metric) |
 | knowledge.published | Published | →points |
 | knowledge.voted | Marked helpful | →points (author) |
 | activity.registered | Training registered | →points (presenter/organizer/participant scored separately) |

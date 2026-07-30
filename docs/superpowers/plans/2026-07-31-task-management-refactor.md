@@ -109,27 +109,27 @@
 - `GET/POST/PATCH/DELETE /api/task-management/work-tasks`
 - `POST /api/task-management/work-tasks/{id}/transition`
 
-- [ ] **Step 1: Write failing API tests**
+- [x] **Step 1: Write failing API tests**
 
   Cover Bug registration with CI/product-manager snapshot, confirmation authorization, multi-row fix-task creation, child-task completion gate, verification close, reopen, delegated-task lifecycle, search, and delete rules.
 
-- [ ] **Step 2: Run the API tests and verify the expected failures**
+- [x] **Step 2: Run the API tests and verify the expected failures**
 
   Run: `cd backend && python -m pytest tests/test_m82_bug_flow_api.py tests/test_m82_work_task_api.py -q`
 
-- [ ] **Step 3: Implement domain services before route handlers**
+- [x] **Step 3: Implement domain services before route handlers**
 
   Centralize state transitions, assignee scope checks, product-manager snapshot resolution, all-child-task completion checks, soft-delete rules, event publication, and audit summaries in the service layer.
 
-- [ ] **Step 4: Implement route handlers using the domain service**
+- [x] **Step 4: Implement route handlers using the domain service**
 
   Route handlers must not write tables directly without invoking the service validation. All list responses include capability fields for the frontend.
 
-- [ ] **Step 5: Run focused tests and then the existing requirement/problem suites**
+- [x] **Step 5: Run focused tests and then the existing requirement/problem suites**
 
   Run: `cd backend && python -m pytest tests/test_m82_bug_flow_api.py tests/test_m82_work_task_api.py tests/test_m5_requirements.py tests/test_m18_task_guard.py tests/test_m29_problem_flow.py -q`
 
-- [ ] **Step 6: Commit the backend domain slice**
+- [x] **Step 6: Commit the backend domain slice**
 
   Commit with `feat(task): implement bug and delegated task APIs`.
 

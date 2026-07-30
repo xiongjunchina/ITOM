@@ -35,7 +35,7 @@ FastAPI（Kubernetes Service backend:6800，uvicorn）
    ▼
 PostgreSQL 16（StatefulSet + PVC 持久化）
 ```
-关键机制：单据（工单/问题/需求/项目）创建即挂接流程实例，状态由流程编排自动同步（详见「关键概念」）；
+关键机制：单据（工单/问题/需求/项目/Bug）创建即挂接流程实例，状态由流程编排自动同步（详见「关键概念」）；
 权限=功能矩阵×数据范围×流程节点三层；飞书组织同步、扫码登录继续保留。`feature/aily-agent-mcp` 已完成 P0 底座和 P1 服务入口：清除服务台运行路径、内嵌 `/mcp`、Aily JWT 与精确身份映射、脱敏工具审计、真实服务项检索、版本化动态表单、预览确认/幂等提交、服务项流程与派单，以及独立 IT 需求登记和本人单据查询。网页与 MCP 共用领域校验；ITOM 始终是服务目录、表单、流程和权限的唯一事实来源，详见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)。
 
 ### 临时本地隔离排障（默认不使用）
@@ -96,7 +96,7 @@ cd deploy/k8s
 backend/app/
   models/        SQLAlchemy 模型（support 身份/组织、itsm、project、requirement、team、process）
   routers/       FastAPI 路由（一个域一个文件）
-  services/      领域逻辑（permissions 权限矩阵、perf 人效引擎、points 积分、
+  services/      领域逻辑（permissions 权限矩阵、task_management 任务管理、perf 人效引擎、points 积分、
                  org_sync 飞书同步、seed* 种子、migrate 增量补列、excel_io 导入导出）
   events/        事件总线 bus + notifier（站内 + 发件箱，飞书通道未来挂接点）
   core/          security（JWT/bcrypt）、errors（AppError）、config

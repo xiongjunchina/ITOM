@@ -100,7 +100,7 @@ def _staff_base() -> dict[str, str]:
                    "knowledge": "vce", "requirements": "vc", "performance_result": "v",
     "activities": "vc", "learning_growth": "vced", "ideas": "vc",
     # IT 团队成员均可登记 Bug/委派任务；具体编辑、分派和删除仍由业务服务按数据范围控制。
-    "task_bug": "vc", "task_delegated": "vc"})
+    "task_bug": "vce", "task_delegated": "vce"})
     return matrix
 
 

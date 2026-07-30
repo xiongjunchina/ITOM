@@ -25,6 +25,7 @@ class CiCreate(BaseModel):
     category: str
     status: str = "运行中"
     owner: str
+    product_manager_id: str | None = None
     environment: str | None = None
     business_owner: str | None = None
     vendor_id: str | None = None
@@ -39,6 +40,7 @@ class CiUpdate(BaseModel):
     category: str | None = None
     status: str | None = None
     owner: str | None = None
+    product_manager_id: str | None = None
     environment: str | None = None
     business_owner: str | None = None
     vendor_id: str | None = None
@@ -60,6 +62,8 @@ def _row(c: Ci, db: Session) -> dict:
     return {
         "id": c.id, "ci_code": c.ci_code, "is_example": c.is_example, "name": c.name, "category": c.category,
         "status": c.status, "owner": c.owner, "owner_name": owner.name if owner else None,
+        "product_manager_id": c.product_manager_id,
+        "product_manager_name": db.get(OrgMember, c.product_manager_id).name if c.product_manager_id and db.get(OrgMember, c.product_manager_id) else None,
         "environment": c.environment, "business_owner": c.business_owner,
         "vendor_id": c.vendor_id, "vendor_name": vendor.name if vendor else None,
         "description": c.description, "launch_date": c.launch_date,
@@ -89,6 +93,7 @@ def list_cis(
 def create_ci(body: CiCreate, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "create"))):
     require_it_member_if_configured(db, body.owner, "配置项负责人")
     require_it_member_if_configured(db, body.business_owner, "配置项业务负责人")
+    require_it_member_if_configured(db, body.product_manager_id, "配置项产品经理")
     ci = Ci(**body.model_dump(), ci_code=gen_code(db, Ci, "ci_code", "CI"))
     db.add(ci)
     db.flush()
@@ -106,6 +111,8 @@ def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=D
     data = body.model_dump(exclude_unset=True)
     if "owner" in data:
         require_it_member_if_configured(db, data["owner"], "配置项负责人")
+    if "product_manager_id" in data:
+        require_it_member_if_configured(db, data["product_manager_id"], "配置项产品经理")
     if "business_owner" in data:
         require_it_member_if_configured(db, data["business_owner"], "配置项业务负责人")
     for k, v in data.items():

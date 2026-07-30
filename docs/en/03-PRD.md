@@ -344,6 +344,14 @@ Registration → Evaluation → Analysis → Implementation → Closure (any act
 
 Implementation-task permissions: while a requirement is in Implementation, its owner may add multiple task rows and maintain task name, description, assignee, planned date, and planned/actual effort. A task assignee may update only the status and actual effort of their own task. Deletion remains restricted to the Requirement/Task Tracking edit permissions so ordinary executors cannot accidentally remove delivery records. Both the task list and requirement detail return capability flags; the server rechecks permission, requirement stage, and example-data protection on every write. This fix adds backward-compatible capability fields and authorization checks only; it does not rewrite or migrate existing requirements or tasks.
 
+### 7.1a Task Management (M82)
+
+Task Management is separate from Requirement Management and has two second-level pages: “Development Tasks” and “Delegated Tasks.” Development Tasks contains “Requirement Development” and “Bug Fix” tabs. Requirement Development continues to display the existing `RequirementTask` records; Bug Fix uses dedicated Bug and fix-task models and is not mixed with ITIL Problem records.
+
+The Bug loop is fixed as: **Register Bug (IT team member) → Bug Confirmation (affected-system product manager, approval) → Generate Fix Tasks (development leader) → Development Fix (assigned developer, execution) → Verification & Closure (affected-system product manager, approval)**. Registration snapshots the product manager from the CMDB CI; one Bug may generate multiple development/test child tasks, and only after all child tasks close does the Bug enter product verification. Confirmation rejection, failed verification, and reopening require a reason and retain an audit trail.
+
+Delegated Tasks cover work originating from tickets, problems, incidents, technical research, and other non-project work. They use the lightweight lifecycle “Register → Schedule → Execute → Close,” plus “Pause/Abort.” The registrar may delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Administrators can edit, pause, abort, and close from the list page. Both task types use independent permission modules and server-side record scope; front-end buttons never replace authorization. Existing requirement tasks, problems, performance, and point history remain readable without rewriting.
+
 ### 7.2 Six-Dimension Weighted Scoring & Four Quadrants
 
 Based on the "Requirement Scoring & Prioritization Standard" (McKinsey strategic-value × feasibility axes). Weights / thresholds / rubric are configured on the **Requirements → "Scoring Rules" tab** (admin-editable; other roles see it read-only as a scoring reference), adjustable annually (defaults below).
