@@ -89,7 +89,7 @@ cd deploy/k8s
 ./k8s-deploy.sh
 ```
 
-`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。`k8s-deploy.sh` 保留现有 Secret/PVC/数据库/上传和飞书配置，要求 rollout 成功，并核对实际镜像、集群内前端代理、外部 `/api/health` 与 MCP `initialize`。回滚时使用上一有效标签执行 `TAG=<previous-tag> ./k8s-deploy.sh`。`ALLOW_UNTRUSTED_TLS=1` 只允许临时诊断，不得作为正式验收结果。
+`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。发布构建通过已验证的 `mirror.gcr.io` 官方 Docker Library 缓存及固定摘要取得 Python、Node 和 Nginx 基础镜像，避免 Docker Hub 限流和可变标签漂移。`k8s-deploy.sh` 保留现有 Secret/PVC/数据库/上传和飞书配置，要求 rollout 成功，并核对实际镜像、集群内前端代理、外部 `/api/health` 与 MCP `initialize`。回滚时使用上一有效标签执行 `TAG=<previous-tag> ./k8s-deploy.sh`。`ALLOW_UNTRUSTED_TLS=1` 只允许临时诊断，不得作为正式验收结果。
 
 ### 目录结构
 ```
@@ -230,7 +230,7 @@ cd deploy/k8s
 ./k8s-deploy.sh
 ```
 
-`push-images.sh` builds and pushes images only; it does not start the application. Its default tag is `git-<first-12-commit-chars>-linux-amd64`. `k8s-deploy.sh` preserves existing Secrets, PVCs, database, uploads, and Feishu configuration; requires successful rollouts; and verifies image identity, the in-cluster frontend proxy, external `/api/health`, and MCP `initialize`. Roll back with `TAG=<previous-tag> ./k8s-deploy.sh`. `ALLOW_UNTRUSTED_TLS=1` is a temporary diagnostic override and never formal acceptance evidence.
+`push-images.sh` builds and pushes images only; it does not start the application. Its default tag is `git-<first-12-commit-chars>-linux-amd64`. Release builds obtain Python, Node, and Nginx from the verified `mirror.gcr.io` Docker Library cache at pinned digests, avoiding Docker Hub rate limits and mutable-tag drift. `k8s-deploy.sh` preserves existing Secrets, PVCs, database, uploads, and Feishu configuration; requires successful rollouts; and verifies image identity, the in-cluster frontend proxy, external `/api/health`, and MCP `initialize`. Roll back with `TAG=<previous-tag> ./k8s-deploy.sh`. `ALLOW_UNTRUSTED_TLS=1` is a temporary diagnostic override and never formal acceptance evidence.
 
 ### Directory layout
 ```

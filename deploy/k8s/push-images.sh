@@ -20,6 +20,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
 TAG="${TAG:-git-${COMMIT_SHA:0:12}-linux-amd64}"
 REG=core.harbor.domain
+PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-mirror.gcr.io/library/python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de}"
+NODE_BASE_IMAGE="${NODE_BASE_IMAGE:-mirror.gcr.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32}"
+NGINX_BASE_IMAGE="${NGINX_BASE_IMAGE:-mirror.gcr.io/library/nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}"
 
 case "$TAG" in
   ""|*[!A-Za-z0-9_.-]*)
@@ -40,10 +43,13 @@ getent hosts "$REG" >/dev/null 2>&1 || grep -q "$REG" /etc/hosts 2>/dev/null || 
 
 echo "==> Release commit: $COMMIT_SHA"
 echo "==> Immutable image tag: $TAG"
-echo "==> Build backend + frontend for linux/amd64 (no local app startup)"
+echo "==> Build backend + frontend for linux/amd64 from pinned base digests (no local app startup)"
 docker build --platform linux/amd64 --pull --no-cache \
+  --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
   -t "$REG/sn/itom-backend:$TAG" "$REPO_ROOT/backend"
 docker build --platform linux/amd64 --pull --no-cache \
+  --build-arg "NODE_BASE_IMAGE=$NODE_BASE_IMAGE" \
+  --build-arg "NGINX_BASE_IMAGE=$NGINX_BASE_IMAGE" \
   -t "$REG/sn/itom-frontend:$TAG" "$REPO_ROOT/frontend"
 
 for image in itom-backend itom-frontend; do
