@@ -162,7 +162,7 @@ export interface OrgSettings {
   feishu_auto_sync_last_attempt_at: string | null;
 }
 
-/** Aily MCP 集成配置；两类 Secret 均只写不读。 */
+/** Aily MCP 集成配置；所有 Secret、Token 与 Encrypt Key 均只写不读。 */
 export interface AilyConfig {
   enabled: boolean;
   mcp_auth_mode: 'aily_jwt' | string;
@@ -176,12 +176,14 @@ export interface AilyConfig {
   has_bot_app_secret: boolean;
   api_base: string;
   message_enabled: boolean;
-  card_action_skill_id: string | null;
+  has_card_callback_verification_token: boolean;
+  has_card_callback_encrypt_key: boolean;
   interactive_cards_ready: boolean;
   last_test_at: string | null;
   last_test_status: string | null;
   last_error_redacted: string | null;
   mcp_path: string;
+  card_callback_path: string;
 }
 
 /** 飞书外部身份到 ITOM 账号的精确映射。 */

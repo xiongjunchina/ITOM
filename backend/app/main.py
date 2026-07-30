@@ -17,6 +17,7 @@ from app.routers import (
     admin_users,
     attachments,
     auth,
+    feishu_card_callbacks,
     cmdb,
     dashboard,
     itsm_catalog,
@@ -150,6 +151,8 @@ async def auditor_readonly_guard(request: Request, call_next):
 for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
           itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, team_activities, team_learning, team_mgmt, ui_branding, integrations, aily):
     app.include_router(r.router)
+
+app.include_router(feishu_card_callbacks.router)
 
 app.mount("/mcp", mcp_runtime, name="aily-mcp")
 

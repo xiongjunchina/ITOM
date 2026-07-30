@@ -369,7 +369,7 @@ def rate_satisfaction(
         raise AppError("FORBIDDEN", "只有提交人可以评价", 403)
     if not 1 <= score <= 5:
         raise AppError("INVALID_SCORE", "评分须为 1-5")
-    if source not in {"web", "aily"}:
+    if source not in {"web", "aily", "feishu_card"}:
         raise AppError("INVALID_SOURCE", "评价来源无效")
     normalized_tags: list[str] = []
     for raw in tags or []:

@@ -350,7 +350,7 @@ class ExternalIdentity(GlidBase):
 
 
 class AilyIntegrationConfig(GlidBase):
-    """Aily MCP 入站认证和机器人出站消息的单行配置。"""
+    """Aily MCP 入站、机器人出站和飞书卡片回调的单行配置。"""
 
     __tablename__ = "aily_integration_config"
 
@@ -364,7 +364,8 @@ class AilyIntegrationConfig(GlidBase):
     bot_app_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     api_base: Mapped[str] = mapped_column(String(100), default="https://open.feishu.cn")
     message_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    card_action_skill_id: Mapped[str | None] = mapped_column(String(128))
+    card_callback_verification_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    card_callback_encrypt_key_encrypted: Mapped[str | None] = mapped_column(Text)
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_test_status: Mapped[str | None] = mapped_column(String(16))
     last_error_redacted: Mapped[str | None] = mapped_column(Text)

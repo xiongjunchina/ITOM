@@ -12,6 +12,18 @@ from app.services.aily_cards import build_rating_card, build_resolution_confirma
 _REGISTERED = False
 
 
+def _interactive_cards_enabled(cfg: AilyIntegrationConfig | None) -> bool:
+    return bool(
+        cfg
+        and cfg.enabled
+        and cfg.message_enabled
+        and cfg.bot_app_id
+        and cfg.bot_app_secret_encrypted
+        and cfg.card_callback_verification_token_encrypted
+        and cfg.card_callback_encrypt_key_encrypted
+    )
+
+
 def _recipient_identity(
     db: Session,
     ticket: Ticket,
@@ -74,10 +86,9 @@ def _resolution_card(
     cfg: AilyIntegrationConfig | None,
     solution: str,
 ) -> dict | None:
-    if not cfg or not cfg.card_action_skill_id:
+    if not _interactive_cards_enabled(cfg):
         return None
     return build_resolution_confirmation_card(
-        skill_id=cfg.card_action_skill_id,
         ticket_code=ticket.ticket_code,
         title=ticket.title,
         solution=solution,
@@ -211,9 +222,8 @@ def register_subscribers() -> None:
             .first()
         )
         card = None
-        if cfg and cfg.card_action_skill_id:
+        if _interactive_cards_enabled(cfg):
             card = build_rating_card(
-                skill_id=cfg.card_action_skill_id,
                 ticket_code=ticket.ticket_code,
                 title=ticket.title,
             )

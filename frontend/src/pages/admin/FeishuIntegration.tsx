@@ -91,7 +91,8 @@ export default function FeishuIntegration() {
   const [botAppId, setBotAppId] = useState('');
   const [botAppSecret, setBotAppSecret] = useState('');
   const [messageEnabled, setMessageEnabled] = useState(false);
-  const [cardActionSkillId, setCardActionSkillId] = useState('');
+  const [cardCallbackVerificationToken, setCardCallbackVerificationToken] = useState('');
+  const [cardCallbackEncryptKey, setCardCallbackEncryptKey] = useState('');
   const [identities, setIdentities] = useState<AilyExternalIdentity[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [identityOpen, setIdentityOpen] = useState(false);
@@ -103,6 +104,7 @@ export default function FeishuIntegration() {
 
   const redirectUri = window.location.origin + '/login/feishu-callback';
   const publicMcpUrl = window.location.origin + (ailyConfig?.mcp_path || '/mcp/');
+  const cardCallbackUrl = window.location.origin + (ailyConfig?.card_callback_path || '/api/integrations/feishu/card-actions');
 
   const applyAilyConfig = (value: AilyConfig) => {
     setAilyConfig(value);
@@ -112,9 +114,10 @@ export default function FeishuIntegration() {
     setOrigins(value.allowed_origins.join('\n'));
     setBotAppId(value.bot_app_id || '');
     setMessageEnabled(value.message_enabled);
-    setCardActionSkillId(value.card_action_skill_id || '');
     setJwtSecret('');
     setBotAppSecret('');
+    setCardCallbackVerificationToken('');
+    setCardCallbackEncryptKey('');
   };
 
   const load = useCallback(async () => {
@@ -212,10 +215,15 @@ export default function FeishuIntegration() {
         bot_app_id: botAppId.trim() || null,
         api_base: DEFAULT_API_BASE,
         message_enabled: messageEnabled,
-        card_action_skill_id: cardActionSkillId.trim() || null,
       };
       if (jwtSecret.trim()) body.mcp_jwt_secret = jwtSecret.trim();
       if (botAppSecret.trim()) body.bot_app_secret = botAppSecret.trim();
+      if (cardCallbackVerificationToken.trim()) {
+        body.card_callback_verification_token = cardCallbackVerificationToken.trim();
+      }
+      if (cardCallbackEncryptKey.trim()) {
+        body.card_callback_encrypt_key = cardCallbackEncryptKey.trim();
+      }
       const saved = await api.put<AilyConfig>('/admin/integrations/aily', body);
       applyAilyConfig(saved);
       message.success('Aily MCP 配置已保存');
@@ -377,17 +385,35 @@ export default function FeishuIntegration() {
           <Input value={botAppId} disabled={disabled} placeholder="Bot App ID" onChange={(event) => setBotAppId(event.target.value)} />
           <Input.Password value={botAppSecret} disabled={disabled} placeholder={ailyConfig?.has_bot_app_secret ? 'Bot App Secret 已配置，留空表示不修改' : 'Bot App Secret'} onChange={(event) => setBotAppSecret(event.target.value)} autoComplete="new-password" />
           <Space><Switch checked={messageEnabled} disabled={disabled} onChange={setMessageEnabled} /><Typography.Text>启用主动消息</Typography.Text></Space>
-          <Typography.Text>Aily 卡片动作 Skill ID</Typography.Text>
-          <Input
-            value={cardActionSkillId}
+          <Divider style={{ margin: '8px 0' }} />
+          <Typography.Text strong>飞书交互卡片回调（关闭、重开、评价按钮）</Typography.Text>
+          <Alert
+            type="info"
+            showIcon
+            message="普通对话仍只使用 Aily + MCP；卡片按钮是唯一例外，由 ITOM 验证飞书签名和点击人身份后调用同一领域服务。"
+          />
+          <Typography.Text>公网回调地址（请通过 ngrok 或正式公网域名访问本页后复制；localhost/内网地址不可用）</Typography.Text>
+          <Typography.Text code copyable={{ text: cardCallbackUrl }}>{cardCallbackUrl}</Typography.Text>
+          <Typography.Text>Verification Token</Typography.Text>
+          <Input.Password
+            value={cardCallbackVerificationToken}
             disabled={disabled}
-            placeholder="skill_xxx；留空时继续发送纯文本通知"
-            onChange={(event) => setCardActionSkillId(event.target.value)}
+            placeholder={ailyConfig?.has_card_callback_verification_token ? '已配置，留空表示不修改' : '飞书开放平台「事件与回调 > 加密策略」中的 Verification Token'}
+            onChange={(event) => setCardCallbackVerificationToken(event.target.value)}
+            autoComplete="new-password"
+          />
+          <Typography.Text>Encrypt Key</Typography.Text>
+          <Input.Password
+            value={cardCallbackEncryptKey}
+            disabled={disabled}
+            placeholder={ailyConfig?.has_card_callback_encrypt_key ? '已配置，留空表示不修改' : '飞书开放平台「事件与回调 > 加密策略」中的 Encrypt Key'}
+            onChange={(event) => setCardCallbackEncryptKey(event.target.value)}
+            autoComplete="new-password"
           />
           <Typography.Text type={ailyConfig?.interactive_cards_ready ? 'success' : 'secondary'}>
             {ailyConfig?.interactive_cards_ready
-              ? '交互卡片已就绪：解决确认与星级评价将使用按钮。'
-              : '交互卡片未就绪：需先在 Aily 上传并启用卡片动作技能，再填写其 Skill ID。'}
+              ? '交互卡片已就绪：解决确认、未解决原因和星级评价将使用飞书原生交互。'
+              : '交互卡片未就绪：需同时配置机器人凭证、Verification Token 与 Encrypt Key；未就绪时继续发送纯文本。'}
           </Typography.Text>
           <Space.Compact style={{ width: '100%' }}>
             <Select

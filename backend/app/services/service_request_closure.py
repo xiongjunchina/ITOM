@@ -71,6 +71,13 @@ def pending_confirmations(db: Session, user: AuthUser) -> list[dict]:
     return [_safe_summary(row) for row in rows]
 
 
+def confirmation_target(db: Session, user: AuthUser, ticket_code: str) -> Ticket:
+    """返回本人当前待确认的服务请求，供 Web、MCP 和飞书卡片共用。"""
+    ticket = _own_service_request(db, user, ticket_code)
+    _confirmation_task(db, ticket, user)
+    return ticket
+
+
 def reopen_from_confirmation(
     db: Session,
     user: AuthUser,
@@ -159,6 +166,8 @@ def confirm_resolution(
     resolved: bool,
     feedback: str,
     idempotency_key: str,
+    *,
+    source: str = "aily",
 ) -> tuple[dict, Ticket | None]:
     normalized_feedback = str(feedback or "").strip()
     if not resolved and len(normalized_feedback) < 2:
@@ -204,7 +213,7 @@ def confirm_resolution(
             ticket.id,
             "user_confirm_resolution",
             user,
-            {"code": ticket.ticket_code},
+            {"code": ticket.ticket_code, "source": source},
         )
         result = {
             "ticket_code": ticket.ticket_code,
@@ -222,7 +231,7 @@ def confirm_resolution(
             ticket,
             task,
             normalized_feedback,
-            source="aily",
+            source=source,
         )
 
     mcp_intents.mark_executed(intent, "ticket", ticket.id, result)
@@ -237,6 +246,8 @@ def rate_request(
     tags: list[str] | None,
     comment: str,
     idempotency_key: str,
+    *,
+    source: str = "aily",
 ) -> tuple[dict, Ticket | None]:
     payload = {
         "ticket_code": str(ticket_code or "").strip(),
@@ -272,7 +283,7 @@ def rate_request(
         user,
         tags=payload["tags"],
         comment=payload["comment"],
-        source="aily",
+        source=source,
         commit=False,
     )
     result = {

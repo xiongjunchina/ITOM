@@ -112,7 +112,8 @@ ENSURE_COLUMNS = {
         ("last_error_redacted", "TEXT"),
     ],
     "aily_integration_config": [
-        ("card_action_skill_id", "VARCHAR(128)"),
+        ("card_callback_verification_token_encrypted", "TEXT"),
+        ("card_callback_encrypt_key_encrypted", "TEXT"),
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),

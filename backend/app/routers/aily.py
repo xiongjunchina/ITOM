@@ -33,11 +33,8 @@ class AilyConfigIn(BaseModel):
     bot_app_secret: str | None = Field(default=None, max_length=512)
     api_base: str | None = Field(default=None, max_length=100)
     message_enabled: bool | None = None
-    card_action_skill_id: str | None = Field(
-        default=None,
-        max_length=128,
-        pattern=r"^skill_[A-Za-z0-9_-]+$",
-    )
+    card_callback_verification_token: str | None = Field(default=None, max_length=512)
+    card_callback_encrypt_key: str | None = Field(default=None, max_length=512)
 
 
 class ExternalIdentityIn(BaseModel):
@@ -103,13 +100,17 @@ def _config_payload(cfg) -> dict:
         "has_bot_app_secret": bool(cfg.bot_app_secret_encrypted),
         "api_base": cfg.api_base,
         "message_enabled": cfg.message_enabled,
-        "card_action_skill_id": cfg.card_action_skill_id,
+        "has_card_callback_verification_token": bool(
+            cfg.card_callback_verification_token_encrypted
+        ),
+        "has_card_callback_encrypt_key": bool(cfg.card_callback_encrypt_key_encrypted),
         "interactive_cards_ready": bool(
             cfg.enabled
             and cfg.message_enabled
             and cfg.bot_app_id
             and cfg.bot_app_secret_encrypted
-            and cfg.card_action_skill_id
+            and cfg.card_callback_verification_token_encrypted
+            and cfg.card_callback_encrypt_key_encrypted
         ),
         "last_test_at": cfg.last_test_at,
         "last_test_status": cfg.last_test_status,
@@ -118,6 +119,7 @@ def _config_payload(cfg) -> dict:
         # Keep the trailing slash in the operator-facing URL even though FastAPI
         # also accepts the mount prefix without it.
         "mcp_path": "/mcp/",
+        "card_callback_path": "/api/integrations/feishu/card-actions",
     }
 
 
@@ -168,6 +170,18 @@ def update_config(
     target_message_enabled = data.get("message_enabled", cfg.message_enabled)
     if target_message_enabled and not (bot_app_id and bot_secret_present):
         raise AppError("AILY_BOT_CONFIG_INCOMPLETE", "启用机器人消息前必须配置 Bot App ID 与 App Secret")
+    callback_token_present = bool(
+        data.get("card_callback_verification_token")
+        or cfg.card_callback_verification_token_encrypted
+    )
+    callback_key_present = bool(
+        data.get("card_callback_encrypt_key") or cfg.card_callback_encrypt_key_encrypted
+    )
+    if callback_token_present != callback_key_present:
+        raise AppError(
+            "AILY_CARD_CALLBACK_CONFIG_INCOMPLETE",
+            "飞书卡片回调必须同时配置 Verification Token 与 Encrypt Key",
+        )
 
     for key, value in data.items():
         if key == "mcp_jwt_secret":
@@ -177,6 +191,14 @@ def update_config(
         if key == "bot_app_secret":
             if value:
                 cfg.bot_app_secret_encrypted = encrypt_secret(value)
+            continue
+        if key == "card_callback_verification_token":
+            if value:
+                cfg.card_callback_verification_token_encrypted = encrypt_secret(value)
+            continue
+        if key == "card_callback_encrypt_key":
+            if value:
+                cfg.card_callback_encrypt_key_encrypted = encrypt_secret(value)
             continue
         if key == "allowed_tenant_ids":
             cfg.allowed_tenant_ids = tenants
@@ -195,9 +217,21 @@ def update_config(
         "update",
         actor,
         {
-            "fields": [k for k in data if k not in {"mcp_jwt_secret", "bot_app_secret"}],
+            "fields": [
+                k for k in data
+                if k not in {
+                    "mcp_jwt_secret",
+                    "bot_app_secret",
+                    "card_callback_verification_token",
+                    "card_callback_encrypt_key",
+                }
+            ],
             "mcp_secret_changed": bool(data.get("mcp_jwt_secret")),
             "bot_secret_changed": bool(data.get("bot_app_secret")),
+            "card_callback_token_changed": bool(
+                data.get("card_callback_verification_token")
+            ),
+            "card_callback_key_changed": bool(data.get("card_callback_encrypt_key")),
         },
     )
     db.commit()

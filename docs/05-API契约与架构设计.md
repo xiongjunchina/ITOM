@@ -1,12 +1,14 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 交互卡片服务端契约已实现，卡片动作 Skill 已进入线上版本 `1.0.2`，本地 ITOM 已回填真实 `skill_*`，新工单双按钮卡片已发送成功；真实按钮点击 UAT 待完成。P3 尚未实现。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。P3 按用户决定暂缓。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
 ```text
 飞书用户 ⇄ Aily Agent ──HTTPStreaming + x-aily-jwt──▶ Nginx /mcp
+                                                       │
+飞书用户 ──点击机器人卡片──▶ 飞书开放平台 ──签名回调──▶ Nginx /api/integrations/feishu/card-actions
                                                        │
 React SPA ──JWT Bearer──▶ Nginx /api ──────────────────┤
                                                        ▼
@@ -162,9 +164,13 @@ list_my_it_requirements
 
 #### 主动消息
 
-MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过 Aily 机器人应用发送消息。`aily_integration_config.card_action_skill_id` 配置为已启用的 Aily 卡片动作 Skill `skill_*` 后，解决/确认期限提醒发送交互卡片（已解决并关闭、仍未解决），关单发送 1–5 星评价卡片；未配置时发送兼容纯文本。卡片 action 按飞书官方约定使用 `x_aily_forbid_forward_callback=true`、`aily_action=trigger_skill`、`skill_id`、JSON 字符串 `skill_input` 和按动作设置的 `update_card`。按钮不直接调用 ITOM API 或数据库，只唤起 Aily Skill；该 Skill 使用当前点击用户身份调用 `confirm_service_request_resolution` / `rate_service_request`，因此本人范围、状态校验和幂等仍由 MCP 与 ITOM 领域服务执行。发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。
+MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过飞书机器人应用发送消息。机器人凭据、消息开关、卡片回调 Verification Token 与 Encrypt Key 同时就绪后，解决/确认期限提醒发送交互卡片（已解决并关闭、仍未解决），关单发送 1–5 星评价卡片；否则发送兼容纯文本。“仍未解决”第一次点击只把原卡片更新为必填原因表单，提交后才重开。
 
-管理员通过 `GET/PUT /api/admin/integrations/aily` 读取/维护该 Skill ID；响应增加 `interactive_cards_ready`，仅在机器人凭据、消息开关和 Skill ID 同时就绪时为真。存量 PostgreSQL 由启动迁移为 `aily_integration_config` 幂等补列，不新增业务表。
+普通对话仍只走 Aily + MCP。卡片按钮是唯一例外：飞书开放平台向 `POST /api/integrations/feishu/card-actions` 推送新版 `card.action.trigger`，ITOM 在读取业务 JSON 前以 `X-Lark-Request-Timestamp`、`X-Lark-Request-Nonce`、Encrypt Key 和原始正文计算 SHA-256 签名，并限制 5 分钟时效；时间戳按官方 Unix 秒/毫秒格式校验，同时兼容真实 Aily 回调出现的带时区和 Go 单调时钟后缀的时间字符串，签名计算仍使用原始请求头字符串。启用加密时按 AES-256-CBC/PKCS#7 解密，再校验 Verification Token、Bot App ID、回调头与点击人中的 `tenant_key` 一致性，以及点击人的 `open_id/user_id/union_id` 显式映射。真实联调证明 Aily JWT 的 `tenant_id` 与卡片回调 `tenant_key` 属于不同标识命名空间，不能强制字符串相等：回调租户未直接命中 Aily 租户白名单时，点击人必须在允许的 Agent/Bot App 范围内唯一映射到“已授权 Aily 租户 + 活动 ITOM 账号”，未知、歧义、停用或无权限身份均拒绝；白名单为空也不允许回退授权。飞书保存 Webhook 地址时实测发送无签名头的加密 `url_verification` challenge；该只读握手仅在成功解密、类型严格为 challenge 且 Verification Token 匹配时放行，任何 `card.action.trigger` 仍必须具备完整有效签名。通过后只调用 `service_request_closure`，不直接写表；该服务继续执行 RBAC、提交人本人范围、流程状态、8–128 字符幂等键和审计。响应在飞书要求的 3 秒内返回 Toast 与更新后的卡片；立即更新使用新版固定结构 `card={"type":"raw","data":<完整卡片 JSON>}`，不能把原始卡片直接放在 `card` 下。无效签名使用 HTTP 401，业务拒绝使用错误 Toast 并保留原卡片。动作值只含公开工单号、动作、评分和幂等键，不含飞书身份、Token、密钥、ITOM 主键或内部处理字段。
+
+协议依据：飞书开放平台[处理卡片回调](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/handle-card-callbacks?lang=zh-CN)、[接收回调](https://open.feishu.cn/document/event-subscription-guide/callback-subscription/receive-and-handle-callbacks?lang=zh-CN)及[输入框组件](https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input?lang=zh-CN)。实现固定使用新版 `card.action.trigger`，不兼容已废弃的旧版卡片回调。
+
+发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。管理员通过 `GET/PUT /api/admin/integrations/aily` 只写配置两个回调秘密；响应仅返回 `has_card_callback_verification_token`、`has_card_callback_encrypt_key` 和 `interactive_cards_ready`，绝不回显秘密。存量 PostgreSQL 由启动迁移幂等补列两个密文字段，不新增业务表。
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 
@@ -183,6 +189,7 @@ GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/fo
 GET/PUT /api/service-items/{id}/dispatch-rule  # P1：服务项派单规则；运行时仍支持目录/全局兜底
 POST /api/tickets/{id}/accept                  # 目标：实际受理打点，响应 SLA 以此为准
 POST /api/tickets/{id}/confirm-resolution      # 目标：提交人确认关闭或未解决重开；网页与 MCP 共用服务
+POST /api/integrations/feishu/card-actions     # P2.1：飞书新版验签卡片回调；无需 ITOM Bearer Token
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # 影响分析(上下游+关联工单)
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # 实时达成率

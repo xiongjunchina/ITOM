@@ -17,6 +17,8 @@ from app.services.feishu import FeishuClient
 
 JWT_SECRET = secrets.token_urlsafe(32)
 BOT_SECRET = secrets.token_urlsafe(24)
+CARD_VERIFICATION_TOKEN = secrets.token_urlsafe(24)
+CARD_ENCRYPT_KEY = secrets.token_urlsafe(24)
 TENANT_ID = "tenant-p0"
 AGENT_ID = "agent-p0"
 APP_ID = "agent-p0"
@@ -115,16 +117,21 @@ def test_config_never_returns_secrets(client, admin_headers):
     assert data["mcp_tool_calls_ready"] is True
     assert JWT_SECRET not in str(data)
 
+    incomplete = client.put("/api/admin/integrations/aily", json={
+        "card_callback_verification_token": CARD_VERIFICATION_TOKEN,
+    }, headers=admin_headers)
+    assert incomplete.status_code == 400
+    assert incomplete.json()["error"]["code"] == "AILY_CARD_CALLBACK_CONFIG_INCOMPLETE"
     response = client.put("/api/admin/integrations/aily", json={
-        "card_action_skill_id": "skill_itom_closure_p0",
+        "card_callback_verification_token": CARD_VERIFICATION_TOKEN,
+        "card_callback_encrypt_key": CARD_ENCRYPT_KEY,
     }, headers=admin_headers)
     assert response.status_code == 200, response.text
-    assert response.json()["data"]["card_action_skill_id"] == "skill_itom_closure_p0"
+    assert response.json()["data"]["has_card_callback_verification_token"] is True
+    assert response.json()["data"]["has_card_callback_encrypt_key"] is True
     assert response.json()["data"]["interactive_cards_ready"] is False
-    invalid = client.put("/api/admin/integrations/aily", json={
-        "card_action_skill_id": "agent_not_a_skill",
-    }, headers=admin_headers)
-    assert invalid.status_code == 422
+    assert CARD_VERIFICATION_TOKEN not in str(response.json())
+    assert CARD_ENCRYPT_KEY not in str(response.json())
 
 
 def test_verified_but_unapproved_aily_identity_is_recorded_pending(client, admin_headers):
@@ -269,18 +276,18 @@ def test_bot_message_is_reliable_and_idempotent(client, admin_headers, aily_read
         ).count() == 1
 
 
-def test_interactive_card_outbox_and_aily_skill_contract(client, admin_headers, monkeypatch):
+def test_interactive_card_outbox_and_feishu_callback_contract(client, admin_headers, monkeypatch):
     config = client.put("/api/admin/integrations/aily", json={
         "enabled": True,
         "bot_app_id": "cli_bot_p0",
         "bot_app_secret": BOT_SECRET,
         "message_enabled": True,
-        "card_action_skill_id": "skill_itom_closure_p0",
+        "card_callback_verification_token": CARD_VERIFICATION_TOKEN,
+        "card_callback_encrypt_key": CARD_ENCRYPT_KEY,
     }, headers=admin_headers)
     assert config.status_code == 200, config.text
     assert config.json()["data"]["interactive_cards_ready"] is True
     resolved_card = build_resolution_confirmation_card(
-        skill_id="skill_itom_closure_p0",
         ticket_code="TK-P0-CARD",
         title="交互卡片验证",
         solution="已恢复服务",
@@ -288,19 +295,16 @@ def test_interactive_card_outbox_and_aily_skill_contract(client, admin_headers, 
         reopen_count=1,
     )
     rating_card = build_rating_card(
-        skill_id="skill_itom_closure_p0",
         ticket_code="TK-P0-CARD",
         title="交互卡片验证",
     )
     confirm_actions = resolved_card["elements"][1]["actions"]
     assert len(confirm_actions) == 2
-    assert confirm_actions[0]["value"]["aily_action"] == "trigger_skill"
-    assert confirm_actions[0]["value"]["x_aily_forbid_forward_callback"] is True
-    assert '"operation":"confirm_resolved"' in confirm_actions[0]["value"]["skill_input"]
-    assert '"operation":"reopen"' in confirm_actions[1]["value"]["skill_input"]
-    assert confirm_actions[1]["value"]["update_card"] is False
+    assert confirm_actions[0]["value"]["itom_action"] == "confirm_resolved"
+    assert confirm_actions[1]["value"]["itom_action"] == "show_reopen_form"
+    assert "skill_id" not in confirm_actions[0]["value"]
     assert len(rating_card["elements"][1]["actions"]) == 5
-    assert '"score":5' in rating_card["elements"][1]["actions"][4]["value"]["skill_input"]
+    assert rating_card["elements"][1]["actions"][4]["value"]["score"] == 5
 
     calls = []
     monkeypatch.setattr(

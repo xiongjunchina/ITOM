@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.services import process_engine
 from app.services.aily_ticket_notifications import scan_pending_confirmation_reminders
+from app.services.secrets_store import encrypt_secret
 
 from tests.test_m81_aily_mcp_p1 import (
     OTHER_SUBJECT,
@@ -87,7 +88,11 @@ def test_p2_service_request_reopen_confirm_rate_and_outbox(client, p1):
         cfg = db.query(AilyIntegrationConfig).filter(
             AilyIntegrationConfig.is_deleted.is_(False)
         ).one()
-        cfg.card_action_skill_id = "skill_itom_closure_p2"
+        cfg.bot_app_id = "cli_p2_card_bot"
+        cfg.bot_app_secret_encrypted = encrypt_secret("p2-card-bot-secret")
+        cfg.message_enabled = True
+        cfg.card_callback_verification_token_encrypted = encrypt_secret("p2-verification-token")
+        cfg.card_callback_encrypt_key_encrypted = encrypt_secret("p2-encrypt-key")
         db.commit()
     ticket_code = _create_request(client, p1, "p2-closure-001")
 
@@ -303,8 +308,8 @@ def test_p2_service_request_reopen_confirm_rate_and_outbox(client, p1):
         resolved_rows = [row for row in outbox if row.event_type == "ticket.resolved"]
         assert all(row.payload.get("message_type") == "interactive" for row in resolved_rows)
         first_buttons = resolved_rows[0].payload["card"]["elements"][1]["actions"]
-        assert first_buttons[0]["value"]["skill_id"] == "skill_itom_closure_p2"
-        assert '"operation":"confirm_resolved"' in first_buttons[0]["value"]["skill_input"]
+        assert first_buttons[0]["value"]["itom_action"] == "confirm_resolved"
+        assert first_buttons[1]["value"]["itom_action"] == "show_reopen_form"
         closed_row = next(row for row in outbox if row.event_type == "ticket.closed")
         assert closed_row.payload.get("message_type") == "interactive"
         assert len(closed_row.payload["card"]["elements"][1]["actions"]) == 5

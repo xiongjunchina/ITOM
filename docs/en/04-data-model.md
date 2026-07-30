@@ -104,7 +104,7 @@ provider, tenant_id, app_id, subject type (open_id/user_id/union_id), subject ID
 
 ### 1.11 aily_integration_config [cfg][implemented in P0]
 
-Singleton: enabled, MCP auth mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, message enabled, `card_action_skill_id`, last test status/time, and redacted error. The card field accepts an enabled Aily card-action Skill `skill_*` identifier; when absent, proactive delivery stays text-only. Read APIs expose configured flags only, never plaintext or ciphertext.
+Singleton: enabled, MCP auth mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, message enabled, encrypted card-callback Verification Token, encrypted card-callback Encrypt Key, last test status/time, and redacted error. The two callback secrets must be configured together; if either is absent, proactive delivery stays text-only. MCP JWT Secret, Bot App Secret, Verification Token, and Encrypt Key are all Fernet-encrypted, and read APIs expose configured flags only. The old `card_action_skill_id` is no longer part of the runtime model or configuration contract; an as-yet physically retained legacy column in an existing database is never read.
 
 ### 1.12 mcp_tool_call [audit][implemented in P0]
 
@@ -171,7 +171,7 @@ name, scope_type (service_item/catalog/global), scope_id, target_type (group/mem
 
 ### 2.15 ticket_satisfaction [implemented in P2]
 
-Unique ticket_id, database-checked score 1–5, tags, comment, source (web/aily), rater, rating time, and update time. One effective rating exists per ticket; a later rating updates the same row and writes `satisfaction_create/satisfaction_update` audit. The score is copied to `ticket.satisfaction` for existing reporting.
+Unique ticket_id, database-checked score 1–5, tags, comment, source (web/aily/feishu_card), rater, rating time, and update time. One effective rating exists per ticket; a later rating updates the same row and writes `satisfaction_create/satisfaction_update` audit. The score is copied to `ticket.satisfaction` for existing reporting.
 
 ### 2.4 problem — problem
 

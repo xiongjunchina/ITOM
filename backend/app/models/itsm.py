@@ -201,7 +201,11 @@ class TicketSatisfaction(GlidBase):
     score: Mapped[int] = mapped_column(Integer)
     tags: Mapped[list] = mapped_column(JsonCol, default=list)
     comment: Mapped[str | None] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(String(16), default="web", comment="web/aily")
+    source: Mapped[str] = mapped_column(
+        String(16),
+        default="web",
+        comment="web/aily/feishu_card",
+    )
     rated_by: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"), index=True)
     rated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, index=True)
 
