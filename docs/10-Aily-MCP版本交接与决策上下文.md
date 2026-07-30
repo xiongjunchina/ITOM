@@ -245,7 +245,7 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 ### 阶段 2：服务闭环
 
-**当前状态：P2 文本交互闭环已完成代码、自动化、前端构建、本地 Docker/ngrok、真实 Aily 多角色对话、普通用户身份、机器人真实收件及普通用户同单端到端验收。P2.1 交互卡片服务端契约已实现；卡片动作 Skill 已上传并启用，真实 `skill_*` 已回填本地 ITOM，尚需发布智能体并完成真实按钮 UAT。**
+**当前状态：P2 文本交互闭环已完成代码、自动化、前端构建、本地 Docker/ngrok、真实 Aily 多角色对话、普通用户身份、机器人真实收件及普通用户同单端到端验收。P2.1 交互卡片服务端契约已实现；卡片动作 Skill 已进入线上版本 `1.0.2`，真实 `skill_*` 已回填本地 ITOM，新 UAT 工单的双按钮卡片已发送成功，尚需用户实际点击完成重开、关闭和评价按钮 UAT。**
 
 - `accepted_at` 与 `confirmation_due_at` 已由实际流程节点打点；IT 完成只进入 `resolved`，提交人确认后才关闭；
 - 已实现 `get_my_pending_confirmations`、`confirm_service_request_resolution`、`rate_service_request`，全部要求本人范围和明确工单编号；
@@ -265,7 +265,7 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 2026-07-30 普通用户同单闭环：`xiongjun` 通过真实 Aily 创建 `TK-202607-0003`（局域网-无线，MacBook 无法连接公司 Wi-Fi，P2）。IT 人员完成受理、处理和解决后，`ticket.accepted`、`ticket.resolved` 均由机器人实际送达；普通用户随后在 Aily 确认解决关闭并提交 5 星评价。ITOM 最终状态为 `closed`，有效评价 `score=5/source=aily`，MCP 审计记录 `confirm_service_request_resolution` 与 `rate_service_request` 均成功。由此 P2 文本交互的普通用户端到端验收完成。
 
-2026-07-30 P2.1 交互卡片：服务端已支持可靠卡片发件箱、解决确认/期限提醒双按钮、关闭后 1–5 星按钮、纯文本回退、`skill_*` 配置校验与存量数据库幂等补列。卡片按官方 `trigger_skill` 契约传递公开工单号、动作、评分和幂等键，不传内部主键或身份秘密；定向自动化 `12 passed`，完整后端回归 `271 passed`，前端 TypeScript/Vite 生产构建成功，本地 PostgreSQL 已补列且 8180 `/api/health` 正常。新版自定义智能体已从根目录含 `SKILL.md` 的技能包生成、启用 `itom-service-request-closure`，页面给出可用于卡片 action 的真实 `skill_*` 标识，本地 ITOM 已配置该标识并满足交互卡片就绪条件。“Create via Chat”此前产生的异常内容未保存或发布；当前只剩智能体发布和新测试工单的真实按钮 UAT，尚不宣称按钮闭环已通过。
+2026-07-30 P2.1 交互卡片：服务端已支持可靠卡片发件箱、解决确认/期限提醒双按钮、关闭后 1–5 星按钮、纯文本回退、`skill_*` 配置校验与存量数据库幂等补列。卡片按官方 `trigger_skill` 契约传递公开工单号、动作、评分和幂等键，不传内部主键或身份秘密；定向自动化 `12 passed`，完整后端回归 `271 passed`，前端 TypeScript/Vite 生产构建成功，本地 PostgreSQL 已补列且 8180 `/api/health` 正常。新版自定义智能体已从根目录含 `SKILL.md` 的技能包生成、启用 `itom-service-request-closure`，页面给出可用于卡片 action 的真实 `skill_*` 标识，本地 ITOM 已配置该标识并满足交互卡片就绪条件。“Create via Chat”此前产生的异常内容未保存或发布。线上发布窗口显示版本 `1.0.2`、2026-07-30 09:06 且“暂无变更”；真实 Aily 随后创建且幂等复用 `TK-202607-0004`，ITOM 流程推进到 `resolved` 后已发送标题“服务请求待您确认”的交互卡片，发件箱为 `sent`，按钮为“已解决并关闭 / 仍未解决”，action 指向配置的卡片动作 Skill。尚待 `xiongjun` 实际点击按钮验证点击者身份、重开、关闭和评价链路，因此暂不宣称按钮闭环已通过。
 
 验收：以业务用户、IT 人员完成“诉求 → 建单 → 派单 → 受理 → 解决 → 通知 → 确认/重开 → 关闭 → 评价”真实闭环，多张待确认单据不串单，内部信息不外发。
 

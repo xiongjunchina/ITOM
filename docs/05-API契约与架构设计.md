@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 交互卡片服务端契约已实现，卡片动作 Skill 已上传、启用并回填本地 ITOM；智能体发布与真实按钮 UAT 待完成。P3 尚未实现。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 交互卡片服务端契约已实现，卡片动作 Skill 已进入线上版本 `1.0.2`，本地 ITOM 已回填真实 `skill_*`，新工单双按钮卡片已发送成功；真实按钮点击 UAT 待完成。P3 尚未实现。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 

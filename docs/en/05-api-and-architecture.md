@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. The P2.1 server-side interactive-card contract is implemented; the card-action Skill is uploaded, enabled, and configured in local ITOM, while agent publication and live-button UAT remain. P3 is not implemented. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. The P2.1 server-side interactive-card contract is implemented; the card-action Skill is live in version `1.0.2`, local ITOM contains the real `skill_*`, and a close/reopen card for a new ticket was delivered successfully. Live user-click UAT remains. P3 is not implemented. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
