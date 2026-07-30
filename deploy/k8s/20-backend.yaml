@@ -46,7 +46,7 @@ spec:
         - name: harbor-isa
       containers:
         - name: backend
-          image: core.harbor.domain/sn/itom-backend:pmo-cio-20260723-120000-linux-amd64
+          image: core.harbor.domain/sn/itom-backend:aily-mcp-0ff989f-20260730-linux-amd64
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 6800
