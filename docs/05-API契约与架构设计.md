@@ -176,6 +176,7 @@ GET /api/requirements/tasks/active
 ```text
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
+GET /api/task-management/reference/cis              # Bug 所属系统候选；只读 CMDB 配置项
 POST /api/task-management/bugs/{id}/confirm
 POST /api/task-management/bugs/{id}/reject-confirm
 POST /api/task-management/bugs/{id}/fix-tasks
@@ -190,6 +191,8 @@ DELETE /api/task-management/work-tasks/{id}
 ```
 
 Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+
+`GET /api/task-management/reference/cis` 只返回未删除、未退役的 CMDB 配置项及其产品经理可读信息，供 Bug 登记页选择“所属系统”；它不维护第二套系统字典，也不放宽 `cmdb.view` 之外的写权限。系统管理员应在 CMDB 中维护配置项，Bug 表单的候选项会随 CMDB 当前有效数据变化。
 
 绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
 
@@ -261,6 +264,8 @@ GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时�
 POST /api/process-tasks/{id}/complete | /reassign
 ```
 
+流程定义列表的稳定展示顺序为：ITSM（服务请求）→ ITSM（变更）→ ITSM（事件）→ ITSM（问题）→ 项目 → 需求 → Bug 管理；后端按触发实体归一排序，前端分组与左侧菜单保持一致，不能依赖数据库返回顺序。
+
 ### 4.6 团队
 
 ```text
@@ -298,11 +303,15 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # 兼容旧客户端；团队贡献权重、目标及满意度组合的规范入口是 /api/point-rules/team-config
 ```
 
+`/api/points/leaderboard` 的 `points` 是该周期 `point_entry` 台账中同一人员所有正负流水的原始代数和；响应可带 `breakdown` 按 `source_type` 汇总来源。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
+
 ### 4.7 Dashboard
 
 ```text
 GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚合)
 ```
+
+当账号具有任务模块查看权限时，响应额外包含 `task` 聚合块：`open_total`、`open_bugs`、`open_bug_fix_tasks`、`open_delegated_tasks` 和 `open_requirement_tasks`。该块只读、按当前非终态任务实时统计，不改变原有 Dashboard 字段。
 
 ## 5. 领域事件清单
 

@@ -179,6 +179,8 @@ export const zh: Dict = {
   'proj.confirmDeleteTask': '确认删除该任务？',
   'proj.emptyWbs': '暂无任务，可通过「新建任务」或章程导入生成',
   'proj.gantt': '甘特图',
+  'proj.phaseProgress': '项目阶段进展',
+  'proj.phaseEmpty': '暂无一级 WBS 任务，无法展示项目阶段',
   // 甘特图（按周分桶，左 6 列固定）
   'proj.gantt.empty': '暂无任务',
   'proj.gantt.legend.plan': '计划',
@@ -499,6 +501,8 @@ export const en: Dict = {
   'proj.confirmDeleteTask': 'Delete this task?',
   'proj.emptyWbs': 'No tasks yet; add via "New Task" or Charter Import',
   'proj.gantt': 'Gantt Chart',
+  'proj.phaseProgress': 'Project Phase Progress',
+  'proj.phaseEmpty': 'No top-level WBS tasks; project phases cannot be shown',
   // Gantt (weekly buckets, 6 fixed left columns)
   'proj.gantt.empty': 'No tasks',
   'proj.gantt.legend.plan': 'Plan',

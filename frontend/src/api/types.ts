@@ -354,6 +354,13 @@ export interface DashboardData {
     trainings: number;
     hirings: number;
   };
+  task?: {
+    open_total: number;
+    open_bugs: number;
+    open_bug_fix_tasks: number;
+    open_delegated_tasks: number;
+    open_requirement_tasks: number;
+  };
   alerts: { type: string; title: string; link?: string | null }[];
 }
 
@@ -637,7 +644,7 @@ export interface ProvisionRule {
 
 // ============ M2.5 自配置：状态机 ============
 
-export type WorkflowEntityType = 'ticket' | 'ticket_change' | 'requirement' | 'project' | 'problem';
+export type WorkflowEntityType = 'ticket' | 'ticket_change' | 'requirement' | 'project' | 'problem' | 'bug';
 
 export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   ticket: '工单（事件/服务请求）',
@@ -645,6 +652,7 @@ export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   requirement: '需求',
   project: '项目',
   problem: '问题',
+  bug: 'Bug 管理',
 };
 
 /** 状态定义 */
@@ -1754,7 +1762,11 @@ export interface MyPoints {
 /** 本期积分排行榜（GET /points/leaderboard） */
 export interface PointsLeaderboard {
   period: string;
-  board: { person_name: string | null; points: number }[];
+  board: {
+    person_name: string | null;
+    points: number;
+    breakdown: { source_type: string; points: number }[];
+  }[];
 }
 
 /** 积分规则（自动事件分值，可调可停用） */

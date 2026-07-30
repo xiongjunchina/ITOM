@@ -301,7 +301,7 @@ def _notify(db: Session, event_type: str, req: LoginRequest, title: str, content
 def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
                             email: str | None = None, mobile: str | None = None,
                             avatar_url: str | None = None) -> dict:
-    """飞书身份 → 已开通直登 / 未开通落 LoginRequest 返回 pending 凭据（模拟与真实 OAuth 共用）。"""
+    """飞书身份 → 已开通直登 / 业务用户自动开户 / 其他人员进入审批。"""
     existing = (
         db.query(AuthUser)
         .filter(
@@ -318,6 +318,26 @@ def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
         audit(db, "auth_user", existing.id, "login", existing, {"source": "feishu"})
         db.commit()
         return {"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)}
+
+    # 业务用户 JIT 开户：仅使用组织同步已经确认的非 IT 人员，不能安全匹配时继续审批流。
+    from app.services.provisioning import provision_business_feishu_user
+
+    business_user = provision_business_feishu_user(
+        db,
+        external_id=external_id,
+        display_name=display_name,
+        email=email,
+        mobile=mobile,
+    )
+    if business_user:
+        if not business_user.is_active:
+            raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
+        business_user.last_login_at = datetime.now()
+        audit(db, "auth_user", business_user.id, "auto_provision_business_login", business_user, {
+            "source": "feishu", "role_initialized": "requester",
+        })
+        db.commit()
+        return {"status": "active", "token": create_token(business_user.id), "user": _user_payload(db, business_user)}
 
     req = (
         db.query(LoginRequest)

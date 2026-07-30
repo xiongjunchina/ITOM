@@ -497,7 +497,33 @@ def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depend
         .all()
     )
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
+    person_ids = {pid for pid, _ in rows}
+    source_rows = (
+        db.query(PointEntry.person_id, PointEntry.source_type, func.sum(PointEntry.points))
+        .filter(
+            period_clause(PointEntry.period, period),
+            PointEntry.person_id.in_(person_ids or {"-"}),
+            PointEntry.is_deleted.is_(False),
+        )
+        .group_by(PointEntry.person_id, PointEntry.source_type)
+        .all()
+    )
+    breakdown: dict[str, list[dict]] = {}
+    for person_id, source_type, points in source_rows:
+        breakdown.setdefault(person_id, []).append({
+            "source_type": source_type or "unknown",
+            "points": round(float(points), 1),
+        })
+    for values in breakdown.values():
+        values.sort(key=lambda item: (-item["points"], item["source_type"]))
     return ok({
         "period": period,
-        "board": [{"person_name": names.get(pid), "points": round(float(pts), 1)} for pid, pts in rows],
+        "board": [
+            {
+                "person_name": names.get(pid),
+                "points": round(float(pts), 1),
+                "breakdown": breakdown.get(pid, []),
+            }
+            for pid, pts in rows
+        ],
     })

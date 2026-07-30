@@ -68,7 +68,7 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 ### 2.2a Identity & Organization (M3.5; see docs/06 for details)
 
 - **Departments**: the company org structure (one person, one department; tree-shaped; types it/business/audit), pure data with no permissions. Feishu is implemented as the personnel and department source of truth; local records remain available for transitional manual maintenance.
-- **Account provisioning (JIT)**: local and Feishu authentication are implemented (ad/sms/wechat reserved). A newly authenticated Feishu identity creates a pending provisioning request; an administrator links any valid company person and sets username, roles, and language before activation. Accounts cover both IT and business users and are not constrained by the digital-team scope. **Provisioning rules** take effect only on first provisioning, after which roles are freely managed.
+- **Account provisioning (JIT)**: local and Feishu authentication are implemented (ad/sms/wechat reserved). If a newly authenticated Feishu identity matches an already-synced non-IT business person, has a valid email, and has no person/username collision, the account is created automatically with the email prefix as username and the `requester` role. Other identities continue through the administrator approval request, where an administrator links any valid company person and sets username, roles, and language. Accounts cover both IT and business users and are not constrained by the digital-team scope. Automatic provisioning only initializes the first account; conflicts never take over an existing account.
 - **Feishu QR-code login + admin provisioning approval (finalized 2026-07-12 M7)**: after an employee first passes identity verification via a Feishu QR-code scan, they **do not log in immediately** — a `login_request` (pending) is recorded, and the employee remains on a transition page ("The administrator is processing your login request, please wait") polling the status; once the admin configures a system username, base roles, **default display language**, and linked person for them under "User & Group Management → Login Provisioning" and provisions the account, the employee's transition page automatically enters the system; a rejection shows the reason. Bidirectional notifications currently go through in-app + the outbox (channel=in_app), and the outbox is the future hook for Feishu push. Before Feishu credentials are ready, `/api/auth/feishu/scan` simulates the OAuth callback with the passed-in identity.
 - **Chinese-English bilingual (2026-07-12 M7)**: the system supports Chinese/English display languages, and a user can switch on their own after login (the language is stored in `auth_user.preferences.language` and applied on login); the admin sets the employee's default language during Feishu provisioning. i18n covers the application shell (navigation / top bar / login / transition page / provisioning approval / permission-module labels) and antd built-in components; the body copy of each business page is translated incrementally. The repository's design documents provide an English translation under `docs/en/`.
 - **Business domain / service line**: code / name / owner (BP) / backup owner — the owner is a field, not a role.
@@ -139,6 +139,7 @@ Login, Overview, Profile Center (account/security/preferences/activity), Service
 | Problem | In-progress count, P1–P4 priority distribution, known errors, closure rate | Jump to the problem list (with filters) |
 | Project | Active project count, health distribution (green/yellow/red), overdue milestone count, budget execution rate | Jump to the project list |
 | Requirement | Four-stage requirement counts (Registered / Analyzed / Implemented / Closed), this month's average delivery lead time | Jump to the requirement list |
+| Task Management | Open-task total, plus Bug, Bug-fix, delegated, and requirement-development counts | Jump to Development Tasks |
 | Team | Top-5 member workload, Top-5 growth-points ranking, this month's training sessions, hiring progress | Jump to Team Management |
 | Alert area | SLA-imminent/overdue tickets, contracts expiring within 90 days, overdue milestones, red-health projects | Jump to the corresponding record |
 
@@ -299,6 +300,7 @@ Recovery transitions (M12): Closed → In Progress (restart, optionally rewind t
 
 - 4 required on creation: task name, assignee, start/end date; optional: description, deliverable, predecessor tasks.
 - The WBS hierarchy code is auto-generated (by tree position); completion provides 0%/50%/100% presets and accepts a custom integer from 0–100, while status is derived from completion and planned end date (0% not started, 100% done, otherwise in progress/overdue). Explicitly setting any parent to 100% cascades 100% to all descendants; changing a child recomputes each ancestor as the arithmetic average of its direct children; overall project progress is duration-weighted over leaf tasks only to avoid double-counting parents.
+- Above the Gantt chart, Project Detail shows a horizontal “Project Phase Progress” line. Nodes are derived from top-level WBS task names and show completion and status; no second phase master data is introduced.
 - The wide WBS table provides an Excel-style freeze pane: the header remains visible during vertical scrolling and the first three columns remain visible during horizontal scrolling. One sticky bottom horizontal scrollbar remains available. Users can drag header separators to resize columns and row edges to resize rows; the layout is saved per project in the current browser.
 - Every table that exceeds the content width provides one sticky bottom horizontal scrollbar; the active table's scrollbar remains usable when the user reaches the table bottom or the table body leaves the viewport, and only one active-table scrollbar is shown per viewport. Table headers remain visible during page scrolling. The WBS table additionally freezes the first three columns.
 - Completing a task on time produces a point event.
@@ -352,6 +354,8 @@ The web entry points are **Task Management → Development Tasks** (with `?tab=r
 
 The Bug loop is fixed as: **Register Bug (IT team member) → Bug Confirmation (affected-system product manager, approval) → Generate Fix Tasks (development leader) → Development Fix (assigned developer, execution) → Verification & Closure (affected-system product manager, approval)**. Registration snapshots the product manager from the CMDB CI; one Bug may generate multiple development/test child tasks, and only after all child tasks close does the Bug enter product verification. Confirmation rejection, failed verification, and reopening require a reason and retain an audit trail.
 
+“System” is not a frontend enum. Options come from non-retired CMDB configuration items through a read-only task reference endpoint; CMDB remains the maintenance entry point, and the product-manager snapshot is still taken server-side.
+
 Delegated Tasks cover work originating from tickets, problems, incidents, technical research, and other non-project work. They use the lightweight lifecycle “Register → Schedule → Execute → Close,” plus “Pause/Abort.” The registrar may delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Administrators can edit, pause, abort, and close from the list page. Both task types use independent permission modules and server-side record scope; front-end buttons never replace authorization. Existing requirement tasks, problems, performance, and point history remain readable without rewriting.
 
 Performance ownership is explicit: Bug-fix child tasks and ordinary delegated tasks default to job-result evidence, measured by `bug_fix_delivery` and `delegated_work_delivery`, with completion points recorded idempotently. Only a delegated task explicitly marked as team contribution and typed as Technical Research, Cross-team Support, or Knowledge Sharing enters the corresponding team-contribution dimension.
@@ -397,7 +401,7 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 - Initially 6–8 built-in processes: incident handling, service-request delivery, change approval & implementation, problem analysis, requirement delivery, project key milestones.
 - Assignment rules: assigned by each step's default role (e.g. requirement review → it_bm, solution assessment → it_pdm_leader, project milestone → it_pm, change request/implementation → it_ops, change approval → it_op_leader, change retrospective → is_mgr, development task → it_dev_leader); reassignable within an instance, with no external dependency.
 
-**Snapshot of the six active built-in processes in the current published runtime (verified locally on 2026-07-24):** this table is the actual process-center configuration, not a generic ITIL example or an old seed description. A newly published process version supersedes it; historical instances retain their original snapshots.
+**Snapshot of the seven active built-in processes in the current published runtime (verified locally on 2026-07-24; Bug was added in M82):** this table is the actual process-center configuration, not a generic ITIL example or an old seed description. A newly published process version supersedes it; historical instances retain their original snapshots.
 
 | Process | Actual steps (default handler; node semantics/CC in parentheses) |
 | --- | --- |
@@ -407,6 +411,7 @@ Review governance: M10 starts with **single-reviewer consensus scoring** (`requi
 | `problem_flow` | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
 | `requirement_flow` | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
 | `project_flow` | Project kickoff (it_pm, approval; CC cio, it_bm) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval; CC cio, it_tm) |
+| `bug_flow` | Register Bug (registration node auto-completed) → Bug confirmation (affected-system product manager, approval) → Generate fix tasks (it_dev_leader) → Development fix (assigned developer) → Verification & closure (affected-system product manager, approval) |
 
 Service requests do not add a separate Aily-routing process step. Aily handles intent, field collection, and confirmation; after MCP creates the record, ITOM immediately applies the service item's bound workflow and dispatch rule. Completion by IT moves only to `resolved`; the requester confirms through the web or Aily before closure, or rejects the resolution to return to `processing`. Only user-visible progress is sent outward.
 
@@ -457,8 +462,10 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 | Training contribution | Presenting/organizing training, attending training |
 | Knowledge contribution | Publishing an article, article marked "helpful" |
 | Suggestions | Submitting a suggestion, liked, adopted |
+| Task contribution | Bug-fix completion and delegated-task completion; technical research, cross-team support, and knowledge sharing enter team dimensions only when explicitly classified as team contribution |
 
 - Points ledger: person / event / points / source record / time, traceable to the triggering record; admin manual point adjustments also go through the ledger (a reason is required).
+- Leaderboard points are the raw sum of the current-period ledger by person (for example, 30 + 20 = 50). The UI can expand a row to show source types and values. This is not the normalized activity-relative score used by the performance overview.
 - Pages: leaderboard (month/quarter/year/cumulative), personal points detail, Activity Points → Point Rules (team-contribution events; only admin/CIO can edit; every change is audited). Role-result source mappings, RACI/process-step mappings, and weights are maintained in Team Management → Performance → Scoring Rules and are never mixed with activity points.
 - Points are one of the input sources for the 9.1 performance evaluation.
 

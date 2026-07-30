@@ -202,7 +202,7 @@ export default function DelegatedTasksPage() {
           <Form.Item name="description" label={t('task.description')} rules={[{ required: true, message: t('task.descriptionRequired') }]}><Input.TextArea rows={3} maxLength={2000} /></Form.Item>
           <Space wrap size={16}>
             <Form.Item name="task_type" label={t('task.taskType')} rules={[{ required: true }]}><Select style={{ width: 150 }} options={['技术研究', '跨团队支持', '知识分享', '系统优化', '运维执行', '其他'].map((v) => ({ value: v, label: v }))} /></Form.Item>
-            <Form.Item name="source_type" label={t('task.source')}><Select style={{ width: 150 }} options={['manual', 'ticket', 'problem', 'incident'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+            <Form.Item name="source_type" label={t('task.source')}><Select style={{ width: 150 }} options={['manual', 'ticket', 'problem', 'incident'].map((v) => ({ value: v, label: t(`task.source.${v}`) }))} /></Form.Item>
             <Form.Item name="priority" label={t('task.priority')}><Select style={{ width: 100 }} options={['P1', 'P2', 'P3', 'P4'].map((v) => ({ value: v, label: v }))} /></Form.Item>
           </Space>
           <Space wrap size={16}>

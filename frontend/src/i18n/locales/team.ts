@@ -219,6 +219,7 @@ export const zh: Dict = {
   'team.points.empty': '暂无积分流水',
   'team.points.source': '来源',
   'team.points.period': '考核期',
+  'team.points.noBreakdown': '暂无来源明细',
   // 活动积分 - 专项活动
   'team.campaign.tab': '专项活动',
   'team.campaign.create': '新建活动',
@@ -564,6 +565,7 @@ export const en: Dict = {
   'team.points.empty': 'No points records',
   'team.points.source': 'Source',
   'team.points.period': 'Period',
+  'team.points.noBreakdown': 'No source breakdown',
   'team.campaign.tab': 'Campaigns',
   'team.campaign.create': 'New campaign',
   'team.campaign.empty': 'No campaigns',

@@ -106,7 +106,7 @@ export default function BugListPage() {
   const loadReferences = async () => {
     if (cis.length === 0 || members.length === 0) {
       const [ciResult, memberResult] = await Promise.all([
-        cis.length === 0 ? api.getList<CiRow>('/cis', { page: 1, page_size: 2000 }) : Promise.resolve({ items: cis, total: cis.length }),
+        cis.length === 0 ? api.getList<CiRow>('/task-management/reference/cis', { page: 1, page_size: 2000 }) : Promise.resolve({ items: cis, total: cis.length }),
         members.length === 0 ? api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }) : Promise.resolve({ items: members, total: members.length }),
       ]);
       setCis(ciResult.items);
@@ -254,7 +254,7 @@ export default function BugListPage() {
       <Modal title={t('task.bug.register')} open={createOpen} onOk={() => void submitCreate()} confirmLoading={saving} onCancel={() => setCreateOpen(false)} destroyOnClose width={680}>
         <Form form={bugForm} layout="vertical" preserve={false}>
           <Form.Item name="title" label={t('task.title')} rules={[{ required: true, message: t('task.titleRequired') }]}><Input maxLength={200} /></Form.Item>
-          <Form.Item name="ci_id" label={t('task.bug.system')} rules={[{ required: true, message: t('task.bug.systemRequired') }]}>
+          <Form.Item name="ci_id" label={t('task.bug.system')} extra={t('task.bug.systemHint')} rules={[{ required: true, message: t('task.bug.systemRequired') }]}>
             <Select showSearch optionFilterProp="label" options={cis.map((ci) => ({ value: ci.id, label: `${ci.name}${ci.product_manager_name ? `（PM：${ci.product_manager_name}）` : ''}` }))} />
           </Form.Item>
           <Space wrap size={16}>

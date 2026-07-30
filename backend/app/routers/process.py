@@ -17,6 +17,31 @@ from app.services.audit import audit
 router = APIRouter(tags=["process"])
 
 
+PROCESS_DISPLAY_ORDER = {
+    "service_request": 10,
+    "change": 20,
+    "ticket_change": 20,
+    "incident": 30,
+    "problem": 40,
+    "project": 50,
+    "requirement": 60,
+    "bug": 70,
+}
+
+
+def _definition_display_order(definition: ProcessDefinition) -> tuple[int, int, str]:
+    entity_key = definition.entity_type
+    if definition.entity_type == "ticket":
+        ticket_type = (definition.trigger_condition or {}).get("ticket_type")
+        entity_key = {
+            "service_request": "service_request",
+            "change": "ticket_change",
+            "incident": "incident",
+            "problem": "problem",
+        }.get(ticket_type, "service_request")
+    return (PROCESS_DISPLAY_ORDER.get(entity_key, 999), -definition.version, definition.code)
+
+
 class CompleteIn(BaseModel):
     comment: str = ""
 
@@ -243,12 +268,8 @@ def _check_trigger_conflict(db: Session, entity_type: str, trigger: dict | None,
 
 @router.get("/api/admin/process-definitions")
 def list_definitions(db: Session = Depends(get_db), _=Depends(require_perm("process_definitions", "view"))):
-    rows = (
-        db.query(ProcessDefinition)
-        .filter(ProcessDefinition.is_deleted.is_(False))
-        .order_by(ProcessDefinition.entity_type, ProcessDefinition.code)
-        .all()
-    )
+    rows = db.query(ProcessDefinition).filter(ProcessDefinition.is_deleted.is_(False)).all()
+    rows.sort(key=_definition_display_order)
     return ok([_def_row(d, db) for d in rows], total=len(rows))
 
 

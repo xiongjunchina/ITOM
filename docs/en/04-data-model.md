@@ -6,6 +6,8 @@
 > Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
 > This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, dispatch, and rating-detail models are implemented. Database facts must be checked against real models and migrations.
 
+> This task-management enhancement changes only read aggregations, presentation, and authentication configuration. It adds or deletes no business table and rewrites no existing record; `business_initial_password` is deployment configuration, not a persisted business field.
+
 ## 0. Global Conventions
 
 - Primary key: `id CHAR(26)` GLID, system-generated; not listed per-table below.
@@ -278,7 +280,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.3 bug — defect record
 
-`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK, `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, evidence, resolution and verification notes, rejection reason, and reopen/close timestamps. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
+`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK (the selectable system comes from CMDB), `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, evidence, resolution and verification notes, rejection reason, and reopen/close timestamps. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
 
 ### 4.4 bug_fix_task — Bug repair task
 

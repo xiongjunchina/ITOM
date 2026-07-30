@@ -414,10 +414,11 @@ export default function Definitions() {
     { key: 'itsm_sr', label: t('proc.group.itsmSr') },
     { key: 'itsm_change', label: t('proc.group.itsmChange') },
     { key: 'itsm_incident', label: t('proc.group.itsmIncident') },
+    { key: 'problem', label: et.workflowEntity('problem') },
+    { key: 'project', label: et.workflowEntity('project') },
+    { key: 'requirement', label: et.workflowEntity('requirement') },
+    { key: 'bug', label: et.workflowEntity('bug') },
     { key: 'itsm_other', label: t('proc.group.itsmOther') },
-    ...(Object.keys(WORKFLOW_ENTITY_LABELS) as WorkflowEntityType[])
-      .filter((e) => e !== 'ticket' && e !== 'ticket_change')
-      .map((e) => ({ key: e as string, label: et.workflowEntity(e) })),
   ];
   const grouped = groupMeta.map((g) => ({
     et: g.key,

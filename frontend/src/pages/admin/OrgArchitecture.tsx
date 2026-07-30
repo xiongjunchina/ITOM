@@ -32,9 +32,7 @@ import {
   ReloadOutlined,
   SyncOutlined,
   SettingOutlined,
-  TeamOutlined,
   UserAddOutlined,
-  UserOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
@@ -159,7 +157,8 @@ export default function OrgArchitecture() {
       setOrgSettings(settings);
       if (!initedRef.current) {
         initedRef.current = true;
-        setExpandedKeys(['company', 'unassigned', ...res.departments.map((d) => `dept:${d.id}`)]);
+        // 组织架构展示只展开到公司下的一级部门；完整部门/人员数据仍保留给选择器和同步功能。
+        setExpandedKeys(['company']);
       }
     } catch {
       // 已统一提示
@@ -285,54 +284,27 @@ export default function OrgArchitecture() {
       );
     };
 
-    const memberNode = (m: Member): DataNode => {
-      const off = m.status === '离职';
-      return {
-        key: `member:${m.id}`,
-        icon: <UserOutlined />,
-        isLeaf: true,
-        title: (
-          <span style={off ? { color: GRAY } : undefined}>
-            {highlight(m.name)}
-            {off ? <span style={{ color: GRAY }}>{t('admin.org.leftSuffix')}</span> : null}
-            <SourceTag source={m.external_source} />
-          </span>
-        ),
-      };
-    };
-
     const ids = new Set(data.departments.map((d) => d.id));
     const byParent = new Map<string | null, OrgTreeDept[]>();
     for (const d of data.departments) {
       const pid = d.parent_id && ids.has(d.parent_id) ? d.parent_id : null;
       byParent.set(pid, [...(byParent.get(pid) ?? []), d]);
     }
-    const deptNodes = (pid: string | null): DataNode[] =>
-      (byParent.get(pid) ?? [])
-        .slice()
-        .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || a.code.localeCompare(b.code))
-        .map((d) => ({
-          key: `dept:${d.id}`,
-          icon: <ApartmentOutlined />,
-          title: (
-            <span style={!d.active ? { color: GRAY } : undefined}>
-              {highlight(d.name)}
-              {!d.active ? <span style={{ color: GRAY }}>{t('admin.org.disabledSuffix')}</span> : null}
-              <SourceTag source={d.external_source} />
-            </span>
-          ),
-          children: [...deptNodes(d.id), ...d.members.map(memberNode)],
-        }));
-
-    const children: DataNode[] = deptNodes(null);
-    if (data.unassigned_members.length > 0) {
-      children.push({
-        key: 'unassigned',
-        icon: <TeamOutlined />,
-        title: <span style={{ color: GRAY }}>{highlight(t('admin.org.unassignedDept'))}</span>,
-        children: data.unassigned_members.map(memberNode),
-      });
-    }
+    const children: DataNode[] = (byParent.get(null) ?? [])
+      .slice()
+      .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || a.code.localeCompare(b.code))
+      .map((d) => ({
+        key: `dept:${d.id}`,
+        icon: <ApartmentOutlined />,
+        isLeaf: true,
+        title: (
+          <span style={!d.active ? { color: GRAY } : undefined}>
+            {highlight(d.name)}
+            {!d.active ? <span style={{ color: GRAY }}>{t('admin.org.disabledSuffix')}</span> : null}
+            <SourceTag source={d.external_source} />
+          </span>
+        ),
+      }));
     return [
       {
         key: 'company',
@@ -350,20 +322,9 @@ export default function OrgArchitecture() {
     if (!q || !data) return;
     const hit = (name?: string | null) => !!name && name.toLowerCase().includes(q);
     const expanded = new Set<Key>(['company']);
-    const ids = new Set(data.departments.map((d) => d.id));
-    const parentOf = new Map(data.departments.map((d) => [d.id, d.parent_id]));
-    const expandChain = (deptId?: string | null) => {
-      let cur = deptId ?? null;
-      while (cur && ids.has(cur)) {
-        expanded.add(`dept:${cur}`);
-        cur = parentOf.get(cur) ?? null;
-      }
-    };
-    for (const d of data.departments) {
-      if (hit(d.name)) expandChain(d.parent_id);
-      if (d.members.some((m) => hit(m.name))) expandChain(d.id);
+    for (const d of data.departments.filter((item) => !item.parent_id)) {
+      if (hit(d.name)) expanded.add(`dept:${d.id}`);
     }
-    if (data.unassigned_members.some((m) => hit(m.name))) expanded.add('unassigned');
     setExpandedKeys([...expanded]);
     setAutoExpandParent(true);
   };

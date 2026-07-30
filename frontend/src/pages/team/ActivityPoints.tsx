@@ -806,6 +806,7 @@ interface IdeaFormValues {
 
 function IdeasTab() {
   const t = useT();
+  const et = useEnums();
   const canCreate = useIdeasPerm('create');
   const canManage = useIdeasPerm('edit');
   const user = useAuthStore((s) => s.user);
@@ -1117,6 +1118,15 @@ function IdeasTab() {
               { title: t('team.col.person'), dataIndex: 'person_name', render: (v) => v || '-' },
               { title: t('team.col.points'), dataIndex: 'points', width: 100 },
             ]}
+            expandable={{
+              expandedRowRender: (row) => (
+                <Space wrap size={[6, 4]}>
+                  {row.breakdown.length === 0 ? <Typography.Text type="secondary">{t('team.points.noBreakdown')}</Typography.Text> : row.breakdown.map((item) => (
+                    <Tag key={item.source_type}>{et.pointSource(item.source_type)}：{item.points}</Tag>
+                  ))}
+                </Space>
+              ),
+            }}
             dataSource={board?.board ?? []}
             pagination={false}
             locale={{ emptyText: t('team.overview.board.empty') }}

@@ -178,6 +178,7 @@ The frontend routes are `/task-management/development` and `/task-management/del
 ```text
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
+GET /api/task-management/reference/cis              # read-only CMDB system candidates for Bug registration
 POST /api/task-management/bugs/{id}/confirm
 POST /api/task-management/bugs/{id}/reject-confirm
 POST /api/task-management/bugs/{id}/fix-tasks
@@ -192,6 +193,8 @@ DELETE /api/task-management/work-tasks/{id}
 ```
 
 Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
+
+`GET /api/task-management/reference/cis` returns only non-deleted, non-retired CMDB configuration items and readable product-manager information for the Bug form's “Affected system” field. It does not create a second system dictionary or grant CMDB write access. Administrators maintain the candidate list in CMDB, so the Bug form follows the current effective CMDB data.
 
 Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
 
@@ -263,6 +266,8 @@ GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue 
 POST /api/process-tasks/{id}/complete | /reassign
 ```
 
+The stable display order for process definitions is ITSM (Service Request) → ITSM (Change) → ITSM (Incident) → ITSM (Problem) → Project → Requirement → Bug Management. The backend normalizes ordering by trigger entity and the UI keeps the same grouping order as the left navigation; it must not depend on database row order.
+
 ### 4.6 Team
 
 ```text
@@ -297,11 +302,15 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # legacy compatibility endpoint; canonical team config is /api/point-rules/team-config
 ```
 
+The `points` value from `/api/points/leaderboard` is the raw algebraic sum of all positive and negative `point_entry` rows for a person in the period; the response may include a `breakdown` grouped by `source_type`. This is distinct from the role/target/weight-normalized result shown by Performance.
+
 ### 4.7 Dashboard
 
 ```text
 GET /api/dashboard    # a single endpoint returning all data for the four panels + alert area (one aggregation)
 ```
+
+When the account has task-module view permission, the response also contains a read-only `task` aggregate with `open_total`, `open_bugs`, `open_bug_fix_tasks`, `open_delegated_tasks`, and `open_requirement_tasks`. These are live counts of non-terminal tasks and do not change existing Dashboard fields.
 
 ## 5. Domain Event List
 

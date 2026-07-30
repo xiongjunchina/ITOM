@@ -310,7 +310,7 @@ def fix_pmo_performance_review_mode(db: Session):
 
 
 def fix_process_node_types_m75(db: Session):
-    """M75：为六条内置流程补齐审批/处理节点语义。"""
+    """M75：为七条内置流程补齐审批/处理节点语义。"""
     approval_steps = {
         "incident_flow": ("受理定级", "解决与用户确认"),
         "sr_flow": ("用户确认关闭",),

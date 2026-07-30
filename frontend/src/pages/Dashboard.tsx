@@ -5,6 +5,7 @@ import { Button, Card, Col, Empty, List, Row, Space, Spin, Statistic, Tag, Typog
 import {
   AlertOutlined,
   BugOutlined,
+  CheckSquareOutlined,
   FileDoneOutlined,
   FileTextOutlined,
   ProjectOutlined,
@@ -31,6 +32,7 @@ const WIDGET_KEYS = [
   'itsm_problem',
   'project',
   'requirement',
+  'task',
   'team',
 ] as const;
 
@@ -45,6 +47,7 @@ const WIDGET_ICONS: Record<WidgetKey, ReactNode> = {
   itsm_problem: <BugOutlined style={{ color: '#faad14' }} />,
   project: <ProjectOutlined style={{ color: '#2f54eb' }} />,
   requirement: <FileTextOutlined style={{ color: '#eb2f96' }} />,
+  task: <CheckSquareOutlined style={{ color: '#1677ff' }} />,
   team: <TeamOutlined style={{ color: '#52c41a' }} />,
 };
 
@@ -57,6 +60,7 @@ const WIDGET_PERMS: Record<WidgetKey, string[]> = {
   itsm_problem: ['problems'],
   project: ['projects'],
   requirement: ['requirements'],
+  task: ['task_development', 'task_bug', 'task_delegated'],
   team: ['team_overview'],
 };
 
@@ -178,6 +182,7 @@ export default function Dashboard() {
   const pb = blocks?.problem;
   const project = data?.project;
   const requirement = data?.requirement;
+  const task = data?.task;
   const team = data?.team;
   const alerts = data?.alerts ?? [];
 
@@ -383,6 +388,24 @@ export default function Dashboard() {
               />
             </Col>
           </Row>
+        </BlockCard>
+      </Col>
+    ),
+
+    task: () => (
+      <Col key="task" xs={24} lg={12}>
+        <BlockCard
+          widget={widgetOf('task')}
+          dragProps={board.dragProps('task')}
+          extra={<Link to="/task-management/development">{t('dash.view')}</Link>}
+        >
+          <Statistic title={t('dash.task.openTotal')} value={task?.open_total ?? 0} />
+          <div style={SUB_ROW_STYLE}>
+            <SubStat label={t('dash.task.bugs')} value={task?.open_bugs ?? 0} />
+            <SubStat label={t('dash.task.bugFixes')} value={task?.open_bug_fix_tasks ?? 0} />
+            <SubStat label={t('dash.task.delegated')} value={task?.open_delegated_tasks ?? 0} />
+            <SubStat label={t('dash.task.requirements')} value={task?.open_requirement_tasks ?? 0} />
+          </div>
         </BlockCard>
       </Col>
     ),

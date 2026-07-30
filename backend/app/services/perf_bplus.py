@@ -27,6 +27,7 @@ from app.models import (
     PointEntry,
     ProcessTask,
     Project,
+    Role,
     Requirement,
     UserGroup,
     UserGroupMember,
@@ -263,7 +264,29 @@ def _person_roles(db: Session, member: OrgMember) -> set[str]:
     for user in users:
         roles |= effective_roles(db, user)
     roles |= set((member.position.primary_roles if member.position else []) or [])
-    return roles - EXCLUDED_ROLES
+    # 系统自定义角色通过 base_role 继承权限时，绩效也应沿用对应内置角色档案。
+    # 否则“已分配系统角色”会在绩效页错误显示为“未配置角色”。
+    bases = {
+        row.code: row.base_role
+        for row in db.query(Role).filter(Role.is_deleted.is_(False), Role.code.in_(roles or {"-"})).all()
+    }
+    normalized = {bases.get(code) or code for code in roles}
+    return normalized - EXCLUDED_ROLES
+
+
+def _role_status(db: Session, member: OrgMember) -> str:
+    """返回无绩效角色人员的可执行诊断，避免把系统角色和绩效角色混为一谈。"""
+    roles = _person_roles(db, member)
+    profiles = {
+        profile.role_code
+        for profile in db.query(PerformanceRoleProfile).filter(
+            PerformanceRoleProfile.is_deleted.is_(False), PerformanceRoleProfile.active.is_(True)
+        )
+    }
+    missing = sorted(roles - profiles)
+    if missing:
+        return f"系统角色未配置绩效档案：{','.join(missing)}"
+    return "未配置绩效角色"
 
 
 def _domain_scope(db: Session, person_id: str) -> tuple[list[str], list[str]]:
@@ -759,7 +782,7 @@ def build_internal_result(db: Session, period: PerformancePeriod) -> dict:
             "person_id": person_id,
             "person_name": member.name,
             "roles": [],
-            "role_status": "未配置角色",
+            "role_status": _role_status(db, member),
             "business_contribution": 0.0,
             "professional_contribution": 0.0,
         })

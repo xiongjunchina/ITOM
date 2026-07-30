@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import AuthUser, Bug, BugFixTask, WorkTask
+from app.models import AuthUser, Bug, BugFixTask, Ci, OrgMember, WorkTask
 from app.schemas.common import ok, paginate
 from app.services import task_management
 
@@ -117,6 +117,27 @@ class WorkTaskUpdate(BaseModel):
 class WorkTaskTransitionIn(BaseModel):
     to: str
     reason: str = ""
+
+
+@router.get("/reference/cis")
+def list_bug_ci_references(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """Bug 登记的所属系统只读选项：复用 CMDB 配置项，不要求用户具备 CMDB 管理权限。"""
+    task_management._require_module(db, user, "task_bug", "view")
+    rows = db.query(Ci).filter(Ci.is_deleted.is_(False), Ci.status != "已下线").order_by(Ci.name, Ci.ci_code).all()
+    names = {
+        member.id: member.name
+        for member in db.query(OrgMember).filter(OrgMember.id.in_({row.product_manager_id for row in rows if row.product_manager_id}))
+    }
+    return ok([
+        {
+            "id": row.id,
+            "ci_code": row.ci_code,
+            "name": row.name,
+            "category": row.category,
+            "product_manager_name": names.get(row.product_manager_id),
+        }
+        for row in rows
+    ], total=len(rows), page=1)
 
 
 def _get_bug(db: Session, bug_id: str) -> Bug:
