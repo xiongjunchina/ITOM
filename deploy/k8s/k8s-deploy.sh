@@ -145,18 +145,18 @@ fi
 echo "   frontend proxy health: OK"
 
 echo "==> Verify external health and MCP initialize"
-curl_tls=()
+curl_args=(--fail --silent --show-error --max-time 20)
 if [ "${ALLOW_UNTRUSTED_TLS:-0}" = "1" ]; then
-  curl_tls=(--insecure)
+  curl_args+=(--insecure)
   echo "   warning: TLS verification explicitly disabled for this run"
 fi
-curl --fail --silent --show-error --max-time 20 "${curl_tls[@]}" \
+curl "${curl_args[@]}" \
   "$PUBLIC_BASE_URL/api/health" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' || {
     echo "   !! external /api/health failed: $PUBLIC_BASE_URL/api/health"
     exit 1
   }
 mcp_response="$(
-  curl --fail --silent --show-error --max-time 20 "${curl_tls[@]}" \
+  curl "${curl_args[@]}" \
     -H 'Origin: https://aily.feishu.cn' \
     -H 'Accept: application/json, text/event-stream' \
     -H 'Content-Type: application/json' \
