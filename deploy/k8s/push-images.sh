@@ -23,6 +23,7 @@ REG=core.harbor.domain
 PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-mirror.gcr.io/library/python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de}"
 NODE_BASE_IMAGE="${NODE_BASE_IMAGE:-mirror.gcr.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32}"
 NGINX_BASE_IMAGE="${NGINX_BASE_IMAGE:-mirror.gcr.io/library/nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}"
+POSTGRES_BASE_IMAGE="${POSTGRES_BASE_IMAGE:-mirror.gcr.io/library/postgres:16-alpine@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382}"
 
 case "$TAG" in
   ""|*[!A-Za-z0-9_.-]*)
@@ -95,10 +96,10 @@ echo "==> Push frontend"
 skopeo copy --all --dest-tls-verify=false --dest-creds "$CREDS" \
   docker-daemon:$REG/sn/itom-frontend:$TAG docker://$REG/sn/itom-frontend:$TAG
 
-echo "==> Mirror postgres:16-alpine (amd64) so air-gapped nodes can pull it"
+echo "==> Mirror pinned postgres:16-alpine (amd64) so air-gapped nodes can pull it"
 skopeo copy --override-arch amd64 --override-os linux \
   --src-tls-verify=false --dest-tls-verify=false --dest-creds "$CREDS" \
-  docker://docker.io/library/postgres:16-alpine docker://$REG/sn/postgres:16-alpine
+  "docker://$POSTGRES_BASE_IMAGE" docker://$REG/sn/postgres:16-alpine
 
 echo "==> Verify in Harbor"
 for rt in itom-backend:$TAG itom-frontend:$TAG postgres:16-alpine; do
