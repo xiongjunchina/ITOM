@@ -1,6 +1,9 @@
 """M6 团队管理：建言积分 / 专项活动发放与上限 / 自动事件积分 / 培训 / 人效框架 / 流程监控 / 示例只读。"""
 import pytest
 
+from app.db import SessionLocal
+from app.models import PointEntry
+
 
 @pytest.fixture(scope="module")
 def ctx(client, admin_headers):
@@ -165,7 +168,7 @@ def test_example_campaign_seeded_and_readonly(client, admin_headers, ctx):
 # ---------- 自动事件积分（M6b） ----------
 
 def test_ticket_resolution_awards_points(client, admin_headers, ctx):
-    """工单 解决+5 / 关单 SLA 双达成+3 —— 事件订阅自动计分。"""
+    """工单 解决+5 / 关单 SLA 双达成+3 —— 自动写入岗位结果积分，不混入活动积分。"""
     pid, h = ctx["member_and_user"]("积分运维", "pt_ops", ["it_ops"])
     item = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
     r = client.post("/api/tickets", json={"title": "积分事件测试工单", "ticket_type": "incident",
@@ -179,11 +182,22 @@ def test_ticket_resolution_awards_points(client, admin_headers, ctx):
                     json={"to": "resolved", "fields": {"solution": "done", "root_cause": "n/a"}}, headers=admin_headers)
     assert r.json()["success"], r.text
     pts = my_points(client, h)
-    assert pts["total"] == 5 and pts["entries"][0]["source_type"] == "ticket_resolved"
+    assert pts["total"] == 0 and pts["entries"] == []
+    with SessionLocal() as db:
+        entries = db.query(PointEntry).filter(PointEntry.person_id == pid, PointEntry.source_ref == t["id"]).all()
+        assert {(entry.source_type, entry.points, entry.contribution_bucket) for entry in entries} == {
+            ("ticket_resolved", 5, "role_result"),
+        }
     r = client.post(f"/api/tickets/{t['id']}/transition",
                     json={"to": "closed", "fields": {"closure_code": "已解决"}}, headers=admin_headers)
     assert r.json()["success"], r.text
-    assert my_points(client, h)["total"] == 8  # +ticket_sla_met（P4 时限宽裕必达成）
+    assert my_points(client, h)["total"] == 0  # 岗位结果积分不进入活动积分
+    with SessionLocal() as db:
+        entries = db.query(PointEntry).filter(PointEntry.person_id == pid, PointEntry.source_ref == t["id"]).all()
+        assert {(entry.source_type, entry.points, entry.contribution_bucket) for entry in entries} == {
+            ("ticket_resolved", 5, "role_result"),
+            ("ticket_sla_met", 3, "role_result"),
+        }
 
 
 def test_training_awards_points(client, admin_headers, ctx):

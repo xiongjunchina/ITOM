@@ -461,7 +461,11 @@ def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(require_pe
         return ok({"period": current_period(), "total": 0, "entries": []})
     entries = (
         db.query(PointEntry)
-        .filter(PointEntry.person_id == user.person_id, PointEntry.is_deleted.is_(False))
+        .filter(
+            PointEntry.person_id == user.person_id,
+            PointEntry.contribution_bucket == "team_contribution",
+            PointEntry.is_deleted.is_(False),
+        )
         .order_by(PointEntry.created_at.desc())
         .limit(100)
         .all()
@@ -490,7 +494,12 @@ def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depend
     team_ids = it_member_ids(db)
     rows = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
+        .filter(
+            period_clause(PointEntry.period, period),
+            PointEntry.person_id.in_(team_ids or {"-"}),
+            PointEntry.contribution_bucket == "team_contribution",
+            PointEntry.is_deleted.is_(False),
+        )
         .group_by(PointEntry.person_id)
         .order_by(func.sum(PointEntry.points).desc())
         .limit(20)
@@ -503,6 +512,7 @@ def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depend
         .filter(
             period_clause(PointEntry.period, period),
             PointEntry.person_id.in_(person_ids or {"-"}),
+            PointEntry.contribution_bucket == "team_contribution",
             PointEntry.is_deleted.is_(False),
         )
         .group_by(PointEntry.person_id, PointEntry.source_type)

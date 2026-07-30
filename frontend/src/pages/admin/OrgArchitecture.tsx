@@ -290,13 +290,35 @@ export default function OrgArchitecture() {
       const pid = d.parent_id && ids.has(d.parent_id) ? d.parent_id : null;
       byParent.set(pid, [...(byParent.get(pid) ?? []), d]);
     }
-    const children: DataNode[] = (byParent.get(null) ?? [])
+    const sortDepartments = (items: OrgTreeDept[]) => items
       .slice()
-      .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || a.code.localeCompare(b.code))
-      .map((d) => ({
+      .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0) || a.code.localeCompare(b.code));
+    const sortMembers = (items: Member[]) => items
+      .slice()
+      .sort((a, b) => {
+        if (a.status !== b.status) return a.status === '离职' ? 1 : -1;
+        return a.name.localeCompare(b.name, 'zh-CN');
+      });
+    const memberNodes = (members: Member[]): DataNode[] => sortMembers(members).map((member) => ({
+      key: `member:${member.id}`,
+      icon: <UserAddOutlined />,
+      isLeaf: true,
+      title: (
+        <span style={member.status === '离职' ? { color: GRAY } : undefined}>
+          {highlight(member.name)}
+          {member.status === '离职' ? <span style={{ color: GRAY }}>{t('admin.org.inactiveMember')}</span> : null}
+          <SourceTag source={member.external_source} />
+        </span>
+      ),
+    }));
+    const departmentNode = (d: OrgTreeDept): DataNode => {
+      const nestedDepartments = sortDepartments(byParent.get(d.id) ?? []).map(departmentNode);
+      const children = [...nestedDepartments, ...memberNodes(d.members ?? [])];
+      return {
         key: `dept:${d.id}`,
         icon: <ApartmentOutlined />,
-        isLeaf: true,
+        isLeaf: children.length === 0,
+        ...(children.length > 0 ? { children } : {}),
         title: (
           <span style={!d.active ? { color: GRAY } : undefined}>
             {highlight(d.name)}
@@ -304,7 +326,9 @@ export default function OrgArchitecture() {
             <SourceTag source={d.external_source} />
           </span>
         ),
-      }));
+      };
+    };
+    const children: DataNode[] = sortDepartments(byParent.get(null) ?? []).map(departmentNode);
     return [
       {
         key: 'company',
@@ -313,7 +337,7 @@ export default function OrgArchitecture() {
         children,
       },
     ];
-  }, [data, searchValue]);
+  }, [data, searchValue, t]);
 
   /** 搜索：展开所有命中节点的祖先链并高亮 */
   const onSearchChange = (value: string) => {
@@ -322,8 +346,15 @@ export default function OrgArchitecture() {
     if (!q || !data) return;
     const hit = (name?: string | null) => !!name && name.toLowerCase().includes(q);
     const expanded = new Set<Key>(['company']);
-    for (const d of data.departments.filter((item) => !item.parent_id)) {
-      if (hit(d.name)) expanded.add(`dept:${d.id}`);
+    const byId = new Map(data.departments.map((item) => [item.id, item]));
+    for (const d of data.departments) {
+      const memberHit = (d.members ?? []).some((member) => hit(member.name));
+      if (!hit(d.name) && !memberHit) continue;
+      let current: OrgTreeDept | undefined = d;
+      while (current) {
+        expanded.add(`dept:${current.id}`);
+        current = current.parent_id ? byId.get(current.parent_id) : undefined;
+      }
     }
     setExpandedKeys([...expanded]);
     setAutoExpandParent(true);
@@ -803,7 +834,17 @@ export default function OrgArchitecture() {
                 showIcon
                 treeData={treeData}
                 selectedKeys={selectedKey ? [selectedKey] : []}
-                onSelect={(keys) => setSelectedKey(keys.length > 0 ? String(keys[0]) : null)}
+                onSelect={(keys, info) => {
+                  setSelectedKey(keys.length > 0 ? String(keys[0]) : null);
+                  const node = info.node as DataNode;
+                  if (node.children?.length) {
+                    const key = String(node.key);
+                    setExpandedKeys((current) =>
+                      current.includes(key) ? current.filter((item) => String(item) !== key) : [...current, key],
+                    );
+                    setAutoExpandParent(false);
+                  }
+                }}
                 expandedKeys={expandedKeys}
                 autoExpandParent={autoExpandParent}
                 onExpand={(keys) => {

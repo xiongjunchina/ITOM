@@ -24,10 +24,10 @@ def test_bug_flow_is_seeded_with_five_nodes(client):
     ]
 
 
-def test_bug_flow_assigns_creation_and_development_to_development_leader(client):
+def test_bug_flow_assigns_creation_to_leader_and_development_to_child_assignees(client):
     with SessionLocal() as db:
         definition = db.query(ProcessDefinition).filter_by(code="bug_flow").one()
         steps = list(definition.steps)
 
     assert steps[2].default_role == "it_dev_leader"
-    assert steps[3].default_role == "it_dev_leader"
+    assert steps[3].default_role is None

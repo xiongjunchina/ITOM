@@ -389,6 +389,10 @@ def ensure_assignments(db: Session, period: PerformancePeriod, actor_id: str | N
 
     assignments: list[PerformanceRoleAssignment] = []
     snapshot: list[dict] = []
+    active_keys = {(member.id, role_code) for member, role_code, *_ in specs}
+    for key, row in existing.items():
+        if key not in active_keys:
+            row.is_deleted = True
     for member, role_code, profile, domain_ids, group_ids, evaluator_ids, scope_ids in specs:
         key = (member.id, role_code)
         both_sides = business_count[member.id] > 0 and professional_count[member.id] > 0
@@ -435,6 +439,39 @@ def ensure_assignments(db: Session, period: PerformancePeriod, actor_id: str | N
     period.updated_by = actor_id
     db.flush()
     return assignments
+
+
+def role_snapshot_needs_refresh(db: Session, period: PerformancePeriod) -> bool:
+    """判断实际系统角色是否已偏离当前考核周期的绩效角色快照。"""
+    profiles = _profiles(db)
+    expected: set[tuple[str, str]] = set()
+    members = db.query(OrgMember).filter(
+        OrgMember.id.in_(it_member_ids(db) or {"-"}),
+        OrgMember.is_deleted.is_(False),
+        OrgMember.status == "在岗",
+    ).all()
+    for member in members:
+        expected.update(
+            (member.id, role_code)
+            for role_code in _person_roles(db, member)
+            if role_code in profiles
+        )
+    actual = {
+        (row.person_id, row.role_code)
+        for row in db.query(PerformanceRoleAssignment).filter(
+            PerformanceRoleAssignment.period_id == period.id,
+            PerformanceRoleAssignment.is_deleted.is_(False),
+        ).all()
+    }
+    return expected != actual
+
+
+def refresh_bplus_if_role_snapshot_changed(db: Session, period: PerformancePeriod, actor_id: str | None = None) -> bool:
+    """读取活动周期时补齐新增角色；已发布/锁定周期保持版本隔离。"""
+    if period.status in {"published", "locked"} or not role_snapshot_needs_refresh(db, period):
+        return False
+    recompute_bplus(db, period.period_code, actor_id)
+    return True
 
 
 def _rate(hits: int, total: int) -> float | None:

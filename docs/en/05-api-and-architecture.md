@@ -302,7 +302,7 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # legacy compatibility endpoint; canonical team config is /api/point-rules/team-config
 ```
 
-The `points` value from `/api/points/leaderboard` is the raw algebraic sum of all positive and negative `point_entry` rows for a person in the period; the response may include a `breakdown` grouped by `source_type`. This is distinct from the role/target/weight-normalized result shown by Performance.
+The `points` value from `/api/points/leaderboard` is the raw algebraic sum of positive and negative `point_entry` rows with `contribution_bucket=team_contribution` for a person in the period; personal points and the team-overview leaderboard use the same filter, and the response may include a `breakdown` grouped by `source_type`. `role_result` rows remain in the ledger for role scoring and audit but are excluded from Activity Points reads. This is distinct from the role/target/weight-normalized result shown by Performance.
 
 ### 4.7 Dashboard
 
@@ -358,7 +358,7 @@ Scheduled tasks cover SLA, contracts, milestones, one reminder at 80% of the req
 5. **SLA timing**: on-hold time accumulates into paused_minutes; the attainment check = (resolved_at − submitted_at − paused) ≤ target.
 6. **Matrix-role performance review**: the system first generates reference scores from ITSM, requirements, projects, processes, and points events. Business-line leads can write only business-role proposals; professional-line leads can write only professional-role proposals; platform roles and leaders' own scores are entered directly by the CIO. The backend enforces `performance_role_assignment.review_scope`; UI hiding is not an authorization boundary.
 7. **External-input and publication isolation**: external business satisfaction is stored in `performance_external_input` and must be submitted, verified, and locked before it affects scoring. `performance_score_component` keeps reference, stage proposal, and effective values separately. `/api/my/performance` returns published snapshots only.
-8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again.
+8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again. Activity Points read APIs aggregate only `team_contribution`.
 9. **MCP boundary (implemented in P1)**: tools call domain services only. `x-aily-jwt` passes allowlist and `external_identity` mapping before creating request-scoped `AuthUser` context. Prompts are never the sole business validator.
 10. **Confirmation/idempotency (implemented in P1)**: preview stores `mcp_operation_intent`; submission validates token hash, user, tool, expiry, and idempotency key. Payload digest prevents key reuse with different content; retries return the first result.
 11. **Form snapshots (implemented in P1)**: published versions are immutable; ticket creation stores version, answers, and schema. Person/department choices are revalidated at submit time.

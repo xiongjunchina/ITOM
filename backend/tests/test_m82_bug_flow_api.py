@@ -1,5 +1,8 @@
 import pytest
 
+from app.db import SessionLocal
+from app.models import ProcessInstance, ProcessTask
+
 
 @pytest.fixture(scope="module")
 def actors(client, admin_headers):
@@ -87,6 +90,15 @@ def test_bug_registration_confirmation_multi_tasks_and_verification_close(client
         headers=actors["leader"],
     )
     assert generated.status_code == 200, generated.text
+    with SessionLocal() as db:
+        instance = db.query(ProcessInstance).filter(ProcessInstance.entity_type == "bug", ProcessInstance.entity_id == bug["id"]).one()
+        current = db.query(ProcessTask).filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        ).one()
+        assert current.step.seq == 4
+        assert current.assignee is None
     tasks = generated.json()["data"]["tasks"]
     assert len(tasks) == 2
 

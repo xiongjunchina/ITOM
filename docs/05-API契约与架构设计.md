@@ -303,7 +303,7 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # 兼容旧客户端；团队贡献权重、目标及满意度组合的规范入口是 /api/point-rules/team-config
 ```
 
-`/api/points/leaderboard` 的 `points` 是该周期 `point_entry` 台账中同一人员所有正负流水的原始代数和；响应可带 `breakdown` 按 `source_type` 汇总来源。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
+`/api/points/leaderboard` 的 `points` 是该周期 `point_entry` 台账中同一人员 `contribution_bucket=team_contribution` 的所有正负流水原始代数和；个人积分和团队总览积分排行采用同一过滤口径，响应可带 `breakdown` 按 `source_type` 汇总来源。`role_result` 岗位结果流水不进入这些活动积分读接口，但仍保留在台账中供人效角色结果和审计使用。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
 
 ### 4.7 Dashboard
 
@@ -359,7 +359,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 5. **SLA 计时**：挂起时累计 paused_minutes，达成判定 = (resolved_at − submitted_at − paused) ≤ 目标。
 6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。
 7. **外部原数据与发布隔离**：外部业务满意度先写入 `performance_external_input`，完成提交/核验/锁定后才参与折算；`performance_score_component` 保存系统参考分、阶段建议分和生效分，`/api/my/performance` 只返回已发布快照。
-8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。
+8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。活动积分相关读接口只聚合 `team_contribution`，避免把角色结果重复计算为活动积分。
 9. **MCP 适配边界（P1 已实现）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
 10. **确认与幂等（P1 已实现）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、过期时间和 idempotency key；payload digest 在准备阶段防止同键异内容，重复调用返回首次结果，不重复建单或启动流程。
 11. **动态表单快照（P1 已实现）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项在提交时二次校验。

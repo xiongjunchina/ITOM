@@ -316,7 +316,12 @@ def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_ov
     team_ids = it_member_ids(db)
     board = (
         db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
+        .filter(
+            period_clause(PointEntry.period, period),
+            PointEntry.person_id.in_(team_ids or {"-"}),
+            PointEntry.contribution_bucket == "team_contribution",
+            PointEntry.is_deleted.is_(False),
+        )
         .group_by(PointEntry.person_id)
         .order_by(func.sum(PointEntry.points).desc())
         .limit(10)

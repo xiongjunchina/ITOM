@@ -338,7 +338,7 @@ def verify_bug(db: Session, bug: Bug, actor: AuthUser, verified: bool, note: str
         for fix_task in db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)):
             fix_task.status = "执行"
             fix_task.done_at = None
-        process_engine.rewind_to_step(db, "bug", bug.id, 4, preferred_assignee=bug.dev_leader_id)
+        process_engine.rewind_to_step(db, "bug", bug.id, 4)
         audit(db, "bug", bug.id, "verify_reject", actor, {"reason": note.strip()})
         publish(db, "bug.reopened", "bug", bug.id, {"reason": note.strip()})
     return bug

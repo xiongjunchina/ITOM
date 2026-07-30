@@ -334,6 +334,46 @@ def fix_process_node_types_m75(db: Session):
     db.commit()
 
 
+def fix_bug_flow_assignment_m83(db: Session):
+    """M83：Bug「开发修复」由修复子任务执行人负责，不再错误指派给开发负责人。"""
+    from app.models import ProcessDefinition, ProcessInstance, ProcessTask
+
+    definitions = db.query(ProcessDefinition).filter(
+        ProcessDefinition.code.like("bug_flow%"),
+        ProcessDefinition.is_deleted.is_(False),
+    ).all()
+    step_ids: list[str] = []
+    changed = 0
+    for definition in definitions:
+        for step in definition.steps:
+            if step.seq != 4 or step.is_deleted:
+                continue
+            step_ids.append(step.id)
+            description = "执行人以开发负责人在修复任务中指定的开发/测试人员为准；全部修复任务完成后进入产品经理验证"
+            if step.default_role is not None or step.description != description:
+                step.default_role = None
+                step.description = description
+                changed += 1
+    if step_ids:
+        active_tasks = db.query(ProcessTask).join(
+            ProcessInstance, ProcessInstance.id == ProcessTask.instance_id
+        ).filter(
+            ProcessTask.step_id.in_(step_ids),
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+            ProcessInstance.entity_type == "bug",
+            ProcessInstance.is_deleted.is_(False),
+        ).all()
+        for task in active_tasks:
+            if task.assignee:
+                task.assignee = None
+                task.raci_snapshot = {**(task.raci_snapshot or {}), "responsible": None, "accountable": None}
+                changed += 1
+    if changed:
+        logger.info("M83：修正 %d 个 Bug 开发修复节点/任务的错误负责人指派", changed)
+    db.commit()
+
+
 def rebuild_requirement_flow_m16(db: Session):
     """M16：需求交付流程按新语义重构（评审→方案评估→实现→验收）。
 
@@ -740,6 +780,7 @@ def migrate_m35_org(db: Session):
     sync_process_status_m24(db)
     rebuild_problem_flow_m29(db)
     fix_process_node_types_m75(db)
+    fix_bug_flow_assignment_m83(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

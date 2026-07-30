@@ -148,7 +148,7 @@ Targets are configurable by CIO, with role/family defaults and optional person o
 
 The points ledger must distinguish two buckets:
 
-- `role_result`: ticket SLA, change compliance, requirement delivery, project milestones, and process-governance outcomes. These facts support role scores and do not enter the fixed 20% again.
+- `role_result`: ticket SLA, change compliance, requirement delivery, project milestones, and process-governance outcomes. These facts support role scores and do not enter the fixed 20% again. Activity Points read APIs exclude this bucket, so a role-result event such as a project-manager milestone cannot appear as a team-contribution activity score.
 - `team_contribution`: activities outside normal role results, learning, knowledge sharing, improvement, and cross-team support. These facts enter the fixed 20% only.
 
 `PointRule` and `PointEntry` therefore require `contribution_bucket` and `contribution_dimension`. Existing ticket, requirement, and project events may remain in the ledger for traceability, but are `role_result` by default when they already drive a role metric. Bonus and penalty remain separate.
@@ -167,7 +167,7 @@ Configuration supports role profiles, dimensions, weights, evidence rules, per-p
 
 The “Performance → Scoring Rules” page owns role-result rules only: each role profile's dimension weights (100% within the role), system source mappings, process/RACI step mappings, and the current-period employee role matrix (business/professional roles total 80%). The fixed 20% team-contribution event rules, targets, and satisfaction mix are maintained under “Activity Points → Point Rules” and are not duplicated here. Administrators and the CIO can edit the corresponding rule page for pre-release validation.
 
-The performance overview reads the matrix-role period result and does not fall back to or display the legacy `perf_scheme` default. To add a non-default rule, select **Add role rule** in Scoring Rules, then assign the role and its business/professional weight to an employee in the period detail; role weights must total 80% and team contribution remains fixed at 20%.
+The performance overview reads the matrix-role period result and does not fall back to or display the legacy `perf_scheme` default. On an unpublished period, reads reconcile the current active IT member role set with the period snapshot so a newly bound performance role is visible without waiting for a manual recompute; published/locked periods remain immutable. To add a non-default rule, select **Add role rule** in Scoring Rules, then assign the role and its business/professional weight to an employee in the period detail; role weights must total 80% and team contribution remains fixed at 20%.
 
 The current-period role matrix is aggregated to one row per employee; the employee detail page contains all role allocations and supports CIO/admin weight adjustments. Recompute generates defaults only for a new period or an explicit reset, and preserves manual period-weight overrides.
 

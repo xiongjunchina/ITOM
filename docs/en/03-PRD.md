@@ -352,7 +352,7 @@ Task Management is separate from Requirement Management and has two second-level
 
 The web entry points are **Task Management → Development Tasks** (with `?tab=requirement` or `?tab=bug`) and **Task Management → Delegated Tasks**. The historical `/requirements/tasks` and `/requirements?tab=tasks` URLs remain as redirects; the existing requirement-task APIs and data are unchanged.
 
-The Bug loop is fixed as: **Register Bug (IT team member) → Bug Confirmation (affected-system product manager, approval) → Generate Fix Tasks (development leader) → Development Fix (assigned developer, execution) → Verification & Closure (affected-system product manager, approval)**. Registration snapshots the product manager from the CMDB CI; one Bug may generate multiple development/test child tasks, and only after all child tasks close does the Bug enter product verification. Confirmation rejection, failed verification, and reopening require a reason and retain an audit trail.
+The Bug loop is fixed as: **Register Bug (IT team member) → Bug Confirmation (affected-system product manager, approval) → Generate Fix Tasks (development leader) → Development Fix (developers/testers assigned by the development leader in the child tasks, execution) → Verification & Closure (affected-system product manager, approval)**. Registration snapshots the product manager from the CMDB CI; one Bug may generate multiple development/test child tasks, and only after all child tasks close does the Bug enter product verification. The Development Fix process node has no default development-leader assignee; execution follows the assignee on each repair child task. Confirmation rejection, failed verification, and reopening require a reason and retain an audit trail.
 
 “System” is not a frontend enum. Options come from non-retired CMDB configuration items through a read-only task reference endpoint; CMDB remains the maintenance entry point, and the product-manager snapshot is still taken server-side.
 
@@ -443,7 +443,7 @@ The existing quarterly periods remain `YYYY-Q1`, `YYYY-Q2`, `YYYY-Q3`, and annua
 
 Team contribution uses six dimensions: special activities, learning and growth, training/knowledge sharing, suggestions/process improvement, knowledge assets/retrospectives, and cross-team support. It is a 100-point score that contributes a fixed 20%.
 
-Facts already used for role-result metrics, such as ticket SLA, change compliance, requirement delivery, project milestones, and process governance, are classified as `role_result` and are not counted again in team contribution. Only `team_contribution` events enter the fixed 20% bucket.
+Facts already used for role-result metrics, such as ticket SLA, change compliance, requirement delivery, project milestones, and process governance, are classified as `role_result` and are not counted again in team contribution. Only `team_contribution` events enter the fixed 20% bucket. Activity Points and team-overview leaderboard reads filter to `team_contribution`; role-result ledger rows remain available for role scoring and audit but are not shown as activity points.
 
 The detailed role profiles, evaluator rules, learning-task model, APIs, and acceptance criteria are defined in [IT Team Role Performance PRD](08-it-team-role-performance-prd.md).
 The current “Performance → Scoring Rules” UI is the matrix-role profile design: it shows per-role dimension weights, system/external/manual collection modes, and the employee-period matrix of business/professional role weight (80%) plus team contribution (20%). The legacy `perf_scheme` API remains only for historical compatibility and is not the primary UI design.
@@ -465,7 +465,7 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 | Task contribution | Bug-fix completion and delegated-task completion; technical research, cross-team support, and knowledge sharing enter team dimensions only when explicitly classified as team contribution |
 
 - Points ledger: person / event / points / source record / time, traceable to the triggering record; admin manual point adjustments also go through the ledger (a reason is required).
-- Leaderboard points are the raw sum of the current-period ledger by person (for example, 30 + 20 = 50). The UI can expand a row to show source types and values. This is not the normalized activity-relative score used by the performance overview.
+- Leaderboard points are the raw sum of the current-period `team_contribution` ledger by person (for example, 30 + 20 = 50). `role_result` ledger rows are excluded from Activity Points. The UI can expand a row to show source types and values. This is not the normalized activity-relative score used by the performance overview.
 - Pages: leaderboard (month/quarter/year/cumulative), personal points detail, Activity Points → Point Rules (team-contribution events; only admin/CIO can edit; every change is audited). Role-result source mappings, RACI/process-step mappings, and weights are maintained in Team Management → Performance → Scoring Rules and are never mixed with activity points.
 - Points are one of the input sources for the 9.1 performance evaluation.
 
