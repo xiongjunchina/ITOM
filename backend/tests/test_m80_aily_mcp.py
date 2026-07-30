@@ -134,6 +134,38 @@ def test_config_never_returns_secrets(client, admin_headers):
     assert CARD_ENCRYPT_KEY not in str(response.json())
 
 
+def test_public_base_url_is_normalized_and_rejects_unsafe_components(client, admin_headers):
+    response = client.put("/api/admin/integrations/aily", json={
+        "public_base_url": "https://itom.snnc.cc:30443/",
+    }, headers=admin_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["public_base_url"] == "https://itom.snnc.cc:30443"
+
+    for invalid_url in (
+        "https://itom.snnc.cc:30443/mcp/",
+        "https://itom.snnc.cc:30443?source=aily",
+        "https://itom.snnc.cc:30443#callback",
+        "https://user:password@itom.snnc.cc:30443",
+        "ftp://itom.snnc.cc:30443",
+        "https://itom.snnc.cc:70000",
+    ):
+        invalid = client.put("/api/admin/integrations/aily", json={
+            "public_base_url": invalid_url,
+        }, headers=admin_headers)
+        assert invalid.status_code == 422, invalid_url
+        assert invalid.json()["error"]["code"] == "AILY_PUBLIC_BASE_URL_INVALID"
+
+    current = client.get("/api/admin/integrations/aily", headers=admin_headers)
+    assert current.status_code == 200, current.text
+    assert current.json()["data"]["public_base_url"] == "https://itom.snnc.cc:30443"
+
+    cleared = client.put("/api/admin/integrations/aily", json={
+        "public_base_url": " ",
+    }, headers=admin_headers)
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["data"]["public_base_url"] == ""
+
+
 def test_verified_but_unapproved_aily_identity_is_recorded_pending(client, admin_headers):
     client.put("/api/admin/integrations/aily", json={
         "enabled": True,

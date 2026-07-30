@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。P3 按用户决定暂缓。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -319,17 +319,28 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 ## 7. 部署架构
 
 ```yaml
-# deploy/docker-compose.yml 形态
-services:
-  db:        postgres:16  (volume + 每日 pg_dump 到宿主机备份目录)
-  backend:   uvicorn, 依赖 db, 启动时 alembic upgrade + seed(幂等)；`SEED_INITIAL_CONFIG=1` 时在全新数据库初始化六条流程定义以及已验证的登录页/Logo 品牌配置，已有品牌草稿或发布版本不会覆盖
-  frontend:  nginx 托管构建产物, /api 与 /mcp 反代 backend
+# 默认交付链路
+GitHub Actions:
+  backend:   Python 3.12 + 临时 SQLite，完整 pytest
+  frontend:  Node.js 22，npm ci + TypeScript + Vite 生产构建
+  contract:  部署 YAML/脚本/差异检查 + 中英文文档交付守卫
+Harbor:
+  backend:   git-<commit>-linux-amd64
+  frontend:  git-<commit>-linux-amd64
+IDC Kubernetes:
+  db:        PostgreSQL 16 + 持久卷
+  backend:   uvicorn，启动时增量迁移 + 幂等 seed
+  frontend:  nginx 托管构建产物，反代 /api 与 /mcp
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
-- 正式发布仍以 IDC Kubernetes 为最终验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布。当前 IDC 基础设施阻塞期间，用户已授权 Aily + MCP 使用本地 Docker 开发，并由 ngrok 暴露完整 `127.0.0.1:8180`；同一 HTTPS 根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。
+- IDC Kubernetes 是唯一运行、联调和验收环境；默认禁止在本地启动应用栈、数据库、Compose、8180 或 ngrok。只有用户明确要求临时隔离排障时才允许例外，且结果不属于交付验收。
+- `.github/workflows/quality-gate.yml` 在 feature/develop/main 的推送和 PR 上运行完整后端回归、前端生产构建、部署文件检查及中英文文档交付守卫。测试夹具使用临时 SQLite，不连接 IDC 业务数据库。
+- 质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，构建并校验 linux/amd64 镜像，以 `git-<commit前12位>-linux-amd64` 为默认不可变标签后推送 Harbor；镜像构建不启动本地 ITOM。
+- `deploy/k8s/k8s-deploy.sh` 部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。脚本对 rollout、Ready Endpoint、实际镜像、集群内前端代理、外部 `/api/health` 与 MCP `initialize` 采用失败即停止；涉及数据库结构的版本在部署前必须执行批准的集群内备份/检查点。
+- 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。
 - `/mcp/` 必须保留流式响应并设置合理读超时；Aily 配置使用带末尾斜杠的规范地址，密钥只放请求头，不放 URL、日志或前端构建变量。
-- 日志：结构化 JSON 到 stdout（docker logs 可查）。
+- 日志：结构化 JSON 到 stdout（由 Kubernetes 日志链路查询）。
 
 ## 8. 里程碑映射（开发顺序）
 
@@ -343,8 +354,8 @@ services:
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份及机器人真实收件已完成） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
-| Aily-MCP P2（代码/自动化、真实 Aily 对话闭环及机器人收件分别完成；普通用户同单端到端待验收） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
-| Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
+| Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
+| Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
 
 ## 8.1 业务域服务部门 API（M41）
 

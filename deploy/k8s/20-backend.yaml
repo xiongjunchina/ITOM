@@ -46,7 +46,8 @@ spec:
         - name: harbor-isa
       containers:
         - name: backend
-          image: core.harbor.domain/sn/itom-backend:aily-mcp-0ff989f-20260730-linux-amd64
+          # k8s-deploy.sh replaces this baseline with the requested immutable tag.
+          image: core.harbor.domain/sn/itom-backend:aily-mcp-public-base-20260730-linux-amd64
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 6800

@@ -363,6 +363,7 @@ class AilyIntegrationConfig(GlidBase):
     bot_app_id: Mapped[str | None] = mapped_column(String(64))
     bot_app_secret_encrypted: Mapped[str | None] = mapped_column(Text)
     api_base: Mapped[str] = mapped_column(String(100), default="https://open.feishu.cn")
+    public_base_url: Mapped[str | None] = mapped_column(String(300))
     message_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     card_callback_verification_token_encrypted: Mapped[str | None] = mapped_column(Text)
     card_callback_encrypt_key_encrypted: Mapped[str | None] = mapped_column(Text)

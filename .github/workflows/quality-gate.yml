@@ -1,0 +1,116 @@
+name: ITOM Quality Gate
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - feature/aily-agent-mcp
+  pull_request:
+    branches:
+      - main
+      - develop
+      - feature/aily-agent-mcp
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend pytest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: python -m pip install --requirement requirements.txt
+
+      - name: Run complete backend regression
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: python -m pytest -q
+
+  frontend:
+    name: Frontend production build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build production frontend
+        run: npm run build
+
+  repository-contract:
+    name: Repository contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check changed-line whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            merge_base="$(git merge-base "$BASE_SHA" HEAD)"
+            git diff --check "$merge_base" HEAD
+          elif git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          fi
+
+      - name: Validate deployment files
+        run: |
+          bash -n deploy/k8s/push-images.sh deploy/k8s/k8s-deploy.sh
+          ruby -e 'require "yaml"; %w[deploy/k8s/00-namespace.yaml deploy/k8s/10-postgres.yaml deploy/k8s/20-backend.yaml deploy/k8s/30-frontend.yaml deploy/k8s/40-ingress.yaml].each { |path| YAML.load_stream(File.read(path)) }'
+
+      - name: Enforce Chinese and English documentation delivery
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          merge_base="$(git merge-base "$BASE_SHA" HEAD)"
+          changed="$(git diff --name-only "$merge_base" HEAD)"
+          if printf '%s\n' "$changed" | grep -Eq '^(backend/app/|frontend/src/|deploy/)'; then
+            printf '%s\n' "$changed" | grep -Eq '^(README\.md|docs/(03-PRD|04-数据模型设计|05-API契约与架构设计|06-用户身份与组织模型设计|10-Aily-MCP版本交接与决策上下文|用户操作手册)\.md)$' || {
+              echo "Implementation/deployment changed without an authoritative Chinese documentation update."
+              exit 1
+            }
+            printf '%s\n' "$changed" | grep -Eq '^docs/en/.*\.md$' || {
+              echo "Implementation/deployment changed without a docs/en mirror update."
+              exit 1
+            }
+          fi

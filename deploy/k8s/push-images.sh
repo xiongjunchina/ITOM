@@ -1,20 +1,59 @@
 #!/usr/bin/env bash
-# Push ITOM images (+ mirror postgres) into SN Harbor, project `sn`.
+# Build linux/amd64 ITOM images from a clean commit, then push them
+# (+ mirror postgres) into SN Harbor, project `sn`.
 #
 # Auth: reuses the Harbor credential already stored in-cluster as the
 # `harbor-isa` pull secret (read via kubectl), so no token needs to be typed.
 # Requires: /etc/hosts maps `core.harbor.domain -> 10.60.65.10` (Harbor's token
-# realm redirects to that hostname), and skopeo installed.
+# realm redirects to that hostname), Docker, and skopeo.
 #
-# Usage:  ./push-images.sh
+# Usage:
+#   ./push-images.sh
+#   TAG=release-name-linux-amd64 ./push-images.sh
+#
+# The default immutable tag is derived from the current Git commit. This script
+# builds images only; it never starts a local ITOM application environment.
 set -euo pipefail
 cd "$(dirname "$0")"
-TAG=aily-mcp-0ff989f-20260730-linux-amd64
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+TAG="${TAG:-git-${COMMIT_SHA:0:12}-linux-amd64}"
 REG=core.harbor.domain
 
+case "$TAG" in
+  ""|*[!A-Za-z0-9_.-]*)
+    echo "!! Invalid image tag: $TAG"
+    exit 1
+    ;;
+esac
+
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+  echo "!! Refusing to publish images from a dirty worktree. Commit the complete implementation, tests, and documentation first."
+  exit 1
+fi
+
+command -v docker >/dev/null || { echo "!! docker not found"; exit 1; }
 command -v skopeo >/dev/null || { echo "!! skopeo not found (brew install skopeo)"; exit 1; }
 getent hosts "$REG" >/dev/null 2>&1 || grep -q "$REG" /etc/hosts 2>/dev/null || \
   ping -c1 -t1 "$REG" >/dev/null 2>&1 || { echo "!! $REG does not resolve — add: echo '10.60.65.10 $REG' | sudo tee -a /etc/hosts"; exit 1; }
+
+echo "==> Release commit: $COMMIT_SHA"
+echo "==> Immutable image tag: $TAG"
+echo "==> Build backend + frontend for linux/amd64 (no local app startup)"
+docker build --platform linux/amd64 --pull --no-cache \
+  -t "$REG/sn/itom-backend:$TAG" "$REPO_ROOT/backend"
+docker build --platform linux/amd64 --pull --no-cache \
+  -t "$REG/sn/itom-frontend:$TAG" "$REPO_ROOT/frontend"
+
+for image in itom-backend itom-frontend; do
+  arch="$(docker image inspect "$REG/sn/$image:$TAG" --format '{{.Architecture}}')"
+  [ "$arch" = "amd64" ] || {
+    echo "!! $image:$TAG architecture is $arch, expected amd64"
+    exit 1
+  }
+  echo "   $image:$TAG architecture: $arch"
+done
 
 # ---- cluster auth (freshest Rancher token + IP endpoint) to read the secret ----
 newest=""
@@ -60,4 +99,5 @@ for rt in itom-backend:$TAG itom-frontend:$TAG postgres:16-alpine; do
   skopeo inspect --tls-verify=false --creds "$CREDS" docker://$REG/sn/$rt >/dev/null \
     && echo "   sn/$rt OK" || echo "   !! sn/$rt MISSING"
 done
-echo "==> Done. Next: ./k8s-deploy.sh"
+echo "==> Done. Deploy the same immutable tag with:"
+echo "    TAG=$TAG ./k8s-deploy.sh"

@@ -175,6 +175,7 @@ export interface AilyConfig {
   bot_app_id: string | null;
   has_bot_app_secret: boolean;
   api_base: string;
+  public_base_url: string;
   message_enabled: boolean;
   has_card_callback_verification_token: boolean;
   has_card_callback_encrypt_key: boolean;

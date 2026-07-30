@@ -34,6 +34,25 @@ import type {
 
 const DEFAULT_API_BASE = 'https://open.feishu.cn';
 
+const normalizePublicBaseUrl = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  const parsed = new URL(trimmed);
+  if (
+    !['http:', 'https:'].includes(parsed.protocol)
+    || !parsed.hostname
+    || parsed.username
+    || parsed.password
+    || !['', '/'].includes(parsed.pathname)
+    || parsed.search
+    || parsed.hash
+    || (parsed.port && (Number(parsed.port) < 1 || Number(parsed.port) > 65535))
+  ) {
+    throw new Error('公网访问根地址只能填写 http/https + 域名或 IP + 可选端口，不能包含路径、参数或片段');
+  }
+  return parsed.origin;
+};
+
 const STAT_META: { key: keyof FeishuSyncStats; label: string; color: string }[] = [
   { key: 'dept_created', label: 'feishu.statDeptCreated', color: 'green' },
   { key: 'dept_updated', label: 'feishu.statDeptUpdated', color: 'blue' },
@@ -84,6 +103,8 @@ export default function FeishuIntegration() {
   const [ailySaving, setAilySaving] = useState(false);
   const [ailyConfig, setAilyConfig] = useState<AilyConfig | null>(null);
   const [ailyEnabled, setAilyEnabled] = useState(false);
+  const [publicBaseUrl, setPublicBaseUrl] = useState('');
+  const [publicBaseUrlError, setPublicBaseUrlError] = useState('');
   const [jwtSecret, setJwtSecret] = useState('');
   const [tenantIds, setTenantIds] = useState('');
   const [agentIds, setAgentIds] = useState('');
@@ -102,13 +123,16 @@ export default function FeishuIntegration() {
   const [testIdentityId, setTestIdentityId] = useState<string>();
   const [messageTesting, setMessageTesting] = useState(false);
 
-  const redirectUri = window.location.origin + '/login/feishu-callback';
-  const publicMcpUrl = window.location.origin + (ailyConfig?.mcp_path || '/mcp/');
-  const cardCallbackUrl = window.location.origin + (ailyConfig?.card_callback_path || '/api/integrations/feishu/card-actions');
+  const publicBase = publicBaseUrl.trim().replace(/\/+$/, '');
+  const publicMcpUrl = publicBase ? `${publicBase}${ailyConfig?.mcp_path || '/mcp/'}` : '';
+  const redirectUri = publicBase ? `${publicBase}/login/feishu-callback` : '';
+  const cardCallbackUrl = publicBase ? `${publicBase}${ailyConfig?.card_callback_path || '/api/integrations/feishu/card-actions'}` : '';
 
   const applyAilyConfig = (value: AilyConfig) => {
     setAilyConfig(value);
     setAilyEnabled(value.enabled);
+    setPublicBaseUrl(value.public_base_url || '');
+    setPublicBaseUrlError('');
     setTenantIds(value.allowed_tenant_ids.join('\n'));
     setAgentIds(value.allowed_agent_ids.join('\n'));
     setOrigins(value.allowed_origins.join('\n'));
@@ -205,6 +229,16 @@ export default function FeishuIntegration() {
   };
 
   const handleAilySave = async () => {
+    let normalizedPublicBaseUrl = '';
+    try {
+      normalizedPublicBaseUrl = normalizePublicBaseUrl(publicBaseUrl);
+      setPublicBaseUrlError('');
+    } catch (error) {
+      const detail = (error as Error).message || '公网访问根地址格式不正确';
+      setPublicBaseUrlError(detail);
+      message.error(detail);
+      return;
+    }
     setAilySaving(true);
     try {
       const body: Record<string, unknown> = {
@@ -214,6 +248,7 @@ export default function FeishuIntegration() {
         allowed_origins: lines(origins),
         bot_app_id: botAppId.trim() || null,
         api_base: DEFAULT_API_BASE,
+        public_base_url: normalizedPublicBaseUrl || null,
         message_enabled: messageEnabled,
       };
       if (jwtSecret.trim()) body.mcp_jwt_secret = jwtSecret.trim();
@@ -352,7 +387,9 @@ export default function FeishuIntegration() {
             {config?.last_sync_at ? t('feishu.lastSyncAt', { time: dayjs(config.last_sync_at).format('YYYY-MM-DD HH:mm:ss') }) : t('feishu.neverSynced')}
           </Typography.Text>
           {stats && <Space wrap>{STAT_META.map((meta) => <Tag key={meta.key} color={meta.color}>{t(meta.label)} {stats[meta.key] ?? 0}</Tag>)}</Space>}
-          <Typography.Text type="secondary">飞书登录回调：<Typography.Text code copyable={{ text: redirectUri }}>{redirectUri}</Typography.Text></Typography.Text>
+          <Typography.Text type="secondary">
+            飞书登录回调：<Typography.Text code copyable={redirectUri ? { text: redirectUri } : false}>{redirectUri || '请在下方填写公网访问根地址'}</Typography.Text>
+          </Typography.Text>
         </Space>
       </Card>
 
@@ -369,8 +406,28 @@ export default function FeishuIntegration() {
             : '首次接入可只启用 MCP 并配置 Origin，让 Aily 完成协议校验；Aily 创建后再回填 JWT 密钥、租户/Agent 白名单和身份映射。密钥只写入后端，不会回显。'}
         />
         <Space direction="vertical" size={12} style={{ width: '100%', maxWidth: 760 }}>
+          <Typography.Text strong>公网访问根地址（域名/IP + 服务端口）</Typography.Text>
+          <Input
+            value={publicBaseUrl}
+            disabled={disabled}
+            placeholder="例如 https://itom.snnc.cc:30443"
+            onChange={(event) => { setPublicBaseUrl(event.target.value); setPublicBaseUrlError(''); }}
+            onBlur={() => {
+              try {
+                setPublicBaseUrl(normalizePublicBaseUrl(publicBaseUrl));
+                setPublicBaseUrlError('');
+              } catch {
+                // 保存时会再次校验并给出明确提示。
+              }
+            }}
+            aria-label="公网访问根地址"
+          />
+          <Typography.Text type="secondary">
+            填写外部实际访问入口，不要填写 /mcp/ 或任何回调路径；使用非 443 端口时必须保留端口号。清空后下方地址不再生成。
+          </Typography.Text>
+          {publicBaseUrlError && <Typography.Text type="danger">{publicBaseUrlError}</Typography.Text>}
           <Typography.Text>MCP 公网地址</Typography.Text>
-          <Typography.Text code copyable={{ text: publicMcpUrl }}>{publicMcpUrl}</Typography.Text>
+          <Typography.Text code copyable={publicMcpUrl ? { text: publicMcpUrl } : false}>{publicMcpUrl || '请先填写公网访问根地址'}</Typography.Text>
           <Space><Switch checked={ailyEnabled} disabled={disabled} onChange={setAilyEnabled} /><Typography.Text>启用 Aily MCP</Typography.Text></Space>
           <Typography.Text>x-aily-jwt HS256 Secret</Typography.Text>
           <Input.Password value={jwtSecret} disabled={disabled} placeholder={ailyConfig?.has_mcp_jwt_secret ? '已配置，留空表示不修改' : '至少 16 个字符'} onChange={(event) => setJwtSecret(event.target.value)} autoComplete="new-password" />
@@ -392,8 +449,8 @@ export default function FeishuIntegration() {
             showIcon
             message="普通对话仍只使用 Aily + MCP；卡片按钮是唯一例外，由 ITOM 验证飞书签名和点击人身份后调用同一领域服务。"
           />
-          <Typography.Text>公网回调地址（请通过 ngrok 或正式公网域名访问本页后复制；localhost/内网地址不可用）</Typography.Text>
-          <Typography.Text code copyable={{ text: cardCallbackUrl }}>{cardCallbackUrl}</Typography.Text>
+          <Typography.Text>公网回调地址（由上方公网访问根地址自动生成）</Typography.Text>
+          <Typography.Text code copyable={cardCallbackUrl ? { text: cardCallbackUrl } : false}>{cardCallbackUrl || '请先填写公网访问根地址'}</Typography.Text>
           <Typography.Text>Verification Token</Typography.Text>
           <Input.Password
             value={cardCallbackVerificationToken}

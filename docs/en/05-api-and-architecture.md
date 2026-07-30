@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. P2.1 now uses Feishu's new signed `card.action.trigger` callback. The Aily Workflow/Skill path does not perform card mutations because it cannot provide a trusted `x-aily-jwt`; the live unresolved → reopen → resolve and close → rate button loop has passed. P3 is deferred by user decision. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. P2.1 now uses Feishu's new signed `card.action.trigger` callback. The Aily Workflow/Skill path does not perform card mutations because it cannot provide a trusted `x-aily-jwt`; the live unresolved → reopen → resolve and close → rate button loop has passed. P3 Feishu Approval is deferred by user decision, while IDC release hardening and formal acceptance continue. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -318,17 +318,28 @@ Scheduled tasks cover SLA, contracts, milestones, one reminder at 80% of the req
 ## 7. Deployment Architecture
 
 ```yaml
-# deploy/docker-compose.yml form
-services:
-  db:        postgres:16  (volume + daily pg_dump to a host backup directory)
-  backend:   uvicorn, depends on db, runs alembic upgrade + seed (idempotent) on startup; with `SEED_INITIAL_CONFIG=1`, a fresh database also receives the six workflows and the verified login/Logo branding, while existing branding drafts/releases are preserved
-  frontend:  nginx serving the build output, /api and /mcp reverse-proxied to the backend
+# Default delivery path
+GitHub Actions:
+  backend:   Python 3.12 + temporary SQLite, complete pytest
+  frontend:  Node.js 22, npm ci + TypeScript + Vite production build
+  contract:  deployment YAML/script/diff checks + bilingual documentation guard
+Harbor:
+  backend:   git-<commit>-linux-amd64
+  frontend:  git-<commit>-linux-amd64
+IDC Kubernetes:
+  db:        PostgreSQL 16 + persistent volume
+  backend:   uvicorn, incremental migration + idempotent seed on startup
+  frontend:  nginx serving the build output and proxying /api and /mcp
 ```
 
 - Environment variables: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_INIT_PASSWORD`, `TZ=Asia/Shanghai`.
-- IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes local Docker plus ngrok on the full `127.0.0.1:8180` origin for the web app, `/api`, OAuth callback, and `/mcp/`.
+- IDC Kubernetes is the sole runtime, integration, and acceptance environment. Starting a local application stack, database, Compose, port 8180, or ngrok is prohibited by default. It is allowed only for an explicitly requested isolated investigation and never counts as delivery acceptance.
+- `.github/workflows/quality-gate.yml` runs the complete backend regression, frontend production build, deployment-file checks, and bilingual documentation guard for pushes and pull requests on feature/develop/main. Test fixtures use temporary SQLite and never the IDC business database.
+- After the gate passes, `deploy/k8s/push-images.sh` accepts only a clean commit, builds and verifies linux/amd64 images, applies the default immutable `git-<first-12-commit-chars>-linux-amd64` tag, and pushes to Harbor. Image building does not start a local ITOM runtime.
+- `deploy/k8s/k8s-deploy.sh` deploys that same tag while preserving existing Secrets, PVCs, database, uploads, and Feishu configuration. It fails on rollout, Ready Endpoint, image-identity, in-cluster frontend proxy, external `/api/health`, or MCP `initialize` errors. Schema-affecting releases require the approved in-cluster backup/checkpoint first.
+- Administrators persist the external entry point in `public_base_url`, including the scheme, domain/IP, and optional service port; the same root serves the web app, `/api`, Feishu OAuth callback, and `/mcp/`. The current root is `https://itom.snnc.cc:30443`.
 - `/mcp/` preserves streaming and a suitable read timeout. Aily uses the canonical URL with its trailing slash. Secrets belong in headers, never URLs, logs, or frontend build variables.
-- Logging: structured JSON to stdout (viewable via docker logs).
+- Logging: structured JSON to stdout through the Kubernetes logging path.
 
 ## 8. Milestone Mapping (development order)
 
@@ -342,8 +353,8 @@ services:
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path and live bot receipt complete) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
 | Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
-| Aily-MCP P2 (code/automation, real-Aily conversational loop, and bot receipt passed separately; normal-user same-ticket end-to-end UAT pending) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
-| Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
+| Aily-MCP P2 (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
+| Aily-MCP P3 / release hardening | Feishu Approval deferred; trusted TLS plus IDC security/performance/recovery/real-role UAT | approval/operations config | docs/10 §10 |
 
 ## 8.1 Business-domain Service Department API (M41)
 

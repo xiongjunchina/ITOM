@@ -5,7 +5,7 @@
 > Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
-> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol, identity, and live bot receipt; P1 intake; and P2 service-closure code are complete. P1 passed real-Aily write UAT. P2 passed automated regression, a real-Aily multi-role conversational loop, normal-user bot receipt, and a normal-user same-ticket end-to-end loop. P2.1 has moved from the Aily Workflow/Skill path, which could not provide a trusted JWT, to Feishu's new `card.action.trigger`: ordinary conversation remains MCP-only, while card buttons are the sole exception and are signature-verified by ITOM before clicker mapping and invocation of the same domain services. Automation and the live unresolved → reopen → resolve and close → rate button loop have both passed. P3 is deferred by user decision.
+> Aily + MCP sections are the formal contract for `feature/aily-agent-mcp`. P0 protocol, identity, and live bot receipt; P1 intake; and P2 service-closure code are complete. P1 passed real-Aily write UAT. P2 passed automated regression, a real-Aily multi-role conversational loop, normal-user bot receipt, and a normal-user same-ticket end-to-end loop. P2.1 has moved from the Aily Workflow/Skill path, which could not provide a trusted JWT, to Feishu's new `card.action.trigger`: ordinary conversation remains MCP-only, while card buttons are the sole exception and are signature-verified by ITOM before clicker mapping and invocation of the same domain services. Automation and the live unresolved → reopen → resolve and close → rate button loop have both passed. P3 Feishu Approval is deferred by user decision, while IDC release hardening and formal acceptance continue.
 
 ---
 
@@ -501,7 +501,7 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | Item | Requirement |
 | --- | --- |
 | Tech stack | Backend FastAPI + SQLAlchemy + PostgreSQL; frontend React + Ant Design; single repository |
-| Deployment | IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes Docker Compose + ngrok on the full `8180` origin for Aily/MCP development and real-tenant integration; IDC acceptance remains mandatory after recovery |
+| Deployment | IDC Kubernetes is the sole runtime, integration, and acceptance environment. The workstation must not start the ITOM application stack, database, Compose, port 8180, or ngrok unless the user explicitly requests temporary isolated troubleshooting. GitHub Actions first runs the complete backend regression, frontend production build, and repository-contract checks. A clean commit then produces Git-SHA-derived immutable linux/amd64 images that are pushed to Harbor and deployed under the same tag. Formal acceptance covers strict rollout, actual image identity, internal/external health paths, MCP entry, and real-role business UAT; automation must never target the IDC business database |
 | Performance | List pages ≤ 1s; Dashboard ≤ 2s; sized for 100k tickets over 5 years |
 | Security | Hashed password storage, JWT sessions, interface-level RBAC, immutable audit logs |
 | API convention | Unified response `{success, data, total, page}`; RESTful; OpenAPI docs auto-generated |
@@ -527,6 +527,6 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | Aily-MCP P0 Protocol & Foundation (code, real identity path, and live bot receipt complete) | 2, 3, 11 | Remove Helpdesk; embedded MCP; identity, tool audit, proactive bot message; Docker + ngrok validation |
 | Aily-MCP P1 Intake (real Aily write UAT complete for service requests and IT requirements) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; no normal-user incident creation |
 | Aily-MCP P2 Closure Loop (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | 3, 5, 8 | Dispatch, accept, resolve, reliable outbox, button/text confirm or reopen, close, and rate across real roles |
-| Aily-MCP P3 Approval & Release | 8, 10, 11 | Feishu Approval idempotency, IDC security/performance/recovery/UAT, user-approved PR to `main` |
+| Aily-MCP P3 Approval & Release Hardening | 8, 10, 11 | Feishu Approval idempotency is deferred by user decision; complete trusted TLS, IDC security/performance/recovery/real-role UAT, and a user-approved PR to `main` |
 
 **System-level overall acceptance**: all creation forms require ≤ 5 items; no page manually maintains statistics; all six point-event categories trigger automatically; real acceptance covers “Aily request → MCP create → ITOM dispatch/accept/resolve → Aily proactive notification → requester confirm/reopen → close → rate” and “Aily requirement registration → ITOM evaluation → delivery/project → acceptance and closure.”

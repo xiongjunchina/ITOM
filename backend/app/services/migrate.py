@@ -114,6 +114,7 @@ ENSURE_COLUMNS = {
     "aily_integration_config": [
         ("card_callback_verification_token_encrypted", "TEXT"),
         ("card_callback_encrypt_key_encrypted", "TEXT"),
+        ("public_base_url", "VARCHAR(300)"),
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),

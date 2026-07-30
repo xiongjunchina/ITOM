@@ -1,4 +1,6 @@
 # Expose ITOM at https://itom.prod.sn.local via ingress-nginx.
+# The public alias itom.snnc.cc is routed to the same frontend below. It needs
+# a separate publicly trusted TLS secret before browsers will trust HTTPS.
 # TLS reuses the internal-CA wildcard secret (copied into the itom namespace by
 # k8s-deploy.sh). external-dns target pins the A record to the ingress VIP
 # (10.60.65.220); node-IP status records don't serve :443.
@@ -19,6 +21,16 @@ spec:
       secretName: wildcard-prod-sn-local-tls
   rules:
     - host: itom.prod.sn.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: itom-frontend
+                port:
+                  number: 80
+    - host: itom.snnc.cc
       http:
         paths:
           - path: /
