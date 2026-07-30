@@ -42,6 +42,21 @@ on this branch:
 The frozen Feishu Helpdesk baseline remains recoverable from the annotated tag
 `v1.0.0-feishu-helpdesk` at commit `f13f702`.
 
+## Mandatory pre-development Git synchronization
+
+Before starting every new development task or modifying code:
+
+1. Check the worktree and current branch with `git status` and `git branch`.
+2. If local changes exist, commit them as a separate baseline/version record;
+   never mix those changes with the new task.
+3. Push the current development branch to GitHub and verify that the local
+   `HEAD` equals the remote branch tip.
+4. Only after synchronization succeeds may new implementation changes begin.
+
+If GitHub synchronization is unavailable or the local and remote tips differ,
+stop before editing code and report the exact blocker. This gate applies to
+every subsequent update, not only large refactors or releases.
+
 ## Deployment and verification environment
 
 The IDC Kubernetes cluster is the sole runtime delivery and acceptance environment. The user's workstation must not start the ITOM application stack, a local database, Docker Compose, port 8180, or ngrok for routine development validation. A local application environment is allowed only when the user explicitly requests a temporary isolated investigation.

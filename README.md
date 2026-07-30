@@ -140,6 +140,7 @@ deploy/          docker-compose、Nginx、备份
 - `develop`：日常开发集成分支；功能开发从 `develop` 拉 `feature/<名称>` 分支，完成后 PR 合回。
 - `release/feishu-helpdesk-v1` 与标签 `v1.0.0-feishu-helpdesk`：飞书服务台版本的冻结基线；标签固定在提交 `f13f702`，不得重写。
 - `feature/aily-agent-mcp`：基于上述冻结基线的新版本开发线；方案背景、架构边界和新会话启动要求见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)，完成后由用户确认并通过 Pull Request 合入 `main`。
+- **开发前同步门禁**：每次开始新的开发任务前，必须先检查工作区；有本地变更时先单独提交版本记录，再推送当前开发分支并确认本地 `HEAD` 与 GitHub 分支指针一致。同步失败或分支不一致时，停止编辑代码，不得把旧变更与新任务混在一起。
 - 首次 clone 后启用钩子：`git config core.hooksPath scripts/git-hooks`。
 - 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误；按改动影响同步更新 `README.md`、`docs/03–06` 及对应英文译本。
 - **交付完成定义**：代码实现、测试与受影响说明文档必须相互一致；功能、接口、数据模型、配置、部署、权限或用户流程发生变化但文档未同步时，不得视为完整交付。仓库级执行规则见 [`AGENTS.md`](AGENTS.md)。
@@ -280,6 +281,7 @@ deploy/          docker-compose, Nginx, backups
 - `develop`: day-to-day integration branch; cut `feature/<name>` branches from it and PR back.
 - `release/feishu-helpdesk-v1` and `v1.0.0-feishu-helpdesk`: immutable frozen Helpdesk baseline at `f13f702`.
 - `feature/aily-agent-mcp`: sole Aily + MCP development line; see the [final design baseline](docs/en/10-aily-mcp-handoff-and-decision-context.md) and merge to `main` only through a user-approved PR.
+- **Pre-development synchronization gate**: before every new development task, inspect the worktree; commit any existing local changes as a separate version record, push the current development branch, and verify that local `HEAD` equals the GitHub branch tip. If synchronization fails or tips differ, stop before editing code and report the blocker; never mix the previous changes with the new task.
 - After cloning, enable the hooks once: `git config core.hooksPath scripts/git-hooks`.
 - Pre-commit checklist: backend `pytest -q` all green, frontend `npm run build` with zero errors, and affected sections in `README.md`, `docs/03–06`, and their English mirrors updated.
 - **Definition of done**: implementation, tests, and affected documentation must agree. A behavior, API, data-model, configuration, deployment, permission, or workflow change without synchronized docs is not a complete delivery. See [`AGENTS.md`](AGENTS.md).
