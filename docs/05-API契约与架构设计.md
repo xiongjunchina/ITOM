@@ -212,21 +212,21 @@ MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理�
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 
-### 4.1c IT 员工分流与跨单据关联（已确认，待实现）
+### 4.1c IT 员工分流与跨单据关联（阶段 A 已实现；关联待实现）
 
-以下为已确认实现契约，当前尚未上线；它们只服务 IT 员工网页，不增加 Aily/MCP 工具：
+以下契约只服务 IT 员工网页，不增加 Aily/MCP 工具。分流与说明接口已上线；跨单据关联接口仍是后续实现契约：
 
 ```text
 POST /api/staff-intake/recommend
-    # IT 员工；临时问题→推荐单据类型、理由、反例、可访问目标入口；不落库
+    # 已实现：IT 员工；临时问题→推荐单据类型、理由、反例、按真实创建权限过滤的目标入口；不落库
 GET  /api/it-document-guide
-    # 已登录用户；六类单据的一行说明和案例库；前端按实际创建权限展示入口
+    # 已实现：已登录用户；六类单据的一行说明和案例库；服务端返回 IT 员工能力开关
 POST /api/record-relations/prepare
-    # 源单据 + relation_type + idempotency_key；复核源查看/目标创建权限，返回安全预填和目标必填缺口
+    # 待实现：源单据 + relation_type + idempotency_key；复核源查看/目标创建权限，返回安全预填和目标必填缺口
 POST /api/record-relations/submit
-    # 目标表单 + relation_type + reason + idempotency_key；调用目标领域服务创建目标、写关系和审计
+    # 待实现：目标表单 + relation_type + reason + idempotency_key；调用目标领域服务创建目标、写关系和审计
 GET  /api/records/{entity_type}/{entity_id}/relations
-    # 受数据范围约束的双向关系列表
+    # 待实现：受数据范围约束的双向关系列表
 ```
 
 `recommend` 的问题和答案不得持久化。`prepare/submit` 不直接写领域表；`submit` 必须通过事件、问题、变更或项目等领域服务完成各自的字段、状态、流程、审批、RBAC、审计和事件发布。允许的首期关系类型由服务端白名单控制；任何重复提交按幂等键返回首次结果，不得改变源单据类型、状态或流程。

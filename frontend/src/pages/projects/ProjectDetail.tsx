@@ -42,6 +42,7 @@ import { useGoBack } from '../../utils/nav';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -1339,6 +1340,7 @@ export default function ProjectDetail() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {isExample && <ExampleAlert />}
+      <DocumentTypeHint documentType="project" />
       {/* 头部 */}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>

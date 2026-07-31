@@ -49,6 +49,7 @@ import type {
 import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/types';
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag } from './shared';
 import RequirementImportModal from './RequirementImportModal';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
@@ -555,6 +556,7 @@ export default function Requirements() {
         onCancel={() => setCreateOpen(false)}
         destroyOnClose
       >
+        <DocumentTypeHint documentType="requirement" />
         <Form<CreateFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="title"
@@ -624,5 +626,5 @@ export default function Requirements() {
   );
 
   // M17：任务跟踪/评分规则已拆为左侧导航二级菜单独立页，本页只承载需求总览
-  return <Card title={t('req.tab.overview')}>{overviewTab}</Card>;
+  return <Card title={t('req.tab.overview')}><DocumentTypeHint documentType="requirement" />{overviewTab}</Card>;
 }

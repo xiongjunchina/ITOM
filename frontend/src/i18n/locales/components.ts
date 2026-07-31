@@ -68,6 +68,25 @@ export const zh: Dict = {
   'comp.example.tip': '示例数据：字段内容即填写指引，仅供学习参考，不可编辑',
   'comp.example.tag': '示例',
   'comp.example.alert': '这是一条示例数据——每个字段的内容就是该字段的填写指引，仅供学习参考，不可编辑。',
+
+  // IT 员工单据分流
+  'intake.title': '登记 IT 单据',
+  'intake.intro': '通过几个临时判断项获得单据建议。回答不会保存，您仍可自行选择并在原生表单中完成登记。',
+  'intake.q.broadImpact': '是否影响多名用户、一个服务或核心系统？',
+  'intake.q.recurring': '是否反复发生、属于已知错误或需要定位根因？',
+  'intake.q.plannedChange': '是否需要在生产环境按计划修改，并考虑风险、回退或窗口？',
+  'intake.q.newCapability': '是否属于新系统、新功能、优化或重构想法？',
+  'intake.recommend': '获取建议',
+  'intake.recommended': '建议登记为',
+  'intake.counterexample': '不适用示例',
+  'intake.goCreate': '进入登记表单',
+  'intake.manualChoice': '我已明确单据类型，直接选择',
+  'intake.guideTitle': 'IT 单据速查',
+  'intake.viewExamples': '查看示例',
+  'intake.suitable': '适用场景',
+  'intake.example': '典型示例',
+  'intake.notSuitable': '不适用情形',
+  'intake.redirect': '应转向',
 };
 
 export const en: Dict = {
@@ -137,4 +156,23 @@ export const en: Dict = {
   'comp.example.tip': 'Example data: field content is the filling guidance, for reference only, not editable',
   'comp.example.tag': 'Example',
   'comp.example.alert': "This is example data — each field's content is the filling guidance for that field, for reference only and not editable.",
+
+  // IT staff document intake
+  'intake.title': 'Register IT Record',
+  'intake.intro': 'Answer a few temporary prompts to get a recommendation. Answers are not stored; you can still choose the record type and complete its native form.',
+  'intake.q.broadImpact': 'Does this affect multiple users, a service, or a core system?',
+  'intake.q.recurring': 'Is it recurring, a known error, or does it require root-cause analysis?',
+  'intake.q.plannedChange': 'Does it require a planned production change with risk, rollback, or a window?',
+  'intake.q.newCapability': 'Is it an idea for a new system, function, optimisation, or refactoring?',
+  'intake.recommend': 'Get recommendation',
+  'intake.recommended': 'Recommended record',
+  'intake.counterexample': 'Not suitable example',
+  'intake.goCreate': 'Open registration form',
+  'intake.manualChoice': 'I know the record type',
+  'intake.guideTitle': 'IT Record Quick Guide',
+  'intake.viewExamples': 'View examples',
+  'intake.suitable': 'Suitable for',
+  'intake.example': 'Typical example',
+  'intake.notSuitable': 'Not suitable for',
+  'intake.redirect': 'Use instead',
 };

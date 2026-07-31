@@ -24,6 +24,7 @@ import { canHandleTask, useAuthStore } from '../../stores/auth';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
   AllowedTransition,
@@ -270,6 +271,7 @@ export default function ProblemDetail() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {isExample && <ExampleAlert />}
+      <DocumentTypeHint documentType="problem" />
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>

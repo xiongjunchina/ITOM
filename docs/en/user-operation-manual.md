@@ -39,6 +39,10 @@ Business tables provide keyword search, core-field filters, clickable sortable h
 
 ## 3. ITSM
 
+### Quick routing for IT staff
+
+Business users normally do not need to open these pages: describe the request to Feishu Aily, which assists only with service requests or IT requirements. Signed-in IT team members can use the header's **Create IT Record** action for two to four lightweight temporary questions. Answers are not saved, the recommendation is overrideable, and the UI shows only entries the current account can actually create. The list, detail, and creation forms for all six record types include a one-line use case and **View examples**. Choose a service request for an individual user's fault, assistance, or request; an incident for a broad interruption; a problem for recurrence requiring root-cause analysis; a change for planned production work with risk, window, or rollback requirements; an IT requirement for a new system, function, optimization, or refactor; and a project only for delivery that meets project-management conditions. This entry does not change Aily permissions, fields, confirmation, reopen, rating, or create cross-record relations.
+
 ### Service requests
 
 After the requester selects a service item, ITOM loads that item's currently published form version and renders its dynamic fields. The web form and Aily MCP share the same required, type, length, option, date, person/department scope, and conditional-rule validation. Only published, non-example items within the requester's audience are selectable. On submission, ITOM stores the form version and schema snapshot, starts the process bound to the item, and dispatches by item rule, catalog rule, then global fallback. If no eligible handler exists, the record enters a manual queue instead of being silently dropped. IT staff and administrators can still use Internal Handling Information where permitted.

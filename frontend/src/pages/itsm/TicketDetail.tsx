@@ -21,6 +21,7 @@ import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
@@ -300,6 +301,7 @@ export default function TicketDetail() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {isExample && <ExampleAlert />}
+      <DocumentTypeHint documentType={detail.ticket_type as TicketType} />
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
