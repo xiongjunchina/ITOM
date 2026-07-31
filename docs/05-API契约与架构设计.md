@@ -212,9 +212,9 @@ MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理�
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 
-### 4.1c IT 员工分流与跨单据关联（阶段 A/B 已实现；创建并关联待实现）
+### 4.1c IT 员工分流与跨单据关联（阶段 A/B/C 已实现）
 
-以下契约只服务 IT 员工网页，不增加 Aily/MCP 工具。分流、说明和受范围约束的关联读取接口已上线；创建目标并关联的接口仍是后续实现契约：
+以下契约只服务 IT 员工网页，不增加 Aily/MCP 工具。分流、说明、受范围约束的关联读取和创建目标并关联接口均已上线：
 
 ```text
 POST /api/staff-intake/recommend
@@ -222,14 +222,16 @@ POST /api/staff-intake/recommend
 GET  /api/it-document-guide
     # 已实现：已登录用户；六类单据的一行说明和案例库；服务端返回 IT 员工能力开关
 POST /api/record-relations/prepare
-    # 待实现：源单据 + relation_type + idempotency_key；复核源查看/目标创建权限，返回安全预填和目标必填缺口
+    # 已实现：源单据 + relation_type；复核源查看/目标创建权限，返回安全预填和目标必填字段
 POST /api/record-relations/submit
-    # 待实现：目标表单 + relation_type + reason + idempotency_key；调用目标领域服务创建目标、写关系和审计
+    # 已实现：目标表单 + relation_type + reason + idempotency_key；来源锁 + 提交摘要防重，调用目标领域服务创建目标、启动流程、写关系和审计
 GET  /api/records/{entity_type}/{entity_id}/relations
     # 已实现：当前用户可见源记录后，只返回其同时有权查看的关联对端；不泄露不可见单据的关系、编号或标题
 ```
 
-`recommend` 的问题和答案不得持久化。阶段 B 已对活动关系建立来源/目标/关系类型唯一约束，并对创建人、来源、目标类型、幂等键建立唯一约束；同键异参由请求摘要拒绝。`prepare/submit` 不直接写领域表；阶段 C 的 `submit` 必须通过事件、问题、变更或项目等领域服务完成各自的字段、状态、流程、审批、RBAC、审计和事件发布。允许的首期关系类型由服务端白名单控制；任何重复提交按幂等键返回首次结果，不得改变源单据类型、状态或流程。
+`prepare` 与 `submit` 仅接受服务端白名单的四类来源/目标组合。`submit` 不接受客户端指定目标实体类型；服务端从来源记录和 `relation_type` 推导目标类型，先复核来源数据范围和目标 `create` 权限，再调用工单、问题或项目领域服务。重复调用同一操作者/来源/目标类型/幂等键且规范化请求一致时返回首次目标；同键异参返回 `IDEMPOTENCY_CONFLICT`（409）。
+
+`recommend` 的问题和答案不得持久化。活动关系已建立来源/目标/关系类型唯一约束，并对创建人、来源、目标类型、幂等键建立唯一约束；同键异参由请求摘要拒绝。`prepare/submit` 不直接写领域表；`submit` 已通过事件、问题、变更或项目等领域服务完成各自的字段、状态、流程、审批、RBAC、审计和事件发布。允许的首期关系类型由服务端白名单控制；任何重复提交按幂等键返回首次结果，不得改变源单据类型、状态或流程。
 
 ### 4.2 ITSM
 

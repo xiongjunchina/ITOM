@@ -25,6 +25,7 @@ import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
@@ -254,6 +255,8 @@ export default function ProblemDetail() {
 
   /** 示例数据只读：隐藏关联工单/完成步骤等残余写入口（allowed_transitions 后端已置空） */
   const isExample = detail.is_example === true;
+  const isStaff = !!user && user.roles.some((role) => role !== 'requester');
+  const canCreateRemediationChange = !isExample && isStaff && detail.status !== 'closed';
   const process = detail.process;
   const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);
 
@@ -313,6 +316,14 @@ export default function ProblemDetail() {
                   {t('itsm.problem.rejectBtn')}
                 </Button>
               </>
+            )}
+            {canCreateRemediationChange && id && (
+              <RecordRelationCreateButton
+                sourceEntityType="problem"
+                sourceId={id}
+                relationType="remediated_by_change"
+                onCreated={() => void load()}
+              />
             )}
             {(detail.allowed_transitions ?? []).map((tr) => (
               <Button key={tr.to} type="primary" onClick={() => openTransition(tr)}>

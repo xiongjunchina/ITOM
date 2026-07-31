@@ -20,7 +20,17 @@ function recordPath(row: RecordRelationRow['counterpart']): string {
 }
 
 /** 只读关联区：前端不根据本地数据猜测权限，由后端对关系两端做可见性过滤。 */
-export default function RecordRelationsPanel({ entityType, entityId }: { entityType: EntityType; entityId: string }) {
+export default function RecordRelationsPanel({
+  entityType,
+  entityId,
+  excludeRelationTypes = [],
+  hideWhenEmpty = false,
+}: {
+  entityType: EntityType;
+  entityId: string;
+  excludeRelationTypes?: string[];
+  hideWhenEmpty?: boolean;
+}) {
   const t = useT();
   const [rows, setRows] = useState<RecordRelationRow[]>([]);
 
@@ -35,13 +45,16 @@ export default function RecordRelationsPanel({ entityType, entityId }: { entityT
     };
   }, [entityId, entityType]);
 
+  const visibleRows = rows.filter((row) => !excludeRelationTypes.includes(row.relation_type));
+  if (hideWhenEmpty && visibleRows.length === 0) return null;
+
   return (
     <Card title={<Space><LinkOutlined />{t('comp.relations.title')}</Space>} size="small">
-      {rows.length === 0 ? (
+      {visibleRows.length === 0 ? (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('comp.relations.empty')} />
       ) : (
         <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <div key={row.id} style={{ borderBottom: '1px solid #f0f0f0', paddingBottom: 10 }}>
               <Space wrap size={[8, 4]}>
                 <Tag color={row.direction === 'outbound' ? 'blue' : 'purple'}>

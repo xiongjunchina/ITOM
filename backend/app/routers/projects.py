@@ -18,6 +18,7 @@ from app.models import (
     OrgMember,
     Portfolio,
     Project,
+    RecordRelation,
     Risk,
     ServiceItem,
     WbsTask,
@@ -368,9 +369,25 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
         .order_by(Requirement.created_at.desc())
         .all()
     )
+    # “需求转项目”的新统一关联仍复用 requirement.project_id 维持既有闭环；
+    # 将关联说明带回旧的关联需求区，详情页即可避免与通用关系面板重复展示。
+    relation_by_requirement = {
+        relation.source_entity_id: relation
+        for relation in db.query(RecordRelation)
+        .filter(
+            RecordRelation.is_deleted.is_(False),
+            RecordRelation.source_entity_type == "requirement",
+            RecordRelation.target_entity_type == "project",
+            RecordRelation.target_entity_id == p.id,
+            RecordRelation.relation_type == "converted_to_project",
+        )
+        .all()
+    }
     detail["linked_requirements"] = [
         {"id": r.id, "requirement_code": r.requirement_code, "title": r.title,
-         "status": r.status, "status_name": req_status.get(r.status, r.status), "moscow": r.moscow}
+         "status": r.status, "status_name": req_status.get(r.status, r.status), "moscow": r.moscow,
+         "relation_reason": relation_by_requirement[r.id].reason if r.id in relation_by_requirement else None,
+         "relation_created_at": relation_by_requirement[r.id].created_at if r.id in relation_by_requirement else None}
         for r in linked
     ]
     return ok(detail)

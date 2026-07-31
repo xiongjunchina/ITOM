@@ -1246,6 +1246,9 @@ export interface LinkedRequirementBrief {
   status: string;
   status_name: string;
   moscow?: string | null;
+  /** 通过通用关联“转为项目”时的业务说明；旧关联为空。 */
+  relation_reason?: string | null;
+  relation_created_at?: string | null;
 }
 
 /** 章程组织条目（主要成员：role=角色 duty=职责；关键干系人：role=角色/单位 duty=关注点） */
@@ -1258,6 +1261,8 @@ export interface ProjectOrgEntry {
 export interface ProjectDetail extends ProjectRow {
   /** 关联需求（需求实现阶段挂接本项目） */
   linked_requirements?: LinkedRequirementBrief[];
+  /** 通过“创建关联项目”写入的关联说明；旧 project_id 关联为空。 */
+  project_relation_reason?: string | null;
   /** 其他说明（章程分字段后仅存放补充说明，兼容存量描述） */
   description: string | null;
   service_item_id: string | null;
@@ -1718,6 +1723,8 @@ export interface RequirementDetail extends RequirementRow {
   analyzing_at: string | null;
   implementing_at: string | null;
   project_name: string | null;
+  /** 通过“创建关联项目”写入的关联说明；旧 project_id 关联为空。 */
+  project_relation_reason?: string | null;
   tasks: RequirementTask[];
   /** 关闭收尾已转出清单 */
   handover: {

@@ -22,6 +22,7 @@ import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
@@ -105,7 +106,6 @@ export default function TicketDetail() {
   const [ratingSaving, setRatingSaving] = useState(false);
 
   // M3：升级为问题 / 沉淀为知识
-  const [escalating, setEscalating] = useState(false);
   const [toKnowledgeSaving, setToKnowledgeSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -220,21 +220,6 @@ export default function TicketDetail() {
     }
   };
 
-  const escalateProblem = async () => {
-    setEscalating(true);
-    try {
-      const res = await api.post<{ problem_id: string; problem_code: string }>(
-        `/tickets/${id}/escalate-problem`,
-      );
-      message.success(t('itsm.ticket.escalated', { code: res.problem_code }));
-      navigate(`/itsm/problems/${res.problem_id}`);
-    } catch {
-      // 已统一提示（含 ALREADY_ESCALATED）
-    } finally {
-      setEscalating(false);
-    }
-  };
-
   const toKnowledge = async () => {
     setToKnowledgeSaving(true);
     try {
@@ -295,7 +280,10 @@ export default function TicketDetail() {
   const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);
   // M3：非 requester（拥有任一内部角色）可升级为问题
   const isStaff = !!user && user.roles.some((r) => r !== 'requester');
-  const canEscalate = !isExample && isStaff && detail.status !== 'new' && detail.status !== 'closed';
+  const canCreateRelated = !isExample && isStaff && detail.status !== 'closed';
+  const canUpgradeIncident = canCreateRelated && detail.ticket_type === 'service_request';
+  const canCreateRootCauseProblem = canCreateRelated && (detail.ticket_type === 'service_request' || detail.ticket_type === 'incident');
+  const canCreateRemediationChange = canCreateRelated && detail.ticket_type === 'incident';
   const canToKnowledge =
     !isExample && (detail.status === 'resolved' || detail.status === 'closed') && hasPermission(user, 'knowledge', 'create');
 
@@ -360,11 +348,9 @@ export default function TicketDetail() {
               disabled={isExample}
               onDone={() => void load()}
             />
-            {canEscalate && (
-              <Button loading={escalating} onClick={() => void escalateProblem()}>
-                {t('itsm.ticket.escalate')}
-              </Button>
-            )}
+            {canUpgradeIncident && id && <RecordRelationCreateButton sourceEntityType="ticket" sourceId={id} relationType="upgraded_to_incident" onCreated={() => void load()} />}
+            {canCreateRootCauseProblem && id && <RecordRelationCreateButton sourceEntityType="ticket" sourceId={id} relationType="root_cause_of" onCreated={() => void load()} />}
+            {canCreateRemediationChange && id && <RecordRelationCreateButton sourceEntityType="ticket" sourceId={id} relationType="remediated_by_change" onCreated={() => void load()} />}
             {canToKnowledge && (
               <Button loading={toKnowledgeSaving} onClick={() => void toKnowledge()}>
                 {t('itsm.ticket.toKnowledge')}

@@ -1,6 +1,6 @@
 # IT-Staff Intake and Cross-Record Relationship Design Baseline
 
-> Status: **phases A/B implemented; phases C/D pending**
+> Status: **phases A/B/C implemented; phase D pending**
 > Approval date: 2026-07-31
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -71,17 +71,19 @@ An active-relation uniqueness constraint covers `(source_entity_type, source_ent
 
 The initiator needs both source-read and target-create permission. Target validation, approval, workflow, RBAC, audit, events, and data scope remain owned by the target domain service. Phase one offers no ordinary unlinking action; any future administrative unlink must be soft-deleted with a reason and audit.
 
-## 6. APIs and UI boundary (phase-B reads implemented; submits pending)
+## 6. APIs and UI boundary (phases B/C implemented)
 
 ```text
 POST /api/staff-intake/recommend
 GET  /api/it-document-guide
 POST /api/record-relations/prepare
+  # source record + relation_type; validates source view/target create and returns safe prefill/required target fields
 POST /api/record-relations/submit
+  # target form + relation_type + reason + idempotency_key; source-row lock and digest idempotency, then invokes the target domain service
 GET  /api/records/{entity_type}/{entity_id}/relations
 ```
 
-`recommend` is ephemeral. Phase B delivers the additive PostgreSQL migration, active-relation/idempotency uniqueness, immutable audit, read route, and bidirectional safe display in ticket, problem, requirement, and project details while preserving dedicated legacy links. `prepare` checks source-read and target-create permission and returns safe prefill plus missing target requirements. Phase-C `submit` receives target form data, relation type, reason, and an idempotency key; it orchestrates the target domain service, relation, and audit rather than writing tables directly.
+`recommend` is ephemeral. Phase B delivers the additive PostgreSQL migration, active-relation/idempotency uniqueness, immutable audit, read route, and bidirectional safe display in ticket, problem, requirement, and project details while preserving dedicated legacy links. Phase C implements `prepare/submit` plus the detail-page Create-and-link drawer: the server derives the target kind from its whitelist rather than trusting the client; while holding the PostgreSQL source-row lock it normalizes the target form and link reason with Pydantic, computes a digest, and checks the same actor/source/target-kind/idempotency key. The same request returns the first target and same-key different input is rejected; only an unmatched request invokes the incident, problem, change, or project domain service and writes target, workflow, relation, and audit in one transaction.
 
 ## 7. Delivery phases and acceptance
 
@@ -89,7 +91,7 @@ GET  /api/records/{entity_type}/{entity_id}/relations
 | --- | --- | --- |
 | A (implemented) | IT-staff entry, temporary guide, compact explanations, case library | Aily normal-user flow unchanged; no guide answers persisted; explainable/reversible recommendation; compact default header |
 | B (implemented) | `record_relation`, migration, reads, bidirectional detail section, audit/permission/idempotency | Existing data and dedicated links preserved; unauthorized users cannot read relations; retries do not duplicate relations |
-| C | Four create-target-and-relate paths | Independent target workflow; source type/status unchanged; no partial record on failure; every relation has a reason |
+| C (implemented) | Four create-target-and-relate paths | Independent target workflow; source type/status unchanged; no partial record on failure; every relation has a reason |
 | D | Recommendation override/hit feedback and case-library governance | Improve rules from IT-staff use without expanding Aily permissions |
 
 Every phase requires migration/unit/API regression tests, frontend build, Chinese authoritative docs plus English mirror, IDC Kubernetes deployment, and real IDC user-flow validation. No MCP tool is added for this design; any future Aily scope expansion needs separate approval.

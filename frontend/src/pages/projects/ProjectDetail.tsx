@@ -799,18 +799,30 @@ export default function ProjectDetail() {
         ) : (
           <Space direction="vertical" size={4} style={{ width: '100%' }}>
             {(detail.linked_requirements ?? []).map((r) => (
-              <Space key={r.id} size={8}>
-                <Link to={`/requirements/${r.id}`}>{r.requirement_code}</Link>
-                <span>{r.title}</span>
-                {r.moscow && <Tag>{et.moscow(r.moscow)}</Tag>}
-                <Tag>{r.status_name}</Tag>
-              </Space>
+              <div key={r.id}>
+                <Space size={8}>
+                  <Link to={`/requirements/${r.id}`}>{r.requirement_code}</Link>
+                  <span>{r.title}</span>
+                  {r.moscow && <Tag>{et.moscow(r.moscow)}</Tag>}
+                  <Tag>{r.status_name}</Tag>
+                </Space>
+                {r.relation_reason && (
+                  <Typography.Text type="secondary" style={{ display: 'block', marginTop: 2 }}>
+                    {r.relation_reason}
+                  </Typography.Text>
+                )}
+              </div>
             ))}
           </Space>
         )}
       </Card>
 
-      <RecordRelationsPanel entityType="project" entityId={detail.id} />
+      <RecordRelationsPanel
+        entityType="project"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
 
       <Card title={t('proj.progress')} size="small">
         {detail.progress == null ? (

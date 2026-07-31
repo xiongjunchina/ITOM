@@ -20,6 +20,7 @@ from app.models import (
     OrgMember,
     Problem,
     Project,
+    RecordRelation,
     Requirement,
     RequirementScore,
     RequirementScoringConfig,
@@ -538,6 +539,20 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
     status_map = status_names(db, "requirement")
     detail = _row(r, db, names, domains, status_map, requirement_scoring.get_config(db))
     project = db.get(Project, r.project_id) if r.project_id else None
+    project_relation = None
+    if project:
+        project_relation = (
+            db.query(RecordRelation)
+            .filter(
+                RecordRelation.is_deleted.is_(False),
+                RecordRelation.source_entity_type == "requirement",
+                RecordRelation.source_entity_id == r.id,
+                RecordRelation.target_entity_type == "project",
+                RecordRelation.target_entity_id == project.id,
+                RecordRelation.relation_type == "converted_to_project",
+            )
+            .first()
+        )
     tasks = (
         db.query(RequirementTask)
         .filter(RequirementTask.requirement_id == r.id, RequirementTask.is_deleted.is_(False))
@@ -563,6 +578,7 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         "evaluating_at": r.evaluating_at,
         "analyzing_at": r.analyzing_at, "implementing_at": r.implementing_at,
         "project_name": project.name if project else None,
+        "project_relation_reason": project_relation.reason if project_relation else None,
         "scores": [
             {"id": s.id, "reviewer_name": s.reviewer_name, "reviewer_role": s.reviewer_role,
              "d1_strategy": s.d1_strategy, "d2_value": s.d2_value, "d3_tech": s.d3_tech,

@@ -214,9 +214,9 @@ Delivery keeps event idempotency, retry/backoff, and redacted errors. Disabled o
 
 All `/api/integrations/feishu/helpdesk/*` routes, subscriptions, handoffs, queues, and Helpdesk-specific outbox have been removed from the new runtime. Existing PostgreSQL structures are previewed by `python -m app.scripts.migrate_aily_mcp` and are permanently removed only with explicit `--confirm`.
 
-### 4.1c IT-staff routing and cross-record relations (phases A/B implemented; create-and-relate pending)
+### 4.1c IT-staff routing and cross-record relations (phases A/B/C implemented)
 
-The following contracts serve only the IT-staff web experience and add no Aily/MCP tool. Routing, guidance, and scope-constrained relation reads are live; create-target-and-relate endpoints remain future contracts:
+The following contracts serve only the IT-staff web experience and add no Aily/MCP tool. Routing, guidance, scope-constrained relation reads, and create-target-and-relate endpoints are live:
 
 ```text
 POST /api/staff-intake/recommend
@@ -224,14 +224,16 @@ POST /api/staff-intake/recommend
 GET  /api/it-document-guide
     # live: signed-in user; one-line guidance and case library for six records; server returns IT-staff capability switch
 POST /api/record-relations/prepare
-    # pending: source record + relation_type + idempotency_key; validates source read/target create and returns safe prefill/missing requirements
+    # live: source record + relation_type; validates source read/target create and returns safe prefill/required target fields
 POST /api/record-relations/submit
-    # pending: target form + relation_type + reason + idempotency_key; invokes the target domain service, relation, and audit
+    # live: target form + relation_type + reason + idempotency_key; source lock + submission digest prevent duplication, then target domain service creates the target, starts its workflow, writes relation and audit
 GET  /api/records/{entity_type}/{entity_id}/relations
     # live: after source visibility is checked, returns only counterparts also visible to the current user; it does not leak an invisible record's existence, code, or title
 ```
 
-`recommend` questions and answers are not persisted. Phase B applies active source/target/relation uniqueness plus creator/source/target-type/idempotency-key uniqueness; a request digest rejects a reused key with different parameters. `prepare/submit` do not write domain tables directly; phase-C `submit` must invoke the incident, problem, change, project, or other target domain service for its own fields, status, workflow, approval, RBAC, audit, and event publishing. A server whitelist controls first-phase relation types. Idempotent retries return the first result and never alter the source record's type, status, or workflow.
+`prepare` and `submit` accept only the four server-whitelisted source/target combinations. `submit` does not accept a client-selected target entity type; the server derives it from the source record and `relation_type`, verifies source data scope plus target `create` permission, then invokes the ticket, problem, or project domain service. A retry using the same actor/source/target-kind/idempotency key and normalized request returns the first target; same-key different input returns `IDEMPOTENCY_CONFLICT` (409).
+
+`recommend` questions and answers are not persisted. Active source/target/relation uniqueness plus creator/source/target-type/idempotency-key uniqueness are enforced; a request digest rejects a reused key with different parameters. `prepare/submit` do not write domain tables directly; `submit` invokes the incident, problem, change, project, or other target domain service for its own fields, status, workflow, approval, RBAC, audit, and event publishing. A server whitelist controls first-phase relation types. Idempotent retries return the first result and never alter the source record's type, status, or workflow.
 
 ### 4.2 ITSM
 

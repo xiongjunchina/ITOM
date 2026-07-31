@@ -42,6 +42,7 @@ import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
@@ -916,6 +917,7 @@ export default function RequirementDetail() {
 
   const st = detail.status;
   const isFinal = st === 'closed' || st === 'cancelled';
+  const canCreateLinkedProject = !isExample && !isFinal && !!user && user.roles.some((role) => role !== 'requester');
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
   const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
@@ -1054,6 +1056,14 @@ export default function RequirementDetail() {
             <ReqStatusBadge status={detail.status} name={detail.status_name} />
             <MoscowTag value={detail.moscow} empty={null} />
           </Space>
+          {canCreateLinkedProject && id && (
+            <RecordRelationCreateButton
+              sourceEntityType="requirement"
+              sourceId={id}
+              relationType="converted_to_project"
+              onCreated={() => void load()}
+            />
+          )}
           {canEdit && (
             <Space wrap>
               {detail.can_close && (
@@ -1197,7 +1207,12 @@ export default function RequirementDetail() {
         </Descriptions>
       </Card>
 
-      <RecordRelationsPanel entityType="requirement" entityId={detail.id} />
+      <RecordRelationsPanel
+        entityType="requirement"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
 
       {/* 评估评分（登记/评估阶段或已有评分时显示） */}
       {id && (st === 'registered' || st === 'evaluating' || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
@@ -1393,9 +1408,17 @@ export default function RequirementDetail() {
                     onChange={(v) => void patchField({ project_id: v ?? null }, t('req.linkedProjectUpdated'))}
                   />
                   {detail.project_id && <Link to={`/projects/${detail.project_id}`}>{t('req.viewProject')}</Link>}
+                  {detail.project_relation_reason && (
+                    <Typography.Text type="secondary">{detail.project_relation_reason}</Typography.Text>
+                  )}
                 </Space>
               ) : detail.project_id ? (
-                <Link to={`/projects/${detail.project_id}`}>{detail.project_name || t('req.viewProject')}</Link>
+                <Space direction="vertical" size={0}>
+                  <Link to={`/projects/${detail.project_id}`}>{detail.project_name || t('req.viewProject')}</Link>
+                  {detail.project_relation_reason && (
+                    <Typography.Text type="secondary">{detail.project_relation_reason}</Typography.Text>
+                  )}
+                </Space>
               ) : (
                 '-'
               )}
