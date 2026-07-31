@@ -43,6 +43,7 @@ import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -808,6 +809,8 @@ export default function ProjectDetail() {
           </Space>
         )}
       </Card>
+
+      <RecordRelationsPanel entityType="project" entityId={detail.id} />
 
       <Card title={t('proj.progress')} size="small">
         {detail.progress == null ? (

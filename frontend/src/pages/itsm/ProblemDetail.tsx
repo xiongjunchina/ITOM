@@ -25,6 +25,7 @@ import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
   AllowedTransition,
@@ -395,6 +396,8 @@ export default function ProblemDetail() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
+
+      <RecordRelationsPanel entityType="problem" entityId={detail.id} />
 
       <Card title={t('itsm.problem.rootCauseCard')} size="small">
         <Descriptions column={1} size="small" bordered>

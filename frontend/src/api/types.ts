@@ -7,6 +7,24 @@ export interface Envelope<T = unknown> {
   error?: { code: string; message: string };
 }
 
+/** M84：通用跨域单据关联（详情页只展示当前用户同时有权查看的两端）。 */
+export interface RecordRelationRow {
+  id: string;
+  direction: 'outbound' | 'inbound';
+  relation_type: string;
+  relation_name: string;
+  reason: string;
+  created_at?: string | null;
+  created_by_name?: string | null;
+  counterpart: {
+    entity_type: 'ticket' | 'problem' | 'requirement' | 'project';
+    id: string;
+    code: string;
+    title: string;
+    record_type?: string;
+  };
+}
+
 /** 系统角色（16 个内置角色，矩阵式 IT 组织） */
 export type Role =
   | 'admin'

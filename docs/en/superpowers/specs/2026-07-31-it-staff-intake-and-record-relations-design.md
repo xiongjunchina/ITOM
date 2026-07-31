@@ -1,6 +1,6 @@
 # IT-Staff Intake and Cross-Record Relationship Design Baseline
 
-> Status: **approved design; not implemented**
+> Status: **phases A/B implemented; phases C/D pending**
 > Approval date: 2026-07-31
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -65,13 +65,13 @@ Only safe context is prefilled; every target's required fields remain mandatory.
 
 ## 5. Generic `record_relation` model (Approach A)
 
-The new model contains `id`, source/target entity type and ID, controlled `relation_type`, mandatory `reason`, created-by/time, and reserved soft-delete audit fields. It uses polymorphic entity references, so each domain service validates types and identifiers in its transaction rather than relying on cross-table polymorphic foreign keys.
+The new model contains `id`, source/target entity type and ID, controlled `relation_type`, mandatory `reason`, created-by/time, `idempotency_key`, `request_digest`, and reserved soft-delete audit fields. It uses polymorphic entity references, so each domain service validates types and identifiers in its transaction rather than relying on cross-table polymorphic foreign keys.
 
-An active-relation uniqueness constraint covers `(source_entity_type, source_entity_id, target_entity_type, target_entity_id, relation_type)`. Combined source/target indexes support bidirectional reads. Self-relations and arbitrary client-supplied type combinations are forbidden by a server-side whitelist. No historical ticket/problem/requirement/project data, workflows, or audits will be migrated or rewritten.
+An active-relation uniqueness constraint covers `(source_entity_type, source_entity_id, target_entity_type, target_entity_id, relation_type)`. The same creator/source/target-type/idempotency-key tuple is also unique and the digest rejects same-key/different-request retries. Combined source/target indexes support bidirectional reads. A self-link to the same record and arbitrary client-supplied type combinations are forbidden by a server-side whitelist; a service-request ticket may still relate to an incident ticket. No historical ticket/problem/requirement/project data, workflows, or audits will be migrated or rewritten.
 
 The initiator needs both source-read and target-create permission. Target validation, approval, workflow, RBAC, audit, events, and data scope remain owned by the target domain service. Phase one offers no ordinary unlinking action; any future administrative unlink must be soft-deleted with a reason and audit.
 
-## 6. Target APIs (not implemented)
+## 6. APIs and UI boundary (phase-B reads implemented; submits pending)
 
 ```text
 POST /api/staff-intake/recommend
@@ -81,14 +81,14 @@ POST /api/record-relations/submit
 GET  /api/records/{entity_type}/{entity_id}/relations
 ```
 
-`recommend` is ephemeral. `prepare` checks source-read and target-create permission and returns safe prefill plus missing target requirements. `submit` receives target form data, relation type, reason, and an idempotency key; it orchestrates the target domain service, relation, and audit rather than writing tables directly.
+`recommend` is ephemeral. Phase B delivers the additive PostgreSQL migration, active-relation/idempotency uniqueness, immutable audit, read route, and bidirectional safe display in ticket, problem, requirement, and project details while preserving dedicated legacy links. `prepare` checks source-read and target-create permission and returns safe prefill plus missing target requirements. Phase-C `submit` receives target form data, relation type, reason, and an idempotency key; it orchestrates the target domain service, relation, and audit rather than writing tables directly.
 
 ## 7. Delivery phases and acceptance
 
 | Phase | Delivery | Acceptance |
 | --- | --- | --- |
-| A | IT-staff entry, temporary guide, compact explanations, case library | Aily normal-user flow unchanged; no guide answers persisted; explainable/reversible recommendation; compact default header |
-| B | `record_relation`, migration, reads, bidirectional detail section, audit/permission/idempotency | Existing data and dedicated links preserved; unauthorized users cannot read relations; retries do not duplicate relations |
+| A (implemented) | IT-staff entry, temporary guide, compact explanations, case library | Aily normal-user flow unchanged; no guide answers persisted; explainable/reversible recommendation; compact default header |
+| B (implemented) | `record_relation`, migration, reads, bidirectional detail section, audit/permission/idempotency | Existing data and dedicated links preserved; unauthorized users cannot read relations; retries do not duplicate relations |
 | C | Four create-target-and-relate paths | Independent target workflow; source type/status unchanged; no partial record on failure; every relation has a reason |
 | D | Recommendation override/hit feedback and case-library governance | Improve rules from IT-staff use without expanding Aily permissions |
 

@@ -222,6 +222,55 @@ def ensure_aily_indexes(db: Session):
     db.commit()
 
 
+def ensure_record_relation_schema(db: Session):
+    """M84：为已有 PostgreSQL 库增量创建通用关联表及有效记录唯一索引。
+
+    仅新增表/列/索引，不修改既有单据或历史关联数据；SQLite 测试库由 metadata.create_all
+    自动建表，生产库由此幂等迁移补齐。
+    """
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS record_relation ("
+        "id VARCHAR(26) PRIMARY KEY, "
+        "source_entity_type VARCHAR(32) NOT NULL, source_entity_id VARCHAR(26) NOT NULL, "
+        "target_entity_type VARCHAR(32) NOT NULL, target_entity_id VARCHAR(26) NOT NULL, "
+        "relation_type VARCHAR(64) NOT NULL, reason TEXT NOT NULL, "
+        "created_by VARCHAR(26) NOT NULL REFERENCES auth_user(id), "
+        "idempotency_key VARCHAR(128), request_digest VARCHAR(64) NOT NULL, "
+        "deleted_at TIMESTAMP, deleted_by VARCHAR(26) REFERENCES auth_user(id), delete_reason TEXT, "
+        "created_at TIMESTAMP NOT NULL DEFAULT now(), updated_at TIMESTAMP NOT NULL DEFAULT now(), "
+        "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false"
+        ")"
+    ))
+    for name, ddl in (
+        ("idempotency_key", "VARCHAR(128)"),
+        ("request_digest", "VARCHAR(64)"),
+        ("deleted_at", "TIMESTAMP"),
+        ("deleted_by", "VARCHAR(26)"),
+        ("delete_reason", "TEXT"),
+    ):
+        if name not in _columns(db, "record_relation"):
+            db.execute(text(f"ALTER TABLE record_relation ADD COLUMN {name} {ddl}"))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_record_relation_active "
+        "ON record_relation (source_entity_type, source_entity_id, target_entity_type, target_entity_id, relation_type) "
+        "WHERE is_deleted=false"
+    ))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_record_relation_idempotency "
+        "ON record_relation (created_by, source_entity_type, source_entity_id, target_entity_type, idempotency_key) "
+        "WHERE is_deleted=false AND idempotency_key IS NOT NULL"
+    ))
+    db.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_record_relation_source_active "
+        "ON record_relation (source_entity_type, source_entity_id, relation_type) WHERE is_deleted=false"
+    ))
+    db.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_record_relation_target_active "
+        "ON record_relation (target_entity_type, target_entity_id, relation_type) WHERE is_deleted=false"
+    ))
+    db.commit()
+
+
 def backfill_process_step_codes(db: Session):
     """M78：为历史流程步骤补齐版本内稳定编码，避免名称/序号变更破坏取数映射。"""
     rows = db.execute(text(
@@ -761,6 +810,7 @@ def migrate_m35_org(db: Session):
     widen_department_sort_m341(db)
     ensure_columns(db)
     ensure_aily_indexes(db)
+    ensure_record_relation_schema(db)
     backfill_process_step_codes(db)
     separate_role_result_point_entries(db)
     backfill_password_set_m362(db)

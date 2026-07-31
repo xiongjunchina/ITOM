@@ -1,7 +1,7 @@
 """支撑域模型（docs/04 §1）+ 岗位表（人员主数据依赖）。"""
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -222,6 +222,49 @@ class AuditLog(GlidBase):
     actor: Mapped[str | None] = mapped_column(String(26), comment="auth_user.id")
     actor_name: Mapped[str | None] = mapped_column(String(64))
     summary: Mapped[dict | None] = mapped_column(JsonCol)
+
+
+class RecordRelation(GlidBase):
+    """跨域单据关系的通用、可审计记录。
+
+    不替代既有 ``ticket.problem_id``、``problem_ticket``、``requirement.project_id``
+    等历史链路；新关系以“来源 -> 目标 + 关系类型”保存，并通过软删除保留审计痕迹。
+    同一实体类型可以关联（例如服务请求 ticket 升级为事件 ticket），但不能自关联到
+    同一条业务记录。
+    """
+
+    __tablename__ = "record_relation"
+    __table_args__ = (
+        Index(
+            "uq_record_relation_active",
+            "source_entity_type", "source_entity_id", "target_entity_type", "target_entity_id", "relation_type",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+            sqlite_where=text("is_deleted = 0"),
+        ),
+        Index(
+            "uq_record_relation_idempotency",
+            "created_by", "source_entity_type", "source_entity_id", "target_entity_type", "idempotency_key",
+            unique=True,
+            postgresql_where=text("is_deleted = false AND idempotency_key IS NOT NULL"),
+            sqlite_where=text("is_deleted = 0 AND idempotency_key IS NOT NULL"),
+        ),
+        Index("ix_record_relation_source_active", "source_entity_type", "source_entity_id", "relation_type"),
+        Index("ix_record_relation_target_active", "target_entity_type", "target_entity_id", "relation_type"),
+    )
+
+    source_entity_type: Mapped[str] = mapped_column(String(32))
+    source_entity_id: Mapped[str] = mapped_column(String(26))
+    target_entity_type: Mapped[str] = mapped_column(String(32))
+    target_entity_id: Mapped[str] = mapped_column(String(26))
+    relation_type: Mapped[str] = mapped_column(String(64))
+    reason: Mapped[str] = mapped_column(Text)
+    created_by: Mapped[str] = mapped_column(ForeignKey("auth_user.id"), index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128))
+    request_digest: Mapped[str] = mapped_column(String(64))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    deleted_by: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"))
+    delete_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class LoginRequest(GlidBase):

@@ -42,6 +42,7 @@ import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -1195,6 +1196,8 @@ export default function RequirementDetail() {
           )}
         </Descriptions>
       </Card>
+
+      <RecordRelationsPanel entityType="requirement" entityId={detail.id} />
 
       {/* 评估评分（登记/评估阶段或已有评分时显示） */}
       {id && (st === 'registered' || st === 'evaluating' || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (

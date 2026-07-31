@@ -22,6 +22,7 @@ import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
@@ -441,6 +442,8 @@ export default function TicketDetail() {
           />
         </Card>
       )}
+
+      <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
 
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>

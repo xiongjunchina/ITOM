@@ -87,6 +87,13 @@ export const zh: Dict = {
   'intake.example': '典型示例',
   'intake.notSuitable': '不适用情形',
   'intake.redirect': '应转向',
+
+  // 通用跨域单据关联
+  'comp.relations.title': '关联单据',
+  'comp.relations.empty': '暂无当前可查看的关联单据',
+  'comp.relations.outbound': '关联到',
+  'comp.relations.inbound': '被关联',
+  'comp.relations.createdBy': '由 {name} 于 {time} 建立',
 };
 
 export const en: Dict = {
@@ -175,4 +182,11 @@ export const en: Dict = {
   'intake.example': 'Typical example',
   'intake.notSuitable': 'Not suitable for',
   'intake.redirect': 'Use instead',
+
+  // Generic cross-record relations
+  'comp.relations.title': 'Related records',
+  'comp.relations.empty': 'No related records visible to you',
+  'comp.relations.outbound': 'Links to',
+  'comp.relations.inbound': 'Linked from',
+  'comp.relations.createdBy': 'Created by {name} at {time}',
 };
