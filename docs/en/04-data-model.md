@@ -204,7 +204,7 @@ problem_id + ticket_id, UNIQUE composite. Supports "multiple tickets with the sa
 | description / launch_date / remarks | | |
 | attrs | JSONB | Category-specific attributes (attribute names defined by master_data per category) |
 
-`product_manager_id` FK is optional and identifies the product manager of an application system. Bug registration snapshots this person; later CI product-manager changes do not rewrite historical Bugs.
+`product_manager_id` FK is optional and identifies the product manager of an application system; the CMDB create/edit page maintains it from IT team members. Bug registration snapshots this person; later CI product-manager changes do not rewrite historical Bugs.
 
 ### 2.7 ci_relationship
 
@@ -350,11 +350,11 @@ idea_id + person, UNIQUE composite.
 
 ### 6.7 point_rule — point rule [cfg]
 
-rule_code, name, event_type (UNIQUE, see the event list in doc 05), points INT (may be negative), contribution_bucket (`role_result` / `team_contribution`), contribution_dimension, target_scope JSONB, active, description. A source event belongs to one bucket only. Activity Points, personal points, and the team-overview leaderboard aggregate only `team_contribution`; role-result rows are not displayed a second time as activity points.
+rule_code, name, event_type (UNIQUE, see the event list in doc 05), points INT (may be negative), contribution_bucket (`role_result` / `team_contribution`), contribution_dimension, target_scope JSONB, active, description. A source event belongs to one bucket only. Activity Points, personal points, and the team-overview leaderboard aggregate only `team_contribution`; role-result rows are not displayed a second time as activity points. During the current assessment period, automatic activity events use the current effective rule value and an inactive rule displays zero.
 
 ### 6.8 point_entry — points ledger (append-only)
 
-person FK, event_type, points, rule_id FK, contribution_bucket, contribution_dimension, period, source_entity_type, source_entity_id, earned_at, remark, created_by, idempotency_key. Indexes: (person, period), (person, earned_at), event_type. The ledger is append-only and powers live aggregation without rewriting published results.
+person FK, event_type, points, rule_id FK, contribution_bucket, contribution_dimension, period, source_entity_type, source_entity_id, earned_at, remark, created_by, idempotency_key. Indexes: (person, period), (person, earned_at), event_type. `points` retains the award-time value and the ledger is append-only. Current-period activity reads may resolve the display value from the current effective rule, while historical periods and published/locked performance retain the original value without rewriting published results.
 
 ### 6.9 performance_period — performance period [computed]
 

@@ -58,6 +58,7 @@ interface CiFormValues {
   name: string;
   category: string;
   owner: string;
+  product_manager_id?: string;
   status: string;
   environment?: string;
   business_owner?: string;
@@ -173,6 +174,7 @@ export default function Cmdb() {
       name: row.name,
       category: row.category,
       owner: row.owner ?? undefined,
+      product_manager_id: row.product_manager_id ?? undefined,
       status: row.status,
       environment: row.environment ?? undefined,
       business_owner: row.business_owner ?? undefined,
@@ -196,6 +198,7 @@ export default function Cmdb() {
       name: values.name,
       category: values.category,
       owner: values.owner,
+      product_manager_id: values.product_manager_id ?? null,
       status: values.status,
       environment: values.environment ?? null,
       business_owner: values.business_owner ?? null,
@@ -315,6 +318,7 @@ export default function Cmdb() {
       render: (v: string) => <Tag color={CI_STATUS_COLORS[v] ?? 'default'}>{et.ciStatus(v)}</Tag>,
     },
     { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
+    { title: t('itsm.cmdb.productManager'), dataIndex: 'product_manager_name', width: 110, render: (v) => v || '-' },
     { title: t('itsm.f.vendor'), dataIndex: 'vendor_name', width: 140, ellipsis: true, render: (v) => v || '-' },
     {
       title: t('common.actions'),
@@ -534,6 +538,22 @@ export default function Cmdb() {
               showSearch
               optionFilterProp="label"
               placeholder={t('itsm.ownerPlaceholder')}
+              options={members.map((m) => ({
+                value: m.id,
+                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="product_manager_id"
+            label={t('itsm.cmdb.productManager')}
+            extra={t('itsm.cmdb.productManagerHint')}
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder={t('itsm.cmdb.productManagerPlaceholder')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,

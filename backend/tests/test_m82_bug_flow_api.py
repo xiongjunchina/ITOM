@@ -62,6 +62,40 @@ def _register_bug(client, actors, title="供应链接口异常"):
     return response.json()["data"]
 
 
+def test_cmdb_can_add_product_manager_before_bug_registration(client, actors):
+    """应用系统可先创建、后在 CMDB 补配产品经理，Bug 登记读取补配后的快照。"""
+    ci = client.post(
+        "/api/cis",
+        json={"name": "M84 后补产品经理系统", "category": "app", "owner": actors["dev_id"]},
+        headers=actors["admin"],
+    )
+    assert ci.status_code == 200, ci.text
+    ci_id = ci.json()["data"]["id"]
+
+    missing_pm = client.post(
+        "/api/task-management/bugs",
+        json={"title": "M84 产品经理缺失", "description": "验证缺少产品经理时被拦截", "ci_id": ci_id},
+        headers=actors["dev"],
+    )
+    assert missing_pm.status_code == 400
+    assert missing_pm.json()["error"]["code"] == "PRODUCT_MANAGER_REQUIRED"
+
+    configured = client.patch(
+        f"/api/cis/{ci_id}",
+        json={"product_manager_id": actors["pm_id"]},
+        headers=actors["admin"],
+    )
+    assert configured.status_code == 200, configured.text
+
+    registered = client.post(
+        "/api/task-management/bugs",
+        json={"title": "M84 产品经理已补配", "description": "验证 Bug 读取 CMDB 产品经理", "ci_id": ci_id},
+        headers=actors["dev"],
+    )
+    assert registered.status_code == 200, registered.text
+    assert registered.json()["data"]["product_manager_id"] == actors["pm_id"]
+
+
 def test_bug_registration_confirmation_multi_tasks_and_verification_close(client, actors):
     bug = _register_bug(client, actors)
     assert bug["status"] == "registered"

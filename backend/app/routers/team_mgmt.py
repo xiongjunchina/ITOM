@@ -29,7 +29,7 @@ from app.models import (
 )
 from app.schemas.common import ok
 from app.services.audit import audit
-from app.services.points import award_by_rule, current_period, period_clause
+from app.services.points import award_by_rule, current_period, live_team_points_expression, period_clause
 from app.services.team_scope import is_it_member, it_member_ids
 
 router = APIRouter(tags=["team"])
@@ -314,8 +314,10 @@ def _workload(db: Session) -> list[dict]:
 def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_overview", "view"))):
     period = current_period()
     team_ids = it_member_ids(db)
+    live_rule, effective_points, join_condition = live_team_points_expression()
     board = (
-        db.query(PointEntry.person_id, func.sum(PointEntry.points))
+        db.query(PointEntry.person_id, func.sum(effective_points))
+        .outerjoin(live_rule, join_condition)
         .filter(
             period_clause(PointEntry.period, period),
             PointEntry.person_id.in_(team_ids or {"-"}),
@@ -323,7 +325,7 @@ def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_ov
             PointEntry.is_deleted.is_(False),
         )
         .group_by(PointEntry.person_id)
-        .order_by(func.sum(PointEntry.points).desc())
+        .order_by(func.sum(effective_points).desc())
         .limit(10)
         .all()
     )

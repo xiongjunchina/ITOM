@@ -282,18 +282,18 @@ def _score_knowledge_contrib(db: Session, member_ids: list[str], start, end) -> 
 
 
 def _score_activity_points(db: Session, member_ids: list[str], period: str, **_) -> dict[str, float]:
-    from sqlalchemy import func
+    from app.services.points import effective_team_entry_points, period_clause
 
-    from app.services.points import period_clause
-
-    rows = (
-        db.query(PointEntry.person_id, func.sum(PointEntry.points))
+    entries = (
+        db.query(PointEntry)
         .filter(period_clause(PointEntry.period, period), PointEntry.is_deleted.is_(False),
                 PointEntry.person_id.in_(member_ids))
-        .group_by(PointEntry.person_id)
         .all()
     )
-    totals = {pid: float(pts) for pid, pts in rows}
+    entry_points = effective_team_entry_points(db, entries, period)
+    totals: dict[str, float] = {}
+    for entry in entries:
+        totals[entry.person_id] = totals.get(entry.person_id, 0.0) + entry_points[entry.id]
     top = max(totals.values(), default=0)
     per = {pid: 0.0 for pid in member_ids}
     if top > 0:

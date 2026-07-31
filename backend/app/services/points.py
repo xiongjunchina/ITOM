@@ -8,6 +8,8 @@
 import logging
 from datetime import date
 
+from sqlalchemy import and_, case
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
 from app.models import AuthUser, OrgMember, PointEntry, PointRule
@@ -27,6 +29,79 @@ def period_clause(col, period: str):
     if period.endswith("-All"):
         return col.like(f"{period.split('-')[0]}-%")
     return col == period
+
+
+def live_team_points_expression():
+    """Return an outer-join target and effective value for the live activity-points view.
+
+    `point_entry.points` remains the immutable award-time ledger amount.  For the
+    current assessment period only, the activity-points views resolve automatic
+    team-contribution events against the currently effective rule.  A disabled
+    rule contributes zero without deleting or rewriting the original ledger.
+    """
+    live_rule = aliased(PointRule)
+    join_condition = and_(
+        live_rule.code == PointEntry.source_type,
+        live_rule.is_deleted.is_(False),
+        live_rule.contribution_bucket == "team_contribution",
+    )
+    effective_points = case(
+        (
+            PointEntry.period == current_period(),
+            case(
+                (
+                    live_rule.id.is_not(None),
+                    case((live_rule.active.is_(True), live_rule.points), else_=0.0),
+                ),
+                else_=PointEntry.points,
+            ),
+        ),
+        else_=PointEntry.points,
+    )
+    return live_rule, effective_points, join_condition
+
+
+def _is_in_period(value: str | None, period: str) -> bool:
+    if not value:
+        return False
+    return value == period
+
+
+def effective_team_entry_points(
+    db: Session,
+    entries: list[PointEntry],
+    period: str,
+    *,
+    use_live_rules: bool = True,
+) -> dict[str, float]:
+    """Resolve display values while retaining every award-time entry unchanged.
+
+    Only entries inside the current assessment period use the live activity rule;
+    historical and published-period callers retain their ledger values.
+    """
+    values = {entry.id: float(entry.points) for entry in entries}
+    if not use_live_rules or period != current_period():
+        return values
+
+    in_period = [entry for entry in entries if _is_in_period(entry.period, period)]
+    if not in_period:
+        return values
+    codes = {entry.source_type for entry in in_period if entry.source_type}
+    if not codes:
+        return values
+    rules = {
+        rule.code: rule
+        for rule in db.query(PointRule).filter(
+            PointRule.code.in_(codes),
+            PointRule.is_deleted.is_(False),
+            PointRule.contribution_bucket == "team_contribution",
+        )
+    }
+    for entry in in_period:
+        rule = rules.get(entry.source_type)
+        if rule:
+            values[entry.id] = float(rule.points) if rule.active else 0.0
+    return values
 
 
 def award(

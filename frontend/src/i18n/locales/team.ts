@@ -70,6 +70,7 @@ export const zh: Dict = {
   'team.activities.form.host': '主讲/组织人',
   'team.activities.form.hostPlaceholder': '选择主讲人',
   'team.activities.form.participantsPlaceholder': '选择参与人员（可多选）',
+  'team.activities.form.unassignedDepartment': '未分配部门',
   'team.activities.form.output': '产出链接',
   'team.activities.form.outputPlaceholder': '课件/纪要/知识库文章链接',
 
@@ -418,6 +419,7 @@ export const en: Dict = {
   'team.activities.form.host': 'Host/Organizer',
   'team.activities.form.hostPlaceholder': 'Select host',
   'team.activities.form.participantsPlaceholder': 'Select participants (multiple)',
+  'team.activities.form.unassignedDepartment': 'Unassigned department',
   'team.activities.form.output': 'Output link',
   'team.activities.form.outputPlaceholder': 'Link to slides / minutes / KB article',
 

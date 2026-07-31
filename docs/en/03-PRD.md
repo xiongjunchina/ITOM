@@ -249,7 +249,7 @@ Two-tier structure: **Catalog** (category, Gold/Silver/Bronze tiering) → **Ser
 Single CI table, 9 categories: Application / Server / Cloud Resource / Network / Security / Collaboration / Endpoint / Infrastructure / Consulting Service.
 
 - 4 required on creation: name, category, status (default Running), owner.
-- Optional: environment, business owner, vendor (referencing the vendor table), description, launch date, remarks.
+- Optional: environment, business owner, product manager (selected from IT team members and expected for application systems), vendor (referencing the vendor table), description, launch date, and remarks. The CMDB list and create/edit drawer expose the product manager; Bug registration reads it and stores a snapshot.
 - **Category-specific attributes**: each category predefines a few extension attributes (e.g. Application: tech stack / deployment mode; Server: IP / spec), stored in JSONB, shown collapsed, all optional.
 - CI relationships: three relation types "runs on / depends on / connects to," used for impact analysis (upstream/downstream shown when viewing a CI).
 - Tickets can link to a CI; the CI detail page looks up its linked ticket history.
@@ -476,8 +476,8 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 | Task contribution | Bug-fix completion and delegated-task completion; technical research, cross-team support, and knowledge sharing enter team dimensions only when explicitly classified as team contribution |
 
 - Points ledger: person / event / points / source record / time, traceable to the triggering record; admin manual point adjustments also go through the ledger (a reason is required).
-- Leaderboard points are the raw sum of the current-period `team_contribution` ledger by person (for example, 30 + 20 = 50). `role_result` ledger rows are excluded from Activity Points. The UI can expand a row to show source types and values. This is not the normalized activity-relative score used by the performance overview.
-- Pages: leaderboard (month/quarter/year/cumulative), personal points detail, Activity Points → Point Rules (team-contribution events; only admin/CIO can edit; every change is audited). Role-result source mappings, RACI/process-step mappings, and weights are maintained in Team Management → Performance → Scoring Rules and are never mixed with activity points.
+- Current-period leaderboards, personal points, Team Overview, and Dashboard read only `team_contribution`. Automatic events driven by an activity rule are resolved against the current rule value at read time; a disabled rule displays zero, while campaign and manual entries retain their ledger amount. `role_result` rows are excluded from Activity Points. Rule changes never rewrite the award-time ledger, ended historical periods, or published/locked performance. This is not the normalized activity-relative score used by the performance overview.
+- Pages: leaderboard (month/quarter/year/cumulative), personal points detail, Activity Points → Point Rules (team-contribution events; only admin/CIO can edit; every change is audited). The current points page and Team Overview refresh automatically every 30 seconds and support manual refresh. Role-result source mappings, RACI/process-step mappings, and weights are maintained in Team Management → Performance → Scoring Rules and are never mixed with activity points.
 - Points are one of the input sources for the 9.1 performance evaluation.
 
 ### 9.3 Position & Headcount
@@ -494,7 +494,7 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 
 ### 9.4 Training & Development
 
-- Activity registration, 5 items: type ✔ (internal cross-training / external technical exchange / new-technology research), topic ✔, date ✔, presenter/organizer, participants (multi-select) + optional output link.
+- Activity registration, 5 items: type ✔ (internal cross-training / external technical exchange / new-technology research), topic ✔, date ✔, presenter/organizer, participants (multi-select) + optional output link. Participants are grouped in collapsible department directories; each person is a checkbox so multiple IT team members can be selected at once.
 - Completing registration automatically awards points to the presenter and participants.
 
 ### 9.5 Team Culture

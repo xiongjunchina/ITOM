@@ -44,7 +44,7 @@ from app.services.perf import (
     _score_ticket_service,
     period_range,
 )
-from app.services.points import period_clause
+from app.services.points import effective_team_entry_points, period_clause
 from app.services.rbac import effective_roles
 from app.core.rbac import IT_PMO
 from app.services.team_scope import it_member_ids
@@ -616,6 +616,12 @@ def _team_contribution_scores(db: Session, period: str, member_ids: list[str], p
         ),
         PointEntry.person_id.in_(member_ids), PointEntry.is_deleted.is_(False),
     ).all()
+    entry_points = effective_team_entry_points(
+        db,
+        rows,
+        period,
+        use_live_rules=not period_row or period_row.status not in {"published", "locked"},
+    )
     aliases = {
         "campaign_award": "special_activity", "training_host": "training_knowledge", "training_attend": "training_knowledge",
         "knowledge_published": "knowledge_asset", "knowledge_voted": "knowledge_asset",
@@ -625,7 +631,7 @@ def _team_contribution_scores(db: Session, period: str, member_ids: list[str], p
     for row in rows:
         dimension = row.contribution_dimension or aliases.get(row.source_type)
         if dimension:
-            totals[row.person_id][dimension] += row.points
+            totals[row.person_id][dimension] += entry_points[row.id]
     config = _period_contribution_config(db, period_row) if period_row else get_contribution_config(db)
     scores: dict[str, dict[str, float]] = {}
     for pid in member_ids:
@@ -653,7 +659,7 @@ def _system_scores(db: Session, period: str, member_ids: list[str], period_row: 
         "domain_demand_outcome": _score_domain_demand_outcome(db, member_ids, start, end),
         "external_business_satisfaction": _external_scores(db, period_row, member_ids),
     }
-    scores["team_contribution"] = _team_contribution_scores(db, period, member_ids)
+    scores["team_contribution"] = _team_contribution_scores(db, period, member_ids, period_row)
     return scores
 
 

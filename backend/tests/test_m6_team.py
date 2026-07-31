@@ -2,7 +2,7 @@
 import pytest
 
 from app.db import SessionLocal
-from app.models import PointEntry
+from app.models import PointEntry, PointRule
 
 
 @pytest.fixture(scope="module")
@@ -215,6 +215,108 @@ def test_training_awards_points(client, admin_headers, ctx):
     dev_entries = my_points(client, ctx["dev_h"])["entries"]
     assert any(e["source_type"] == "training_attend" and e["points"] == 3 for e in dev_entries)
     assert not any(e["source_type"] == "training_attend" for e in tm_entries)  # 主讲不重复计参与分
+
+
+def test_current_period_activity_points_follow_live_rules_everywhere(client, admin_headers, ctx):
+    """当前考核期的活动积分应随规则实时变化，不改写原始积分台账。"""
+    from app.services.points import current_period
+
+    rule_code = "m84_live_activity_rule"
+    with SessionLocal() as db:
+        db.add(PointRule(
+            code=rule_code,
+            name="M84 当前周期动态积分测试",
+            points=1000,
+            contribution_bucket="team_contribution",
+            active=True,
+        ))
+        db.add(PointEntry(
+            person_id=ctx["tm_pid"],
+            points=1000,
+            source_type=rule_code,
+            period=current_period(),
+            contribution_bucket="team_contribution",
+        ))
+        db.commit()
+
+    def team_points() -> float:
+        board = client.get("/api/team/overview", headers=ctx["tm_h"]).json()["data"]["points_board"]
+        return next(row["points"] for row in board if row["person_name"] == "积分组长")
+
+    def dashboard_points() -> float:
+        board = client.get("/api/dashboard", headers=admin_headers).json()["data"]["team"]["top_points"]
+        return next(row["value"] for row in board if row["name"] == "积分组长")
+
+    def leaderboard_points() -> float:
+        board = client.get("/api/points/leaderboard", headers=ctx["tm_h"]).json()["data"]["board"]
+        return next(row["points"] for row in board if row["person_name"] == "积分组长")
+
+    before_team = team_points()
+    before_dashboard = dashboard_points()
+    before_leaderboard = leaderboard_points()
+    before_mine = my_points(client, ctx["tm_h"])["period_total"]
+
+    response = client.patch(
+        f"/api/admin/point-rules/{rule_code}",
+        json={"points": 1023, "active": True},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    assert team_points() == before_team + 23
+    assert dashboard_points() == before_dashboard + 23
+    assert leaderboard_points() == before_leaderboard + 23
+    assert my_points(client, ctx["tm_h"])["period_total"] == before_mine + 23
+
+    response = client.patch(
+        f"/api/admin/point-rules/{rule_code}",
+        json={"points": 1023, "active": False},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert team_points() == before_team - 1000
+    assert dashboard_points() == before_dashboard - 1000
+    assert leaderboard_points() == before_leaderboard - 1000
+    assert my_points(client, ctx["tm_h"])["period_total"] == before_mine - 1000
+
+
+def test_live_activity_rule_keeps_prior_period_ledger_amounts(ctx):
+    """全年视图可汇总历史，但当前规则只能作用于当前考核期的自动事件。"""
+    from sqlalchemy import func
+
+    from app.services.points import current_period, live_team_points_expression
+
+    period = current_period()
+    year = period.split("-", 1)[0]
+    prior_period = f"{year}-Q2" if period != f"{year}-Q2" else f"{year}-Q1"
+    rule_code = "m84_live_rule_history_guard"
+    with SessionLocal() as db:
+        db.add(PointRule(
+            code=rule_code,
+            name="M84 历史周期保护测试",
+            points=77,
+            contribution_bucket="team_contribution",
+            active=True,
+        ))
+        current = PointEntry(
+            person_id=ctx["tm_pid"], points=10, source_type=rule_code,
+            period=period, contribution_bucket="team_contribution",
+        )
+        prior = PointEntry(
+            person_id=ctx["tm_pid"], points=10, source_type=rule_code,
+            period=prior_period, contribution_bucket="team_contribution",
+        )
+        db.add_all([current, prior])
+        db.flush()
+        live_rule, effective_points, join_condition = live_team_points_expression()
+        total = (
+            db.query(func.sum(effective_points))
+            .outerjoin(live_rule, join_condition)
+            .filter(PointEntry.id.in_([current.id, prior.id]))
+            .scalar()
+        )
+        assert total == 87  # 当前周期 77，历史周期仍保留台账 10
+        db.rollback()
 
 
 def test_point_rule_inactive_skips(client, admin_headers, ctx):

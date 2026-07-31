@@ -164,14 +164,16 @@ def _project_section(db: Session) -> tuple[dict, list]:
 
 def _team_section(db: Session) -> dict:
     from app.models import DevelopmentActivity, HiringNeed, PointEntry, OrgMember
-    from app.services.points import current_period, period_clause
+    from app.services.points import current_period, live_team_points_expression, period_clause
     from sqlalchemy import func as _f
     from app.services.team_scope import it_member_ids
 
     period = current_period()
     team_ids = it_member_ids(db)
+    live_rule, effective_points, join_condition = live_team_points_expression()
     board = (
-        db.query(PointEntry.person_id, _f.sum(PointEntry.points))
+        db.query(PointEntry.person_id, _f.sum(effective_points))
+        .outerjoin(live_rule, join_condition)
         .filter(
             period_clause(PointEntry.period, period),
             PointEntry.person_id.in_(team_ids or {"-"}),
@@ -179,7 +181,7 @@ def _team_section(db: Session) -> dict:
             PointEntry.is_deleted.is_(False),
         )
         .group_by(PointEntry.person_id)
-        .order_by(_f.sum(PointEntry.points).desc())
+        .order_by(_f.sum(effective_points).desc())
         .limit(5)
         .all()
     )

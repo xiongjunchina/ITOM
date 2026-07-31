@@ -10,6 +10,7 @@ import {
   Select,
   Space,
   Tag,
+  TreeSelect,
   Typography,
   message,
 } from 'antd';
@@ -112,6 +113,24 @@ export default function Activities() {
     value: m.id,
     label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
   }));
+  const participantTreeData = Object.entries(
+    members.reduce<Record<string, Member[]>>((groups, member) => {
+      const department = member.department_name || t('team.activities.form.unassignedDepartment');
+      (groups[department] ??= []).push(member);
+      return groups;
+    }, {}),
+  )
+    .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
+    .map(([department, departmentMembers]) => ({
+      key: `department:${department}`,
+      value: `department:${department}`,
+      title: department,
+      selectable: false,
+      disableCheckbox: true,
+      children: departmentMembers
+        .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+        .map((member) => ({ key: member.id, value: member.id, title: member.name })),
+    }));
 
   const columns: ColumnsType<TrainingRow> = [
     {
@@ -237,14 +256,16 @@ export default function Activities() {
             <Select allowClear showSearch optionFilterProp="label" placeholder={t('team.activities.form.hostPlaceholder')} options={memberOptions} />
           </Form.Item>
           <Form.Item name="participant_ids" label={t('team.activities.col.participants')}>
-            <Select
-              mode="multiple"
+            <TreeSelect
               allowClear
               showSearch
-              optionFilterProp="label"
+              treeCheckable
+              treeNodeFilterProp="title"
               maxTagCount="responsive"
               placeholder={t('team.activities.form.participantsPlaceholder')}
-              options={memberOptions}
+              treeData={participantTreeData}
+              treeDefaultExpandAll={false}
+              style={{ width: '100%' }}
             />
           </Form.Item>
           <Form.Item name="output_link" label={t('team.activities.form.output')}>

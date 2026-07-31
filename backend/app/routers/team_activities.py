@@ -23,7 +23,14 @@ from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
 from app.core.i18n import localize_status
-from app.services.points import award, award_by_rule, current_period, period_clause
+from app.services.points import (
+    award,
+    award_by_rule,
+    current_period,
+    effective_team_entry_points,
+    live_team_points_expression,
+    period_clause,
+)
 from app.services.team_scope import is_it_member, it_member_ids
 
 router = APIRouter(tags=["team"])
@@ -471,17 +478,18 @@ def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(require_pe
         .all()
     )
     period = current_period()
+    entry_points = effective_team_entry_points(db, entries, period)
     if period.endswith("-All"):
         year_prefix = period.split("-")[0] + "-"
-        period_total = sum(e.points for e in entries if (e.period or "").startswith(year_prefix))
+        period_total = sum(entry_points[e.id] for e in entries if (e.period or "").startswith(year_prefix))
     else:
-        period_total = sum(e.points for e in entries if e.period == period)
+        period_total = sum(entry_points[e.id] for e in entries if e.period == period)
     return ok({
         "period": period,
         "period_total": round(period_total, 1),
-        "total": round(sum(e.points for e in entries), 1),
+        "total": round(sum(entry_points[e.id] for e in entries), 1),
         "entries": [
-            {"id": e.id, "points": e.points, "source_type": e.source_type, "period": e.period,
+            {"id": e.id, "points": entry_points[e.id], "source_type": e.source_type, "period": e.period,
              "note": e.note, "created_at": e.created_at}
             for e in entries
         ],
@@ -492,8 +500,16 @@ def my_points(db: Session = Depends(get_db), user: AuthUser = Depends(require_pe
 def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depends(require_perm("ideas", "view"))):
     period = period or current_period()
     team_ids = it_member_ids(db)
+    if period == current_period():
+        live_rule, effective_points, join_condition = live_team_points_expression()
+        point_sum = func.sum(effective_points)
+        board_query = db.query(PointEntry.person_id, point_sum).outerjoin(live_rule, join_condition)
+    else:
+        effective_points = PointEntry.points
+        point_sum = func.sum(effective_points)
+        board_query = db.query(PointEntry.person_id, point_sum)
     rows = (
-        db.query(PointEntry.person_id, func.sum(PointEntry.points))
+        board_query
         .filter(
             period_clause(PointEntry.period, period),
             PointEntry.person_id.in_(team_ids or {"-"}),
@@ -501,14 +517,24 @@ def points_leaderboard(period: str = "", db: Session = Depends(get_db), _=Depend
             PointEntry.is_deleted.is_(False),
         )
         .group_by(PointEntry.person_id)
-        .order_by(func.sum(PointEntry.points).desc())
+        .order_by(point_sum.desc())
         .limit(20)
         .all()
     )
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
     person_ids = {pid for pid, _ in rows}
+    if period == current_period():
+        live_rule, effective_points, join_condition = live_team_points_expression()
+        source_sum = func.sum(effective_points)
+        source_query = (
+            db.query(PointEntry.person_id, PointEntry.source_type, source_sum)
+            .outerjoin(live_rule, join_condition)
+        )
+    else:
+        source_sum = func.sum(PointEntry.points)
+        source_query = db.query(PointEntry.person_id, PointEntry.source_type, source_sum)
     source_rows = (
-        db.query(PointEntry.person_id, PointEntry.source_type, func.sum(PointEntry.points))
+        source_query
         .filter(
             period_clause(PointEntry.period, period),
             PointEntry.person_id.in_(person_ids or {"-"}),
