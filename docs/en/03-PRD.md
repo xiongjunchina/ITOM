@@ -157,6 +157,14 @@ Login, Overview, Profile Center (account/security/preferences/activity), Service
 
 ITOM still has **Incident / Service Request / Change** ticket types. Normal business users may create only service requests in the web app or Aily. Incidents are created only by IT staff or a monitoring integration; changes require authorized IT roles. A single user's software/device/network-access/account/usage problem is a service request, not an incident.
 
+### 5.1a IT-staff routing, record guidance, and cross-record relations (approved, not implemented)
+
+Normal business users continue to enter through Feishu Aily and may create only service requests or IT requirements; this section must not alter Aily MCP tools or its query, confirmation, reopen, and rating boundary. The IT-staff web experience will add a global “Create IT Record” action. It asks two to four **non-persisted** temporary questions, returns a user-overridable rule-based recommendation, and then opens the existing target creation form. Rule order is: broad impact → incident; recurrence/root cause → problem; planned production modification with risk, rollback, or a window → change; new system/function/optimization/refactor → IT requirement; other individual help, failure, or request for an existing capability → service request.
+
+The six record pages will show one default “when to use + positive example” line beside the title plus a “View examples” entry. The detailed case library contains definition, use/non-use cases, examples, and common corrections. No persisted classification questionnaire or unnecessary optional field may be added.
+
+Every escalation or transfer follows “**create target + relation + retain source**”: service request → incident (`upgraded_to_incident`), service request/incident → problem (`root_cause_of`), incident/problem → change (`remediated_by_change`), and IT requirement → project (`converted_to_project`). A source record is never retyped, deleted, force-closed, or overwritten. Source and target keep separate status, SLA, workflow, permission, and closure rules. The target domain service must complete required-field, permission, workflow, and approval checks before an audited relation is written in the same transaction. See `docs/en/superpowers/specs/2026-07-31-it-staff-intake-and-record-relations-design.md`.
+
 #### Creation Form
 
 Service-request intake starts from live, published ITOM service items that the current user may request. Aily searches the catalog, asks the user to select when ambiguous, then obtains the selected item's active form version. It pre-fills facts supported by the natural-language request and asks only for missing required fields. Web and MCP intake share one form, validator, and creation domain service.
@@ -332,6 +340,8 @@ The Project Management landing page has two tabs: **Project List** (default) and
 ### 7.1 Five-Stage Lifecycle
 
 From M10: an "Evaluation" gate sits between Registration and Analysis — six-dimension weighted scoring + four-quadrant decision. **M16 finalizes the full routing loop**: registration enters review immediately (the review task is auto-assigned to the business domain owner / service-line lead); scores landing in the "Re-evaluate" quadrant may only be put On Hold (re-review after enrichment) or Rejected (closed, reason required); other quadrants, once approved, go to the discipline leads (PDM lead responsible / dev lead cc'd, configurable) for **solution assessment & routing** — secondary development on an existing system with effort < threshold (default 20 person-days, configurable) → in-house delivery (task list & scheduling, priority = weighted score); a new system purchase or effort ≥ threshold → **convert to a project** (assign a PM → PM prepares the charter, creates the project linked to the requirement). **Closing the loop (M16.5)**: when the project is accepted & closed, the PM is reminded to return to the requirement and complete the "Delivery" step → the "Acceptance & Closure" task is auto-assigned to the business-domain owner (who organizes business acceptance) → when the process completes the requirement closes automatically (or the owner is reminded if acceptance criteria remain unchecked). Saving the decision performs the transition in one step.
+
+After generic relations are implemented, “convert to project” must use `record_relation(relation_type=converted_to_project)` for unified audit. The project is still created through the project domain service and starts its own workflow; the source requirement is not retyped or automatically closed.
 
 ```text
 Registration → Evaluation → Analysis → Implementation → Closure (any active stage can move to "On Hold / Cancelled")

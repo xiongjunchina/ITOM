@@ -214,6 +214,25 @@ Delivery keeps event idempotency, retry/backoff, and redacted errors. Disabled o
 
 All `/api/integrations/feishu/helpdesk/*` routes, subscriptions, handoffs, queues, and Helpdesk-specific outbox have been removed from the new runtime. Existing PostgreSQL structures are previewed by `python -m app.scripts.migrate_aily_mcp` and are permanently removed only with explicit `--confirm`.
 
+### 4.1c IT-staff routing and cross-record relations (approved, not implemented)
+
+The following are confirmed implementation contracts, not live endpoints. They serve only the IT-staff web experience and add no Aily/MCP tool:
+
+```text
+POST /api/staff-intake/recommend
+    # IT staff; temporary answers → recommendation, rationale, counterexample, accessible target entry; no persistence
+GET  /api/it-document-guide
+    # signed-in user; one-line guidance and case library for the six records; UI shows entries by actual create permission
+POST /api/record-relations/prepare
+    # source record + relation_type + idempotency_key; validates source read/target create and returns safe prefill/missing requirements
+POST /api/record-relations/submit
+    # target form + relation_type + reason + idempotency_key; invokes the target domain service, relation, and audit
+GET  /api/records/{entity_type}/{entity_id}/relations
+    # bidirectional relation list constrained by data scope
+```
+
+`recommend` questions and answers are not persisted. `prepare/submit` do not write domain tables directly; `submit` must invoke the incident, problem, change, project, or other target domain service for its own fields, status, workflow, approval, RBAC, audit, and event publishing. A server whitelist controls first-phase relation types. Idempotent retries return the first result and never alter the source record's type, status, or workflow.
+
 ### 4.2 ITSM
 
 ```text

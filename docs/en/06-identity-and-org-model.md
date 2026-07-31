@@ -170,6 +170,12 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 
 The service-request tool does not accept `ticket_type`; requirement registration calls the separate Requirement domain service. UI hiding is not authorization: web APIs, MCP tools, and domain services enforce the same server-side boundary.
 
+### 11.2a IT-staff web routing and transfer permission (approved, not implemented)
+
+“Create IT Record” is visible only to IT staff in the ITOM web experience. It is not granted to normal business users and is not exposed as an Aily/MCP tool. Routing recommendations are temporary, overrideable assistance; they persist no answers and cannot bypass target-record authorization.
+
+To create a cross-record relation, an actor needs both source-record read scope and the target record's `create` permission. The target domain service continues to validate required fields, workflow node, approval, role, and data scope. Relation reads are also trimmed by visibility of both source and target, so a related record cannot leak access to another record. System-level administrator authority does not replace a business submitter's service-request confirmation and does not change the Aily normal-user boundary.
+
 ### 11.3 Confirmation, idempotency, and cross-ticket safety
 
 Create/register mutations first create `mcp_operation_intent` and validate a confirmation token plus idempotency key at submission. Confirmation/reopen/rating is already an explicit user action, so it creates a same-transaction idempotency intent without issuing a second token. Every intent binds the ITOM user, tool, and normalized payload digest. An explicit ticket code is mandatory; when multiple tickets await confirmation, Aily asks the user to choose and never guesses the latest. Retries return the first result, while the same key with different parameters is rejected.

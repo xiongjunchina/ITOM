@@ -18,7 +18,7 @@
 
 ---
 
-## 1. Support Domain (current 29; target 29)
+## 1. Support Domain (current 29; confirmed not-yet-implemented target 30)
 
 ### 1.1 auth_user — login account
 
@@ -115,6 +115,12 @@ Unique call_id, tool_name, tenant/agent, external subject as subject type plus S
 ### 1.13 mcp_operation_intent [active in P1]
 
 Unique intent_id, tool, auth_user_id, normalized payload, payload digest, token hash, idempotency key, status (prepared/executed/expired), expiry/consumption times, and result entity/snapshot. Unique `(auth_user_id, tool_name, idempotency_key)`; raw confirmation tokens are not stored.
+
+### 1.13a record_relation — generic cross-record relation [approved, not implemented]
+
+`id`, `source_entity_type`, `source_entity_id`, `target_entity_type`, `target_entity_id`, `relation_type`, `reason`, `created_by FK→auth_user`, `created_at`, `deleted_at`, `deleted_by FK→auth_user`, and `delete_reason`. The domain service validates entity combinations and relation type against a server-side whitelist. The first phase permits only `service_request→incident(upgraded_to_incident)`, `service_request/incident→problem(root_cause_of)`, `incident/problem→change(remediated_by_change)`, and `requirement→project(converted_to_project)`; arbitrary client polymorphic pairs and self-relations are rejected.
+
+Active relations are unique on `(source_entity_type, source_entity_id, target_entity_type, target_entity_id, relation_type)`, with combined source and target indexes for bidirectional detail reads. The model has no cross-table polymorphic FKs: domain services verify entities, permission, and data scope in the same transaction that creates the target, relation, and audit. Existing `problem_ticket`, `Ticket.problem_id`, and historical requirement/project relations remain unchanged, with no migration, backfill, or overwrite; no unlink action is exposed in the first phase.
 
 ---
 

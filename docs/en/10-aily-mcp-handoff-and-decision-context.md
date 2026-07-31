@@ -66,6 +66,10 @@ An incident means a broad network, server, or application outage. Only IT staff 
 
 When a user describes a potentially broad outage, Aily still creates that user's service request and marks it as suspected major impact. IT staff decide whether to associate an existing incident or create a new one. Aily and normal users do not classify it directly as an incident.
 
+### 3.4 IT-staff web routing does not change the Aily boundary (approved, not implemented)
+
+IT staff will receive a Web “Create IT Record” guide and cross-record relation capability. It supports internal ITIL judgment only and does not burden normal business users with web type selection. Aily continues to create only service requests and IT requirements. It does not transfer service request → incident, service request/incident → problem, incident/problem → change, or requirement → project. Any future MCP scope expansion needs separate confirmation of architecture, permission, audit, and user experience.
+
 ## 4. Approved architecture
 
 Use **Approach A: embed the MCP Server in the existing FastAPI backend**.
