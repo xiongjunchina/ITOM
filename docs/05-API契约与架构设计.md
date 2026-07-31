@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，历史真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。2026-07-31 IDC 复核发现 `itom.snnc.cc:30443` 公网证书无法通过标准 CA 校验且当前卡片 POST 未到达入口日志，因此当前 IDC 的“确认关闭”仍待受信 TLS 和新工单卡片复验。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -303,7 +303,7 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # 兼容旧客户端；团队贡献权重、目标及满意度组合的规范入口是 /api/point-rules/team-config
 ```
 
-`/api/points/leaderboard` 的 `points` 是该周期 `point_entry` 台账中同一人员 `contribution_bucket=team_contribution` 的所有正负流水原始代数和；个人积分和团队总览积分排行采用同一过滤口径，响应可带 `breakdown` 按 `source_type` 汇总来源。`role_result` 岗位结果流水不进入这些活动积分读接口，但仍保留在台账中供人效角色结果和审计使用。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
+`/api/points/leaderboard` 的 `points` 是该周期 `point_entry` 台账中同一人员 `contribution_bucket=team_contribution` 的所有正负流水原始代数和；个人积分、团队总览和 Dashboard 人员积分排行采用同一过滤口径，响应可带 `breakdown` 按 `source_type` 汇总来源。`role_result` 岗位结果流水不进入这些活动积分读接口，但仍保留在台账中供人效角色结果和审计使用。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
 
 ### 4.7 Dashboard
 

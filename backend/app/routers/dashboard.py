@@ -172,7 +172,12 @@ def _team_section(db: Session) -> dict:
     team_ids = it_member_ids(db)
     board = (
         db.query(PointEntry.person_id, _f.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
+        .filter(
+            period_clause(PointEntry.period, period),
+            PointEntry.person_id.in_(team_ids or {"-"}),
+            PointEntry.contribution_bucket == "team_contribution",
+            PointEntry.is_deleted.is_(False),
+        )
         .group_by(PointEntry.person_id)
         .order_by(_f.sum(PointEntry.points).desc())
         .limit(5)

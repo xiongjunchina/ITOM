@@ -41,6 +41,15 @@ def test_activity_points_exclude_role_result_entries(client, admin_headers):
     overview_row = next(item for item in overview.json()["data"]["points_board"] if item["person_name"] == "M83积分隔离")
     assert overview_row["points"] == 7
 
+    dashboard = client.get("/api/dashboard", headers=admin_headers)
+    assert dashboard.status_code == 200, dashboard.text
+    dashboard_row = next(
+        item
+        for item in dashboard.json()["data"]["team"]["top_points"]
+        if item["name"] == "M83积分隔离"
+    )
+    assert dashboard_row["value"] == 7
+
 
 def test_performance_overview_refreshes_role_snapshot_after_role_binding(client, admin_headers):
     person_id, user_id, _ = _member_and_user(client, admin_headers, "M83角色刷新", "m83_role_refresh", [])

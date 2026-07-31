@@ -280,6 +280,10 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 2026-07-30 公网根地址配置回归：后端完整测试 `277 passed`；`public_base_url` 定向契约测试 `1 passed`，覆盖末尾斜杠规范化、路径/查询参数/片段/URL 凭据/非法协议/越界端口拒绝、失败不覆盖已保存值和清空配置；前端 linux/amd64 生产镜像完成 `tsc --noEmit` 与 Vite 构建。`git diff --check`、Kubernetes YAML 解析和部署脚本语法检查均通过。
 
+2026-07-31 本次问题复核与修复：Dashboard 的 `/api/dashboard` 原先聚合人员积分时遗漏 `contribution_bucket=team_contribution`，因此会把项目经理里程碑等 `role_result` 流水与团队贡献相加；团队总览已使用正确分桶，造成两页显示不一致。已在 Dashboard 查询补齐同一分桶条件，并在 `test_activity_points_exclude_role_result_entries` 增加 Dashboard 回归断言，验证 `role_result=50`、`team_contribution=7` 时两处均只显示 7。该修复不改数据模型、不改存量流水。
+
+同日 IDC 回调复核：`https://itom.snnc.cc:30443/api/health` 在标准证书校验下因 `unable to get local issuer certificate` 失败，关闭证书校验后返回 HTTP 200；Backend/Frontend Ingress 日志在复核窗口内没有收到 `card-actions` POST，当前 IDC 数据库也没有旧截图中的 `TK-202607-0004/0005`。因此 Aily 显示的 `200080` 当前不能归因于 `service_request_closure` 业务逻辑；首先必须为 `itom.snnc.cc:30443` 配置公网受信 CA 证书，再用当前 IDC 新建工单生成的新卡片复验。旧 `TK-202607-0005` 的按钮闭环仍是历史 UAT 证据，不代表当前 IDC 卡片链路已恢复。
+
 验收：以业务用户、IT 人员完成“诉求 → 建单 → 派单 → 受理 → 解决 → 通知 → 确认/重开 → 关闭 → 评价”真实闭环，多张待确认单据不串单，内部信息不外发。
 
 ### 阶段 3：飞书审批（暂缓）与发布加固

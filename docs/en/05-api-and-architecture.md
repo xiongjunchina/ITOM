@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. P2.1 now uses Feishu's new signed `card.action.trigger` callback. The Aily Workflow/Skill path does not perform card mutations because it cannot provide a trusted `x-aily-jwt`; the live unresolved → reopen → resolve and close → rate button loop has passed. P3 Feishu Approval is deferred by user decision, while IDC release hardening and formal acceptance continue. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. P2.1 now uses Feishu's new signed `card.action.trigger` callback. The Aily Workflow/Skill path does not perform card mutations because it cannot provide a trusted `x-aily-jwt`; the historical unresolved → reopen → resolve and close → rate button loop has passed. A 2026-07-31 IDC recheck found that the public certificate for `itom.snnc.cc:30443` fails standard CA verification and the current card POST did not reach ingress logs, so current-IDC “confirm closure” acceptance remains pending trusted TLS and a newly generated ticket/card. P3 Feishu Approval is deferred by user decision, while IDC release hardening and formal acceptance continue. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -302,7 +302,7 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # legacy compatibility endpoint; canonical team config is /api/point-rules/team-config
 ```
 
-The `points` value from `/api/points/leaderboard` is the raw algebraic sum of positive and negative `point_entry` rows with `contribution_bucket=team_contribution` for a person in the period; personal points and the team-overview leaderboard use the same filter, and the response may include a `breakdown` grouped by `source_type`. `role_result` rows remain in the ledger for role scoring and audit but are excluded from Activity Points reads. This is distinct from the role/target/weight-normalized result shown by Performance.
+The `points` value from `/api/points/leaderboard` is the raw algebraic sum of positive and negative `point_entry` rows with `contribution_bucket=team_contribution` for a person in the period; personal points, the team-overview leaderboard, and the Dashboard people-points ranking use the same filter, and the response may include a `breakdown` grouped by `source_type`. `role_result` rows remain in the ledger for role scoring and audit but are excluded from Activity Points reads. This is distinct from the role/target/weight-normalized result shown by Performance.
 
 ### 4.7 Dashboard
 

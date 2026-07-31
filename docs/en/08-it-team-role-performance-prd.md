@@ -150,6 +150,7 @@ The points ledger must distinguish two buckets:
 
 - `role_result`: ticket SLA, change compliance, requirement delivery, project milestones, and process-governance outcomes. These facts support role scores and do not enter the fixed 20% again. Activity Points read APIs exclude this bucket, so a role-result event such as a project-manager milestone cannot appear as a team-contribution activity score.
 - `team_contribution`: activities outside normal role results, learning, knowledge sharing, improvement, and cross-team support. These facts enter the fixed 20% only.
+- Activity Points, the team overview, and the Dashboard people-points ranking must use the same `team_contribution` filter; Dashboard must not mix `role_result` ledger rows into its people-points ranking.
 
 `PointRule` and `PointEntry` therefore require `contribution_bucket` and `contribution_dimension`. Existing ticket, requirement, and project events may remain in the ledger for traceability, but are `role_result` by default when they already drive a role metric. Bonus and penalty remain separate.
 
