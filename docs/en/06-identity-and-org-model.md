@@ -185,6 +185,8 @@ The web agent accepts only the current ITOM login session, never client-supplied
 
 A model profile controls wording, knowledge scope, disabled capabilities, and maximum risk only; it never authorizes. An L3 token binds the ITOM user, web conversation, capability, payload digest, and expiry and is re-authorized at confirmation. Users read only their own conversations; administrators see operational metrics and action audit by default, not complete transcripts. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
 
+WA0 registers `admin_ai` (AI Agent) under System Administration. It is not added to the default matrices for requester, BDO, IT staff, or auditor; only `admin` reaches model and profile governance through the existing implicit full authority. This functional entry grants neither business data scope nor workflow authority, and cannot replace a business submitter's confirmation.
+
 ### 11.3 Confirmation, idempotency, and cross-ticket safety
 
 Create/register mutations first create `mcp_operation_intent` and validate a confirmation token plus idempotency key at submission. Confirmation/reopen/rating is already an explicit user action, so it creates a same-transaction idempotency intent without issuing a second token. Every intent binds the ITOM user, tool, and normalized payload digest. An explicit ticket code is mandatory; when multiple tickets await confirmation, Aily asks the user to choose and never guesses the latest. Retries return the first result, while the same key with different parameters is rejected.

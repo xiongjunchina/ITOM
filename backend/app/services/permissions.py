@@ -65,6 +65,7 @@ MODULES = [
     ("admin_master_data", "数据字典", "系统管理"),
     ("admin_workflow", "状态机配置", "系统管理"),
     ("admin_feishu", "系统集成", "系统管理"),
+    ("admin_ai", "AI 智能体", "系统管理"),
     ("admin_audit", "审计日志", "系统管理"),
     ("admin_ui_branding", "界面与品牌", "系统管理"),
 ]

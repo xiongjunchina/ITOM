@@ -8,6 +8,15 @@ from app.models.itsm import (
     Ticket,
     TicketSatisfaction,
 )
+from app.models.assistant import (
+    AiAction,
+    AiAgentProfile,
+    AiAgentProfileVersion,
+    AiConversation,
+    AiMessage,
+    AiProviderCall,
+    AiProviderConfig,
+)
 from app.models.itsm_assets import (
     Ci,
     CiRelationship,
@@ -85,6 +94,13 @@ from app.models.support import (
 )
 
 __all__ = [
+    "AiAction",
+    "AiAgentProfile",
+    "AiAgentProfileVersion",
+    "AiConversation",
+    "AiMessage",
+    "AiProviderCall",
+    "AiProviderConfig",
     "ActivityCampaign",
     "Attachment",
     "BusinessDomain",

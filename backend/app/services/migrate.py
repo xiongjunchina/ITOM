@@ -829,6 +829,132 @@ def backfill_wbs_progress_hierarchy(db: Session):
         db.commit()
 
 
+ASSISTANT_SCHEMA_STATEMENTS = (
+    "CREATE TABLE IF NOT EXISTS ai_provider_config ("
+    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL UNIQUE, name VARCHAR(128) NOT NULL, "
+    "provider_type VARCHAR(32) NOT NULL, api_base_url VARCHAR(300), api_key_encrypted TEXT, model VARCHAR(128), "
+    "timeout_seconds INTEGER NOT NULL DEFAULT 30, max_output_tokens INTEGER NOT NULL DEFAULT 2048, temperature DOUBLE PRECISION, "
+    "capability_probe JSONB NOT NULL DEFAULT '{}'::jsonb, probe_status VARCHAR(16) NOT NULL DEFAULT 'unverified', "
+    "last_probed_at TIMESTAMP, is_primary BOOLEAN NOT NULL DEFAULT false, fallback_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), "
+    "enabled BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false)",
+    "CREATE TABLE IF NOT EXISTS ai_agent_profile ("
+    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL UNIQUE, name VARCHAR(128), audience VARCHAR(32) NOT NULL, "
+    "default_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', "
+    "status VARCHAR(16) NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT false, "
+    "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
+    "is_example BOOLEAN NOT NULL DEFAULT false)",
+    "CREATE TABLE IF NOT EXISTS ai_agent_profile_version ("
+    "id VARCHAR(26) PRIMARY KEY, profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), version INTEGER NOT NULL, "
+    "status VARCHAR(16) NOT NULL DEFAULT 'draft', system_prompt_zh TEXT, system_prompt_en TEXT, "
+    "enabled_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb, knowledge_scope JSONB NOT NULL DEFAULT '[]'::jsonb, "
+    "max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', published_by VARCHAR(26) REFERENCES auth_user(id), published_at TIMESTAMP, "
+    "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
+    "is_example BOOLEAN NOT NULL DEFAULT false, UNIQUE(profile_id, version))",
+    "CREATE TABLE IF NOT EXISTS ai_conversation ("
+    "id VARCHAR(26) PRIMARY KEY, auth_user_id VARCHAR(26) NOT NULL REFERENCES auth_user(id), "
+    "profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), "
+    "profile_version_id VARCHAR(26) REFERENCES ai_agent_profile_version(id), language VARCHAR(16) NOT NULL DEFAULT 'zh-CN', "
+    "page_context JSONB NOT NULL DEFAULT '{}'::jsonb, status VARCHAR(16) NOT NULL DEFAULT 'active', expires_at TIMESTAMP, archived_at TIMESTAMP, "
+    "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
+    "is_example BOOLEAN NOT NULL DEFAULT false)",
+    "CREATE TABLE IF NOT EXISTS ai_message ("
+    "id VARCHAR(26) PRIMARY KEY, conversation_id VARCHAR(26) NOT NULL REFERENCES ai_conversation(id), role VARCHAR(16) NOT NULL, "
+    "content JSONB NOT NULL DEFAULT '{}'::jsonb, redacted_text TEXT, status VARCHAR(16) NOT NULL DEFAULT 'completed', "
+    "input_tokens INTEGER, output_tokens INTEGER, duration_ms INTEGER, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false)",
+    "CREATE TABLE IF NOT EXISTS ai_action ("
+    "id VARCHAR(26) PRIMARY KEY, conversation_id VARCHAR(26) NOT NULL REFERENCES ai_conversation(id), "
+    "auth_user_id VARCHAR(26) NOT NULL REFERENCES auth_user(id), message_id VARCHAR(26) REFERENCES ai_message(id), "
+    "capability_code VARCHAR(96) NOT NULL, risk_level VARCHAR(2) NOT NULL, normalized_payload JSONB NOT NULL DEFAULT '{}'::jsonb, "
+    "payload_digest VARCHAR(64) NOT NULL, token_hash VARCHAR(64), idempotency_key VARCHAR(128) NOT NULL, "
+    "status VARCHAR(16) NOT NULL DEFAULT 'prepared', expires_at TIMESTAMP, consumed_at TIMESTAMP, result_code VARCHAR(64), "
+    "result_summary JSONB, result_entity_type VARCHAR(32), result_entity_id VARCHAR(26), created_at TIMESTAMP DEFAULT now(), "
+    "updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false, "
+    "UNIQUE(auth_user_id, capability_code, idempotency_key))",
+    "CREATE TABLE IF NOT EXISTS ai_provider_call ("
+    "id VARCHAR(26) PRIMARY KEY, provider_id VARCHAR(26) NOT NULL REFERENCES ai_provider_config(id), "
+    "conversation_id VARCHAR(26) REFERENCES ai_conversation(id), message_id VARCHAR(26) REFERENCES ai_message(id), "
+    "profile_version_id VARCHAR(26) REFERENCES ai_agent_profile_version(id), model VARCHAR(128) NOT NULL, "
+    "purpose VARCHAR(32) NOT NULL DEFAULT 'chat', input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, "
+    "duration_ms INTEGER NOT NULL DEFAULT 0, result_code VARCHAR(64) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'completed', "
+    "error_redacted JSONB, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false)",
+)
+
+ASSISTANT_ENSURE_COLUMNS = {
+    "ai_provider_config": [
+        ("capability_probe", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("probe_status", "VARCHAR(16) NOT NULL DEFAULT 'unverified'"),
+        ("enabled", "BOOLEAN NOT NULL DEFAULT false"),
+    ],
+    "ai_agent_profile": [
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'draft'"),
+        ("enabled", "BOOLEAN NOT NULL DEFAULT false"),
+    ],
+    "ai_agent_profile_version": [
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'draft'"),
+        ("enabled_capabilities", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("knowledge_scope", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+    ],
+    "ai_conversation": [
+        ("page_context", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'active'"),
+    ],
+    "ai_message": [
+        ("content", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'completed'"),
+    ],
+    "ai_action": [
+        ("normalized_payload", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'prepared'"),
+    ],
+    "ai_provider_call": [
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'completed'"),
+    ],
+}
+
+ASSISTANT_INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_provider_type ON ai_provider_config (provider_type)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_probe_status ON ai_provider_config (probe_status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_enabled ON ai_provider_config (enabled)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_audience ON ai_agent_profile (audience)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_status ON ai_agent_profile (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_enabled ON ai_agent_profile (enabled)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_profile_id ON ai_agent_profile_version (profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_status ON ai_agent_profile_version (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_auth_user_id ON ai_conversation (auth_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_profile_id ON ai_conversation (profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_status ON ai_conversation (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_message_conversation_id ON ai_message (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_message_status ON ai_message (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_conversation_id ON ai_action (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_auth_user_id ON ai_action (auth_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_capability_code ON ai_action (capability_code)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_status ON ai_action (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_provider_id ON ai_provider_call (provider_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_result_code ON ai_provider_call (result_code)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_status ON ai_provider_call (status)",
+)
+
+
+def ensure_assistant_schema(db: Session):
+    """Idempotently add WA0 assistant persistence without touching business data."""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    for statement in ASSISTANT_SCHEMA_STATEMENTS:
+        db.execute(text(statement))
+    for table, columns in ASSISTANT_ENSURE_COLUMNS.items():
+        existing = _columns(db, table)
+        for name, ddl in columns:
+            if name not in existing:
+                db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                logger.info("added assistant column %s.%s", table, name)
+    for statement in ASSISTANT_INDEX_STATEMENTS:
+        db.execute(text(statement))
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -837,6 +963,7 @@ def migrate_m35_org(db: Session):
     widen_department_sort_m341(db)
     ensure_columns(db)
     ensure_aily_indexes(db)
+    ensure_assistant_schema(db)
     ensure_record_relation_schema(db)
     backfill_development_activity_creator(db)
     backfill_process_step_codes(db)
