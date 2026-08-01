@@ -11,6 +11,7 @@ from app.core.errors import AppError
 from app.db import Base, SessionLocal, engine
 from app.routers import (
     aily,
+    admin_ai,
     admin_misc,
     admin_org,
     admin_rbac,
@@ -151,7 +152,7 @@ async def auditor_readonly_guard(request: Request, call_next):
     return await call_next(request)
 
 
-for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
+for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, admin_ai, notifications, attachments, dashboard,
           itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, record_relations, staff_intake, task_management, team_activities, team_learning, team_mgmt, ui_branding, integrations, aily):
     app.include_router(r.router)
 

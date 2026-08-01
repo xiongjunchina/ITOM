@@ -245,7 +245,8 @@ POST     /api/assistant/actions/{id}/confirm|cancel
 POST     /api/assistant/conversations/{id}/archive
 GET      /api/assistant/bootstrap
 
-GET/POST/PATCH /api/admin/ai/providers
+GET/POST       /api/admin/ai/providers
+PATCH/DELETE   /api/admin/ai/providers/{id}
 POST           /api/admin/ai/providers/{id}/test
 GET/PATCH      /api/admin/ai/profiles/{code}/draft
 POST           /api/admin/ai/profiles/{code}/publish|rollback
@@ -261,6 +262,12 @@ WA0 Task 3 已实现提供商中立的 `ModelProvider` 契约、OpenAI-compatibl
 `probe()` 依次独立执行并精确校验：认证基础响应、带合法 `[DONE]` 终止语义的流式响应、`tool_choice` 强制的唯一已提供工具名及合法参数、符合请求中 strict schema 常量/必填/禁额外字段约束的 JSON；提供商忽略某项时仅该能力标记为 false，认证、连接、超时或上游服务故障仍使探测失败。L2/L3 必须同时具备 `supports_streaming`、`supports_tools` 和 `supports_json_schema`，并满足启用、近期探测成功及同策略主/备条件。流式响应只接受可验证的 SSE delta、完整 JSON 对象工具参数、usage、受支持的 `stop/tool_calls` 终止原因和最终 `[DONE]`，见到 `[DONE]` 即停止读取并关闭响应；未知事件、非法 JSON、截断或缺失终止语义均失败关闭。主模型任何输出开始后失败不得切换备用。
 
 `ChatRequest.purpose` 只接受服务端 `ProviderPurpose` 枚举并以最长 32 字符的规范代码存储；原始字符串、未知、超长或可能携密的用途在构造提供商、出站和审计前拒绝。每次真实尝试只向 `ai_provider_call` 写提供商、模型、规范用途、Token、耗时、结果码、状态和脱敏错误，不保存 prompt、响应正文或密钥。审计使用独立 `SessionLocal` 事务，绝不提交/回滚调用方会话；失败尝试的审计写入失败被隔离且不阻断安全回退，取消时审计失败不掩盖取消，成功尝试仅在审计提交后发送 `done`，审计失败返回脱敏 `GATEWAY_AUDIT_FAILED` 而不宣称完成。Task 3 不增加管理 API、`/api/assistant` 路由、UI、会话/动作编排或业务处理器。
+
+WA0 Task 4 已实现 `/api/admin/ai` 管理 API，全部端点逐一声明真实服务端 `require_perm("admin_ai", ...)`，浏览器自报角色不参与授权。提供商创建、查询、更新、软删除与探测复用 Task 3 的 HTTPS、主机白名单、DNS 地址分类及请求级固定 IP 传输；未探测或探测已过期的提供商不能启用，URL、模型或非空新密钥变化会使旧探测失效并自动停用。`api_key` 只在写请求中接收，非空值逐字节加密，省略或全空白更新保留旧密文；任何响应只返回 `has_secret`，不返回明文或密文。`POST /providers/{id}/test` 原样复用 Task 3 的“认证基础 → 流式终止 → 强制工具 → strict JSON Schema”顺序；成功或失败均在同一管理事务中写 `probe_status`、布尔能力、`last_probed_at` 和脱敏审计，失败会撤销启用状态，不能保留虚假健康标记。
+
+档案 code 固定为 `requester`、`bdo`、`it_staff`、`admin`，受众分别固定为 `requester`、`bdo`、`it`、`admin`。草稿更新携带 `expected_updated_at` 乐观锁；数据库只能选择进程内注册表已有的能力 code，且能力受众、风险、知识范围均不得超出服务端受众白名单。发布必须携带 `expected_draft_updated_at`，并同时通过中英文系统指令、非 L4 风险、注册能力、知识范围、启用且近期健康的默认提供商和 L2/L3 工具/JSON Schema 兼容性校验。每次发布新增不可变、单调递增的 `ai_agent_profile_version`；回滚请求携带来源版本与 `expected_latest_version`，把历史快照复制为新的发布版本，从不修改或删除历史。过期草稿或并发版本返回 409，失败发布不改变已发布状态或生成半成品版本。
+
+`GET /health` 只返回提供商/档案计数，`GET /usage` 只返回调用、Token、耗时及按提供商/结果码聚合，`GET /action-audits` 只返回动作 code、风险、状态、结果实体与时间。三者均不返回 Prompt、消息正文、完整会话、密钥、确认 token/hash、规范化载荷、结果载荷或提供商错误正文。Task 4 未实现管理 UI、`/api/assistant` 会话/动作编排、领域能力处理器、部署或 WA1。
 
 ### 4.2 ITSM
 
@@ -457,7 +464,7 @@ IDC Kubernetes:
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
-| 网页智能体 WA0（Task 1–3 已实现；Task 4+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏及安全 OpenAI-compatible 模型网关；管理 API、会话路由和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理待实施 | 网页智能体设计基线 |
+| 网页智能体 WA0（Task 1–4 已实现；Task 5+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关及模型/档案管理 API；会话路由和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理 UI 待实施 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 
