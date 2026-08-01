@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.assistant.policy import capabilities_for_user
 from app.assistant.registry import CapabilityRegistry
@@ -14,6 +14,26 @@ from app.models import AiAgentProfile, AiAgentProfileVersion, AuthUser, UserGrou
 
 class _CapabilityInput(BaseModel):
     subject: str
+
+
+class _UnsafeCredentialInput(BaseModel):
+    access_token: str
+
+
+class _UnsafeAliasInput(BaseModel):
+    title: str = Field(alias="clientSecret")
+
+
+class _UnsafeAuthorizationInput(BaseModel):
+    roles: list[str]
+
+
+class _SchemaDefaultsInput(BaseModel):
+    title: str = Field(default="Printer setup")
+    note: str = Field(
+        default="token=default-token-raw",
+        examples=["Authorization: Basic default-basic-raw"],
+    )
 
 
 def _handler(*_args):
@@ -40,6 +60,8 @@ def _registry():
         _definition("service_request.prepare", audiences={"requester", "bdo", "it", "admin"}, module="ticket_sr", action="create"),
         _definition("requirement.prepare", audiences={"bdo", "it", "admin"}, module="requirements", action="create"),
         _definition("knowledge.search", audiences={"requester", "bdo", "it", "admin", "auditor"}, module="knowledge", action="view", risk=RiskLevel.L1),
+        _definition("auditor.review.prepare", audiences={"auditor"}, module="admin_audit", action="view"),
+        _definition("auditor.review.submit", audiences={"auditor"}, module="admin_audit", action="view", risk=RiskLevel.L3, confirmation=True),
         _definition("incident.create", audiences={"it", "admin"}, module="ticket_incident", action="create", risk=RiskLevel.L3, confirmation=True),
         _definition("process_task.complete", audiences={"it", "admin"}, module="task_development", action="edit", risk=RiskLevel.L3, confirmation=True),
     ):
@@ -81,7 +103,8 @@ def _publish_profile(db, code, audience, enabled_capabilities, max_risk="L3"):
 
 def _published_profiles(db, *, max_risk="L3", requester_codes=None):
     all_codes = [
-        "service_request.prepare", "requirement.prepare", "knowledge.search", "incident.create", "process_task.complete",
+        "service_request.prepare", "requirement.prepare", "knowledge.search", "auditor.review.prepare",
+        "auditor.review.submit", "incident.create", "process_task.complete",
     ]
     _publish_profile(db, "wa0-requester", "requester", requester_codes or all_codes, max_risk)
     _publish_profile(db, "wa0-bdo", "bdo", all_codes, max_risk)
@@ -152,6 +175,24 @@ def test_auditor_admin_inactive_and_profile_constraints_are_fail_closed(client, 
         assert _codes(db, requester_id, registry, max_risk="L3") == {"knowledge.search"}
 
 
+def test_published_profile_risk_ceiling_overrides_a_higher_caller_request(client, admin_headers):
+    """Removing the published L1 ceiling would expose otherwise allowed L2/L3 capability codes."""
+    requester_id, _ = _create_user(client, admin_headers, "wa0_profile_l1", ["requester"])
+    registry = _registry()
+    with SessionLocal() as db:
+        _published_profiles(db, max_risk="L1")
+        assert _codes(db, requester_id, registry, max_risk="L3") == {"knowledge.search"}
+
+
+def test_auditor_hard_ceiling_excludes_auditor_facing_l2_and_l3_capabilities(client, admin_headers):
+    """Relaxing the auditor-only L1 ceiling would expose explicitly auditor-facing mutation-like capabilities."""
+    auditor_id, _ = _create_user(client, admin_headers, "wa0_auditor_ceiling", ["auditor"])
+    registry = _registry()
+    with SessionLocal() as db:
+        _published_profiles(db, max_risk="L3")
+        assert _codes(db, auditor_id, registry, max_risk="L3") == {"knowledge.search"}
+
+
 def test_discovery_reloads_database_identity_and_never_exports_internal_registry_details(client, admin_headers):
     """Trusting caller roles or exposing handlers/policy data would break this server-boundary contract."""
     requester_id, _ = _create_user(client, admin_headers, "wa0_no_client_role", ["requester"])
@@ -190,3 +231,61 @@ def test_registry_rejects_unsafe_or_unbound_capability_definitions():
             code="bad.handler", channels=frozenset({AssistantChannel.WEB}), audiences=frozenset({"requester"}),
             module=None, action=None, risk=RiskLevel.L0, input_model=_CapabilityInput, handler=None,
         ))
+
+
+def test_registry_rejects_raw_string_risks():
+    """Treating string risks as enums would bypass registration invariants and later policy comparisons."""
+    registry = CapabilityRegistry()
+    valid = _definition("safe.read", audiences={"requester"}, module="knowledge", action="view", risk=RiskLevel.L1)
+    registry.register(valid)
+    for code, risk in (("raw-l3", "L3"), ("raw-l4", "L4")):
+        with pytest.raises(ValueError, match="RiskLevel"):
+            registry.register(_definition(code, audiences={"requester"}, module="knowledge", action="view", risk=risk, confirmation=True))
+
+
+def test_registry_exports_zero_schemas_for_an_explicit_empty_visible_collection():
+    """Falling back from an explicit empty discovery result would leak the complete capability registry."""
+    registry = CapabilityRegistry()
+    valid = _definition("safe.read", audiences={"requester"}, module="knowledge", action="view", risk=RiskLevel.L1)
+    registry.register(valid)
+    assert registry.model_schemas([]) == []
+    assert registry.model_schemas() == [valid.model_schema()]
+
+
+def test_registry_rejects_dangerous_input_fields_and_sanitizes_schema_defaults_and_examples():
+    """Allowing credential/authorization fields or raw schema defaults would leak authority or secrets to a model."""
+    registry = CapabilityRegistry()
+    for code, input_model in (
+        ("unsafe.credential", _UnsafeCredentialInput),
+        ("unsafe.alias", _UnsafeAliasInput),
+        ("unsafe.authorization", _UnsafeAuthorizationInput),
+    ):
+        with pytest.raises(ValueError, match="unsafe input field"):
+            registry.register(CapabilityDefinition(
+                code=code,
+                channels=frozenset({AssistantChannel.WEB}),
+                audiences=frozenset({"requester"}),
+                module="knowledge",
+                action="view",
+                risk=RiskLevel.L1,
+                input_model=input_model,
+                handler=_handler,
+            ))
+
+    safe = CapabilityDefinition(
+        code="safe.schema",
+        channels=frozenset({AssistantChannel.WEB}),
+        audiences=frozenset({"requester"}),
+        module="knowledge",
+        action="view",
+        risk=RiskLevel.L1,
+        input_model=_SchemaDefaultsInput,
+        handler=_handler,
+    )
+    schema = registry.register(safe).model_schema()
+    rendered = str(schema)
+    assert "default-token-raw" not in rendered
+    assert "default-basic-raw" not in rendered
+    assert "default" not in rendered
+    assert "examples" not in rendered
+    assert all(name not in rendered for name in ("access_token", "clientSecret", "roles"))

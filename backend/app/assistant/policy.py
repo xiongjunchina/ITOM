@@ -95,6 +95,8 @@ def capability_context_for_user(
     if profile_policy is None:
         return None
     _codes, profile_max_risk = profile_policy
+    if audience == "auditor":
+        profile_max_risk = _minimum_risk(profile_max_risk, RiskLevel.L1)
     return CapabilityContext(
         channel=resolved_channel,
         audience=audience,

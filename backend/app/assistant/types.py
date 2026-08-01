@@ -1,9 +1,90 @@
 """Typed, server-owned contracts for registered assistant capabilities."""
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Mapping
+import re
+from typing import Any, Callable, Mapping, get_args, get_origin
 
 from pydantic import BaseModel
+
+
+_UNSAFE_INPUT_NAMES = frozenset({
+    "password", "passwd", "pwd", "token", "accesstoken", "refreshtoken", "idtoken",
+    "clientsecret", "secret", "apikey", "apiaccesskey", "privatekey", "credential", "credentials",
+    "cookie", "setcookie", "authorization", "bearer", "jwt", "role", "roles", "audience",
+    "permission", "permissions", "authuser", "authuserid", "userid", "user", "actor", "actorid",
+    "currentuser", "securitycontext",
+})
+_SCHEMA_VALUE_KEYS = frozenset({"default", "example", "examples"})
+
+
+def _normalise_name(value: object) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+
+def _unsafe_input_name(value: object) -> bool:
+    normalized = _normalise_name(value)
+    return (
+        normalized in _UNSAFE_INPUT_NAMES
+        or normalized.startswith("internal")
+        or any(marker in normalized for marker in ("password", "secret", "token", "credential"))
+    )
+
+
+def _field_aliases(field_name: str, field: object) -> set[str]:
+    aliases = {field_name}
+    for attribute in ("alias", "validation_alias", "serialization_alias"):
+        value = getattr(field, attribute, None)
+        if isinstance(value, str):
+            aliases.add(value)
+        for choice in getattr(value, "choices", ()):
+            if isinstance(choice, str):
+                aliases.add(choice)
+    return aliases
+
+
+def _nested_models(annotation: object) -> set[type[BaseModel]]:
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return {annotation}
+    nested: set[type[BaseModel]] = set()
+    for argument in get_args(annotation):
+        nested.update(_nested_models(argument))
+    return nested
+
+
+def validate_capability_input_model(input_model: type[BaseModel]) -> None:
+    """Reject model-controlled credentials or authorization facts before registration."""
+    checked: set[type[BaseModel]] = set()
+
+    def check(model: type[BaseModel]) -> None:
+        if model in checked:
+            return
+        checked.add(model)
+        for field_name, field in model.model_fields.items():
+            unsafe = next((name for name in _field_aliases(field_name, field) if _unsafe_input_name(name)), None)
+            if unsafe:
+                raise ValueError(f"unsafe input field: {unsafe}")
+            for nested in _nested_models(field.annotation):
+                check(nested)
+
+    check(input_model)
+
+
+def _sanitize_schema(value: object) -> object:
+    """Remove default/example values and unsafe keys before a model sees JSON Schema."""
+    from app.assistant.redaction import redact_for_model
+
+    if isinstance(value, Mapping):
+        clean: dict[object, object] = {}
+        for key, child in value.items():
+            if _normalise_name(key) in _SCHEMA_VALUE_KEYS or _unsafe_input_name(key):
+                continue
+            clean[key] = _sanitize_schema(child)
+        return clean
+    if isinstance(value, list):
+        return [_sanitize_schema(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_schema(item) for item in value)
+    return redact_for_model(value)
 
 
 class RiskLevel(str, Enum):
@@ -73,5 +154,5 @@ class CapabilityDefinition:
             "code": self.code,
             "description": self.description or self.code,
             "risk": self.risk.value,
-            "input_schema": self.input_model.model_json_schema(),
+            "input_schema": _sanitize_schema(self.input_model.model_json_schema()),
         }

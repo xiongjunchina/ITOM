@@ -64,3 +64,40 @@ def test_redaction_supports_declared_sensitive_field_names_for_all_output_bounda
         assert "custom-secret-raw" not in rendered
         assert output["form"]["private_answer"] == "[REDACTED]"
         assert output["form"]["title"] == "printer"
+
+
+def test_redaction_handles_credential_key_variants_and_header_assignment_and_general_jwt_text():
+    """Missing modern credential spelling or header/assignment patterns would leak raw text outside sensitive keys."""
+    raw = {
+        "access_token": "access-token-raw",
+        "refreshToken": "refresh-token-raw",
+        "client_secret": "client-secret-raw",
+        "apiKey": "api-key-raw",
+        "note": (
+            "Cookie: session=cookie-raw; theme=dark\n"
+            "Set-Cookie: sid=set-cookie-raw; HttpOnly\n"
+            "Authorization: Basic basic-raw-value\n"
+            "Authorization: Digest digest-raw-value\n"
+            "password=assignment-password-raw token: assignment-token-raw secret=assignment-secret-raw\n"
+            "jwt segmentone.segmenttwo.segmentthree release.2026.version"
+        ),
+    }
+    raw_texts = {
+        "access-token-raw", "refresh-token-raw", "client-secret-raw", "api-key-raw",
+        "cookie-raw", "set-cookie-raw", "basic-raw-value", "digest-raw-value",
+        "assignment-password-raw", "assignment-token-raw", "assignment-secret-raw",
+        "segmentone.segmenttwo.segmentthree",
+    }
+
+    outputs = [redact_for_model(raw), redact_for_message(raw), redact_for_log(raw)]
+
+    assert raw["access_token"] == "access-token-raw"
+    assert "release.2026.version" in raw["note"]
+    for output in outputs:
+        rendered = json.dumps(output, ensure_ascii=False)
+        assert not any(value in rendered for value in raw_texts)
+        assert output["access_token"] == "[REDACTED]"
+        assert output["refreshToken"] == "[REDACTED]"
+        assert output["client_secret"] == "[REDACTED]"
+        assert output["apiKey"] == "[REDACTED]"
+        assert "release.2026.version" in output["note"]
