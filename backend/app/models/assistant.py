@@ -6,7 +6,7 @@ continue to use the existing ITOM services.
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import GlidBase, JsonCol
@@ -34,6 +34,9 @@ class AiProviderConfig(GlidBase):
 
 class AiAgentProfile(GlidBase):
     __tablename__ = "ai_agent_profile"
+    __table_args__ = (
+        CheckConstraint("retention_days BETWEEN 0 AND 90", name="ck_ai_agent_profile_retention_days"),
+    )
 
     code: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str | None] = mapped_column(String(128))
@@ -42,6 +45,7 @@ class AiAgentProfile(GlidBase):
     max_risk_level: Mapped[str] = mapped_column(String(2), default="L1")
     status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    retention_days: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
 
 
 class AiAgentProfileVersion(GlidBase):

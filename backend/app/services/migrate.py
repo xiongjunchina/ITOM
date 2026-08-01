@@ -831,26 +831,29 @@ def backfill_wbs_progress_hierarchy(db: Session):
 
 ASSISTANT_SCHEMA_STATEMENTS = (
     "CREATE TABLE IF NOT EXISTS ai_provider_config ("
-    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL UNIQUE, name VARCHAR(128) NOT NULL, "
+    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, "
     "provider_type VARCHAR(32) NOT NULL, api_base_url VARCHAR(300), api_key_encrypted TEXT, model VARCHAR(128), "
     "timeout_seconds INTEGER NOT NULL DEFAULT 30, max_output_tokens INTEGER NOT NULL DEFAULT 2048, temperature DOUBLE PRECISION, "
     "capability_probe JSONB NOT NULL DEFAULT '{}'::jsonb, probe_status VARCHAR(16) NOT NULL DEFAULT 'unverified', "
     "last_probed_at TIMESTAMP, is_primary BOOLEAN NOT NULL DEFAULT false, fallback_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), "
     "enabled BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
-    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false)",
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false, "
+    "CONSTRAINT uq_ai_provider_config_code UNIQUE(code))",
     "CREATE TABLE IF NOT EXISTS ai_agent_profile ("
-    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL UNIQUE, name VARCHAR(128), audience VARCHAR(32) NOT NULL, "
+    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL, name VARCHAR(128), audience VARCHAR(32) NOT NULL, "
     "default_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', "
     "status VARCHAR(16) NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT false, "
+    "retention_days INTEGER NOT NULL DEFAULT 30, "
     "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
-    "is_example BOOLEAN NOT NULL DEFAULT false)",
+    "is_example BOOLEAN NOT NULL DEFAULT false, CONSTRAINT uq_ai_agent_profile_code UNIQUE(code), "
+    "CONSTRAINT ck_ai_agent_profile_retention_days CHECK (retention_days BETWEEN 0 AND 90))",
     "CREATE TABLE IF NOT EXISTS ai_agent_profile_version ("
     "id VARCHAR(26) PRIMARY KEY, profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), version INTEGER NOT NULL, "
     "status VARCHAR(16) NOT NULL DEFAULT 'draft', system_prompt_zh TEXT, system_prompt_en TEXT, "
     "enabled_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb, knowledge_scope JSONB NOT NULL DEFAULT '[]'::jsonb, "
     "max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', published_by VARCHAR(26) REFERENCES auth_user(id), published_at TIMESTAMP, "
     "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
-    "is_example BOOLEAN NOT NULL DEFAULT false, UNIQUE(profile_id, version))",
+    "is_example BOOLEAN NOT NULL DEFAULT false, CONSTRAINT uq_ai_agent_profile_version_profile_version UNIQUE(profile_id, version))",
     "CREATE TABLE IF NOT EXISTS ai_conversation ("
     "id VARCHAR(26) PRIMARY KEY, auth_user_id VARCHAR(26) NOT NULL REFERENCES auth_user(id), "
     "profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), "
@@ -871,7 +874,7 @@ ASSISTANT_SCHEMA_STATEMENTS = (
     "status VARCHAR(16) NOT NULL DEFAULT 'prepared', expires_at TIMESTAMP, consumed_at TIMESTAMP, result_code VARCHAR(64), "
     "result_summary JSONB, result_entity_type VARCHAR(32), result_entity_id VARCHAR(26), created_at TIMESTAMP DEFAULT now(), "
     "updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false, "
-    "UNIQUE(auth_user_id, capability_code, idempotency_key))",
+    "CONSTRAINT uq_ai_action_user_capability_idempotency UNIQUE(auth_user_id, capability_code, idempotency_key))",
     "CREATE TABLE IF NOT EXISTS ai_provider_call ("
     "id VARCHAR(26) PRIMARY KEY, provider_id VARCHAR(26) NOT NULL REFERENCES ai_provider_config(id), "
     "conversation_id VARCHAR(26) REFERENCES ai_conversation(id), message_id VARCHAR(26) REFERENCES ai_message(id), "
@@ -884,57 +887,150 @@ ASSISTANT_SCHEMA_STATEMENTS = (
 
 ASSISTANT_ENSURE_COLUMNS = {
     "ai_provider_config": [
+        ("code", "VARCHAR(64)"),
+        ("name", "VARCHAR(128)"),
+        ("provider_type", "VARCHAR(32)"),
+        ("api_base_url", "VARCHAR(300)"),
+        ("api_key_encrypted", "TEXT"),
+        ("model", "VARCHAR(128)"),
+        ("timeout_seconds", "INTEGER NOT NULL DEFAULT 30"),
+        ("max_output_tokens", "INTEGER NOT NULL DEFAULT 2048"),
+        ("temperature", "DOUBLE PRECISION"),
         ("capability_probe", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("probe_status", "VARCHAR(16) NOT NULL DEFAULT 'unverified'"),
+        ("last_probed_at", "TIMESTAMP"),
+        ("is_primary", "BOOLEAN NOT NULL DEFAULT false"),
+        ("fallback_provider_id", "VARCHAR(26)"),
         ("enabled", "BOOLEAN NOT NULL DEFAULT false"),
     ],
     "ai_agent_profile": [
+        ("code", "VARCHAR(64)"),
+        ("name", "VARCHAR(128)"),
+        ("audience", "VARCHAR(32)"),
+        ("default_provider_id", "VARCHAR(26)"),
+        ("max_risk_level", "VARCHAR(2) NOT NULL DEFAULT 'L1'"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'draft'"),
         ("enabled", "BOOLEAN NOT NULL DEFAULT false"),
+        ("retention_days", "INTEGER NOT NULL DEFAULT 30"),
     ],
     "ai_agent_profile_version": [
+        ("profile_id", "VARCHAR(26)"),
+        ("version", "INTEGER"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'draft'"),
+        ("system_prompt_zh", "TEXT"),
+        ("system_prompt_en", "TEXT"),
         ("enabled_capabilities", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         ("knowledge_scope", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("max_risk_level", "VARCHAR(2) NOT NULL DEFAULT 'L1'"),
+        ("published_by", "VARCHAR(26)"),
+        ("published_at", "TIMESTAMP"),
     ],
     "ai_conversation": [
+        ("auth_user_id", "VARCHAR(26)"),
+        ("profile_id", "VARCHAR(26)"),
+        ("profile_version_id", "VARCHAR(26)"),
+        ("language", "VARCHAR(16) NOT NULL DEFAULT 'zh-CN'"),
         ("page_context", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'active'"),
+        ("expires_at", "TIMESTAMP"),
+        ("archived_at", "TIMESTAMP"),
     ],
     "ai_message": [
+        ("conversation_id", "VARCHAR(26)"),
+        ("role", "VARCHAR(16)"),
         ("content", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("redacted_text", "TEXT"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'completed'"),
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("duration_ms", "INTEGER"),
     ],
     "ai_action": [
+        ("conversation_id", "VARCHAR(26)"),
+        ("auth_user_id", "VARCHAR(26)"),
+        ("message_id", "VARCHAR(26)"),
+        ("capability_code", "VARCHAR(96)"),
+        ("risk_level", "VARCHAR(2)"),
         ("normalized_payload", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("payload_digest", "VARCHAR(64)"),
+        ("token_hash", "VARCHAR(64)"),
+        ("idempotency_key", "VARCHAR(128)"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'prepared'"),
+        ("expires_at", "TIMESTAMP"),
+        ("consumed_at", "TIMESTAMP"),
+        ("result_code", "VARCHAR(64)"),
+        ("result_summary", "JSONB"),
+        ("result_entity_type", "VARCHAR(32)"),
+        ("result_entity_id", "VARCHAR(26)"),
     ],
     "ai_provider_call": [
+        ("provider_id", "VARCHAR(26)"),
+        ("conversation_id", "VARCHAR(26)"),
+        ("message_id", "VARCHAR(26)"),
+        ("profile_version_id", "VARCHAR(26)"),
+        ("model", "VARCHAR(128)"),
+        ("purpose", "VARCHAR(32) NOT NULL DEFAULT 'chat'"),
+        ("input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ("result_code", "VARCHAR(64)"),
         ("status", "VARCHAR(16) NOT NULL DEFAULT 'completed'"),
+        ("error_redacted", "JSONB"),
     ],
 }
 
 ASSISTANT_INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_provider_type ON ai_provider_config (provider_type)",
     "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_probe_status ON ai_provider_config (probe_status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_is_primary ON ai_provider_config (is_primary)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_fallback_provider_id ON ai_provider_config (fallback_provider_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_enabled ON ai_provider_config (enabled)",
     "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_audience ON ai_agent_profile (audience)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_default_provider_id ON ai_agent_profile (default_provider_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_status ON ai_agent_profile (status)",
     "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_enabled ON ai_agent_profile (enabled)",
     "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_profile_id ON ai_agent_profile_version (profile_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_status ON ai_agent_profile_version (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_published_by ON ai_agent_profile_version (published_by)",
     "CREATE INDEX IF NOT EXISTS ix_ai_conversation_auth_user_id ON ai_conversation (auth_user_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_conversation_profile_id ON ai_conversation (profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_profile_version_id ON ai_conversation (profile_version_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_conversation_status ON ai_conversation (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_expires_at ON ai_conversation (expires_at)",
     "CREATE INDEX IF NOT EXISTS ix_ai_message_conversation_id ON ai_message (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_message_role ON ai_message (role)",
     "CREATE INDEX IF NOT EXISTS ix_ai_message_status ON ai_message (status)",
     "CREATE INDEX IF NOT EXISTS ix_ai_action_conversation_id ON ai_action (conversation_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_action_auth_user_id ON ai_action (auth_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_message_id ON ai_action (message_id)",
     "CREATE INDEX IF NOT EXISTS ix_ai_action_capability_code ON ai_action (capability_code)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_token_hash ON ai_action (token_hash)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_idempotency_key ON ai_action (idempotency_key)",
     "CREATE INDEX IF NOT EXISTS ix_ai_action_status ON ai_action (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_expires_at ON ai_action (expires_at)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_result_code ON ai_action (result_code)",
     "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_provider_id ON ai_provider_call (provider_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_conversation_id ON ai_provider_call (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_message_id ON ai_provider_call (message_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_profile_version_id ON ai_provider_call (profile_version_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_purpose ON ai_provider_call (purpose)",
     "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_result_code ON ai_provider_call (result_code)",
     "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_status ON ai_provider_call (status)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_provider_config_code ON ai_provider_config (code)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_agent_profile_code ON ai_agent_profile (code)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_agent_profile_version_profile_version "
+    "ON ai_agent_profile_version (profile_id, version)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_action_user_capability_idempotency "
+    "ON ai_action (auth_user_id, capability_code, idempotency_key)",
+)
+
+ASSISTANT_CONSTRAINT_STATEMENTS = (
+    "DO $$ BEGIN "
+    "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ai_agent_profile_retention_days' "
+    "AND conrelid='ai_agent_profile'::regclass) THEN "
+    "ALTER TABLE ai_agent_profile ADD CONSTRAINT ck_ai_agent_profile_retention_days "
+    "CHECK (retention_days BETWEEN 0 AND 90); "
+    "END IF; END $$",
 )
 
 
@@ -951,6 +1047,8 @@ def ensure_assistant_schema(db: Session):
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                 logger.info("added assistant column %s.%s", table, name)
     for statement in ASSISTANT_INDEX_STATEMENTS:
+        db.execute(text(statement))
+    for statement in ASSISTANT_CONSTRAINT_STATEMENTS:
         db.execute(text(statement))
     db.commit()
 
