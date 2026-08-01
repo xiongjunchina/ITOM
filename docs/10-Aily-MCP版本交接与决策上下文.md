@@ -83,6 +83,8 @@ Fix Round 5 封闭了 SQLAlchemy 不进入 visitor AST 的原始查询修饰入�
 
 网页智能体采用双入口、统一能力内核：网页使用当前 ITOM 登录会话，Aily 保持现有 JWT/MCP 身份，两者只复用下层领域服务和业务约束。WA0 Task 1–7 已实现默认关闭的持久化与 `admin_ai` 权限基础、固定能力注册/请求级策略/递归脱敏、安全 OpenAI-compatible 模型网关、仅限 `admin_ai` 的提供商/四类固定档案管理 API、当前登录用户的会话 API、L3 预览/确认/取消通用动作边界，以及事件固定为 `meta|delta|message|action|error|done` 的受控 POST-SSE/工具循环。Task 7 Fix Round 1 把运行时收紧为标量 turn 快照和分段短事务：L1/L2 只取得只读门面与不可变 actor，L3 只产生服务端“待确认、未执行”预览，普通模型 prose 只作为 `advisory/not_executed`，请求幂等摘要使用服务端密钥 HMAC。Fix Round 2 进一步完成四项收口：提示泄漏检测使用 NFKC/casefold、清除 format/零宽字符并同时比较语义文本与去标点紧凑文本；最终事务先锁定刷新账号并锁后校验，再按会话/档案/占位顺序完成；L1/L2 改为专用有界执行器和合作式取消，满载在工具 Session 创建前拒绝；工具/数据库 deadline 与 worker/queue 均有安全配置范围和关系校验。断流/deadline 立即停止等待和发事件，但不承诺强杀任意 Python 同步线程，非合作式阻塞可能后台运行至返回且 Session 最终关闭；任意硬终止需要进程隔离。会话和动作均按数据库 `auth_user_id` 隔离，模型、提示词和客户端声明不是授权来源；每次工具调用按固定 code 重新授权。已有的提供商安全、档案发布、会话归属/保留、递归脱敏、审计原子性和失败关闭契约继续有效。管理员 UI 和具体业务处理器仍待 Task 8+ 实现。普通业务用户网页智能体仍只处理本人服务请求，BDO 增加本人 IT 需求；IT 员工按实际权限和流程任务获得全模块指导及分阶段写操作。现有“创建单据指引”由真实权限计算可用路径，仍是模型不可用时的确定性降级。真实 PostgreSQL 双 Session、账号/会话/档案锁等待、非合作式线程与真实 ASGI 断流证据留待 Task 9。正式设计见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
 
+Task 7 Fix Round 3 在不扩大业务能力的前提下关闭四项运行时缺口：泄漏紧凑指纹在 NFKC/casefold 后只保留 Unicode `L*`/`N*`，因此 `M*`/`C*`/`Z*`/`P*`/`S*` 插入均不能切断匹配；工具调用先预留有界容量，再进行能力发现/重授权，满载不创建 Session、不查权限、不运行 handler；开始/幂等、能力发现、原生降级、Gateway 选择/审计、最终化和失败清理的同步数据库边界全部移出 async SSE 事件循环；最终化在 provider 返回后及锁齐账号/会话/档案/占位后、写 `completed`/commit 前合作式检查断流并在已观察取消时 rollback。该护栏不宣称强杀线程或消除真实 socket/锁调度的全部微小竞态，Task 9 仍须提供真实 PostgreSQL/ASGI 证据。
+
 ## 4. 已确认的架构
 
 采用**方案 A：MCP Server 内嵌现有 FastAPI 后端**。

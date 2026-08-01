@@ -1,8 +1,11 @@
 """WA0 prompt-authority separation contracts."""
 
 import json
+import unicodedata
 
-from app.assistant.orchestrator import build_prompt_layers
+import pytest
+
+from app.assistant.orchestrator import _normalize_leak_text, build_prompt_layers
 
 
 def test_untrusted_user_page_knowledge_and_business_content_never_enter_system_authority():
@@ -62,3 +65,33 @@ def test_browser_authority_fields_are_rejected_before_streaming(client, admin_he
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("expected_category", "inserted"),
+    [
+        ("Mn", "\u0300"),
+        ("Me", "\u0488"),
+        ("Cc", "\u0001"),
+    ],
+)
+def test_leak_compact_form_keeps_only_unicode_letters_and_numbers(expected_category, inserted):
+    """Marks and controls must not split an authority fingerprint."""
+    assert unicodedata.category(inserted) == expected_category
+
+    compact = _normalize_leak_text(f"A{inserted}-中 9").compact
+
+    assert compact == "a中9"
+    assert all(unicodedata.category(character)[0] in {"L", "N"} for character in compact)
+
+
+def test_leak_compact_category_samples_remove_every_non_content_class():
+    """Representative Mark/Control/Separator/Punctuation/Symbol samples are all discarded."""
+    samples = "\u0300\u0488\u0001\u200b\u2028，-+"
+    categories = {unicodedata.category(character)[0] for character in samples}
+    assert {"M", "C", "Z", "P", "S"}.issubset(categories)
+
+    normalized = _normalize_leak_text("安" + samples + "全42")
+
+    assert normalized.compact == "安全42"
+    assert _normalize_leak_text("").compact == ""

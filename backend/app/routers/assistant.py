@@ -1,5 +1,6 @@
 """Authenticated owner-only endpoints for web assistant conversations and actions."""
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -109,7 +110,7 @@ async def stream_conversation_message(
     # Authentication has already produced a scalar identity.  End the request
     # dependency transaction before returning a long-lived StreamingResponse;
     # the orchestrator opens only dedicated short sessions thereafter.
-    db.rollback()
+    await asyncio.to_thread(db.rollback)
 
     async def generate():
         orchestrator = AssistantOrchestrator(

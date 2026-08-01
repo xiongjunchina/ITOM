@@ -59,7 +59,7 @@ class AssistantGateway:
         risk = _request_risk(request)
         if risk is RiskLevel.L4:
             raise GatewayError("GATEWAY_RISK_FORBIDDEN", "the requested risk level is not available")
-        providers = self._provider_chain()
+        providers = await asyncio.to_thread(self._provider_chain)
         attempted = False
 
         for position, config in enumerate(providers):
@@ -94,7 +94,7 @@ class AssistantGateway:
                         "provider stream protocol validation failed",
                     )
             except (asyncio.CancelledError, GeneratorExit):
-                self._audit(
+                await self._audit_async(
                     config,
                     request,
                     purpose,
@@ -110,7 +110,7 @@ class AssistantGateway:
                 )
                 raise
             except ProviderError as exc:
-                self._audit(
+                await self._audit_async(
                     config,
                     request,
                     purpose,
@@ -125,7 +125,7 @@ class AssistantGateway:
                     raise GatewayError("GATEWAY_STREAM_FAILED", "model stream failed after output began") from None
                 continue
             except ProviderConfigurationError:
-                self._audit(
+                await self._audit_async(
                     config,
                     request,
                     purpose,
@@ -136,7 +136,7 @@ class AssistantGateway:
                 )
                 continue
             except Exception:
-                self._audit(
+                await self._audit_async(
                     config,
                     request,
                     purpose,
@@ -151,7 +151,7 @@ class AssistantGateway:
                     raise GatewayError("GATEWAY_STREAM_FAILED", "model stream failed after output began") from None
                 continue
             else:
-                audited = self._audit(
+                audited = await self._audit_async(
                     config,
                     request,
                     purpose,
@@ -284,6 +284,9 @@ class AssistantGateway:
                 audit_db.close()
             except Exception:
                 pass
+
+    async def _audit_async(self, *args, **kwargs) -> bool:
+        return await asyncio.to_thread(self._audit, *args, **kwargs)
 
     @staticmethod
     def _default_provider(config: AiProviderConfig) -> ModelProvider:

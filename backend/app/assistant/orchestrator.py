@@ -19,7 +19,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.assistant.gateway import AssistantGateway, GatewayError
-from app.assistant.execution import BoundedToolExecutor, ToolExecutorSaturated
+from app.assistant.execution import (
+    BoundedExecutorReservation,
+    BoundedToolExecutor,
+    ToolExecutorSaturated,
+)
 from app.assistant.policy import capabilities_for_user
 from app.assistant.providers import ChatRequest, ModelStreamEvent
 from app.assistant.redaction import redact_for_message, redact_for_model
@@ -57,6 +61,11 @@ logger = logging.getLogger("aom.assistant.orchestrator")
 _DEFAULT_TOOL_EXECUTOR = BoundedToolExecutor(
     max_workers=settings.ai_assistant_tool_executor_workers,
     max_queue_size=settings.ai_assistant_tool_executor_queue_size,
+)
+_DEFAULT_DB_EXECUTOR = BoundedToolExecutor(
+    max_workers=settings.ai_assistant_tool_executor_workers,
+    max_queue_size=settings.ai_assistant_tool_executor_queue_size,
+    thread_name_prefix="itom-assistant-db",
 )
 
 _PLATFORM_INSTRUCTION = """ITOM_PLATFORM_SECURITY_INSTRUCTION
@@ -231,21 +240,27 @@ class _LeakFingerprints:
 
 
 def _normalize_leak_text(value: str) -> _LeakText:
-    """Canonicalize authority text against invisible and punctuation insertion.
+    """Canonicalize authority text against every non-content insertion class.
 
     The semantic form keeps punctuation boundaries for sentence matching.  The
-    compact form removes Unicode punctuation/symbols and whitespace so format
-    characters or punctuation inserted between every character cannot evade a
-    fingerprint.  Common fragments shorter than the fingerprint threshold are
-    never registered.
+    compact form keeps only Unicode letters and numbers after NFKC/casefold, so
+    Mark, Control, Separator, Punctuation, and Symbol characters cannot split a
+    fingerprint. Common fragments shorter than the threshold are not stored.
     """
     normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    without_format = "".join(character for character in normalized if unicodedata.category(character) != "Cf")
-    semantic = re.sub(r"\s+", " ", without_format).strip()
+    decomposed = unicodedata.normalize("NFKD", normalized)
+    semantic_characters = []
+    for character in normalized:
+        category = unicodedata.category(character)
+        if category[0] in {"C", "Z"}:
+            semantic_characters.append(" ")
+        elif category[0] != "M":
+            semantic_characters.append(character)
+    semantic = re.sub(r"\s+", " ", "".join(semantic_characters)).strip()
     compact = "".join(
         character
-        for character in semantic
-        if not character.isspace() and unicodedata.category(character)[:1] not in {"P", "S"}
+        for character in decomposed
+        if unicodedata.category(character)[0] in {"L", "N"}
     )
     return _LeakText(semantic=semantic, compact=compact)
 
@@ -309,6 +324,7 @@ class AssistantOrchestrator:
         turn_timeout_seconds: float = DEFAULT_TURN_TIMEOUT_SECONDS,
         tool_timeout_seconds: float | None = None,
         tool_executor: BoundedToolExecutor | None = None,
+        db_executor: BoundedToolExecutor | None = None,
         session_factory: Callable[[], Session] = SessionLocal,
     ) -> None:
         resolved_actor_id = actor_id or getattr(actor, "id", None)
@@ -330,6 +346,7 @@ class AssistantOrchestrator:
             max(1, int(self.tool_timeout_seconds * 1000) - 1),
         )
         self.tool_executor = tool_executor or _DEFAULT_TOOL_EXECUTOR
+        self.db_executor = db_executor or _DEFAULT_DB_EXECUTOR
         self.session_factory = session_factory
         # Compatibility callers may construct from an authenticated request
         # Session.  Scalarize identity and end that transaction immediately;
@@ -348,9 +365,14 @@ class AssistantOrchestrator:
         business_context: object | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         state: _TurnState | None = None
-        fallback_path = self._native_fallback_path()
+        fallback_path = "/"
         try:
-            state = self._start_turn(
+            fallback_path = await self._await_db_worker(
+                self._native_fallback_path,
+                monitor_disconnect=True,
+            )
+            state = await self._await_db_worker(
+                self._start_turn,
                 conversation_id=conversation_id,
                 content=content,
                 client_message_id=client_message_id,
@@ -400,32 +422,37 @@ class AssistantOrchestrator:
                     knowledge_context=knowledge_context,
                     business_context=business_context,
                 )
-            self._complete_assistant_message(state, outcome)
+            await self._ensure_connected()
+            await self._await_finalization(state, outcome)
+            await self._ensure_connected()
             for event in client_events:
+                await self._ensure_connected()
                 yield dict(event)
+            await self._ensure_connected()
             yield {
                 "type": "message",
                 "data": {"message": _message_for_client(state.assistant_message_id, outcome.content())},
             }
+            await self._ensure_connected()
             yield {"type": "done", "data": {"finish_reason": finish_reason}}
         except asyncio.CancelledError:
-            self._finish_placeholder(state, "cancelled")
+            await self._finish_placeholder_safely(state, "cancelled")
             raise
         except TimeoutError:
-            self._finish_placeholder(state, "failed")
+            await self._finish_placeholder_safely(state, "failed")
             yield self._error_event("AI_ASSISTANT_TIMEOUT", state.fallback_path)
             yield {"type": "done", "data": {"finish_reason": "error"}}
         except AppError as exc:
-            self._finish_placeholder(state, "failed")
+            await self._finish_placeholder_safely(state, "failed")
             logger.info("assistant turn stopped by guarded error code=%s", exc.code)
             yield self._error_event(exc.code, state.fallback_path)
             yield {"type": "done", "data": {"finish_reason": "error"}}
         except GatewayError:
-            self._finish_placeholder(state, "failed")
+            await self._finish_placeholder_safely(state, "failed")
             yield self._error_event("AI_ASSISTANT_PROVIDER_UNAVAILABLE", state.fallback_path)
             yield {"type": "done", "data": {"finish_reason": "error"}}
         except Exception as exc:
-            self._finish_placeholder(state, "failed")
+            await self._finish_placeholder_safely(state, "failed")
             logger.warning("assistant turn failed safely exception_type=%s", type(exc).__name__)
             yield self._error_event("AI_ASSISTANT_PROVIDER_UNAVAILABLE", state.fallback_path)
             yield {"type": "done", "data": {"finish_reason": "error"}}
@@ -615,7 +642,7 @@ class AssistantOrchestrator:
         knowledge_context: object | None,
         business_context: object | None,
     ) -> tuple[list[Mapping[str, Any]], _TurnOutcome, str]:
-        definitions = self._visible_definitions(state)
+        definitions = await self._await_db_worker(self._visible_definitions, state)
         messages = list(build_prompt_layers(
             language=state.language,
             profile_instruction=state.profile_instruction,
@@ -822,69 +849,86 @@ class AssistantOrchestrator:
         arguments = dict(event.arguments or {})
         if _RESERVED_TOOL_ARGUMENTS.intersection(arguments):
             raise AppError("AI_ASSISTANT_TOOL_ARGUMENTS_INVALID", "模型能力参数无效", 422)
-        definition = next((item for item in self._visible_definitions(state) if item.code == code), None)
-        if definition is None or self.registry.get(code) is not definition:
-            raise AppError("AI_ASSISTANT_TOOL_UNAVAILABLE", "模型请求了不可用能力", 403)
         try:
-            parsed = definition.input_model.model_validate(arguments)
-        except ValidationError:
-            raise AppError("AI_ASSISTANT_TOOL_ARGUMENTS_INVALID", "模型能力参数无效", 422) from None
+            reservation = self.tool_executor.reserve()
+        except ToolExecutorSaturated:
+            raise AppError("AI_ASSISTANT_TOOL_BUSY", "能力执行资源繁忙，请稍后重试", 409) from None
+        try:
+            definitions = await self._await_db_worker(self._visible_definitions, state)
+            definition = next((item for item in definitions if item.code == code), None)
+            if definition is None or self.registry.get(code) is not definition:
+                raise AppError("AI_ASSISTANT_TOOL_UNAVAILABLE", "模型请求了不可用能力", 403)
+            try:
+                parsed = definition.input_model.model_validate(arguments)
+            except ValidationError:
+                raise AppError("AI_ASSISTANT_TOOL_ARGUMENTS_INVALID", "模型能力参数无效", 422) from None
 
-        if definition.risk is RiskLevel.L3:
-            action = await self._await_tool_worker(
-                self._prepare_action_worker,
+            if definition.risk is RiskLevel.L3:
+                action = await self._await_tool_worker(
+                    self._prepare_action_worker,
+                    state,
+                    definition.code,
+                    arguments,
+                    _action_idempotency_key(state.client_digest, fingerprint),
+                    reservation=reservation,
+                )
+                event_data = {
+                    "action_id": action["action_id"],
+                    "risk": action["risk"],
+                    "preview": action.get("preview", {}),
+                    "confirmation_token": action.get("confirmation_token"),
+                    "expires_at": action.get("confirmation_expires_at"),
+                }
+                preview_text = (
+                    "A server preview was prepared. Nothing has been executed; confirm it separately to continue."
+                    if state.language.lower().startswith("en")
+                    else "服务端已生成待确认预览；当前仅为预览，尚未执行任何业务变更。"
+                )
+                return _ToolResult(
+                    client_event={"type": "action", "data": redact_for_message(event_data)},
+                    preview_outcome=_TurnOutcome(
+                        authority="server_preview",
+                        operation_status="prepared_not_executed",
+                        text=preview_text,
+                        action_id=action["action_id"],
+                    ),
+                )
+
+            result = await self._await_tool_worker(
+                self._execute_readonly_capability_worker,
                 state,
                 definition.code,
-                arguments,
-                _action_idempotency_key(state.client_digest, fingerprint),
+                parsed,
+                reservation=reservation,
             )
-            event_data = {
-                "action_id": action["action_id"],
-                "risk": action["risk"],
-                "preview": action.get("preview", {}),
-                "confirmation_token": action.get("confirmation_token"),
-                "expires_at": action.get("confirmation_expires_at"),
+            provider_result = {
+                "marker": "UNTRUSTED_TOOL_RESULT",
+                "capability_code": definition.code,
+                "status": result.status,
+                "data": dict(result.data or {}),
+                "message": result.message,
             }
-            preview_text = (
-                "A server preview was prepared. Nothing has been executed; confirm it separately to continue."
-                if state.language.lower().startswith("en")
-                else "服务端已生成待确认预览；当前仅为预览，尚未执行任何业务变更。"
-            )
-            return _ToolResult(
-                client_event={"type": "action", "data": redact_for_message(event_data)},
-                preview_outcome=_TurnOutcome(
-                    authority="server_preview",
-                    operation_status="prepared_not_executed",
-                    text=preview_text,
-                    action_id=action["action_id"],
-                ),
-            )
+            return _ToolResult(provider_message={
+                "role": "tool",
+                "tool_call_id": event.tool_call_id,
+                "content": _json_text(redact_for_model(provider_result)),
+            })
+        finally:
+            reservation.release()
 
-        result = await self._await_tool_worker(
-            self._execute_readonly_capability_worker,
-            state,
-            definition.code,
-            parsed,
-        )
-        provider_result = {
-            "marker": "UNTRUSTED_TOOL_RESULT",
-            "capability_code": definition.code,
-            "status": result.status,
-            "data": dict(result.data or {}),
-            "message": result.message,
-        }
-        return _ToolResult(provider_message={
-            "role": "tool",
-            "tool_call_id": event.tool_call_id,
-            "content": _json_text(redact_for_model(provider_result)),
-        })
-
-    async def _await_tool_worker(self, worker: Callable[..., Any], *args: Any) -> Any:
+    async def _await_tool_worker(
+        self,
+        worker: Callable[..., Any],
+        *args: Any,
+        reservation: BoundedExecutorReservation | None = None,
+    ) -> Any:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.tool_timeout_seconds
         execution = CapabilityExecutionContext(deadline_monotonic=time.monotonic() + self.tool_timeout_seconds)
         try:
-            concurrent_future = self.tool_executor.submit(worker, *args, execution)
+            if reservation is None:
+                reservation = self.tool_executor.reserve()
+            concurrent_future = reservation.submit(worker, *args, execution)
         except ToolExecutorSaturated:
             raise AppError("AI_ASSISTANT_TOOL_BUSY", "能力执行资源繁忙，请稍后重试", 409) from None
         task = asyncio.wrap_future(concurrent_future, loop=loop)
@@ -906,6 +950,81 @@ class AssistantOrchestrator:
         except BaseException:
             execution.cancel()
             raise
+
+    async def _await_db_worker(
+        self,
+        worker: Callable[..., Any],
+        *args: Any,
+        monitor_disconnect: bool = True,
+        pass_execution: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        """Run one short synchronous orchestration DB boundary off the SSE loop."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.turn_timeout_seconds
+        execution = CapabilityExecutionContext(
+            deadline_monotonic=time.monotonic() + self.turn_timeout_seconds,
+        )
+
+        def invoke() -> Any:
+            execution.raise_if_cancelled()
+            if pass_execution:
+                result = worker(*args, execution, **kwargs)
+            else:
+                result = worker(*args, **kwargs)
+            execution.raise_if_cancelled()
+            return result
+
+        try:
+            concurrent_future = self.db_executor.submit(invoke)
+        except ToolExecutorSaturated:
+            raise AppError("AI_ASSISTANT_UNAVAILABLE", "智能体数据库执行资源繁忙", 503) from None
+        task = asyncio.wrap_future(concurrent_future, loop=loop)
+        try:
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    execution.cancel()
+                    raise AppError("AI_ASSISTANT_TIMEOUT", "智能体数据库操作超时", 503)
+                done, _pending = await asyncio.wait(
+                    {task},
+                    timeout=min(DEFAULT_DISCONNECT_POLL_SECONDS, remaining),
+                )
+                if task in done:
+                    try:
+                        return task.result()
+                    except CapabilityExecutionCancelled:
+                        raise asyncio.CancelledError() from None
+                if monitor_disconnect:
+                    await self._ensure_connected()
+        except BaseException:
+            execution.cancel()
+            raise
+
+    async def _await_finalization(self, state: _TurnState, outcome: _TurnOutcome) -> None:
+        await self._await_db_worker(
+            self._complete_assistant_message,
+            state,
+            outcome,
+            pass_execution=True,
+        )
+
+    async def _finish_placeholder_safely(self, state: _TurnState | None, status: str) -> None:
+        if state is None:
+            return
+        try:
+            await asyncio.shield(self._await_db_worker(
+                self._finish_placeholder,
+                state,
+                status,
+                monitor_disconnect=False,
+            ))
+        except BaseException as exc:
+            logger.info(
+                "assistant placeholder cleanup stopped safely status=%s exception_type=%s",
+                status,
+                type(exc).__name__,
+            )
 
     def _prepare_action_worker(
         self,
@@ -1014,9 +1133,15 @@ class AssistantOrchestrator:
         if self.disconnect_check is not None and await self.disconnect_check():
             raise asyncio.CancelledError()
 
-    def _complete_assistant_message(self, state: _TurnState, outcome: _TurnOutcome) -> None:
+    def _complete_assistant_message(
+        self,
+        state: _TurnState,
+        outcome: _TurnOutcome,
+        execution: CapabilityExecutionContext,
+    ) -> None:
         db = self.session_factory()
         try:
+            execution.raise_if_cancelled()
             # Fixed finalization lock order: account -> conversation -> runtime
             # profile/version governance -> streaming placeholder.  The account
             # row is refreshed under lock so a stale identity-map value cannot
@@ -1052,6 +1177,9 @@ class AssistantOrchestrator:
             retention_days = assistant_config.immutable_retention_days(version)
             if retention_days is None:
                 raise AppError("AI_ASSISTANT_RUNTIME_CHANGED", "智能体运行状态已变化", 409)
+            execution.raise_if_cancelled()
+            self._before_final_commit(execution)
+            execution.raise_if_cancelled()
             if retention_days > 0:
                 safe_content = redact_for_message({
                     **outcome.content(),
@@ -1069,12 +1197,17 @@ class AssistantOrchestrator:
                 }
                 row.redacted_text = None
             row.status = "completed"
+            execution.raise_if_cancelled()
             db.commit()
         except Exception:
             db.rollback()
             raise
         finally:
             db.close()
+
+    def _before_final_commit(self, execution: CapabilityExecutionContext) -> None:
+        """Cooperative guard after final locks and immediately before mutation/commit."""
+        execution.raise_if_cancelled()
 
     def _finish_placeholder(self, state: _TurnState, status: str) -> None:
         db = self.session_factory()

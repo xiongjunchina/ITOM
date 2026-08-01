@@ -35,6 +35,43 @@ def test_saturated_executor_rejects_before_worker_can_create_session():
         executor.shutdown(wait=True)
 
 
+def test_reserved_admission_can_be_released_without_submitting_work():
+    """Validation failures must return reserved capacity without creating a worker."""
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0)
+    reservation = executor.reserve()
+    with pytest.raises(ToolExecutorSaturated):
+        executor.reserve()
+
+    reservation.release()
+    next_reservation = executor.reserve()
+    next_reservation.release()
+    executor.shutdown(wait=True)
+
+
+def test_reserved_admission_is_released_after_submitted_work_finishes():
+    """A submitted reservation remains occupied until its future is terminal."""
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0)
+    release = threading.Event()
+    started = threading.Event()
+
+    def worker():
+        started.set()
+        release.wait(timeout=1)
+        return "finished"
+
+    reservation = executor.reserve()
+    future = reservation.submit(worker)
+    assert started.wait(timeout=0.5)
+    with pytest.raises(ToolExecutorSaturated):
+        executor.reserve()
+    release.set()
+    assert future.result(timeout=1) == "finished"
+
+    next_reservation = executor.reserve()
+    next_reservation.release()
+    executor.shutdown(wait=True)
+
+
 def test_cooperative_context_interrupts_worker_without_blocking_event_loop_contract():
     executor = BoundedToolExecutor(max_workers=1, max_queue_size=0)
     context = CapabilityExecutionContext(deadline_monotonic=time.monotonic() + 1)
