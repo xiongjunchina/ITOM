@@ -256,6 +256,8 @@ GET            /api/admin/ai/health|usage|action-audits
 
 The model receives only code-registered capabilities available to the current user. An L3 action first issues a single-use token bound to user, conversation, capability, normalized payload digest, and expiry; confirmation rechecks account, permission, data scope, record state, and workflow assignment. Only a domain service may return success. Provider reads expose `has_secret` only. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
 
+WA0 Tasks 1–2 implement the persistence foundation plus the server-side policy/redaction kernel. Only a fixed code registry may register capabilities; registration rejects duplicate codes, L3 without confirmation, every L4 capability, non-Pydantic input, and a missing handler. Every discovery reloads the active account, effective roles, feature permissions, and published-profile capability-code/maximum-risk limits from the database; a profile can narrow by code and risk only, never create a handler or grant authority. Model schemas omit handlers, internal role/permission matrices, and disabled capabilities. Record data scope, state, ownership, and workflow assignment remain execution-time checks in future domain handlers, so discovery is never execution authorization. Model input, message persistence, and ordinary log summaries share deterministic recursive redaction: case-insensitive sensitive keys, dynamic-form `sensitive=true` fields, Bearer credentials, and JWT-shaped values become `[REDACTED]`. This task does not implement provider calls, `/api/assistant` routers, UI, or business capability handlers.
+
 ### 4.2 ITSM
 
 ```text
@@ -448,7 +450,7 @@ IDC Kubernetes:
 | Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, BDO requirement registration, dispatch | service-item form/dispatch config | PRD §5/7 |
 | Aily-MCP P2 (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
 | Aily-MCP P3 / release hardening | Feishu Approval deferred; trusted TLS plus IDC security/performance/recovery/real-role UAT | approval/operations config | docs/10 §10 |
-| Web Agent WA0–WA4 (design approved; implementation pending) | model gateway, capability registry, role policy, conversation/action audit, domain-service reuse | global assistant, structured cards, AI Assistant administration | web-agent design baseline |
+| Web Agent WA0 (Tasks 1–2 implemented; Task 3+ pending) / WA1–WA4 | WA0 persistence, fixed capability registry, live role policy, and recursive redaction; remaining model gateway, conversation routing, and domain-service reuse are pending | global assistant, structured cards, AI Assistant administration pending | web-agent design baseline |
 
 ## 8.1 Business-domain Service Department API (M41)
 
