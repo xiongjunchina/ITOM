@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 import re
+import threading
+import time as monotonic_time
 from collections.abc import Mapping as MappingABC
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, get_args, get_origin
@@ -190,6 +192,32 @@ class CapabilityResult:
     status: str
     data: Mapping[str, Any] = field(default_factory=dict)
     message: str | None = None
+
+
+class CapabilityExecutionCancelled(RuntimeError):
+    """Raised cooperatively inside a capability worker after cancellation."""
+
+
+@dataclass(frozen=True)
+class CapabilityExecutionContext:
+    """Cooperative deadline/cancellation signal for synchronous L1/L2 handlers.
+
+    This is not a thread-kill primitive.  A handler that performs long CPU work
+    or blocking I/O must poll ``is_cancelled`` or call ``raise_if_cancelled``.
+    """
+
+    deadline_monotonic: float
+    _cancelled: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled.is_set() or monotonic_time.monotonic() >= self.deadline_monotonic
+
+    def raise_if_cancelled(self) -> None:
+        if self.is_cancelled():
+            raise CapabilityExecutionCancelled("assistant capability execution cancelled")
 
 
 @dataclass(frozen=True)
@@ -787,7 +815,10 @@ class ConfirmedCapabilityHandler(Protocol):
     def __call__(self, db: ActionUnitOfWork, actor: ActionActorContext, data: BaseModel) -> CapabilityResult: ...
 
 
-CapabilityHandler = Callable[[ReadOnlyActionData, ActionActorContext, BaseModel], CapabilityResult] | ConfirmedCapabilityHandler
+CapabilityHandler = (
+    Callable[[ReadOnlyActionData, ActionActorContext, BaseModel, CapabilityExecutionContext], CapabilityResult]
+    | ConfirmedCapabilityHandler
+)
 
 
 @dataclass(frozen=True)

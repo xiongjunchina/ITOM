@@ -10,6 +10,8 @@ import hmac
 import json
 import logging
 import re
+import time
+import unicodedata
 from typing import Any
 
 from pydantic import ValidationError
@@ -17,6 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.assistant.gateway import AssistantGateway, GatewayError
+from app.assistant.execution import BoundedToolExecutor, ToolExecutorSaturated
 from app.assistant.policy import capabilities_for_user
 from app.assistant.providers import ChatRequest, ModelStreamEvent
 from app.assistant.redaction import redact_for_message, redact_for_model
@@ -25,6 +28,8 @@ from app.assistant.types import (
     ActionActorContext,
     AssistantChannel,
     CapabilityDefinition,
+    CapabilityExecutionCancelled,
+    CapabilityExecutionContext,
     CapabilityResult,
     ReadOnlyActionData,
     RiskLevel,
@@ -48,6 +53,11 @@ DEFAULT_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_DISCONNECT_POLL_SECONDS = 0.025
 
 logger = logging.getLogger("aom.assistant.orchestrator")
+
+_DEFAULT_TOOL_EXECUTOR = BoundedToolExecutor(
+    max_workers=settings.ai_assistant_tool_executor_workers,
+    max_queue_size=settings.ai_assistant_tool_executor_queue_size,
+)
 
 _PLATFORM_INSTRUCTION = """ITOM_PLATFORM_SECURITY_INSTRUCTION
 You are an ITOM assistant operating under server-owned authorization.
@@ -206,11 +216,41 @@ def _message_for_client(row_id: str, content: Mapping[str, Any]) -> dict[str, An
     return {"id": row_id, "role": "assistant", "content": dict(content), "status": "completed"}
 
 
-def _normalize_leak_text(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
+@dataclass(frozen=True)
+class _LeakText:
+    semantic: str
+    compact: str
 
 
-def _authority_fingerprints(*sources: str) -> tuple[frozenset[str], frozenset[str]]:
+@dataclass(frozen=True)
+class _LeakFingerprints:
+    semantic_strong: frozenset[str]
+    semantic_weak: frozenset[str]
+    compact_strong: frozenset[str]
+    compact_weak: frozenset[str]
+
+
+def _normalize_leak_text(value: str) -> _LeakText:
+    """Canonicalize authority text against invisible and punctuation insertion.
+
+    The semantic form keeps punctuation boundaries for sentence matching.  The
+    compact form removes Unicode punctuation/symbols and whitespace so format
+    characters or punctuation inserted between every character cannot evade a
+    fingerprint.  Common fragments shorter than the fingerprint threshold are
+    never registered.
+    """
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    without_format = "".join(character for character in normalized if unicodedata.category(character) != "Cf")
+    semantic = re.sub(r"\s+", " ", without_format).strip()
+    compact = "".join(
+        character
+        for character in semantic
+        if not character.isspace() and unicodedata.category(character)[:1] not in {"P", "S"}
+    )
+    return _LeakText(semantic=semantic, compact=compact)
+
+
+def _authority_fingerprints(*sources: str) -> _LeakFingerprints:
     """Return stable strong/weak fragments used only for response leak checks.
 
     Complete authority lines of at least 12 normalized characters are strong.
@@ -218,25 +258,40 @@ def _authority_fingerprints(*sources: str) -> tuple[frozenset[str], frozenset[st
     matches; 24+ character fragments are strong.  The thresholds intentionally
     exclude short public words while still detecting a leaked profile line.
     """
-    strong: set[str] = set()
-    weak: set[str] = set()
-    for source in sources:
-        normalized_source = _normalize_leak_text(source)
-        for line in str(source or "").splitlines():
-            normalized_line = _normalize_leak_text(line)
-            if len(normalized_line) >= 12:
-                strong.add(normalized_line)
-        for part in re.split(r"[。！？!?;；\n]+", normalized_source):
-            fragment = _normalize_leak_text(part)
-            if len(fragment) >= 24:
-                strong.add(fragment)
-            elif len(fragment) >= 12:
-                weak.add(fragment)
-            if len(fragment) > 48:
-                windows = [fragment[index:index + 32] for index in range(0, len(fragment) - 31, 16)]
-                windows.append(fragment[-32:])
+    semantic_strong: set[str] = set()
+    semantic_weak: set[str] = set()
+    compact_strong: set[str] = set()
+    compact_weak: set[str] = set()
+
+    def register(fragment: str, *, complete_line: bool = False) -> None:
+        forms = _normalize_leak_text(fragment)
+        for normalized, strong, weak in (
+            (forms.semantic, semantic_strong, semantic_weak),
+            (forms.compact, compact_strong, compact_weak),
+        ):
+            if complete_line and len(normalized) >= 12:
+                strong.add(normalized)
+            elif len(normalized) >= 24:
+                strong.add(normalized)
+            elif len(normalized) >= 12:
+                weak.add(normalized)
+            if len(normalized) > 48:
+                windows = [normalized[index:index + 32] for index in range(0, len(normalized) - 31, 16)]
+                windows.append(normalized[-32:])
                 strong.update(window for window in windows if len(window) >= 24)
-    return frozenset(strong), frozenset(weak)
+
+    for source in sources:
+        for line in str(source or "").splitlines():
+            register(line, complete_line=True)
+        semantic_source = _normalize_leak_text(source).semantic
+        for part in re.split(r"[。！？!?;；\n]+", semantic_source):
+            register(part)
+    return _LeakFingerprints(
+        semantic_strong=frozenset(semantic_strong),
+        semantic_weak=frozenset(semantic_weak),
+        compact_strong=frozenset(compact_strong),
+        compact_weak=frozenset(compact_weak),
+    )
 
 
 class AssistantOrchestrator:
@@ -253,6 +308,7 @@ class AssistantOrchestrator:
         disconnect_check: Callable[[], Awaitable[bool]] | None = None,
         turn_timeout_seconds: float = DEFAULT_TURN_TIMEOUT_SECONDS,
         tool_timeout_seconds: float | None = None,
+        tool_executor: BoundedToolExecutor | None = None,
         session_factory: Callable[[], Session] = SessionLocal,
     ) -> None:
         resolved_actor_id = actor_id or getattr(actor, "id", None)
@@ -269,6 +325,11 @@ class AssistantOrchestrator:
             else tool_timeout_seconds
         )
         self.tool_timeout_seconds = max(0.001, float(configured_tool_timeout))
+        self.tool_statement_timeout_ms = min(
+            settings.ai_assistant_tool_statement_timeout_ms,
+            max(1, int(self.tool_timeout_seconds * 1000) - 1),
+        )
+        self.tool_executor = tool_executor or _DEFAULT_TOOL_EXECUTOR
         self.session_factory = session_factory
         # Compatibility callers may construct from an authenticated request
         # Session.  Scalarize identity and end that transaction immediately;
@@ -819,27 +880,31 @@ class AssistantOrchestrator:
         })
 
     async def _await_tool_worker(self, worker: Callable[..., Any], *args: Any) -> Any:
-        task = asyncio.create_task(asyncio.to_thread(worker, *args))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.tool_timeout_seconds
+        execution = CapabilityExecutionContext(deadline_monotonic=time.monotonic() + self.tool_timeout_seconds)
+        try:
+            concurrent_future = self.tool_executor.submit(worker, *args, execution)
+        except ToolExecutorSaturated:
+            raise AppError("AI_ASSISTANT_TOOL_BUSY", "能力执行资源繁忙，请稍后重试", 409) from None
+        task = asyncio.wrap_future(concurrent_future, loop=loop)
         try:
             while True:
                 remaining = deadline - loop.time()
                 if remaining <= 0:
-                    task.cancel()
+                    execution.cancel()
                     raise AppError("AI_ASSISTANT_TOOL_TIMEOUT", "能力执行超时，本轮已安全停止", 409)
                 done, _pending = await asyncio.wait(
                     {task}, timeout=min(DEFAULT_DISCONNECT_POLL_SECONDS, remaining),
                 )
                 if task in done:
-                    return task.result()
+                    try:
+                        return task.result()
+                    except CapabilityExecutionCancelled:
+                        raise AppError("AI_ASSISTANT_TOOL_TIMEOUT", "能力执行超时，本轮已安全停止", 409) from None
                 await self._ensure_connected()
         except BaseException:
-            task.cancel()
-            try:
-                await task
-            except BaseException:
-                pass
+            execution.cancel()
             raise
 
     def _prepare_action_worker(
@@ -848,7 +913,9 @@ class AssistantOrchestrator:
         capability_code: str,
         arguments: Mapping[str, Any],
         idempotency_key: str,
+        execution: CapabilityExecutionContext,
     ) -> dict:
+        execution.raise_if_cancelled()
         db = self.session_factory()
         try:
             actor = self._active_actor(db)
@@ -871,10 +938,12 @@ class AssistantOrchestrator:
         state: _TurnState,
         capability_code: str,
         parsed: Any,
+        execution: CapabilityExecutionContext,
     ) -> CapabilityResult:
+        execution.raise_if_cancelled()
         tool_db = self.session_factory()
         try:
-            self._set_tool_transaction_guards(tool_db)
+            self._set_tool_transaction_guards(tool_db, self.tool_statement_timeout_ms)
             actor = self._active_actor(tool_db)
             profile, version, _config = assistant_conversations._active_profile(tool_db, actor)
             if profile.id != state.profile_id or version.id != state.profile_version_id:
@@ -898,7 +967,9 @@ class AssistantOrchestrator:
                 ReadOnlyActionData(tool_db),
                 ActionActorContext.from_auth_user(actor),
                 parsed,
+                execution,
             )
+            execution.raise_if_cancelled()
             if not isinstance(result, CapabilityResult) or result.status not in {"succeeded", "completed"}:
                 raise AppError("AI_ASSISTANT_TOOL_RESULT_INVALID", "能力返回结果无效", 409)
             safe_data = redact_for_model(dict(result.data or {}))
@@ -913,20 +984,30 @@ class AssistantOrchestrator:
                 tool_db.close()
 
     @staticmethod
-    def _set_tool_transaction_guards(db: Session) -> None:
+    def _set_tool_transaction_guards(db: Session, statement_timeout_ms: int) -> None:
         if db.get_bind().dialect.name == "postgresql":
             db.execute(text("SET TRANSACTION READ ONLY"))
             db.execute(
                 text("SELECT set_config('statement_timeout', :timeout_ms, true)"),
-                {"timeout_ms": str(max(1, int(settings.ai_assistant_tool_statement_timeout_ms)))},
+                {"timeout_ms": str(max(1, int(statement_timeout_ms)))},
             )
 
     def _validate_final_text(self, model_text: str, profile_instruction: str) -> None:
         normalized = _normalize_leak_text(model_text)
-        strong, weak = _authority_fingerprints(_PLATFORM_INSTRUCTION, profile_instruction)
-        strong_matches = {fragment for fragment in strong if fragment and fragment in normalized}
-        weak_matches = {fragment for fragment in weak if fragment and fragment in normalized}
-        if strong_matches or len(weak_matches) >= 2:
+        fingerprints = _authority_fingerprints(_PLATFORM_INSTRUCTION, profile_instruction)
+        strong_matches = {
+            *(fragment for fragment in fingerprints.semantic_strong if fragment and fragment in normalized.semantic),
+            *(fragment for fragment in fingerprints.compact_strong if fragment and fragment in normalized.compact),
+        }
+        weak_match_keys = {
+            *(
+                _normalize_leak_text(fragment).compact
+                for fragment in fingerprints.semantic_weak
+                if fragment and fragment in normalized.semantic
+            ),
+            *(fragment for fragment in fingerprints.compact_weak if fragment and fragment in normalized.compact),
+        }
+        if strong_matches or len(weak_match_keys) >= 2:
             raise AppError("AI_ASSISTANT_PROMPT_EXTRACTION_BLOCKED", "模型回复触发安全边界", 409)
 
     async def _ensure_connected(self) -> None:
@@ -936,7 +1017,11 @@ class AssistantOrchestrator:
     def _complete_assistant_message(self, state: _TurnState, outcome: _TurnOutcome) -> None:
         db = self.session_factory()
         try:
-            actor = self._active_actor(db)
+            # Fixed finalization lock order: account -> conversation -> runtime
+            # profile/version governance -> streaming placeholder.  The account
+            # row is refreshed under lock so a stale identity-map value cannot
+            # authorize an authoritative terminal message.
+            actor = self._locked_active_actor(db)
             conversation = assistant_conversations._owned_conversation_row(
                 db,
                 actor,
@@ -1018,6 +1103,18 @@ class AssistantOrchestrator:
 
     def _active_actor(self, db: Session) -> AuthUser:
         actor = db.get(AuthUser, self.actor_id)
+        if actor is None or actor.is_deleted or not actor.is_active:
+            raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号不可用", 403)
+        return actor
+
+    def _locked_active_actor(self, db: Session) -> AuthUser:
+        actor = (
+            db.query(AuthUser)
+            .filter(AuthUser.id == self.actor_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+            .one_or_none()
+        )
         if actor is None or actor.is_deleted or not actor.is_active:
             raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号不可用", 403)
         return actor

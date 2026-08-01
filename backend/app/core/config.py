@@ -1,3 +1,4 @@
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,8 +20,16 @@ class Settings(BaseSettings):
     # Python worker itself cannot be force-killed, so database work receives a
     # stricter transaction-local deadline and the caller stops waiting at the
     # tool deadline.
-    ai_assistant_tool_timeout_seconds: float = 5.0
-    ai_assistant_tool_statement_timeout_ms: int = 4000
+    ai_assistant_tool_timeout_seconds: float = Field(default=5.0, ge=0.1, le=60.0)
+    ai_assistant_tool_statement_timeout_ms: int = Field(default=4000, ge=10, le=59_000)
+    ai_assistant_tool_executor_workers: int = Field(default=4, ge=1, le=32)
+    ai_assistant_tool_executor_queue_size: int = Field(default=8, ge=0, le=256)
+
+    @model_validator(mode="after")
+    def validate_assistant_tool_deadlines(self) -> "Settings":
+        if self.ai_assistant_tool_statement_timeout_ms >= self.ai_assistant_tool_timeout_seconds * 1000:
+            raise ValueError("assistant tool statement timeout must be shorter than the tool deadline")
+        return self
 
 
 settings = Settings()
