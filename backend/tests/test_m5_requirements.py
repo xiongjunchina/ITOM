@@ -17,7 +17,7 @@ def ctx(client, admin_headers):
     bp_p, bp = member_and_user("BP小美", "bp10", ["it_bp"])
     pdm_p, pdm = member_and_user("产品老王", "pdm10", ["it_pdm"])
     dev_p, dev = member_and_user("开发小陈", "dev10", ["it_dev"])
-    _, req = member_and_user("业务小赵", "req10", ["requester"])
+    _, req = member_and_user("业务数字化经理小赵", "req10", ["bdo"])
 
     domain = client.post(
         "/api/admin/business-domains",
@@ -51,10 +51,10 @@ def test_register_enters_review_and_assigns_domain_owner(client, ctx):
     assert any("需求评审指派" in n["title"] for n in notif)
 
 
-def test_requester_scope(client, ctx):
+def test_bdo_scope(client, ctx):
     mine = _register(client, ctx["req"], ctx["domain"], title="业务用户的需求")
     listing = client.get("/api/requirements", headers=ctx["req"]).json()["data"]
-    assert all(row["requester_name"] == "业务小赵" for row in listing)
+    assert all(row["requester_name"] == "业务数字化经理小赵" for row in listing)
     other = _register(client, ctx["bp"], ctx["domain"], title="BP代提需求")
     assert client.get(f"/api/requirements/{other['id']}", headers=ctx["req"]).status_code == 403
 

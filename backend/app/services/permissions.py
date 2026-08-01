@@ -7,9 +7,13 @@
   自定义角色在创建时复制模板角色的矩阵，之后独立编辑）
 - 流程/状态机的角色引用是另一层（workflow allowed_roles / process default_role），与本矩阵无关
 """
+import logging
+
 from sqlalchemy.orm import Session
 
 from app.models import AuthUser, RolePermission, UserGroup, UserGroupMember
+
+logger = logging.getLogger(__name__)
 
 ACTIONS = ("view", "create", "edit", "delete")
 
@@ -29,7 +33,7 @@ MODULES = [
     ("contracts", "合同管理", "ITSM"),
     ("knowledge", "知识库", "ITSM"),
     ("projects", "项目管理（项目列表/项目组合）", "项目管理"),
-    # M17.2：需求域按菜单页独立授权（业务用户可登记需求，但不可见任务跟踪/评分规则）
+    # 需求域按菜单页独立授权；只有 BDO/授权 IT 角色可登记需求，不能查看任务跟踪/评分规则。
     ("requirements", "需求总览（登记/评审/方案）", "需求管理"),
     ("req_tasks", "任务跟踪", "需求管理"),
     ("req_scoring", "评分规则", "需求管理"),
@@ -113,8 +117,9 @@ def _merge(base: dict[str, str], extra: dict[str, str]) -> dict[str, str]:
 
 # 内置角色默认矩阵（编码当前系统行为；admin 不在矩阵中——隐式全权）
 DEFAULT_MATRIX: dict[str, dict[str, str]] = {
-    # M33：requester 总览默认关闭（登录落点自动=服务请求）
-    "requester": {"ticket_sr": "vc", "knowledge": "v", "requirements": "vc"},
+    # M33：业务用户总览默认关闭（登录落点自动=服务请求）；IT 需求仅由 BDO 登记。
+    "requester": {"ticket_sr": "vc", "knowledge": "v"},
+    "bdo": {"ticket_sr": "vc", "knowledge": "v", "requirements": "vc"},
     "auditor": _merge(
         {m: "v" for m in _BUSINESS_VIEW},
         {"process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},
@@ -160,8 +165,23 @@ def flags_to_actions(flags: str) -> list[str]:
 
 
 def seed_permissions(db: Session):
-    """按角色写入默认矩阵：仅当该角色一行都没有时补种（幂等；新内置角色自动获得默认
-    矩阵，已被管理员调整过的角色不受影响）。"""
+    """按角色写入默认矩阵并收敛受限内置角色的历史越权。
+
+    一般情况下仅补种缺失模块，管理员已调整的矩阵不受影响。唯一例外是
+    ``requester → requirements``：这是已废止的业务用户需求登记入口，必须在
+    启动时幂等移除，避免历史权限行绕过 BDO 边界；不会影响任何既有需求数据。
+    """
+    removed = (
+        db.query(RolePermission)
+        .filter(
+            RolePermission.role_code == "requester",
+            RolePermission.module == "requirements",
+            RolePermission.is_deleted.is_(False),
+        )
+        .delete(synchronize_session=False)
+    )
+    if removed:
+        logger.info("removed deprecated requester requirements permission rows: %d", removed)
     for role_code, modules in DEFAULT_MATRIX.items():
         existing = {r.module for r in db.query(RolePermission).filter(RolePermission.role_code == role_code)}
         for module, flags in modules.items():

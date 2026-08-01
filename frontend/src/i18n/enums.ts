@@ -13,8 +13,8 @@ import { useLangStore } from './store';
 type M = Record<string, string>;
 
 // code 键（后端用英文码）：zh/en 均为标签
-const ROLE_ZH: M = { admin: '系统管理员', cio: 'CIO(IT总负责人)', it_bm: 'IT业务线负责人', it_tm: 'IT专业线负责人', it_pdm: 'IT产品经理', it_pdm_leader: 'IT产品负责人', it_pm: 'IT项目经理', it_pmo: 'IT PMO(项目管理办公室)', it_dev: 'IT开发', it_dev_leader: 'IT开发负责人', it_ops: 'IT运维', it_op_leader: 'IT运维负责人', is_mgr: '信息安全管理员', it_bp: 'IT业务合作伙伴', auditor: '审计员', requester: '业务用户' };
-const ROLE_EN: M = { admin: 'Administrator', cio: 'CIO (Head of IT)', it_bm: 'IT Business-line Lead', it_tm: 'IT Discipline-line Lead', it_pdm: 'IT Product Manager', it_pdm_leader: 'IT Product Lead', it_pm: 'IT Project Manager', it_pmo: 'IT PMO (Project Management Office)', it_dev: 'IT Developer', it_dev_leader: 'IT Dev Lead', it_ops: 'IT Operations', it_op_leader: 'IT Ops Lead', is_mgr: 'Information Security Manager', it_bp: 'IT Business Partner', auditor: 'Auditor', requester: 'Requester' };
+const ROLE_ZH: M = { admin: '系统管理员', cio: 'CIO(IT总负责人)', it_bm: 'IT业务线负责人', it_tm: 'IT专业线负责人', it_pdm: 'IT产品经理', it_pdm_leader: 'IT产品负责人', it_pm: 'IT项目经理', it_pmo: 'IT PMO(项目管理办公室)', it_dev: 'IT开发', it_dev_leader: 'IT开发负责人', it_ops: 'IT运维', it_op_leader: 'IT运维负责人', is_mgr: '信息安全管理员', it_bp: 'IT业务合作伙伴', auditor: '审计员', bdo: 'BDO(业务数字化经理)', requester: '业务用户' };
+const ROLE_EN: M = { admin: 'Administrator', cio: 'CIO (Head of IT)', it_bm: 'IT Business-line Lead', it_tm: 'IT Discipline-line Lead', it_pdm: 'IT Product Manager', it_pdm_leader: 'IT Product Lead', it_pm: 'IT Project Manager', it_pmo: 'IT PMO (Project Management Office)', it_dev: 'IT Developer', it_dev_leader: 'IT Dev Lead', it_ops: 'IT Operations', it_op_leader: 'IT Ops Lead', is_mgr: 'Information Security Manager', it_bp: 'IT Business Partner', auditor: 'Auditor', bdo: 'BDO (Business Digital Owner)', requester: 'Requester' };
 const TICKET_TYPE_ZH: M = { incident: '事件', service_request: '服务请求', change: '变更' };
 const TICKET_TYPE_EN: M = { incident: 'Incident', service_request: 'Service Request', change: 'Change' };
 const PERM_ACTION_ZH: M = { view: '可见', create: '新建', edit: '修改', delete: '删除' };

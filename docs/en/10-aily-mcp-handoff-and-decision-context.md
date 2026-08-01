@@ -68,7 +68,7 @@ When a user describes a potentially broad outage, Aily still creates that user's
 
 ### 3.4 IT-staff web routing does not change the Aily boundary (approved, not implemented)
 
-IT staff will receive a Web “Create IT Record” guide and cross-record relation capability. It supports internal ITIL judgment only and does not burden normal business users with web type selection. Aily continues to create only service requests and IT requirements. It does not transfer service request → incident, service request/incident → problem, incident/problem → change, or requirement → project. Any future MCP scope expansion needs separate confirmation of architecture, permission, audit, and user experience.
+IT staff and system administrators receive a Web “Record Creation Guide” and cross-record relation capability. It supports internal ITIL judgment only and does not burden normal business users with web type selection. In Aily, a normal business user continues to create only service requests, while a department-appointed BDO may register IT requirements. Aily does not transfer service request → incident, service request/incident → problem, incident/problem → change, or requirement → project. Any future MCP scope expansion needs separate confirmation of architecture, permission, audit, and user experience.
 
 ## 4. Approved architecture
 

@@ -36,7 +36,7 @@ def recommend_document_type(
     """依据临时判断项给出推荐；问答不落库。"""
     available = it_document_guide.available_types(db, user)
     if not it_document_guide.staff_intake_enabled(db, user, available):
-        raise AppError("IT_STAFF_ONLY", "仅数字化团队成员可使用 IT 单据分流入口", 403)
+        raise AppError("IT_STAFF_ONLY", "仅数字化团队成员或系统管理员可使用创建单据指引", 403)
 
     result = it_document_guide.recommend(**body.model_dump())
     if result["recommended_type"] not in available:

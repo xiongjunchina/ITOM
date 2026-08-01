@@ -45,6 +45,19 @@ def test_it_staff_can_read_guide_and_get_explainable_recommendation(client, inta
     assert body["counterexample"]
 
 
+def test_admin_can_use_document_creation_guide(client, admin_headers):
+    guide = client.get("/api/it-document-guide", headers=admin_headers)
+    assert guide.status_code == 200, guide.text
+    assert guide.json()["data"]["staff_intake"]["enabled"] is True
+    recommendation = client.post(
+        "/api/staff-intake/recommend",
+        json={"new_capability": True},
+        headers=admin_headers,
+    )
+    assert recommendation.status_code == 200, recommendation.text
+    assert recommendation.json()["data"]["recommended_type"] == "requirement"
+
+
 def test_business_requester_cannot_use_staff_recommendation(client, intake_users):
     guide = client.get("/api/it-document-guide", headers=intake_users["requester"])
     assert guide.status_code == 200, guide.text

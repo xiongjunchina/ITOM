@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.core.rbac import REQUESTER
+from app.core.rbac import BDO, REQUESTER
 from app.models import AuthUser, Problem, Project, RecordRelation, Requirement, Ticket
 from app.services.audit import audit
 from app.services.permissions import TICKET_TYPE_MODULE, has_perm
@@ -124,7 +124,8 @@ def find_submission_retry(
 
 
 def _is_requester_only(db: Session, user: AuthUser) -> bool:
-    return effective_roles(db, user) == {REQUESTER}
+    roles = effective_roles(db, user)
+    return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
 def get_record(db: Session, entity_type: str, entity_id: str) -> Any:

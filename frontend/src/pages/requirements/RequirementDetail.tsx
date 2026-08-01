@@ -38,6 +38,7 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useGoBack } from '../../utils/nav';
+import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -917,7 +918,7 @@ export default function RequirementDetail() {
 
   const st = detail.status;
   const isFinal = st === 'closed' || st === 'cancelled';
-  const canCreateLinkedProject = !isExample && !isFinal && !!user && user.roles.some((role) => role !== 'requester');
+  const canCreateLinkedProject = !isExample && !isFinal && !!user && !isRequesterOnly(user);
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
   const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);

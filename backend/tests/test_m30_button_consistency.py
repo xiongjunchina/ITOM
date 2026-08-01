@@ -19,7 +19,7 @@ def ctx(client, admin_headers):
         return m["id"], {"Authorization": f"Bearer {token}"}
 
     ops_pid, ops_h = member_and_user("运维M30", "m30_ops", ["it_ops"])
-    req_pid, req_h = member_and_user("业务M30", "m30_req", ["requester"])
+    req_pid, req_h = member_and_user("业务数字化经理M30", "m30_req", ["bdo"])
     dev_pid, dev_h = member_and_user("开发M30", "m30_dev", ["it_dev"])
     pm_pid, pm_h = member_and_user("PM-M30", "m30_pm", ["it_pm"])
     item = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
@@ -89,7 +89,7 @@ def test_requirement_terminal_admin_only_submitter_can_close(client, ctx):
     d = client.get(f"/api/requirements/{r['id']}", headers=ctx["ops_h"]).json()["data"]
     assert all(x["to"] not in ("closed", "cancelled") for x in d["allowed_transitions"])
     assert d["can_close"] is True  # 提出人专门关闭按钮
-    # requester（无 edit）完全无状态按钮
+    # BDO（仅登记/查看，无 edit）完全无状态按钮
     r2 = client.post("/api/requirements", json={"title": "M30业务需求", "req_type": "功能",
                                                 "business_domain_id": ctx["domain"], "description": "d"},
                      headers=ctx["req_h"]).json()["data"]

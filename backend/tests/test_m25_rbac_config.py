@@ -20,7 +20,7 @@ def ctx(client, admin_headers):
 
 def test_builtin_roles_seeded(client, admin_headers):
     roles = client.get("/api/admin/roles", headers=admin_headers).json()["data"]
-    assert sum(1 for r in roles if r["is_builtin"]) == 16  # +it_pmo/+it_pdm_leader/+it_dev_leader/+it_op_leader
+    assert sum(1 for r in roles if r["is_builtin"]) == 17  # +it_pmo/+it_pdm_leader/+it_dev_leader/+it_op_leader/+bdo
 
 
 def test_custom_role_inherits_permissions(client, admin_headers, ctx):

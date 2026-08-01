@@ -28,6 +28,7 @@ import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useGoBack } from '../../utils/nav';
+import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type {
@@ -278,8 +279,8 @@ export default function TicketDetail() {
   const canRate = !isExample && detail.status === 'closed' && isSubmitter && detail.satisfaction == null;
   const process = detail.process;
   const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);
-  // M3：非 requester（拥有任一内部角色）可升级为问题
-  const isStaff = !!user && user.roles.some((r) => r !== 'requester');
+  // 业务门户（业务用户 / BDO）不展示 IT 内部的关联单据创建入口。
+  const isStaff = !!user && !isRequesterOnly(user);
   const canCreateRelated = !isExample && isStaff && detail.status !== 'closed';
   const canUpgradeIncident = canCreateRelated && detail.ticket_type === 'service_request';
   const canCreateRootCauseProblem = canCreateRelated && (detail.ticket_type === 'service_request' || detail.ticket_type === 'incident');

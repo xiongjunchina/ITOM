@@ -15,7 +15,7 @@ This design covers only IT-staff web routing, compact explanations, recommendati
 | User | Entry | Creation scope | Effect of this design |
 | --- | --- | --- | --- |
 | Normal employee | Feishu Aily | Service request and IT requirement | **Unchanged**. Aily does not create incidents, problems, changes, or projects and does not perform transfers. |
-| IT staff | Global ITOM “Create IT Record” action | Determined by actual create permission | Adds a lightweight guide, recommendation, and target navigation. |
+| IT staff and system administrators | Global ITOM “Record Creation Guide” action | Determined by actual create permission | Adds a lightweight guide, recommendation, and target navigation. |
 | Admin/CIO | ITOM web | Determined by the permission matrix | Manages permissions, audit, and later metrics. |
 
 The unified entry is visible only in the IT-staff web experience. It neither adds a normal-user Web entry nor changes Aily request creation, requirement registration, query, confirmation, reopen, or rating.
@@ -26,7 +26,7 @@ The underlying definitions remain unchanged: a service request is an individual'
 
 ### 3.1 Entry and guide
 
-The global action is named “Create IT Record” and opens a drawer/modal. It asks two to four **temporary** questions and recommends a record type; the user may override it and always enters the existing target creation form.
+The global action is named “Record Creation Guide” and opens a drawer/modal. It asks two to four **temporary** questions and recommends a record type; the user may override it and always enters the existing target creation form.
 
 Initial rule order:
 

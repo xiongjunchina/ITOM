@@ -10,8 +10,10 @@ from collections.abc import Iterable
 from sqlalchemy.orm import Session
 
 from app.core.i18n import get_lang
+from app.core.rbac import ADMIN
 from app.models import AuthUser
 from app.services.permissions import TICKET_TYPE_MODULE, has_perm
+from app.services.rbac import effective_roles
 from app.services.team_scope import is_it_member
 
 
@@ -104,7 +106,8 @@ def available_types(db: Session, user: AuthUser) -> set[str]:
 
 
 def staff_intake_enabled(db: Session, user: AuthUser, available: Iterable[str] | None = None) -> bool:
-    return is_it_member(db, user.person_id) and bool(set(available if available is not None else available_types(db, user)))
+    allowed = bool(set(available if available is not None else available_types(db, user)))
+    return allowed and (ADMIN in effective_roles(db, user) or is_it_member(db, user.person_id))
 
 
 def guide_payload(db: Session, user: AuthUser) -> dict:

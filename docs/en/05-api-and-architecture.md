@@ -158,7 +158,7 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-Registration creates a separate `Requirement`, never a Ticket. Normal employees reuse existing `requirements.create/view` permissions with enforced own-record scope; review, scoring, project conversion, and closure retain existing edit/process permissions.
+Registration creates a separate `Requirement`, never a Ticket. Normal business users have no Requirement-module permission; only BDOs and authorized IT roles reuse `requirements.create/view` with enforced own-record scope. The domain service also checks the BDO/IT role boundary, so a historical or manually added requester permission row cannot bypass it; review, scoring, project conversion, and closure retain existing edit/process permissions.
 
 #### Requirement implementation-task APIs
 
@@ -276,7 +276,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
-# P1: requirements.create/view plus enforced own-record scope; no second requirement entity
+# P1: only BDO/authorized IT roles use requirements.create/view plus enforced own-record scope; no second requirement entity
 ```
 
 ### 4.5 Process
@@ -424,7 +424,7 @@ IDC Kubernetes:
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path and live bot receipt complete) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
-| Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
+| Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, BDO requirement registration, dispatch | service-item form/dispatch config | PRD §5/7 |
 | Aily-MCP P2 (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
 | Aily-MCP P3 / release hardening | Feishu Approval deferred; trusted TLS plus IDC security/performance/recovery/real-role UAT | approval/operations config | docs/10 §10 |
 

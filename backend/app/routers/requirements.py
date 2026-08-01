@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
-from app.core.rbac import ADMIN, IT_PDM, REQUESTER
+from app.core.rbac import ADMIN, BDO, IT_PDM, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events import notifier
@@ -136,8 +136,10 @@ class ToProblemIn(BaseModel):
     description: str = Field(min_length=1)
 
 
-def _is_requester_only(db: Session, user: AuthUser) -> bool:
-    return effective_roles(db, user) == {REQUESTER}
+def _is_business_portal_only(db: Session, user: AuthUser) -> bool:
+    """业务门户账号仅可查看本人需求；BDO 也不因登记权限获得全局查看权。"""
+    roles = effective_roles(db, user)
+    return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
 def _can_manage_requirement_tasks(db: Session, user: AuthUser, requirement: Requirement) -> bool:
@@ -199,10 +201,10 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
 def list_requirements(
     page: int = 1, page_size: int = 50, q: str = "", status: str = "",
     business_domain_id: str = "", moscow: str = "", decision: str = "", scope: str = "",
-    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view")),
 ):
     query = db.query(Requirement).filter(Requirement.is_deleted.is_(False))
-    if _is_requester_only(db, user):
+    if _is_business_portal_only(db, user):
         query = query.filter(Requirement.requester == user.id)
     elif scope == "mine":
         query = query.filter(or_(Requirement.requester == user.id,
@@ -378,6 +380,7 @@ def _notify_pdm(db: Session, requirement: Requirement):
 
 @router.post("")
 def create_requirement(body: RequirementCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
+    requirement_intake.ensure_registration_authorized(db, user)
     r = requirement_intake.create_requirement(db, body.model_dump(), user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
@@ -455,12 +458,13 @@ def _import_sheet() -> "Sheet":
 
 
 @router.get("/template")
-def requirement_template(_: AuthUser = Depends(require_perm("requirements", "create"))):
+def requirement_template(db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
     from urllib.parse import quote
 
     from fastapi.responses import Response
 
     from app.services.excel_io import build_template
+    requirement_intake.ensure_registration_authorized(db, user)
     content = build_template([_import_sheet()])
     return Response(
         content=content,
@@ -473,6 +477,7 @@ def requirement_template(_: AuthUser = Depends(require_perm("requirements", "cre
 @router.post("/import")
 async def import_requirements(file: UploadFile, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
     from app.services.excel_io import parse_sheet
+    requirement_intake.ensure_registration_authorized(db, user)
     rows, errors = parse_sheet(await file.read(), _import_sheet())
     domains = {d.name: d for d in db.query(BusinessDomain).filter(
         BusinessDomain.is_deleted.is_(False), BusinessDomain.active.is_(True))}
@@ -526,13 +531,13 @@ def _get_requirement(db: Session, requirement_id: str, user: AuthUser) -> Requir
     r = db.get(Requirement, requirement_id)
     if not r or r.is_deleted:
         raise AppError("NOT_FOUND", "需求不存在", 404)
-    if _is_requester_only(db, user) and r.requester != user.id:
+    if _is_business_portal_only(db, user) and r.requester != user.id:
         raise AppError("FORBIDDEN", "无权查看他人需求", 403)
     return r
 
 
 @router.get("/{requirement_id}")
-def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view"))):
     r = _get_requirement(db, requirement_id, user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}

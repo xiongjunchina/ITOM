@@ -147,8 +147,8 @@ def test_dashboard_itsm_blocks(client, admin_headers):
 
 # ---------- requester 数据范围核查（④） ----------
 
-def test_requester_scope(client, admin_headers, ctx):
-    """业务用户：能提工单/需求并跟踪自己的；看不到他人单据与 IT 内部模块。"""
+def test_business_user_and_bdo_scope(client, admin_headers, ctx):
+    """业务用户只提服务请求；BDO 才能登记并跟踪自己的 IT 需求。"""
     _pid, req_h = ctx["member_and_user"]("业务用户甲", "biz_a", ["requester"])
 
     # 他人工单不可见（示例工单 + ctx 用户的单都不属于他）
@@ -163,13 +163,27 @@ def test_requester_scope(client, admin_headers, ctx):
     # 能查自己单据详情（进展跟踪）
     assert client.get(f"/api/tickets/{t['id']}", headers=req_h).json()["data"]["status"]
 
-    # 需求：能提能看自己的（4 必填：标题/类型/业务域/描述）
+    # 普通业务用户不得进入 IT 需求管理（即使未来误配矩阵也由领域服务兜底）。
     domain = client.get("/api/admin/business-domains", headers=admin_headers).json()["data"][0]["id"]
     r = client.post("/api/requirements", json={"title": "希望增加移动端审批", "req_type": "功能",
                                                "business_domain_id": domain, "description": "出差时审批不便"},
                     headers=req_h)
+    assert r.status_code == 403 and r.json()["error"]["code"] in {"FORBIDDEN", "BDO_REQUIRED"}
+    assert client.get("/api/requirements", headers=req_h).status_code == 403
+
+    _bdo_pid, bdo_h = ctx["member_and_user"]("业务数字化经理甲", "bdo_a", ["bdo"])
+    # BDO 仍是业务用户：不能看到普通业务用户刚提交的服务请求。
+    assert client.get("/api/tickets", headers=bdo_h).json()["data"] == []
+    assert client.get(f"/api/tickets/{t['id']}", headers=bdo_h).status_code == 403
+    bdo_ticket = client.post("/api/tickets", json={"title": "BDO 服务请求", "ticket_type": "service_request",
+                                                     "description": "业务协助", "priority": "P3", "service_item_id": item},
+                             headers=bdo_h).json()["data"]
+    assert [row["id"] for row in client.get("/api/tickets", headers=bdo_h).json()["data"]] == [bdo_ticket["id"]]
+    r = client.post("/api/requirements", json={"title": "希望增加移动端审批", "req_type": "功能",
+                                               "business_domain_id": domain, "description": "出差时审批不便"},
+                    headers=bdo_h)
     assert r.json()["success"], r.text
-    rows = client.get("/api/requirements", headers=req_h).json()["data"]
+    rows = client.get("/api/requirements", headers=bdo_h).json()["data"]
     assert len(rows) == 1 and rows[0]["title"] == "希望增加移动端审批"
 
     # IT 内部模块全部 403（接口层强制，不只菜单隐藏）
@@ -188,8 +202,10 @@ def test_requester_scope(client, admin_headers, ctx):
     assert denied.status_code == 403
     me = client.get("/api/auth/me", headers=req_h).json()["data"]
     perms = me["permissions"]
-    assert set(perms) == {"ticket_sr", "knowledge", "requirements"}  # M33：总览默认关闭
-    assert perms["ticket_sr"] == ["create", "view"] and perms["requirements"] == ["create", "view"]
+    assert set(perms) == {"ticket_sr", "knowledge"}  # M33：总览默认关闭
+    assert perms["ticket_sr"] == ["create", "view"]
+    bdo_me = client.get("/api/auth/me", headers=bdo_h).json()["data"]
+    assert bdo_me["permissions"]["requirements"] == ["create", "view"]
 
 
 # ---------- 季度考核制（M6.4）：Q1-Q3 单季 + 全年 All 聚合 ----------

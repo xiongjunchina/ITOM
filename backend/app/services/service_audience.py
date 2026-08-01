@@ -6,13 +6,14 @@ requester 角色的用户才需要按服务项配置的部门/员工范围过滤
 
 from sqlalchemy.orm import Session
 
-from app.core.rbac import REQUESTER
+from app.core.rbac import BDO, REQUESTER
 from app.models import AuthUser, Department, OrgMember, ServiceItem
 from app.services.rbac import effective_roles
 
 
 def is_requester_only(db: Session, user: AuthUser) -> bool:
-    return effective_roles(db, user) == {REQUESTER}
+    roles = effective_roles(db, user)
+    return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
 def _member_in_department_scope(db: Session, member: OrgMember, department_id: str) -> bool:

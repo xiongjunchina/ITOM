@@ -51,7 +51,7 @@
 
 ### 1.1a role — role registry [cfg] (added 2026-07-10)
 
-code UNIQUE, name, description, base_role (the built-in role code that a custom role inherits; empty for built-ins), is_builtin. The 16 built-in roles are seeded and their codes are read-only; custom roles inherit API permissions via base_role and can be referenced by workflow_transition.allowed_roles and process_step.default_role.
+code UNIQUE, name, description, base_role (the built-in role code that a custom role inherits; empty for built-ins), is_builtin. The 17 built-in roles are seeded and their codes are read-only; `bdo` (Business Digital Owner) is a controlled business-user subset and the Requirement-module permission is granted to it rather than to `requester`. Custom roles inherit API permissions via base_role and can be referenced by workflow_transition.allowed_roles and process_step.default_role.
 
 ### 1.1b user_group / user_group_member — user groups (added 2026-07-10)
 

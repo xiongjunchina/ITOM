@@ -20,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
 import { ArrowLeftOutlined, LinkOutlined } from '@ant-design/icons';
 import { useGoBack } from '../../utils/nav';
+import { isRequesterOnly } from '../../components/menu';
 import { canHandleTask, useAuthStore } from '../../stores/auth';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
@@ -255,7 +256,7 @@ export default function ProblemDetail() {
 
   /** 示例数据只读：隐藏关联工单/完成步骤等残余写入口（allowed_transitions 后端已置空） */
   const isExample = detail.is_example === true;
-  const isStaff = !!user && user.roles.some((role) => role !== 'requester');
+  const isStaff = !!user && !isRequesterOnly(user);
   const canCreateRemediationChange = !isExample && isStaff && detail.status !== 'closed';
   const process = detail.process;
   const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);

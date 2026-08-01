@@ -5,16 +5,32 @@ from datetime import date, datetime
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.rbac import ADMIN, BDO, TEAM_ROLES
 from app.events import notifier
 from app.events.bus import publish
 from app.models import AuthUser, BusinessDomain, OrgMember, Requirement
 from app.services import mcp_intents, process_engine
 from app.services.audit import audit
 from app.services.codes import gen_code
+from app.services.rbac import effective_roles
 
 
 REQ_TYPES = ("业务", "功能", "数据", "集成", "合规")
 REQUIRED_FIELDS = ("title", "req_type", "business_domain_id", "description")
+
+
+def ensure_registration_authorized(db: Session, user: AuthUser) -> None:
+    """Only BDOs may register IT requirements as business users.
+
+    IT roles and administrators retain their existing delivery/administration
+    ability.  This explicit domain boundary supplements the configurable
+    permission matrix so a historical or manually re-added requester matrix
+    row cannot reopen the business intake channel.
+    """
+    roles = effective_roles(db, user)
+    if ADMIN in roles or BDO in roles or roles.intersection(TEAM_ROLES):
+        return
+    raise AppError("BDO_REQUIRED", "仅 BDO 或授权 IT 角色可登记 IT 需求", 403)
 
 
 def form_definition(db: Session) -> dict:

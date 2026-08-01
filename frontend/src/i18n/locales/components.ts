@@ -70,7 +70,7 @@ export const zh: Dict = {
   'comp.example.alert': '这是一条示例数据——每个字段的内容就是该字段的填写指引，仅供学习参考，不可编辑。',
 
   // IT 员工单据分流
-  'intake.title': '登记 IT 单据',
+  'intake.title': '创建单据指引',
   'intake.intro': '通过几个临时判断项获得单据建议。回答不会保存，您仍可自行选择并在原生表单中完成登记。',
   'intake.q.broadImpact': '是否影响多名用户、一个服务或核心系统？',
   'intake.q.recurring': '是否反复发生、属于已知错误或需要定位根因？',
@@ -192,7 +192,7 @@ export const en: Dict = {
   'comp.example.alert': "This is example data — each field's content is the filling guidance for that field, for reference only and not editable.",
 
   // IT staff document intake
-  'intake.title': 'Register IT Record',
+  'intake.title': 'Record Creation Guide',
   'intake.intro': 'Answer a few temporary prompts to get a recommendation. Answers are not stored; you can still choose the record type and complete its native form.',
   'intake.q.broadImpact': 'Does this affect multiple users, a service, or a core system?',
   'intake.q.recurring': 'Is it recurring, a known error, or does it require root-cause analysis?',

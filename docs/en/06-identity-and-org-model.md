@@ -14,13 +14,13 @@
 | Person | `org_member` | Who you are (Chinese/English name / department / position / contact / skills) | Personnel Master Data | **None** |
 | Department | `department` | Where you sit in the company org structure (one person, one department; tree-shaped; types it/business/audit) | Department Management | **None** (used only as the basis for provisioning-rule matching) |
 | User group | `user_group` | Who you work with, and who tickets get assigned to | User Groups | **Group-granted roles**: a person joining the group inherits them automatically |
-| Role | `role` | What you can do in the system | Role Management | 10 built-in + custom (inheriting a built-in) |
+| Role | `role` | What you can do in the system | Role Management | 17 built-in + custom (inheriting a built-in) |
 | Business domain | `business_domain` | Which business line you serve and who owns it | Business Domain | **None** (owner is a field, not a role) |
 | External identity | `external_identity` [implemented in P0] | Which ITOM account a Feishu tenant/app identity maps to | Aily/Feishu integration | **None** (identity mapping grants no role) |
 
 **Effective roles = direct roles ∪ the roles granted by the groups you belong to ∪ the built-in roles inherited by your custom roles.** The `roles` in the login response are the effective roles (the front-end menu renders from them), and `direct_roles` are the direct roles.
 
-## 2. The 10th Built-in Role: auditor (Auditor)
+## 2. Built-in Role: auditor (Auditor)
 
 - Permission boundary: **read-only across all modules + audit-log viewing**; cannot modify any record (enforced by a global read-only middleware, exceptions: login and notification handling, including the notification popover's Mark all as read and Clear read actions).
 - Multi-role unrestricted: a user with auditor + it_ops can write normally (the read-only restriction applies only to users who hold *only* auditor).
@@ -89,7 +89,9 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 
 Performance review does not treat `auth_user` roles as the evaluator assignment. Each period creates a `performance_role_assignment` snapshot with the person's business/professional role, business-domain or professional-pool scope, evaluator, and `review_mode`. A business-line lead proposes only business-role scores in scope; a professional-line lead proposes only professional-role scores in scope. Platform roles default to `review_mode=cio_direct` and are scored directly by the CIO. No leader may self-score; the CIO finalizes leaders' own scores.
 
-The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it_pdm_leader, it_pm, it_pmo, it_dev, it_dev_leader, it_ops, it_op_leader, is_mgr, it_bp, auditor, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
+The built-in roles are finalized at **17**: admin, cio, it_bm, it_tm, it_pdm, it_pdm_leader, it_pm, it_pmo, it_dev, it_dev_leader, it_ops, it_op_leader, is_mgr, it_bp, auditor, bdo, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
+
+`bdo` = **Business Digital Owner**. Appointed by a business department, this business-side Business PO and Data Steward consolidates and filters front-line needs, defines business rules, holds the business UAT veto, drives adoption training, and stewards business terminology and data quality. BDO is a controlled subset of business users: its baseline grants service requests, knowledge lookup, and `requirements.create/view`; its data scope remains `requester == current auth_user.id`, and it gains no review, project, process, or IT-internal-task authority. A normal `requester` no longer has Requirement-module permission. Startup idempotently removes the legacy `requester → requirements` permission row without rewriting historical requirements.
 
 ## 7 (M3.6). Function Permission Matrix
 
@@ -162,18 +164,18 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 6. Only active accounts continue; existing role matrix, data scope, and process guards then authorize the operation.
 7. Every tool call writes a redacted `mcp_tool_call`. `get_current_user_context` returns verification/account status and a readable name only. P1 business tools return public business codes and user-visible summaries, never open_id, tenant_id, agent_id, or an internal ITOM primary key.
 
-### 11.2 Normal employee capability
+### 11.2 Business-user and BDO capability
 
 - Search published service items eligible for the employee and retrieve their real forms.
 - Create `service_request` and read own requests; P2 lists the user's pending confirmations, confirms or reopens an explicit own ticket, and rates an own closed request.
-- Register/read own IT requirements through existing `requirements.create/view`, with `requester == current auth_user.id` enforced by the service.
+- A normal business user may create and read only own service requests. Only a BDO may register/read own IT requirements through existing `requirements.create/view`, with `requester == current auth_user.id` enforced by the service.
 - Never create incidents/changes, read another user's records, or perform review, reassignment, approval, or internal process tasks.
 
 The service-request tool does not accept `ticket_type`; requirement registration calls the separate Requirement domain service. UI hiding is not authorization: web APIs, MCP tools, and domain services enforce the same server-side boundary.
 
 ### 11.2a IT-staff web routing and transfer permission (phases A/B/C implemented)
 
-“Create IT Record” is now visible only to IT staff in the ITOM web experience. It is not granted to normal business users and is not exposed as an Aily/MCP tool. Routing recommendations are temporary, overrideable assistance and persist no answers. The server checks both IT-staff eligibility and at least one real target create permission, then filters each jump target by the current permissions; the flow cannot bypass target-record authorization.
+“Record Creation Guide” is visible to IT staff and system administrators in the ITOM web experience, but not granted to normal business users. Routing recommendations are temporary, overrideable assistance and persist no answers. The server checks IT-staff-or-administrator eligibility plus at least one real target create permission, then filters each jump target by the current permissions; the flow cannot bypass target-record authorization. This web guide is separate from Aily MCP tools; Aily requirement tools are available only to BDOs and authorized IT roles.
 
 Phase-B relation reads are trimmed by visibility of both source and target, and detail pages display only that safe result, so a related record cannot leak access to another record. Phase-C `prepare/submit` is implemented: an actor needs both source-record read scope and the target record's `create` permission; the server derives the target kind from its whitelist, checks idempotency key/request digest while holding the source-row lock, then lets the target domain service validate required fields, workflow node, approval, role, and data scope and writes the relation in the same transaction. System-level administrator authority does not replace a business submitter's service-request confirmation and does not change the Aily normal-user boundary.
 

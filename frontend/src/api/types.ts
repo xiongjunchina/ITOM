@@ -25,7 +25,7 @@ export interface RecordRelationRow {
   };
 }
 
-/** 系统角色（16 个内置角色，矩阵式 IT 组织） */
+/** 系统角色（17 个内置角色，矩阵式 IT 组织） */
 export type Role =
   | 'admin'
   | 'cio'
@@ -42,6 +42,7 @@ export type Role =
   | 'is_mgr'
   | 'it_bp'
   | 'auditor'
+  | 'bdo'
   | 'requester';
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -60,6 +61,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   is_mgr: '信息安全管理员',
   it_bp: 'IT业务合作伙伴',
   auditor: '审计员',
+  bdo: 'BDO(业务数字化经理)',
   requester: '业务用户',
 };
 
@@ -518,7 +520,7 @@ export interface TicketDetail extends TicketRow {
 
 // ============ M2.5 自配置：角色 / 用户组 ============
 
-/** 角色定义（16 个内置角色 + 自定义角色） */
+/** 角色定义（17 个内置角色 + 自定义角色） */
 export interface RoleDef {
   id: string;
   code: string;

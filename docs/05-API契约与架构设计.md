@@ -156,7 +156,7 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-需求登记写入独立 `Requirement`，不创建 Ticket。普通员工复用现有 `requirements.create/view` 功能权限并强制本人数据范围；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
+需求登记写入独立 `Requirement`，不创建 Ticket。普通业务用户不拥有需求模块权限；仅 BDO 和授权 IT 角色复用现有 `requirements.create/view`，并强制本人数据范围。领域服务还会校验 BDO/IT 角色边界，防止历史或手工追加的 `requester` 权限行绕过限制；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
 
 #### 需求实现任务接口
 
@@ -274,7 +274,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
-# P1：普通员工复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
+# P1：仅 BDO/授权 IT 角色复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
 ```
 
 ### 4.5 流程
@@ -425,7 +425,7 @@ IDC Kubernetes:
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份及机器人真实收件已完成） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
-| Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
+| Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
 

@@ -39,6 +39,7 @@ export default function MainLayout() {
 
   // 进入布局后刷新一次当前用户信息（token 失效则由拦截器跳登录页）
   const requesterPortal = isRequesterOnly(user);
+  const canViewManual = user?.roles.includes('admin') ?? false;
 
   useEffect(() => {
     if (!token) return;
@@ -152,9 +153,11 @@ export default function MainLayout() {
           </nav>
           <Space size={12}>
             <Button className="portal-f__search" type="text" icon={<SearchOutlined />} aria-label="搜索" />
-            <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
-              {t('header.manual')}
-            </Button>
+            {canViewManual && (
+              <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
+                {t('header.manual')}
+              </Button>
+            )}
             <LangSwitch />
             <NotificationBell />
             {userControl}
@@ -203,9 +206,11 @@ export default function MainLayout() {
                 {t('intake.title')}
               </Button>
             )}
-            <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
-              {t('header.manual')}
-            </Button>
+            {canViewManual && (
+              <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
+                {t('header.manual')}
+              </Button>
+            )}
             <LangSwitch />
             <NotificationBell />
             {userControl}

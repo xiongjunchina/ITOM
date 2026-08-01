@@ -60,6 +60,15 @@ function DashboardGate() {
   return <Dashboard />;
 }
 
+/** 操作手册尚在重制，仅系统管理员可访问；直接访问旧链接也会被拦截。 */
+function UserManualGate() {
+  const user = useAuthStore((s) => s.user);
+  // 刷新页面时用户资料尚未恢复前保持等待，避免管理员被错误重定向。
+  if (!user) return null;
+  if (!user?.roles.includes('admin')) return <Navigate to={firstAccessiblePath(user)} replace />;
+  return <UserManual />;
+}
+
 /** M17 旧地址兼容：/projects?tab=portfolios、/requirements?tab=tasks|scoring → 新二级菜单路径 */
 function LegacyProjectsRedirect() {
   const [sp] = useSearchParams();
@@ -84,7 +93,7 @@ export const router = createBrowserRouter([
     element: <MainLayout />,
     children: [
       { index: true, element: <HomeRedirect /> },
-      { path: 'user-manual', element: <UserManual /> },
+      { path: 'user-manual', element: <UserManualGate /> },
       { path: 'dashboard', element: <DashboardGate /> },
       { path: 'profile', element: <Profile /> },
 
