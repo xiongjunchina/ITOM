@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import update
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Query
 
@@ -30,7 +30,7 @@ from app.models import (
     ServiceItem,
     Ticket,
 )
-from app.services import assistant_actions, assistant_config
+from app.services import assistant_actions, assistant_config, assistant_conversations
 
 
 CAPABILITY_CODE = "wa0.test.confirmed_ticket_action"
@@ -51,24 +51,58 @@ class _TicketActionHandler:
     authorize_record_calls = 0
     execute_calls = 0
     preview_session_ids: list[int] = []
+    preview_db_type_names: list[str] = []
+    preview_actor_is_orm: list[bool] = []
+    authorize_record_db_type_names: list[str] = []
+    execute_db_type_names: list[str] = []
 
     @staticmethod
     def _ticket(db, data: _ActionInput, *, lock: bool = False) -> Ticket:
-        query = db.query(Ticket).filter(
-            Ticket.ticket_code == data.ticket_code,
-            Ticket.ticket_type == "service_request",
-            Ticket.is_deleted.is_(False),
+        statement = (
+            select(Ticket)
+            .where(
+                Ticket.ticket_code == data.ticket_code,
+                Ticket.ticket_type == "service_request",
+                Ticket.is_deleted.is_(False),
+            )
+            .limit(1)
         )
-        if lock:
-            query = query.with_for_update()
-        ticket = query.first()
+        if hasattr(db, "fetch_first"):
+            ticket = db.fetch_first(statement, with_for_update=lock)
+        else:
+            query = db.query(Ticket).filter(
+                Ticket.ticket_code == data.ticket_code,
+                Ticket.ticket_type == "service_request",
+                Ticket.is_deleted.is_(False),
+            )
+            if lock:
+                query = query.with_for_update()
+            ticket = query.first()
         if ticket is None:
             raise AppError("TEST_TICKET_NOT_FOUND", "目标服务请求不存在", 404)
         return ticket
 
+    @staticmethod
+    def _preview_surface_blocked(operation) -> bool:
+        try:
+            operation()
+        except Exception:
+            return True
+        return False
+
+    @staticmethod
+    def _preview_surface_violation() -> AppError:
+        return AppError(
+            "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION",
+            "动作预览不得修改数据或控制事务",
+            409,
+        )
+
     def preview(self, db, actor: AuthUser, data: _ActionInput) -> CapabilityResult:
         type(self).preview_calls += 1
         type(self).preview_session_ids.append(id(db))
+        type(self).preview_db_type_names.append(type(db).__name__)
+        type(self).preview_actor_is_orm.append(hasattr(actor, "_sa_instance_state"))
         ticket = self._ticket(db, data)
         if data.note == "preview-insert":
             db.add(AiAction(
@@ -90,12 +124,53 @@ class _TicketActionHandler:
                 .where(Ticket.id == ticket.id)
                 .values(remarks="preview DML mutated business state")
             )
+        elif data.note == "preview-actor-mutation":
+            try:
+                actor.preferences = {"preview_mutated": True}
+            except Exception:
+                pass
+        elif data.note == "preview-bind":
+            if self._preview_surface_blocked(lambda: getattr(db, "bind")):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview bind unexpectedly exposed")
+        elif data.note == "preview-get-bind":
+            if self._preview_surface_blocked(lambda: db.get_bind()):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview get_bind unexpectedly exposed")
+        elif data.note == "preview-connection":
+            if self._preview_surface_blocked(lambda: db.connection()):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview connection unexpectedly exposed")
+        elif data.note == "preview-scalar":
+            if self._preview_surface_blocked(lambda: db.scalar(select(Ticket.ticket_code).limit(1))):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview scalar unexpectedly exposed")
+        elif data.note == "preview-scalars":
+            if self._preview_surface_blocked(lambda: db.scalars(select(Ticket))):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview scalars unexpectedly exposed")
+        elif data.note == "preview-begin":
+            if self._preview_surface_blocked(lambda: getattr(db, "begin")):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview begin unexpectedly exposed")
+        elif data.note == "preview-get-transaction":
+            if self._preview_surface_blocked(lambda: db.get_transaction()):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview get_transaction unexpectedly exposed")
         elif data.note == "preview-flush":
             db.flush()
         elif data.note == "preview-commit":
             db.commit()
         elif data.note == "preview-rollback":
             db.rollback()
+        elif data.note == "preview-text-commit":
+            if self._preview_surface_blocked(lambda: db.execute(text("COMMIT"))):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview text COMMIT unexpectedly exposed")
+        elif data.note == "preview-transaction-commit":
+            if self._preview_surface_blocked(lambda: db.get_transaction().commit()):
+                raise self._preview_surface_violation()
+            raise AssertionError("preview transaction commit unexpectedly exposed")
         elif data.note == "preview-invalid-status":
             return CapabilityResult(status="succeeded", data={"ticket_code": ticket.ticket_code})
         return CapabilityResult(
@@ -121,6 +196,7 @@ class _TicketActionHandler:
 
     def authorize_record(self, db, actor: AuthUser, data: _ActionInput) -> None:
         type(self).authorize_record_calls += 1
+        type(self).authorize_record_db_type_names.append(type(db).__name__)
         ticket = self._ticket(db, data, lock=True)
         if ticket.status != "new":
             raise AppError("TEST_RECORD_STATE_CHANGED", "目标记录状态已变化", 409)
@@ -129,12 +205,37 @@ class _TicketActionHandler:
 
     def __call__(self, db, actor: AuthUser, data: _ActionInput) -> CapabilityResult:
         type(self).execute_calls += 1
+        type(self).execute_db_type_names.append(type(db).__name__)
         ticket = self._ticket(db, data, lock=True)
         ticket.remarks = data.note
         if data.note.startswith("explode"):
             raise RuntimeError("handler exploded with Authorization: Bearer handler-secret-raw")
         if data.note.startswith("commit-directly"):
             db.commit()
+        if data.note == "uow-connection-commit":
+            try:
+                db.connection().commit()
+            except Exception as exc:
+                raise AppError("AI_ACTION_TRANSACTION_VIOLATION", "禁止原始事务提交", 409) from exc
+            raise AssertionError("uow connection unexpectedly exposed")
+        if data.note == "uow-text-commit":
+            try:
+                db.execute(text("COMMIT"))
+            except Exception as exc:
+                raise AppError("AI_ACTION_TRANSACTION_VIOLATION", "禁止原始事务提交", 409) from exc
+            raise AssertionError("uow text COMMIT unexpectedly exposed")
+        if data.note == "uow-transaction-commit":
+            try:
+                db.get_transaction().commit()
+            except Exception as exc:
+                raise AppError("AI_ACTION_TRANSACTION_VIOLATION", "禁止原始事务提交", 409) from exc
+            raise AssertionError("uow get_transaction unexpectedly exposed")
+        if data.note == "uow-nested-commit":
+            try:
+                db.begin_nested().commit()
+            except Exception as exc:
+                raise AppError("AI_ACTION_TRANSACTION_VIOLATION", "禁止原始事务提交", 409) from exc
+            raise AssertionError("uow begin_nested unexpectedly exposed")
         return CapabilityResult(
             status="succeeded",
             data={
@@ -249,8 +350,9 @@ def _context(username: str, profile_id: str, version_id: str, *, suffix: str = "
             ServiceItem.is_deleted.is_(False),
         ).first()
         assert item is not None
+        ticket_slug = f"{username.replace('_', '-')}{suffix}"
         ticket = Ticket(
-            ticket_code=f"TK-WA0-ACTION-{username[-12:]}{suffix}",
+            ticket_code=f"TK-WA0-ACTION-{ticket_slug}",
             title="WA0 confirmed action",
             ticket_type="service_request",
             priority="P3",
@@ -551,6 +653,138 @@ def test_success_is_atomic_single_use_and_uses_a_row_lock(
     assert "confirmation_token" not in same_key
 
 
+def test_confirm_uses_action_unit_of_work_and_locks_conversation_before_runtime_and_record_checks(
+    client, admin_headers, action_capability_and_profile, monkeypatch
+):
+    profile_id, version_id = action_capability_and_profile
+    headers = _create_user(client, admin_headers, "wa0_confirm_uow")
+    _, conversation_id, ticket_code = _context("wa0_confirm_uow", profile_id, version_id)
+    prepared = _prepare(
+        "wa0_confirm_uow",
+        conversation_id,
+        ticket_code,
+        "confirm-uow-key",
+        "uow-safe-contract",
+    )
+    lock_events: list[str] = []
+    original_with_for_update = Query.with_for_update
+    original_lock_governance = assistant_config.lock_profile_runtime_governance
+
+    def observed_with_for_update(self, *args, **kwargs):
+        entity = self.column_descriptions[0].get("entity") if self.column_descriptions else None
+        if entity is AiAction:
+            lock_events.append("action")
+        elif entity is AiConversation:
+            lock_events.append("conversation")
+        elif entity is Ticket:
+            lock_events.append("record")
+        return original_with_for_update(self, *args, **kwargs)
+
+    def observed_lock_governance(db):
+        lock_events.append("governance")
+        return original_lock_governance(db)
+
+    monkeypatch.setattr(Query, "with_for_update", observed_with_for_update)
+    monkeypatch.setattr(
+        assistant_config, "lock_profile_runtime_governance", observed_lock_governance
+    )
+    confirmed = client.post(
+        f"/api/assistant/actions/{prepared['action_id']}/confirm",
+        headers=headers,
+        json={"confirmation_token": prepared["confirmation_token"]},
+    )
+
+    assert confirmed.status_code == 200, confirmed.text
+    assert HANDLER.authorize_record_db_type_names[-1] == "ActionUnitOfWork"
+    assert HANDLER.execute_db_type_names[-1] == "ActionUnitOfWork"
+    assert lock_events.index("action") < lock_events.index("conversation")
+    assert lock_events.index("conversation") < lock_events.index("governance")
+    assert lock_events.index("governance") < lock_events.index("record")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "uow-connection-commit",
+        "uow-text-commit",
+        "uow-transaction-commit",
+        "uow-nested-commit",
+    ],
+)
+def test_action_unit_of_work_blocks_raw_transaction_surfaces_without_business_change(
+    client, admin_headers, action_capability_and_profile, mode
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, f"wa0_{mode.replace('-', '_')}")
+    actor_id, conversation_id, ticket_code = _context(
+        f"wa0_{mode.replace('-', '_')}", profile_id, version_id
+    )
+    prepared = _prepare(
+        f"wa0_{mode.replace('-', '_')}",
+        conversation_id,
+        ticket_code,
+        f"{mode}-key",
+        mode,
+    )
+    execute_calls_before = HANDLER.execute_calls
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        with pytest.raises(AppError) as raised:
+            assistant_actions.confirm_action(
+                db, actor, prepared["action_id"], prepared["confirmation_token"]
+            )
+        _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+
+    with SessionLocal() as db:
+        assert db.query(Ticket).filter(Ticket.ticket_code == ticket_code).one().remarks is None
+        assert db.get(AiAction, prepared["action_id"]).status == "failed"
+    assert HANDLER.execute_calls == execute_calls_before + 1
+
+
+def test_confirm_fails_before_runtime_governance_when_archive_wins_after_prepare(
+    client, admin_headers, action_capability_and_profile, monkeypatch
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_confirm_archive")
+    actor_id, conversation_id, ticket_code = _context(
+        "wa0_confirm_archive", profile_id, version_id
+    )
+    prepared = _prepare(
+        "wa0_confirm_archive",
+        conversation_id,
+        ticket_code,
+        "confirm-archive-key",
+    )
+    with SessionLocal() as archive_db:
+        archive_actor = archive_db.get(AuthUser, actor_id)
+        assistant_conversations.archive_own_conversation(
+            archive_db, archive_actor, conversation_id
+        )
+    governance_events: list[str] = []
+    execute_calls_before = HANDLER.execute_calls
+    original_lock_governance = assistant_config.lock_profile_runtime_governance
+
+    def observed_lock_governance(db):
+        governance_events.append("governance")
+        return original_lock_governance(db)
+
+    monkeypatch.setattr(
+        assistant_config, "lock_profile_runtime_governance", observed_lock_governance
+    )
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        with pytest.raises(AppError):
+            assistant_actions.confirm_action(
+                db, actor, prepared["action_id"], prepared["confirmation_token"]
+            )
+
+    assert governance_events == []
+    assert HANDLER.execute_calls == execute_calls_before
+    with SessionLocal() as db:
+        assert db.query(Ticket).filter(Ticket.ticket_code == ticket_code).one().remarks is None
+        assert db.get(AiAction, prepared["action_id"]).status == "failed"
+
+
 def test_handler_exception_rolls_back_business_change_then_commits_redacted_failure(
     client, admin_headers, action_capability_and_profile
 ):
@@ -756,6 +990,164 @@ def test_preview_uses_an_independent_session_and_postgresql_read_only_sql(
     )
     assistant_actions._set_preview_transaction_read_only(fake_postgres_session)
     assert statements == ["SET TRANSACTION READ ONLY"]
+
+
+def test_preview_uses_read_only_action_data_and_actor_mutation_never_touches_the_caller_session(
+    client, admin_headers, action_capability_and_profile
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_action_preview_actor")
+    actor_id, conversation_id, ticket_code = _context(
+        "wa0_action_preview_actor", profile_id, version_id
+    )
+
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        prepared = assistant_actions.prepare_action(
+            db,
+            actor,
+            conversation_id,
+            CAPABILITY_CODE,
+            {"ticket_code": ticket_code, "note": "preview-actor-mutation"},
+            "preview-actor-key",
+        )
+
+    assert prepared["status"] == "prepared"
+    assert HANDLER.preview_db_type_names[-1] == "ReadOnlyActionData"
+    assert HANDLER.preview_actor_is_orm[-1] is False
+    with SessionLocal() as db:
+        assert "preview_mutated" not in (db.get(AuthUser, actor_id).preferences or {})
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "preview-bind",
+        "preview-get-bind",
+        "preview-connection",
+        "preview-scalar",
+        "preview-scalars",
+        "preview-begin",
+        "preview-get-transaction",
+        "preview-text-commit",
+        "preview-transaction-commit",
+    ],
+)
+def test_preview_read_only_action_data_blocks_raw_session_surfaces_without_durable_change(
+    client, admin_headers, action_capability_and_profile, mode
+):
+    profile_id, version_id = action_capability_and_profile
+    username = f"wa0_{mode.replace('-', '_')}"
+    _create_user(client, admin_headers, username)
+    actor_id, conversation_id, ticket_code = _context(username, profile_id, version_id)
+    key = f"{mode}-key-raw-facade"
+    with SessionLocal() as db:
+        prepared_audit_count_before = db.query(AuditLog).filter(
+            AuditLog.entity_type == "ai_action",
+            AuditLog.action == "prepared",
+        ).count()
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        with pytest.raises(AppError) as raised:
+            assistant_actions.prepare_action(
+                db,
+                actor,
+                conversation_id,
+                CAPABILITY_CODE,
+                {"ticket_code": ticket_code, "note": mode},
+                key,
+            )
+        _assert_code(raised, "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION")
+
+    with SessionLocal() as db:
+        ticket = db.query(Ticket).filter(Ticket.ticket_code == ticket_code).one()
+        prepared_audit_count_after = db.query(AuditLog).filter(
+            AuditLog.entity_type == "ai_action",
+            AuditLog.action == "prepared",
+        ).count()
+        assert ticket.remarks is None
+        assert db.query(AiAction).filter(AiAction.idempotency_key == key).count() == 0
+        assert prepared_audit_count_after == prepared_audit_count_before
+
+
+def test_prepare_locks_the_conversation_row_before_any_action_row_persistence(
+    client, admin_headers, action_capability_and_profile, monkeypatch
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_prepare_lock_order")
+    actor_id, conversation_id, ticket_code = _context(
+        "wa0_prepare_lock_order", profile_id, version_id
+    )
+    lock_events: list[str] = []
+    original_with_for_update = Query.with_for_update
+
+    def observed_with_for_update(self, *args, **kwargs):
+        entity = self.column_descriptions[0].get("entity") if self.column_descriptions else None
+        if entity is AiConversation:
+            lock_events.append("conversation")
+        elif entity is AiAction:
+            lock_events.append("action")
+        return original_with_for_update(self, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", observed_with_for_update)
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        prepared = assistant_actions.prepare_action(
+            db,
+            actor,
+            conversation_id,
+            CAPABILITY_CODE,
+            {"ticket_code": ticket_code, "note": "prepare row lock ordering"},
+            "prepare-lock-order-key",
+        )
+
+    assert prepared["status"] == "prepared"
+    assert lock_events
+    assert lock_events[0] == "conversation"
+
+
+def test_prepare_fails_closed_if_archive_commits_after_preview_before_persistence_lock(
+    client, admin_headers, action_capability_and_profile, monkeypatch
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_prepare_archive")
+    actor_id, conversation_id, ticket_code = _context(
+        "wa0_prepare_archive", profile_id, version_id
+    )
+    original_preview = assistant_actions._run_rollback_only_preview
+
+    def archive_after_preview(handler, actor, data):
+        result = original_preview(handler, actor, data)
+        with SessionLocal() as archive_db:
+            archive_actor = archive_db.get(AuthUser, actor.id)
+            assistant_conversations.archive_own_conversation(
+                archive_db, archive_actor, conversation_id
+            )
+        return result
+
+    monkeypatch.setattr(
+        assistant_actions,
+        "_run_rollback_only_preview",
+        archive_after_preview,
+    )
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        with pytest.raises(AppError) as raised:
+            assistant_actions.prepare_action(
+                db,
+                actor,
+                conversation_id,
+                CAPABILITY_CODE,
+                {"ticket_code": ticket_code, "note": "archive before persistence"},
+                "prepare-archive-key",
+            )
+        _assert_code(raised, "AI_CONVERSATION_NOT_FOUND")
+
+    with SessionLocal() as db:
+        assert db.get(AiConversation, conversation_id).status == "archived"
+        assert db.query(AiAction).filter(
+            AiAction.idempotency_key == "prepare-archive-key"
+        ).count() == 0
 
 
 @pytest.mark.parametrize(

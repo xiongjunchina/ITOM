@@ -83,16 +83,31 @@ def bootstrap_payload(db: Session, actor: AuthUser) -> dict:
 
 
 def _conversation_or_404(db: Session, actor: AuthUser, conversation_id: str) -> AiConversation:
-    row = (
+    return _owned_conversation_row(db, actor, conversation_id)
+
+
+def _owned_conversation_row(
+    db: Session,
+    actor: AuthUser,
+    conversation_id: str,
+    *,
+    require_active: bool = False,
+    lock: bool = False,
+) -> AiConversation:
+    query = (
         db.query(AiConversation)
         .filter(
             AiConversation.id == conversation_id,
             AiConversation.auth_user_id == actor.id,
             AiConversation.is_deleted.is_(False),
         )
-        .first()
     )
+    if lock:
+        query = query.with_for_update().populate_existing()
+    row = query.first()
     if row is None:
+        raise AppError("AI_CONVERSATION_NOT_FOUND", "智能体会话不存在", 404)
+    if require_active and (row.status != "active" or row.archived_at is not None):
         raise AppError("AI_CONVERSATION_NOT_FOUND", "智能体会话不存在", 404)
     return row
 
@@ -219,10 +234,10 @@ def get_own_conversation(db: Session, actor: AuthUser, conversation_id: str) -> 
 
 
 def archive_own_conversation(db: Session, actor: AuthUser, conversation_id: str) -> dict:
-    row = _conversation_or_404(db, actor, conversation_id)
+    row = _owned_conversation_row(db, actor, conversation_id, lock=True)
     if row.status != "archived":
         row.status = "archived"
-        row.archived_at = _utcnow()
+        row.archived_at = row.archived_at or _utcnow()
         db.commit()
         db.refresh(row)
     return conversation_payload(row)

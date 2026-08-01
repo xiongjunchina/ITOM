@@ -243,7 +243,8 @@ class PageContextIn(BaseModel):
 - [ ] Test wrong actor, expiry, retry, idempotency conflict, revoked permission, changed state, cancellation, auditor, and handler failure.
 - [ ] Normalize through the Pydantic input model, hash payload, generate a random 32-byte token, and store only its SHA-256.
 - [ ] Obtain preview from the server handler, never from model prose.
-- [ ] Confirm under `SELECT FOR UPDATE`, recompute capability and record guards, and atomically persist business result/action/audit. After exception rollback, store a separate redacted failure state.
+- [ ] Confirm under `SELECT FOR UPDATE`, lock/refresh the owned active conversation before runtime governance, pass only `ActionUnitOfWork` into record authorization/mutation, and atomically persist business result/action/audit. Preview authorization/preview use only a preview-local actor context plus `ReadOnlyActionData`. After exception rollback, store a separate redacted failure state.
+- [ ] Before action insert/idempotency winner handling, preparation must `FOR UPDATE + populate_existing` lock and revalidate the owned active conversation; `archive_own_conversation()` must lock and refresh the owned row before commit.
 - [ ] Expose confirm/cancel endpoints, run tests, and commit `feat(agent): enforce confirmed assistant actions`.
 
 ---

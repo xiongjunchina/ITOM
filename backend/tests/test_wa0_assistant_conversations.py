@@ -18,6 +18,7 @@ from app.routers.admin_ai import ProfileDraftUpdateIn
 from app.services import assistant_config, assistant_conversations, it_document_guide
 import pytest
 from pydantic import ValidationError
+from sqlalchemy.orm import Query
 
 
 PAGE_CONTEXT = {"route": "/itsm/tickets", "page_type": "ticket_list"}
@@ -229,6 +230,46 @@ def test_conversation_routes_keep_every_read_and_archive_scoped_to_the_owner(cli
     assert client.get("/api/assistant/conversations", headers=alice_headers).json()["data"] == []
     archived = client.get("/api/assistant/conversations?include_archived=true", headers=alice_headers)
     assert [row["id"] for row in archived.json()["data"]] == [alice_id]
+
+
+def test_archive_locks_and_refreshes_the_owned_conversation_row_before_committing(
+    client, admin_headers, monkeypatch
+):
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    _publish_requester_profile()
+    headers = _create_user(client, admin_headers, "wa0_conv_archive_lock")
+    created = client.post(
+        "/api/assistant/conversations",
+        headers=headers,
+        json={"language": "zh-CN", "page_context": PAGE_CONTEXT},
+    )
+    assert created.status_code == 200, created.text
+    conversation_id = created.json()["data"]["id"]
+    events: list[str] = []
+    original_with_for_update = Query.with_for_update
+    original_populate_existing = Query.populate_existing
+
+    def observed_with_for_update(self, *args, **kwargs):
+        entity = self.column_descriptions[0].get("entity") if self.column_descriptions else None
+        if entity is AiConversation:
+            events.append("with_for_update")
+        return original_with_for_update(self, *args, **kwargs)
+
+    def observed_populate_existing(self, *args, **kwargs):
+        entity = self.column_descriptions[0].get("entity") if self.column_descriptions else None
+        if entity is AiConversation:
+            events.append("populate_existing")
+        return original_populate_existing(self, *args, **kwargs)
+
+    monkeypatch.setattr(Query, "with_for_update", observed_with_for_update)
+    monkeypatch.setattr(Query, "populate_existing", observed_populate_existing)
+    archived = client.post(
+        f"/api/assistant/conversations/{conversation_id}/archive", headers=headers
+    )
+
+    assert archived.status_code == 200, archived.text
+    assert events[:2] == ["with_for_update", "populate_existing"]
 
 
 @pytest.mark.parametrize("unsafe_field", ["roles", "permissions", "dom", "html", "prompt", "cookies", "headers"])

@@ -1,6 +1,6 @@
 # ITOM Web Agent Design Baseline
 
-> Status: **design approved; WA0 Tasks 1–6 implemented with Task 6 Fix Round 1 complete; Task 7+ pending**
+> Status: **design approved; WA0 Tasks 1–6 implemented with Task 6 Fix Round 2 complete; Task 7+ pending**
 > Approval date: 2026-08-01
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -136,11 +136,11 @@ Read APIs return only `has_secret`, never secret values. Bootstrap returns the c
 ## 10. Security and degradation
 
 - Recheck active account, effective roles, permission, data scope, record state, and process assignment per call.
-- Authorize an L3 preview before record metadata and run it in an independent Session that is always rolled back and closed. PostgreSQL is transaction-read-only; handler writes, flush, commit, and rollback fail closed, and preview status must be exactly `prepared`.
+- Authorize an L3 preview before record metadata and run it in an independent Session that is always rolled back and closed. PostgreSQL is transaction-read-only; the handler sees only an immutable actor context plus `ReadOnlyActionData`, and raw Session/Engine/Connection/transaction surfaces, DML/text transaction statements, handler writes, flush, commit, and rollback all fail closed, while preview status must be exactly `prepared`.
 - Reject normalized input if recursive redaction would change it. Never persist or execute the redacted substitute and never use it for the idempotency digest.
 - Bind an L3 token to user, conversation, capability, normalized payload digest, and expiry; make it single-use.
 - Use the named unique idempotency target; same-key/same-input returns only the winner without a new token, same-key/different-input is rejected, and state drift requires a new preview.
-- Confirmation retains the action row lock, proves that the conversation-captured profile/version/provider remains runnable under the governance lock order, and places domain mutation, success result, and audit in a nested savepoint. Failure rolls back only the savepoint and lets the same outer transaction commit the bounded terminal fact.
+- Prepare relocks and refreshes the owned conversation row after preview and before action insert/idempotency-winner handling. Confirmation retains the action row lock, then locks and refreshes the owned conversation row, proves that the conversation-captured profile/version/provider remains runnable under the governance lock order, and gives record authorization/mutation only an immutable actor context plus `ActionUnitOfWork`. Domain mutation, success result, and audit stay in a nested savepoint; failure rolls back only that savepoint and lets the same outer transaction commit the bounded terminal fact. Conversation archive follows the same row-lock-and-refresh discipline before commit.
 - Treat user text, knowledge, and record content as untrusted data that cannot override system instructions or capability boundaries.
 - Allow only administrator-approved HTTPS model endpoints; redact credentials and sensitive answers.
 - Model failure returns to deterministic guidance, search, and native pages. Invalid structure, timeout, or broken streaming never triggers a mutation.

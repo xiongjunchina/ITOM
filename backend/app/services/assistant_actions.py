@@ -15,7 +15,15 @@ from sqlalchemy.orm import Session
 from app.assistant.policy import capabilities_for_user
 from app.assistant.redaction import redact_for_message
 from app.assistant.registry import registry
-from app.assistant.types import AssistantChannel, CapabilityDefinition, CapabilityResult, RiskLevel
+from app.assistant.types import (
+    ActionActorContext,
+    ActionUnitOfWork,
+    AssistantChannel,
+    CapabilityDefinition,
+    CapabilityResult,
+    ReadOnlyActionData,
+    RiskLevel,
+)
 from app.core.errors import AppError
 from app.db import SessionLocal
 from app.models import AiAction, AiConversation, AuthUser
@@ -53,19 +61,15 @@ def _owned_conversation(
     conversation_id: str,
     *,
     require_active: bool = True,
+    lock: bool = False,
 ) -> AiConversation:
-    row = (
-        db.query(AiConversation)
-        .filter(
-            AiConversation.id == conversation_id,
-            AiConversation.auth_user_id == actor.id,
-            AiConversation.is_deleted.is_(False),
-        )
-        .first()
+    return assistant_conversations._owned_conversation_row(
+        db,
+        actor,
+        conversation_id,
+        require_active=require_active,
+        lock=lock,
     )
-    if row is None or (require_active and row.status != "active"):
-        raise AppError("AI_CONVERSATION_NOT_FOUND", "智能体会话不存在", 404)
-    return row
 
 
 def _current_l3_definition(
@@ -105,73 +109,25 @@ def _normalized_payload(definition: CapabilityDefinition, payload: object) -> tu
         raise AppError("AI_ACTION_PAYLOAD_INVALID", "动作参数无效")
 
 
-def _preview_violation() -> AppError:
-    return AppError(
-        "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION",
-        "动作预览不得修改数据或控制事务",
-        409,
-    )
-
-
 def _set_preview_transaction_read_only(db: Session) -> None:
     """Apply PostgreSQL's transaction-level read-only boundary before preview access."""
     if db.get_bind().dialect.name == "postgresql":
         db.execute(text("SET TRANSACTION READ ONLY"))
 
 
-def _is_mutating_statement(statement: object) -> bool:
-    if any(
-        bool(getattr(statement, name, False))
-        for name in ("is_insert", "is_update", "is_delete", "is_dml")
-    ):
-        return True
-    if statement.__class__.__name__ == "TextClause":
-        keyword = str(statement).lstrip().split(None, 1)[0].lower() if str(statement).strip() else ""
-        return keyword in {
-            "insert", "update", "delete", "merge", "truncate", "create", "alter", "drop", "grant", "revoke",
-        }
-    return False
-
-
 @contextmanager
 def _preview_transaction_boundary(db: Session):
-    """Expose reads while rejecting handler transaction control and write APIs."""
-    guarded_names = (
-        "add",
-        "add_all",
-        "delete",
-        "flush",
-        "commit",
-        "rollback",
-        "bulk_save_objects",
-        "bulk_insert_mappings",
-        "bulk_update_mappings",
-    )
-    originals = {name: getattr(db, name) for name in guarded_names}
-    original_execute = db.execute
-    original_connection = db.connection
-
-    def reject(*_args, **_kwargs):
-        raise _preview_violation()
-
-    def guarded_execute(statement, *args, **kwargs):
-        if _is_mutating_statement(statement):
-            raise _preview_violation()
-        return original_execute(statement, *args, **kwargs)
-
-    for name in guarded_names:
-        setattr(db, name, reject)
-    db.execute = guarded_execute  # type: ignore[method-assign]
-    db.connection = reject  # type: ignore[method-assign]
+    """Keep preview rollback-only even if a handler mutates attached ORM state."""
     try:
         yield
         if db.new or db.dirty or db.deleted:
-            raise _preview_violation()
+            raise AppError(
+                "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION",
+                "动作预览不得修改数据或控制事务",
+                409,
+            )
     finally:
-        for name, original in originals.items():
-            setattr(db, name, original)
-        db.execute = original_execute  # type: ignore[method-assign]
-        db.connection = original_connection  # type: ignore[method-assign]
+        pass
 
 
 def _uniform_preview_unavailable() -> AppError:
@@ -182,15 +138,20 @@ def _uniform_preview_unavailable() -> AppError:
     )
 
 
-def _preview_result(handler: object, db: Session, actor: AuthUser, data: BaseModel) -> CapabilityResult:
+def _preview_result(
+    handler: object,
+    preview_db: ReadOnlyActionData,
+    actor: ActionActorContext,
+    data: BaseModel,
+) -> CapabilityResult:
     authorize_preview = getattr(handler, "authorize_preview", None)
     preview = getattr(handler, "preview", None)
     authorize_record = getattr(handler, "authorize_record", None)
     if not all(callable(item) for item in (authorize_preview, preview, authorize_record)):
         raise _uniform_preview_unavailable()
     try:
-        authorize_preview(db, actor, data)
-        result = preview(db, actor, data)
+        authorize_preview(preview_db, actor, data)
+        result = preview(preview_db, actor, data)
     except AppError as exc:
         if exc.code == "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION":
             raise
@@ -206,8 +167,16 @@ def _run_rollback_only_preview(handler: object, actor: AuthUser, data: BaseModel
     preview_db = SessionLocal()
     try:
         _set_preview_transaction_read_only(preview_db)
+        preview_actor = preview_db.get(AuthUser, actor.id)
+        if preview_actor is None or preview_actor.is_deleted or not preview_actor.is_active:
+            raise _uniform_preview_unavailable()
         with _preview_transaction_boundary(preview_db):
-            return _preview_result(handler, preview_db, actor, data)
+            return _preview_result(
+                handler,
+                ReadOnlyActionData(preview_db),
+                ActionActorContext.from_auth_user(preview_actor),
+                data,
+            )
     finally:
         try:
             preview_db.rollback()
@@ -257,6 +226,11 @@ def prepare_action(
     """Create one authoritative L3 preview and return its raw token once."""
     try:
         conversation = _owned_conversation(db, actor, conversation_id)
+        expected_conversation_binding = (
+            conversation.auth_user_id,
+            conversation.profile_id,
+            conversation.profile_version_id,
+        )
         definition = _current_l3_definition(
             db,
             actor,
@@ -266,6 +240,25 @@ def prepare_action(
         key = _idempotency_key(idempotency_key)
         normalized, parsed = _normalized_payload(definition, payload)
         payload_digest = _digest(normalized)
+        preview_result = _run_rollback_only_preview(definition.handler, actor, parsed)
+        preview, preview_message = _safe_result(preview_result)
+        locked_conversation = _owned_conversation(
+            db,
+            actor,
+            conversation_id,
+            require_active=True,
+            lock=True,
+        )
+        if (
+            locked_conversation.archived_at is not None
+            or (
+                locked_conversation.auth_user_id,
+                locked_conversation.profile_id,
+                locked_conversation.profile_version_id,
+            )
+            != expected_conversation_binding
+        ):
+            raise AppError("AI_CONVERSATION_NOT_FOUND", "智能体会话不存在", 404)
         existing = (
             db.query(AiAction)
             .filter(
@@ -286,12 +279,9 @@ def prepare_action(
                 )
             db.rollback()
             return _action_payload(existing)
-
-        preview_result = _run_rollback_only_preview(definition.handler, actor, parsed)
-        preview, preview_message = _safe_result(preview_result)
         raw_token = secrets.token_urlsafe(32)
         row = AiAction(
-            conversation_id=conversation.id,
+            conversation_id=locked_conversation.id,
             auth_user_id=actor.id,
             capability_code=definition.code,
             risk_level=definition.risk.value,
@@ -403,7 +393,8 @@ def _reauthorized_runtime(
     db: Session,
     actor: AuthUser,
     row: AiAction,
-) -> tuple[AuthUser, CapabilityDefinition, BaseModel]:
+    conversation: AiConversation,
+) -> tuple[AuthUser, ActionActorContext, CapabilityDefinition, BaseModel]:
     active_actor = (
         db.query(AuthUser)
         .filter(
@@ -428,7 +419,6 @@ def _reauthorized_runtime(
             "当前智能体运行档案已失效",
             403,
         ) from None
-    conversation = _owned_conversation(db, active_actor, row.conversation_id)
     if (
         conversation.auth_user_id != row.auth_user_id
         or conversation.profile_id != profile.id
@@ -453,7 +443,7 @@ def _reauthorized_runtime(
         raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作参数已失效", 403) from None
     if not callable(getattr(definition.handler, "authorize_record", None)):
         raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作缺少记录级授权校验", 403)
-    return active_actor, definition, parsed
+    return active_actor, ActionActorContext.from_auth_user(active_actor), definition, parsed
 
 
 def _public_execution_error(exc: Exception) -> tuple[AppError, str]:
@@ -527,11 +517,24 @@ def confirm_action(
         raise AppError("AI_ACTION_TOKEN_INVALID", "确认凭证无效", 403)
 
     try:
-        active_actor, definition, parsed = _reauthorized_runtime(db, actor, row)
+        conversation = _owned_conversation(
+            db,
+            actor,
+            row.conversation_id,
+            require_active=True,
+            lock=True,
+        )
+        active_actor_row, active_actor, definition, parsed = _reauthorized_runtime(
+            db,
+            actor,
+            row,
+            conversation,
+        )
+        uow = ActionUnitOfWork(db)
         with db.begin_nested():
             with _handler_transaction_boundary(db):
-                definition.handler.authorize_record(db, active_actor, parsed)
-                result = definition.handler(db, active_actor, parsed)
+                definition.handler.authorize_record(uow, active_actor, parsed)
+                result = definition.handler(uow, active_actor, parsed)
             if not isinstance(result, CapabilityResult) or result.status != "succeeded":
                 raise AppError("AI_ACTION_RESULT_INVALID", "动作处理器未返回已提交结果", 409)
             result_data, result_message = _safe_result(result)
@@ -553,7 +556,7 @@ def confirm_action(
                 "ai_action",
                 row.id,
                 "succeeded",
-                active_actor,
+                active_actor_row,
                 {
                     "capability_code": row.capability_code,
                     "risk_level": row.risk_level,

@@ -3,10 +3,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 import re
 from collections.abc import Mapping as MappingABC
-from typing import Any, Callable, Mapping, get_args, get_origin
+from types import MappingProxyType
+from typing import Any, Callable, Mapping, Protocol, get_args, get_origin
 
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from app.core.errors import AppError
 from app.assistant.redaction import is_sensitive_name
 
 
@@ -170,7 +173,200 @@ class CapabilityContext:
     max_risk: RiskLevel
 
 
-CapabilityHandler = Callable[[Any, Any, BaseModel], CapabilityResult]
+def _preview_violation() -> AppError:
+    return AppError(
+        "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION",
+        "动作预览不得修改数据或控制事务",
+        409,
+    )
+
+
+def _transaction_violation() -> AppError:
+    return AppError(
+        "AI_ACTION_TRANSACTION_VIOLATION",
+        "动作处理器不能自行提交或回滚事务",
+        409,
+    )
+
+
+@dataclass(frozen=True)
+class ActionActorContext:
+    id: str
+    username: str | None
+    person_id: str | None
+    is_active: bool
+    preferences: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_auth_user(cls, actor: Any) -> "ActionActorContext":
+        preferences = getattr(actor, "preferences", None)
+        if not isinstance(preferences, Mapping):
+            preferences = {}
+        return cls(
+            id=str(actor.id),
+            username=getattr(actor, "username", None),
+            person_id=getattr(actor, "person_id", None),
+            is_active=bool(getattr(actor, "is_active", False)),
+            preferences=MappingProxyType(dict(preferences)),
+        )
+
+
+class _ReadOnlyRecordProxy:
+    __slots__ = ("_record",)
+
+    def __init__(self, record: Any) -> None:
+        object.__setattr__(self, "_record", record)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._record, name)
+
+    def __setattr__(self, _name: str, _value: Any) -> None:
+        raise _preview_violation()
+
+    def __repr__(self) -> str:
+        return f"<ReadOnlyRecordProxy {type(self._record).__name__}>"
+
+
+class _SelectOnlyMixin:
+    __slots__ = ("_db",)
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def _select_statement(self, statement: Any, *, violation: Callable[[], AppError]) -> Any:
+        if not bool(getattr(statement, "is_select", False)):
+            raise violation()
+        return statement
+
+    def _fetch_first(self, statement: Any, *, with_for_update: bool = False) -> Any:
+        statement = self._select_statement(statement, violation=self._violation)
+        query = self._query_from_entity_select(statement, with_for_update=with_for_update)
+        if query is not None:
+            return self._materialize_first(query.first())
+        if with_for_update and callable(getattr(statement, "with_for_update", None)):
+            statement = statement.with_for_update()
+        return self._materialize_first(self._db.execute(statement).scalars().first())
+
+    def _fetch_all(self, statement: Any, *, with_for_update: bool = False) -> list[Any]:
+        statement = self._select_statement(statement, violation=self._violation)
+        query = self._query_from_entity_select(statement, with_for_update=with_for_update)
+        if query is not None:
+            return [self._materialize_first(row) for row in query.all()]
+        if with_for_update and callable(getattr(statement, "with_for_update", None)):
+            statement = statement.with_for_update()
+        return [self._materialize_first(row) for row in self._db.execute(statement).scalars().all()]
+
+    def _materialize_first(self, value: Any) -> Any:
+        return value
+
+    def _query_from_entity_select(self, statement: Any, *, with_for_update: bool):
+        descriptions = getattr(statement, "column_descriptions", None) or ()
+        entity = descriptions[0].get("entity") if len(descriptions) == 1 else None
+        if entity is None:
+            return None
+        query = self._db.query(entity)
+        where_criteria = tuple(getattr(statement, "_where_criteria", ()) or ())
+        if where_criteria:
+            query = query.filter(*where_criteria)
+        order_by = tuple(getattr(statement, "_order_by_clauses", ()) or ())
+        if order_by:
+            query = query.order_by(*order_by)
+        limit_clause = getattr(statement, "_limit_clause", None)
+        if limit_clause is not None:
+            query = query.limit(limit_clause)
+        if with_for_update:
+            query = query.with_for_update()
+        return query
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}>"
+
+
+class ReadOnlyActionData(_SelectOnlyMixin):
+    _BLOCKED_NAMES = frozenset({
+        "add",
+        "add_all",
+        "begin",
+        "bind",
+        "bulk_insert_mappings",
+        "bulk_save_objects",
+        "bulk_update_mappings",
+        "commit",
+        "connection",
+        "delete",
+        "flush",
+        "get_bind",
+        "get_transaction",
+        "merge",
+        "query",
+        "rollback",
+        "scalar",
+        "scalars",
+    })
+
+    def _violation(self) -> AppError:
+        return _preview_violation()
+
+    def _materialize_first(self, value: Any) -> Any:
+        if hasattr(value, "_sa_instance_state"):
+            return _ReadOnlyRecordProxy(value)
+        return value
+
+    def fetch_first(self, statement: Any, *, with_for_update: bool = False) -> Any:
+        return self._fetch_first(statement, with_for_update=with_for_update)
+
+    def fetch_all(self, statement: Any, *, with_for_update: bool = False) -> list[Any]:
+        return self._fetch_all(statement, with_for_update=with_for_update)
+
+    def execute(self, statement: Any, *, with_for_update: bool = False) -> tuple[Any, ...]:
+        return tuple(self._fetch_all(statement, with_for_update=with_for_update))
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._BLOCKED_NAMES:
+            raise _preview_violation()
+        raise AttributeError(name)
+
+
+class ActionUnitOfWork(_SelectOnlyMixin):
+    _BLOCKED_NAMES = frozenset({
+        "begin",
+        "begin_nested",
+        "bind",
+        "commit",
+        "connection",
+        "execute",
+        "flush",
+        "get_bind",
+        "get_transaction",
+        "query",
+        "rollback",
+        "scalar",
+        "scalars",
+    })
+
+    def _violation(self) -> AppError:
+        return _transaction_violation()
+
+    def fetch_first(self, statement: Any, *, with_for_update: bool = False) -> Any:
+        return self._fetch_first(statement, with_for_update=with_for_update)
+
+    def fetch_all(self, statement: Any, *, with_for_update: bool = False) -> list[Any]:
+        return self._fetch_all(statement, with_for_update=with_for_update)
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._BLOCKED_NAMES:
+            raise _transaction_violation()
+        raise AttributeError(name)
+
+
+class ConfirmedCapabilityHandler(Protocol):
+    def authorize_preview(self, db: ReadOnlyActionData, actor: ActionActorContext, data: BaseModel) -> None: ...
+    def preview(self, db: ReadOnlyActionData, actor: ActionActorContext, data: BaseModel) -> CapabilityResult: ...
+    def authorize_record(self, db: ActionUnitOfWork, actor: ActionActorContext, data: BaseModel) -> None: ...
+    def __call__(self, db: ActionUnitOfWork, actor: ActionActorContext, data: BaseModel) -> CapabilityResult: ...
+
+
+CapabilityHandler = Callable[[ActionUnitOfWork, ActionActorContext, BaseModel], CapabilityResult] | ConfirmedCapabilityHandler
 
 
 @dataclass(frozen=True)

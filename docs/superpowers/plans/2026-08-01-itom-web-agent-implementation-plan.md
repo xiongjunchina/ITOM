@@ -412,7 +412,9 @@ def prepare_action(...) -> PreparedAction:
 
 - [ ] **Step 3: 实现行锁、重授权和事务结果**
 
-确认时 `SELECT ... FOR UPDATE`，重新计算当前能力并调用 `authorize_record()`；成功业务写入、`AiAction.succeeded`、结果实体和通用审计在同一事务提交。失败先回滚业务事务，再单独写脱敏失败状态；任何失败响应不得使用“已创建/已关闭”。
+确认时 `SELECT ... FOR UPDATE` 先锁动作，再锁定并刷新所属 active 会话，之后才进入 Task 4 governance/provider/profile 锁序；`authorize_record()` 和 mutation 仅接收 `ActionUnitOfWork`，预览授权/预览仅接收独立 Session actor 上下文和 `ReadOnlyActionData`。成功业务写入、`AiAction.succeeded`、结果实体和通用审计在同一事务提交。失败先回滚业务事务，再单独写脱敏失败状态；任何失败响应不得使用“已创建/已关闭”。
+
+Fix Round 2 还要求：准备在预览结束后、动作插入/幂等赢家处理前先 `FOR UPDATE + populate_existing` 锁定并重检所属 active 会话；`archive_own_conversation()` 在提交前同样锁定并刷新所属会话行。
 
 - [ ] **Step 4: 暴露 confirm/cancel API 并测试**
 

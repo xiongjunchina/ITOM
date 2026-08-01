@@ -1,6 +1,6 @@
 # ITOM 网页智能体设计基线
 
-> 状态：**设计已确认；WA0 Task 1–6 已实现并完成 Task 6 Fix Round 1；Task 7+ 待实施**
+> 状态：**设计已确认；WA0 Task 1–6 已实现并完成 Task 6 Fix Round 2；Task 7+ 待实施**
 > 确认日期：2026-08-01
 > 中文为权威版本；英文镜像见 `docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`。
 
@@ -157,11 +157,11 @@ GET            /api/admin/ai/action-audits
 ## 12. 安全、确认与降级
 
 - 每次调用重新检查活动账号、有效角色、权限、数据范围、记录状态和流程任务；
-- L3 预览授权先于记录元数据，并在独立且最终回滚/关闭的 Session 执行；PostgreSQL 事务只读，处理器写入、flush、commit、rollback 均失败关闭，预览状态必须精确为 `prepared`；
+- L3 预览授权先于记录元数据，并在独立且最终回滚/关闭的 Session 执行；PostgreSQL 事务只读，处理器仅看到独立 Session 中重新加载的不可变 actor context 与 `ReadOnlyActionData` 门面，写入、DML/text 事务语句、bind/get_bind/connection/begin/get_transaction/scalar/scalars、flush、commit、rollback 均失败关闭，预览状态必须精确为 `prepared`；
 - 规范化输入若会被递归脱敏改变则整体拒绝；不得持久化/执行脱敏替代值，也不得以其计算幂等摘要；
 - L3 确认凭证绑定用户、会话、能力、规范化参数摘要和有效期，单次使用；
 - 重试使用命名唯一约束下的幂等键；同键同参只返回赢家且不重发 Token，同键异参拒绝；状态已变化时重新预览；
-- 确认保持动作行锁，按模型治理锁序证明会话捕获档案/版本/提供商仍可运行；领域写入、成功结果和审计位于嵌套 savepoint，失败只回滚 savepoint 并由同一外层事务提交有界终态；
+- prepare 在 preview 后、动作插入/幂等赢家处理前必须锁定并刷新所属会话行；确认保持动作行锁后再锁定并刷新所属会话行，随后按模型治理锁序证明会话捕获档案/版本/提供商仍可运行；`authorize_record` 和 mutation 只获得不可变 actor context 与 `ActionUnitOfWork` 门面；领域写入、成功结果和审计位于嵌套 savepoint，失败只回滚 savepoint 并由同一外层事务提交有界终态；会话归档同样先锁定并刷新所属行再提交；
 - 用户输入、知识内容和记录正文均是不可信数据，不能覆盖系统指令或能力边界；
 - 模型服务地址须在管理员允许范围内并使用 HTTPS；日志不得保存凭据或完整敏感答案；
 - 模型不可用时回退规则指引、搜索和原生页面；非法结构、超时或流式断开不得触发写操作；
