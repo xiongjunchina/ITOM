@@ -269,7 +269,9 @@ WA0 Task 4 已实现 `/api/admin/ai` 管理 API，全部端点逐一声明真实
 
 档案 code 固定为 `requester`、`bdo`、`it_staff`、`admin`，受众分别固定为 `requester`、`bdo`、`it`、`admin`。草稿更新携带 `expected_updated_at` 乐观锁；数据库只能选择进程内注册表已有的能力 code，且能力受众、风险、知识范围均不得超出服务端受众白名单。`name/default_provider_id/enabled/retention_days` 与提示词、能力、知识范围、风险全部保存在 version=0 草稿；所有新草稿、发布版本和回滚副本的 `config_snapshot` 都含显式 `schema_version=1` 及完整四个活动字段，PATCH 不修改 `ai_agent_profile` 当前活动字段。发布必须携带 `expected_draft_updated_at`，并同时通过中英文系统指令、非 L4 风险、注册能力、知识范围、启用且近期健康的默认提供商和 L2/L3 工具/JSON Schema 兼容性校验；只有验证成功后才在同一事务中应用活动档案字段并新增不可变、单调递增的 `ai_agent_profile_version`。回滚请求携带来源版本与 `expected_latest_version`，只把可证明完整的历史快照复制为新发布版本并原子应用，从不修改或删除历史。迁移前 `{}`、无 schema 标记或缺字段版本返回 409 `AI_PROFILE_LEGACY_SNAPSHOT_UNAVAILABLE`，活动档案和全部版本字节保持不变，服务端绝不从当前活动档案猜测历史；完整的新版本仍可复制式回滚。过期草稿或并发版本返回 409；失败发布不改变当前活动档案、既有发布版本或生成半成品版本。
 
-`GET /health` 只返回提供商/档案计数；`GET /usage?days=N` 由数据库聚合调用、Token、耗时及按提供商/结果码分组，`days` 默认 30 且只允许 1–90，不加载调用整行或消息/错误字段；`GET /action-audits` 只返回动作 code、风险、状态、结果实体与时间。三者均不返回 Prompt、消息正文、完整会话、密钥、确认 token/hash、规范化载荷、结果载荷或提供商错误正文。Task 4 未实现管理 UI、`/api/assistant` 会话/动作编排、领域能力处理器、部署或 WA1。
+`GET /health` 只返回提供商/档案计数；`GET /usage?days=N` 由数据库聚合调用、Token、耗时及按提供商/结果码分组，`days` 默认 30 且只允许 1–90，不加载调用整行或消息/错误字段；`GET /action-audits` 只返回动作 code、风险、状态、结果实体与时间。三者均不返回 Prompt、消息正文、完整会话、密钥、确认 token/hash、规范化载荷、结果载荷或提供商错误正文。
+
+WA0 Task 5 已实现当前登录用户的 `GET /api/assistant/bootstrap`、`POST/GET /api/assistant/conversations`、`GET /api/assistant/conversations/{id}` 和 `POST /api/assistant/conversations/{id}/archive`。`bootstrap` 的固定白名单只有 `enabled`、档案 code/version、`max_risk`、`suggested_prompts`、`retention_days` 和 `fallback_available`；档案未发布/停用或策略无法解析时返回 `enabled=false`，不泄露内部原因、能力矩阵、禁用能力、提供商配置、密钥或处理器。创建请求只接受 `language` 和 extra-forbid 的 `page_context`：route 必须是规范化本地路径，page/entity/tab 是有限安全标识，`selected_ids` 只能是最多 20 个不重复 GLID；角色、权限、DOM/HTML、提示词、Cookie、头、外部/协议相对/穿越式路径和其他字段全部 422。创建、列表、详情和归档均以认证后的数据库 `auth_user_id` 过滤；非归属会话统一返回 `AI_CONVERSATION_NOT_FOUND` 404，不通过 total、详情或归档状态泄露其他用户。列表默认只返回 active 会话，`include_archived=true` 仅显示本人已归档会话，按 `created_at DESC, id DESC` 稳定分页。保留期 0 不写任何普通 user/assistant 消息正文；1–90 天创建时设置 `expires_at`，消息写入前递归脱敏；归档绝不删除 `ai_action` 或安全/业务审计。Task 5 不包含消息 SSE、工具循环、L3 动作、业务处理器、UI、部署或 WA1 工作。
 
 ### 4.2 ITSM
 
@@ -466,7 +468,7 @@ IDC Kubernetes:
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
-| 网页智能体 WA0（Task 1–4 已实现；Task 5+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关及模型/档案管理 API；会话路由和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理 UI 待实施 | 网页智能体设计基线 |
+| 网页智能体 WA0（Task 1–5 已实现；Task 6+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关、模型/档案管理 API 及本人网页会话生命周期；SSE/动作和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理 UI 待实施 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 
