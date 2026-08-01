@@ -39,6 +39,7 @@ from app.services.perf_bplus import (
     latest_period,
     publish_period,
     recompute_bplus,
+    refresh_bplus_if_role_snapshot_changed,
     is_pmo_person,
     unlock_period,
     EXTERNAL_INPUT_METRICS,
@@ -265,6 +266,8 @@ def team_performance_overview(period: str = "", db: Session = Depends(get_db), _
         recompute_bplus(db, period)
         db.commit()
         period_row = latest_period(db, period)
+    elif refresh_bplus_if_role_snapshot_changed(db, period_row):
+        db.commit()
     return ok(build_internal_result(db, period_row))
 
 
@@ -692,6 +695,8 @@ def list_bplus_reviews(period: str = "", db: Session = Depends(get_db), _=Depend
         recompute_bplus(db, period)
         db.commit()
         period_row = latest_period(db, period)
+    elif refresh_bplus_if_role_snapshot_changed(db, period_row):
+        db.commit()
     result = build_internal_result(db, period_row)
     return ok({**result, "review_details": True})
 
@@ -705,6 +710,8 @@ def get_bplus_review_person(person_id: str, period: str = "", db: Session = Depe
         recompute_bplus(db, period)
         db.commit()
         period_row = latest_period(db, period)
+    elif refresh_bplus_if_role_snapshot_changed(db, period_row):
+        db.commit()
     result = build_internal_result(db, period_row)
     row = next((item for item in result["rows"] if item["person_id"] == person_id), None)
     if not row:

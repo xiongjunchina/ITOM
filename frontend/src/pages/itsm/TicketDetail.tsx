@@ -21,10 +21,14 @@ import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useGoBack } from '../../utils/nav';
+import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type {
@@ -103,7 +107,6 @@ export default function TicketDetail() {
   const [ratingSaving, setRatingSaving] = useState(false);
 
   // M3：升级为问题 / 沉淀为知识
-  const [escalating, setEscalating] = useState(false);
   const [toKnowledgeSaving, setToKnowledgeSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -218,21 +221,6 @@ export default function TicketDetail() {
     }
   };
 
-  const escalateProblem = async () => {
-    setEscalating(true);
-    try {
-      const res = await api.post<{ problem_id: string; problem_code: string }>(
-        `/tickets/${id}/escalate-problem`,
-      );
-      message.success(t('itsm.ticket.escalated', { code: res.problem_code }));
-      navigate(`/itsm/problems/${res.problem_id}`);
-    } catch {
-      // 已统一提示（含 ALREADY_ESCALATED）
-    } finally {
-      setEscalating(false);
-    }
-  };
-
   const toKnowledge = async () => {
     setToKnowledgeSaving(true);
     try {
@@ -291,15 +279,19 @@ export default function TicketDetail() {
   const canRate = !isExample && detail.status === 'closed' && isSubmitter && detail.satisfaction == null;
   const process = detail.process;
   const currentProcessStep = process?.steps?.find((s) => s.seq === process.current_step_seq);
-  // M3：非 requester（拥有任一内部角色）可升级为问题
-  const isStaff = !!user && user.roles.some((r) => r !== 'requester');
-  const canEscalate = !isExample && isStaff && detail.status !== 'new' && detail.status !== 'closed';
+  // 业务门户（业务用户 / BDO）不展示 IT 内部的关联单据创建入口。
+  const isStaff = !!user && !isRequesterOnly(user);
+  const canCreateRelated = !isExample && isStaff && detail.status !== 'closed';
+  const canUpgradeIncident = canCreateRelated && detail.ticket_type === 'service_request';
+  const canCreateRootCauseProblem = canCreateRelated && (detail.ticket_type === 'service_request' || detail.ticket_type === 'incident');
+  const canCreateRemediationChange = canCreateRelated && detail.ticket_type === 'incident';
   const canToKnowledge =
     !isExample && (detail.status === 'resolved' || detail.status === 'closed') && hasPermission(user, 'knowledge', 'create');
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {isExample && <ExampleAlert />}
+      <DocumentTypeHint documentType={detail.ticket_type as TicketType} />
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <Space size="middle" wrap>
@@ -357,11 +349,9 @@ export default function TicketDetail() {
               disabled={isExample}
               onDone={() => void load()}
             />
-            {canEscalate && (
-              <Button loading={escalating} onClick={() => void escalateProblem()}>
-                {t('itsm.ticket.escalate')}
-              </Button>
-            )}
+            {canUpgradeIncident && id && <RecordRelationCreateButton sourceEntityType="ticket" sourceId={id} relationType="upgraded_to_incident" onCreated={() => void load()} />}
+            {canCreateRootCauseProblem && id && <RecordRelationCreateButton sourceEntityType="ticket" sourceId={id} relationType="root_cause_of" onCreated={() => void load()} />}
+            {canCreateRemediationChange && id && <RecordRelationCreateButton sourceEntityType="ticket" sourceId={id} relationType="remediated_by_change" onCreated={() => void load()} />}
             {canToKnowledge && (
               <Button loading={toKnowledgeSaving} onClick={() => void toKnowledge()}>
                 {t('itsm.ticket.toKnowledge')}
@@ -439,6 +429,8 @@ export default function TicketDetail() {
           />
         </Card>
       )}
+
+      <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
 
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>

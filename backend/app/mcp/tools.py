@@ -238,6 +238,7 @@ def get_it_requirement_form() -> dict:
     """返回 ITOM 的 IT 需求登记字段和当前有效业务域。"""
     def handler(db, user):
         _require_perm(db, user, "requirements", "create")
+        requirement_intake.ensure_registration_authorized(db, user)
         return ToolOutcome(requirement_intake.form_definition(db))
 
     return _execute("get_it_requirement_form", {}, handler)
@@ -247,6 +248,7 @@ def prepare_it_requirement(fields: dict, idempotency_key: str) -> dict:
     """校验 IT 需求登记字段并生成最终预览和短期确认凭证。"""
     def handler(db, user):
         _require_perm(db, user, "requirements", "create")
+        requirement_intake.ensure_registration_authorized(db, user)
         return ToolOutcome(requirement_intake.prepare_requirement(db, user, fields, idempotency_key))
 
     return _execute(
@@ -260,6 +262,7 @@ def register_it_requirement(confirmation_token: str, idempotency_key: str) -> di
     """在用户确认后幂等登记 IT 需求并进入 ITOM 需求评估流程。"""
     def handler(db, user):
         _require_perm(db, user, "requirements", "create")
+        requirement_intake.ensure_registration_authorized(db, user)
         result, requirement = requirement_intake.register_requirement(
             db, user, confirmation_token, idempotency_key
         )

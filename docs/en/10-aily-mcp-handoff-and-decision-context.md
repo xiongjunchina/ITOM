@@ -1,6 +1,6 @@
 # ITOM Feishu Aily Agent + MCP Server Final Design Baseline
 
-> Status: **formal baseline; P0/P1 complete; P2 live same-ticket end-to-end UAT has passed for both text and signed card buttons; P3 is deferred**
+> Status: **formal baseline; P0/P1 complete; P2 live same-ticket end-to-end UAT has passed for both text and signed card buttons; P3 Feishu Approval is deferred, while IDC release hardening and formal acceptance remain**
 > Approval date: 2026-07-29
 > The Chinese document is authoritative. This file is its English mirror.
 
@@ -8,7 +8,7 @@
 
 This document is the approved product and architecture baseline for the `feature/aily-agent-mcp` development line. It defines the goals, boundaries, tools, target data model, phases, and acceptance criteria. The implementation must not reintroduce Feishu Helpdesk or turn Aily, MCP, or Feishu into a second ITOM business system.
 
-This document records both target contracts and actual status. The branch implements P0 protocol/identity/messaging foundations, P1 service-request and requirement intake, and P2 acceptance/confirmation timestamps, three closure MCP tools, shared web/MCP confirmation semantics, reliable user messages, and rating detail. The real-Aily conversational loop, live bot receipt, normal-user same-ticket text loop, and signed-card-button loop have all passed. P3 is deferred by user decision.
+This document records both target contracts and actual status. The branch implements P0 protocol/identity/messaging foundations, P1 service-request and requirement intake, and P2 acceptance/confirmation timestamps, three closure MCP tools, shared web/MCP confirmation semantics, reliable user messages, and rating detail. The real-Aily conversational loop, live bot receipt, normal-user same-ticket text loop, and signed-card-button loop have all passed. P3 Feishu Approval is deferred by user decision. IDC is available and the current version plus public protocol probes are deployed, while trusted TLS, security/performance/recovery, and formal real-role UAT remain.
 
 Before starting work, a new chat must read `AGENTS.md`, this document, `docs/03-PRD.md`, `docs/04-数据模型设计.md`, `docs/05-API契约与架构设计.md`, and `docs/06-用户身份与组织模型设计.md`, then inspect the real code and Git status.
 
@@ -66,6 +66,10 @@ An incident means a broad network, server, or application outage. Only IT staff 
 
 When a user describes a potentially broad outage, Aily still creates that user's service request and marks it as suspected major impact. IT staff decide whether to associate an existing incident or create a new one. Aily and normal users do not classify it directly as an incident.
 
+### 3.4 IT-staff web routing does not change the Aily boundary (approved, not implemented)
+
+IT staff and system administrators receive a Web “Record Creation Guide” and cross-record relation capability. It supports internal ITIL judgment only and does not burden normal business users with web type selection. In Aily, a normal business user continues to create only service requests, while a department-appointed BDO may register IT requirements. Aily does not transfer service request → incident, service request/incident → problem, incident/problem → change, or requirement → project. Any future MCP scope expansion needs separate confirmation of architecture, permission, audit, and user experience.
+
 ## 4. Approved architecture
 
 Use **Approach A: embed the MCP Server in the existing FastAPI backend**.
@@ -74,7 +78,7 @@ Use **Approach A: embed the MCP Server in the existing FastAPI backend**.
 Feishu user ⇄ Aily Agent
                   │  HTTPStreaming / x-aily-jwt
                   ▼
-          Nginx :8180 /mcp
+     IDC Ingress :30443 /mcp/
                   ▼
         MCP embedded in FastAPI
                   ▼
@@ -86,7 +90,9 @@ ITOM domain event → reliable notification outbox → Aily-bot Feishu message �
 User reply → Aily → MCP → ITOM confirmation, reopen, or rating
 ```
 
-Local development uses Docker and an ngrok tunnel for the complete `127.0.0.1:8180` origin, including the frontend, `/api`, Feishu OAuth callback, and `/mcp`. IDC infrastructure is currently blocked; final release still requires the repository's Kubernetes acceptance flow.
+IDC Kubernetes is the sole runtime, integration, and acceptance environment at the current public root `https://itom.snnc.cc:30443`, serving the frontend, `/api`, Feishu OAuth callback, and `/mcp/`. Administrators maintain the root through `public_base_url`, from which the page derives every public endpoint. Starting a local ITOM application stack, database, Docker Compose, port 8180, or ngrok is prohibited by default. It is allowed only when the user explicitly requests temporary isolated troubleshooting, and its results are never delivery evidence.
+
+`.github/workflows/quality-gate.yml` first runs the complete backend regression against an isolated test database, frontend production build, deployment-file checks, and bilingual documentation guard. After it passes, `push-images.sh` builds Git-SHA-derived immutable linux/amd64 images from a clean commit and pushes them to Harbor; `k8s-deploy.sh` deploys the same tag and strictly verifies rollouts, actual image identities, internal/external health paths, and MCP `initialize`. Real Aily, callback, identity, authorization, and business-flow acceptance runs only in IDC.
 
 ### 4.1 Responsibility boundary
 
@@ -274,19 +280,27 @@ P2.1 response-protocol integration fix on 2026-07-30: after the tenant-identifie
 
 P2.1 final live-button UAT on 2026-07-30: normal user `xiongjun` completed “unresolved → enter reason and reopen → IT resolves again → resolved and close → five-star rating” for `TK-202607-0005` in the Feishu client. The user confirmed the client-side loop passed. ITOM data verification shows `status=closed`, `reopen_count=1`, `ticket.satisfaction=5`, and one effective rating row with `score=5/source=feishu_card`. The live signed-card P2.1 loop is therefore accepted.
 
+IDC platform-path snapshot on 2026-07-30: the current Aily + MCP images were deployed through the repository Kubernetes flow with backend 1/1 and frontend 2/2 replicas available. A real MCP `initialize` at `https://itom.snnc.cc:30443/mcp/` returned HTTP 200, and Feishu Open Platform's encrypted `url_verification` challenge at `https://itom.snnc.cc:30443/api/integrations/feishu/card-actions` also returned HTTP 200; the callback configuration was saved and published. This proves the IDC public route, MCP protocol endpoint, and card-challenge path, not formal release acceptance. The public certificate still needs replacement by a trusted CA certificate, and security, performance, recovery, and IDC real-role business UAT remain separate acceptance work.
+
+Public-base configuration regression on 2026-07-30: the complete backend suite reports `277 passed`. The focused `public_base_url` contract reports `1 passed`, covering trailing-slash normalization; rejection of paths, queries, fragments, URL credentials, invalid schemes, and out-of-range ports; preservation of the saved value after rejection; and clearing the configuration. The frontend linux/amd64 production image completed `tsc --noEmit` and the Vite build. `git diff --check`, Kubernetes YAML parsing, and deployment-script syntax checks all passed.
+
+Problem review and fix on 2026-07-31: `/api/dashboard` had omitted `contribution_bucket=team_contribution` while aggregating people points, so project-manager milestone and other `role_result` ledger rows were added to team-contribution points; the team overview already used the correct bucket, producing different values. The Dashboard query now applies the same bucket condition, and `test_activity_points_exclude_role_result_entries` asserts that `role_result=50` plus `team_contribution=7` displays 7 in both views. No data-model or historical-ledger change is required.
+
+IDC callback recheck on the same day: `https://itom.snnc.cc:30443/api/health` fails normal certificate verification with `unable to get local issuer certificate` and returns HTTP 200 only with verification disabled; no `card-actions` POST reached the backend/frontend ingress logs during the check, and the current IDC database does not contain the old screenshot tickets `TK-202607-0004/0005`. Therefore Aily's current `200080` cannot be attributed to `service_request_closure` business logic yet. A publicly trusted CA certificate for `itom.snnc.cc:30443` must be installed first, followed by a new current-IDC ticket/card retest. The old `TK-202607-0005` button loop remains historical UAT evidence and does not prove the current IDC card path is healthy.
+
 Acceptance: a business user and IT staff complete request → dispatch → accept → resolve → notify → confirm/reopen → close → rate. Multiple pending confirmations do not cross-link, and internal information is not sent externally.
 
-### Phase 3: Feishu Approval and release
+### Phase 3: Feishu Approval (deferred) and release hardening
 
-- connect selected ITOM approval steps to Feishu Approval with bidirectional idempotency;
-- complete IDC security, performance, recovery, and real-role UAT;
+- connect selected ITOM approval steps to Feishu Approval with bidirectional idempotency (deferred by user decision and not blocking current release hardening);
+- install trusted TLS and complete IDC security, performance, recovery, and real-role UAT;
 - open a user-approved PR from `feature/aily-agent-mcp` to `main`.
 
 ## 11. Definition of done
 
-Each change includes implementation, tests, authoritative Chinese docs, and matching `docs/en` mirrors. Run relevant unit, API/MCP integration, identity/permission, idempotency/retry tests, and the production frontend build. Local phases use Docker + ngrok for real Aily integration; final release still requires IDC acceptance.
+Each change includes implementation, tests, authoritative Chinese docs, and matching `docs/en` mirrors. The feature branch must first pass GitHub Actions for relevant unit, API/MCP integration, identity/permission, idempotency/retry tests, the production frontend build, and repository-contract checks. Automation never targets the IDC business database. No local application environment is started unless the user explicitly requests isolated troubleshooting. Releases come from clean commits, use Git-SHA-derived immutable linux/amd64 images, and complete rollout, image, health-path, MCP, and real-role acceptance in IDC.
 
-`/api/health`, one successful tool call, a successful build, or simulated payloads are not full business acceptance. Evidence must cover real identity and a multi-role business loop.
+A green CI run, successful image build, `/api/health`, MCP initialization, one successful tool call, or simulated payloads are not full business acceptance. Evidence must cover real identity and a multi-role business loop.
 
 ## 12. Maintenance
 

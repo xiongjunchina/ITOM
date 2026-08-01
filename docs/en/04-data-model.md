@@ -6,6 +6,8 @@
 > Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
 > This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, dispatch, and rating-detail models are implemented. Database facts must be checked against real models and migrations.
 
+> This task-management enhancement changes only read aggregations, presentation, and authentication configuration. It adds or deletes no business table and rewrites no existing record; `business_initial_password` is deployment configuration, not a persisted business field.
+
 ## 0. Global Conventions
 
 - Primary key: `id CHAR(26)` GLID, system-generated; not listed per-table below.
@@ -16,7 +18,7 @@
 
 ---
 
-## 1. Support Domain (current 29; target 29)
+## 1. Support Domain (current 30)
 
 ### 1.1 auth_user — login account
 
@@ -49,7 +51,7 @@
 
 ### 1.1a role — role registry [cfg] (added 2026-07-10)
 
-code UNIQUE, name, description, base_role (the built-in role code that a custom role inherits; empty for built-ins), is_builtin. The 16 built-in roles are seeded and their codes are read-only; custom roles inherit API permissions via base_role and can be referenced by workflow_transition.allowed_roles and process_step.default_role.
+code UNIQUE, name, description, base_role (the built-in role code that a custom role inherits; empty for built-ins), is_builtin. The 17 built-in roles are seeded and their codes are read-only; `bdo` (Business Digital Owner) is a controlled business-user subset and the Requirement-module permission is granted to it rather than to `requester`. Custom roles inherit API permissions via base_role and can be referenced by workflow_transition.allowed_roles and process_step.default_role.
 
 ### 1.1b user_group / user_group_member — user groups (added 2026-07-10)
 
@@ -104,7 +106,7 @@ provider, tenant_id, app_id, subject type (open_id/user_id/union_id), subject ID
 
 ### 1.11 aily_integration_config [cfg][implemented in P0]
 
-Singleton: enabled, MCP auth mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, message enabled, encrypted card-callback Verification Token, encrypted card-callback Encrypt Key, last test status/time, and redacted error. The two callback secrets must be configured together; if either is absent, proactive delivery stays text-only. MCP JWT Secret, Bot App Secret, Verification Token, and Encrypt Key are all Fernet-encrypted, and read APIs expose configured flags only. The old `card_action_skill_id` is no longer part of the runtime model or configuration contract; an as-yet physically retained legacy column in an existing database is never read.
+Singleton: enabled, MCP auth mode, encrypted MCP JWT secret, allowed tenant/agent/origin arrays, bot app ID, encrypted bot secret, API base, `public_base_url`, message enabled, encrypted card-callback Verification Token, encrypted card-callback Encrypt Key, last test status/time, and redacted error. `public_base_url` stores the administrator-entered external root (the current IDC example is `https://itom.snnc.cc:30443`) and accepts only a scheme, host/IP, and optional port; it must not contain `/mcp/` or a callback path. The admin page derives the MCP, Feishu login, and card-callback URLs from it. The two callback secrets must be configured together; if either is absent, proactive delivery stays text-only. MCP JWT Secret, Bot App Secret, Verification Token, and Encrypt Key are all Fernet-encrypted, and read APIs expose configured flags only. The old `card_action_skill_id` is no longer part of the runtime model or configuration contract; an as-yet physically retained legacy column in an existing database is never read.
 
 ### 1.12 mcp_tool_call [audit][implemented in P0]
 
@@ -113,6 +115,12 @@ Unique call_id, tool_name, tenant/agent, external subject as subject type plus S
 ### 1.13 mcp_operation_intent [active in P1]
 
 Unique intent_id, tool, auth_user_id, normalized payload, payload digest, token hash, idempotency key, status (prepared/executed/expired), expiry/consumption times, and result entity/snapshot. Unique `(auth_user_id, tool_name, idempotency_key)`; raw confirmation tokens are not stored.
+
+### 1.13a record_relation — generic cross-record relation [phases B/C implemented]
+
+`id`, `source_entity_type`, `source_entity_id`, `target_entity_type`, `target_entity_id`, `relation_type`, `reason`, `created_by FK→auth_user`, `idempotency_key`, `request_digest`, `created_at`, `deleted_at`, `deleted_by FK→auth_user`, and `delete_reason`. The domain service validates entity combinations and relation type against a server-side whitelist. The first phase permits only `service_request→incident(upgraded_to_incident)`, `service_request/incident→problem(root_cause_of)`, `incident/problem→change(remediated_by_change)`, and `requirement→project(converted_to_project)`; arbitrary client polymorphic pairs and self-links to the same record are rejected (a service-request ticket may still relate to an incident ticket). Phase C stores a digest of the Pydantic-normalized target form and relation reason in `request_digest`; while holding the source-row lock, it first checks the same actor/source/target-entity-type/idempotency key, returns the first target for the same digest, rejects a different digest, and only then lets the target domain service create the target and write the relation.
+
+Active relations are unique on `(source_entity_type, source_entity_id, target_entity_type, target_entity_id, relation_type)`. The creator/source/target-type/idempotency-key combination is also unique; `request_digest` rejects a reused key with different parameters. Combined source/target indexes support bidirectional reads. The model has no cross-table polymorphic FKs: the read service rechecks entities and visibility, while the create service rechecks fields, permission, workflow, approval, and data scope in the same transaction that creates the target, relation, and audit. Existing `problem_ticket`, `Ticket.problem_id`, and historical requirement/project relations remain unchanged, with no migration, backfill, or overwrite; no unlink action is exposed in the first phase.
 
 ---
 
@@ -189,12 +197,14 @@ problem_id + ticket_id, UNIQUE composite. Supports "multiple tickets with the sa
 | name | VARCHAR(128) | Required |
 | category | VARCHAR(32) | Required, 9 categories (dictionary) |
 | status | VARCHAR(16) | Required, default "Running" |
-| owner | FK→org_member | Required |
+| owner | FK→org_member | Required; technical owner for operation and maintenance |
 | environment | VARCHAR(16) | Production / Test / Development |
 | business_owner | VARCHAR(64) | |
 | vendor_id | FK→vendor | |
 | description / launch_date / remarks | | |
 | attrs | JSONB | Category-specific attributes (attribute names defined by master_data per category) |
+
+`product_manager_id` FK identifies the **Application** product manager who confirms and verifies Bugs. It is distinct from the required all-category `owner` (technical owner), though both may be the same person. It is required when an Application is created or edited; a legacy non-Application value is retained for audit but hidden from the UI. Bug registration snapshots this person; later CI product-manager changes do not rewrite historical Bugs.
 
 ### 2.7 ci_relationship
 
@@ -257,7 +267,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ---
 
-## 4. Requirement Domain (2 tables)
+## 4. Requirement and task domain (5 tables)
 
 ### 4.1 requirement — requirement
 
@@ -272,7 +282,21 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.2 requirement_task — requirement task
 
-requirement_id FK, name, assignee FK, planned_date, status (Not Started / In Progress / Done), completed_at [C].
+`requirement_id` FK, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C]. A requirement may have multiple task rows. Tasks continue to use `GlidBase.is_deleted` soft deletion; this permission fix does not rebuild, overwrite, or migrate existing records.
+
+### 4.3 bug — defect record
+
+`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK (the selectable system comes from CMDB), `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, evidence, resolution and verification notes, rejection reason, and reopen/close timestamps. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
+
+### 4.4 bug_fix_task — Bug repair task
+
+`bug_id` FK, `name`, `task_type` (development/testing/other), `description`, `assignee` FK, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed), `done_at`, and `completion_note`. A Bug may have multiple development or testing rows; all required child tasks must be closed before product-manager verification.
+
+### 4.5 work_task — delegated work task
+
+`task_code` [C], `title`, `description`, `task_type`, `source_type/source_id`, `registrar` FK, `assignee` FK, `priority`, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed / Aborted), `performance_bucket`, pause/abort reasons, completion note, and close time. Sources may be tickets, problems, incidents, Bugs, manual technical research, or other IT work.
+
+Only the registrar may delete an unassigned task still in Registered status. After assignment and before closure, deletion is administrator-only. Deletion is soft and audited; administrators can edit, pause, abort, and close from the list.
 
 > No separate table is needed for closure hand-off: `problem.source_requirement_id` and `knowledge_article.source_requirement_id` are queryable both ways.
 
@@ -286,7 +310,7 @@ code, name, entity_type, trigger_condition JSONB, version, active, description. 
 
 ### 5.2 process_step — process step [cfg]
 
-definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step_code, node type, handler, CC parties, and SLA cannot be changed in place; use a new version. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
+definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R; the Bug Development Fix node is intentionally empty and executes through repair-child assignees), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step_code, node type, handler, CC parties, and SLA cannot be changed in place; use a new version. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
 
 ### 5.3 process_instance — process instance
 
@@ -310,7 +334,7 @@ position_id FK, level (senior/mid/junior), count, qualification, status (To Recr
 
 ### 6.3 development_activity — training activity
 
-code [C], activity_type (internal cross-training / external technical exchange / new-technology research), topic, date, presenter FK, organizer FK, participants JSONB (array of org_member ids), output_link, created_by [C]. Registration triggers a point event.
+activity_type (internal cross-training / external technical exchange / new-technology research), topic, activity_date, host_id FK (presenter/organizer), participant_ids JSONB (frozen array of org_member ids used for point recipients), participant_department_selections JSONB (`[{id,name,member_ids}]`, the selected full-department display and attendee snapshot), output_link, remarks, created_by FK→auth_user. The list prefers department snapshots plus individual participants outside those snapshots; points always use `participant_ids`, so later transfers, renames, or hires never reinterpret an activity. Existing activities are not backfilled with department snapshots and retain their original person-list presentation. Registration triggers host/participant training-point events; `created_by` is recorded from the current account and existing rows are idempotently backfilled from the earliest creation audit. Activity deletion and point recalculation use soft deletion, preserving sources, audit, and historical ledger rows.
 
 ### 6.4 team_charter — team culture
 
@@ -326,11 +350,11 @@ idea_id + person, UNIQUE composite.
 
 ### 6.7 point_rule — point rule [cfg]
 
-rule_code, name, event_type (UNIQUE, see the event list in doc 05), points INT (may be negative), contribution_bucket (`role_result` / `team_contribution`), contribution_dimension, target_scope JSONB, active, description. A source event belongs to one bucket only.
+rule_code, name, event_type (UNIQUE, see the event list in doc 05), points INT (may be negative), contribution_bucket (`role_result` / `team_contribution`), contribution_dimension, target_scope JSONB, active, description. A source event belongs to one bucket only. Activity Points, personal points, and the team-overview leaderboard aggregate only `team_contribution`; role-result rows are not displayed a second time as activity points. During the current assessment period, automatic activity events use the current effective rule value and an inactive rule displays zero.
 
 ### 6.8 point_entry — points ledger (append-only)
 
-person FK, event_type, points, rule_id FK, contribution_bucket, contribution_dimension, period, source_entity_type, source_entity_id, earned_at, remark, created_by, idempotency_key. Indexes: (person, period), (person, earned_at), event_type. The ledger is append-only and powers live aggregation without rewriting published results.
+person FK, event_type, points, rule_id FK, contribution_bucket, contribution_dimension, period, source_entity_type, source_entity_id, earned_at, remark, created_by, idempotency_key. Indexes: (person, period), (person, earned_at), event_type. `points` retains the award-time value and the ledger is append-only. Current-period activity reads may resolve the display value from the current effective rule, while historical periods and published/locked performance retain the original value without rewriting published results.
 
 ### 6.9 performance_period — performance period [computed]
 

@@ -2,15 +2,39 @@
 # Deploy ITOM to the SN IDC cluster (namespace: itom).
 # Assumes the two app images are already in Harbor (run ./push-images.sh first).
 #
-# Usage:  cd deploy/k8s && ./k8s-deploy.sh
+# Usage:
+#   cd deploy/k8s
+#   ./k8s-deploy.sh
+#   TAG=release-name-linux-amd64 ./k8s-deploy.sh
 #
 # Prereqs: VPN up + a valid Rancher token in ~/.kube/{sn-rancher.yaml,sn-prod-ip.conf}.
 set -euo pipefail
 cd "$(dirname "$0")"
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+TAG="${TAG:-git-${COMMIT_SHA:0:12}-linux-amd64}"
+REG=core.harbor.domain
 NS=itom
 SRC_NS=sn-cloud-production            # source of the harbor pull secret + wildcard TLS
 SERVER=https://10.60.65.1/k8s/clusters/local
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://itom.snnc.cc:30443}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+
+case "$TAG" in
+  ""|*[!A-Za-z0-9_.-]*)
+    echo "!! Invalid image tag: $TAG"
+    exit 1
+    ;;
+esac
+
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
+  echo "!! Refusing to deploy from a dirty worktree. Commit the complete implementation, tests, and documentation first."
+  exit 1
+fi
+
+echo "==> Release commit: $COMMIT_SHA"
+echo "==> Deploy image tag: $TAG"
 
 # ---- cluster auth: freshest token + IP endpoint (DNS endpoint EOFs on VPN) ----
 newest=""
@@ -55,20 +79,22 @@ else
   echo "   itom-secrets already exists — keeping current values (DB password unchanged)."
 fi
 
-echo "==> Apply Postgres, backend, frontend, ingress"
+echo "==> Apply Postgres, immutable app images, and ingress"
 "${KC[@]}" apply -f 10-postgres.yaml
-"${KC[@]}" apply -f 20-backend.yaml
-"${KC[@]}" apply -f 30-frontend.yaml
+sed -E "s#(image:[[:space:]]*$REG/sn/itom-backend:)[^[:space:]]+#\\1$TAG#" 20-backend.yaml \
+  | "${KC[@]}" apply -f -
+sed -E "s#(image:[[:space:]]*$REG/sn/itom-frontend:)[^[:space:]]+#\\1$TAG#" 30-frontend.yaml \
+  | "${KC[@]}" apply -f -
 "${KC[@]}" apply -f 40-ingress.yaml
 
 echo "==> Wait for Postgres"
-"${KC[@]}" -n "$NS" rollout status statefulset/itom-db --timeout=180s || true
+"${KC[@]}" -n "$NS" rollout status statefulset/itom-db --timeout=180s
 
 echo "==> Wait for backend (first boot runs schema create + seed)"
-"${KC[@]}" -n "$NS" rollout status deploy/itom-backend --timeout=240s || true
+"${KC[@]}" -n "$NS" rollout status deploy/itom-backend --timeout=240s
 
 echo "==> Wait for frontend"
-"${KC[@]}" -n "$NS" rollout status deploy/itom-frontend --timeout=180s || true
+"${KC[@]}" -n "$NS" rollout status deploy/itom-frontend --timeout=180s
 
 # Self-heal the flaky cluster CNI: a pod that drew an unreachable Flannel IP
 # fails readiness and never joins Endpoints. Recreate such pods a few times.
@@ -87,8 +113,23 @@ for dep in itom-backend itom-frontend; do
     echo "   $dep: no Ready endpoint yet; recreating pod ${bad:-?} ($attempt/5)"
     [ -n "$bad" ] && "${KC[@]}" -n "$NS" delete pod "$bad" --grace-period=3 >/dev/null 2>&1 || true
   done
-  [ -n "$ok" ] && echo "   $svc endpoints: $eps" || echo "   !! $svc still has no Ready endpoint — check: ${KC[*]} -n $NS get pods,endpoints -l app=$dep -o wide"
+  if [ -n "$ok" ]; then
+    echo "   $svc endpoints: $eps"
+  else
+    echo "   !! $svc still has no Ready endpoint — check: ${KC[*]} -n $NS get pods,endpoints -l app=$dep -o wide"
+    exit 1
+  fi
 done
+
+echo "==> Verify deployed image identities"
+expected_backend="$REG/sn/itom-backend:$TAG"
+expected_frontend="$REG/sn/itom-frontend:$TAG"
+actual_backend="$("${KC[@]}" -n "$NS" get deployment itom-backend -o jsonpath='{.spec.template.spec.containers[0].image}')"
+actual_frontend="$("${KC[@]}" -n "$NS" get deployment itom-frontend -o jsonpath='{.spec.template.spec.containers[0].image}')"
+[ "$actual_backend" = "$expected_backend" ] || { echo "!! backend image mismatch: $actual_backend"; exit 1; }
+[ "$actual_frontend" = "$expected_frontend" ] || { echo "!! frontend image mismatch: $actual_frontend"; exit 1; }
+echo "   backend: $actual_backend"
+echo "   frontend: $actual_frontend"
 
 # An endpoint alone is insufficient on this cluster: nginx can be Ready while
 # cross-node DNS/backend access is degraded. Verify the complete frontend ->
@@ -97,12 +138,38 @@ echo "==> Verify frontend -> backend proxy"
 front_pod="$("${KC[@]}" -n "$NS" get endpoints itom-frontend \
   -o jsonpath='{.subsets[0].addresses[0].targetRef.name}' 2>/dev/null)"
 if [ -z "$front_pod" ] || ! "${KC[@]}" -n "$NS" exec "$front_pod" -- \
-  wget -qO- --timeout=10 http://localhost/api/health | grep -q '"status":"ok"'; then
+  wget -qO- --timeout=10 http://localhost/api/health | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
   echo "   !! frontend cannot proxy /api/health to backend"
   exit 1
 fi
 echo "   frontend proxy health: OK"
 
+echo "==> Verify external health and MCP initialize"
+curl_args=(--fail --silent --show-error --max-time 20)
+if [ "${ALLOW_UNTRUSTED_TLS:-0}" = "1" ]; then
+  curl_args+=(--insecure)
+  echo "   warning: TLS verification explicitly disabled for this run"
+fi
+curl "${curl_args[@]}" \
+  "$PUBLIC_BASE_URL/api/health" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' || {
+    echo "   !! external /api/health failed: $PUBLIC_BASE_URL/api/health"
+    exit 1
+  }
+mcp_response="$(
+  curl "${curl_args[@]}" \
+    -H 'Origin: https://aily.feishu.cn' \
+    -H 'Accept: application/json, text/event-stream' \
+    -H 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":"idc-release-probe","method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"itom-idc-release","version":"1.0"}}}' \
+    "$PUBLIC_BASE_URL/mcp/"
+)"
+printf '%s' "$mcp_response" | grep -q '"serverInfo"' || {
+  echo "   !! external MCP initialize did not return serverInfo"
+  exit 1
+}
+echo "   external /api/health: OK"
+echo "   external MCP initialize: OK"
+
 echo "==> Status"
 "${KC[@]}" -n "$NS" get pods,svc,ingress -o wide 2>&1 | grep -v "Unhandled Error"
-echo "==> Done. If DNS+ingress are healthy: https://itom.prod.sn.local"
+echo "==> Done: $PUBLIC_BASE_URL"

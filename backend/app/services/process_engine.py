@@ -110,6 +110,7 @@ ENTITY_LINKS = {
     "problem": "/itsm/problems/{id}",
     "requirement": "/requirements/{id}",
     "project": "/projects/{id}",
+    "bug": "/task-management/development?tab=bug&bug_id={id}",
 }
 
 
@@ -454,7 +455,19 @@ def current_pending_task(db: Session, entity_type: str, entity_id: str) -> Proce
     )
     if not instance:
         return None
-    return next((t for t in instance.tasks if t.status == "待处理" and not t.is_deleted), None)
+    # 不使用已经加载过的 instance.tasks 集合：完成当前节点后，_spawn_task
+    # 会在同一 Session 新增下一节点任务，懒加载集合可能仍保留旧快照，导致
+    # 流程服务误判为“没有当前任务”。直接查询保证同事务内看到最新任务。
+    return (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.created_at.desc())
+        .first()
+    )
 
 
 def can_act_on_task(db: Session, user: AuthUser, task: ProcessTask) -> bool:

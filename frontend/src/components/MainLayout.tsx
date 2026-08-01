@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Avatar, Button, Breadcrumb, Dropdown, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
-import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, BookOutlined } from '@ant-design/icons';
+import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, BookOutlined, FormOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import { useAuthStore } from '../stores/auth';
@@ -12,6 +12,8 @@ import NotificationBell from './NotificationBell';
 import LangSwitch from './LangSwitch';
 import { MENU_TREE, breadcrumbOf, filterMenu, isRequesterOnly, type MenuNode } from './menu';
 import { localized, useBrandingStore } from '../stores/branding';
+import StaffIntakeDrawer from './StaffIntakeDrawer';
+import type { ItDocumentGuideResponse } from './DocumentTypeHint';
 
 const { Header, Sider, Content } = Layout;
 
@@ -26,6 +28,8 @@ function toAntdItems(nodes: MenuNode[], lang: Lang): NonNullable<MenuProps['item
 
 export default function MainLayout() {
   const [collapsed, setCollapsed] = useState(false);
+  const [staffIntakeOpen, setStaffIntakeOpen] = useState(false);
+  const [staffIntakeEnabled, setStaffIntakeEnabled] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { token, user, setUser, logout } = useAuthStore();
@@ -34,6 +38,9 @@ export default function MainLayout() {
   const branding = useBrandingStore((s) => s.current?.config);
 
   // 进入布局后刷新一次当前用户信息（token 失效则由拦截器跳登录页）
+  const requesterPortal = isRequesterOnly(user);
+  const canViewManual = user?.roles.includes('admin') ?? false;
+
   useEffect(() => {
     if (!token) return;
     api
@@ -43,9 +50,18 @@ export default function MainLayout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  useEffect(() => {
+    if (!token || requesterPortal) {
+      setStaffIntakeEnabled(false);
+      return;
+    }
+    api.get<ItDocumentGuideResponse>('/it-document-guide')
+      .then((guide) => setStaffIntakeEnabled(guide.staff_intake.enabled))
+      .catch(() => setStaffIntakeEnabled(false));
+  }, [token, requesterPortal]);
+
   const menuItems = useMemo(() => toAntdItems(filterMenu(MENU_TREE, user), lang), [user, lang]);
   const selectedMenuPath = location.pathname.startsWith('/team/performance/review/') ? '/team/performance' : location.pathname;
-  const requesterPortal = isRequesterOnly(user);
   const portalItems = useMemo(() => {
     const visible = filterMenu(MENU_TREE, user);
     const leaves = visible.flatMap((node) => node.children ?? [node]).filter((node) => node.path);
@@ -137,9 +153,11 @@ export default function MainLayout() {
           </nav>
           <Space size={12}>
             <Button className="portal-f__search" type="text" icon={<SearchOutlined />} aria-label="搜索" />
-            <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
-              {t('header.manual')}
-            </Button>
+            {canViewManual && (
+              <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
+                {t('header.manual')}
+              </Button>
+            )}
             <LangSwitch />
             <NotificationBell />
             {userControl}
@@ -183,9 +201,16 @@ export default function MainLayout() {
             </div>
           </Space>
           <Space size="middle">
-            <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
-              {t('header.manual')}
-            </Button>
+            {staffIntakeEnabled && (
+              <Button type="primary" icon={<FormOutlined />} onClick={() => setStaffIntakeOpen(true)}>
+                {t('intake.title')}
+              </Button>
+            )}
+            {canViewManual && (
+              <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
+                {t('header.manual')}
+              </Button>
+            )}
             <LangSwitch />
             <NotificationBell />
             {userControl}
@@ -196,6 +221,7 @@ export default function MainLayout() {
         <Content className="app-content">
           <main className="app-content__inner"><Outlet /></main>
         </Content>
+        <StaffIntakeDrawer open={staffIntakeOpen} onClose={() => setStaffIntakeOpen(false)} />
       </Layout>
     </Layout>
   );

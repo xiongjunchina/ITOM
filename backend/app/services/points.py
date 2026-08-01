@@ -8,6 +8,8 @@
 import logging
 from datetime import date
 
+from sqlalchemy import and_, case
+from sqlalchemy.orm import aliased
 from sqlalchemy.orm import Session
 
 from app.models import AuthUser, OrgMember, PointEntry, PointRule
@@ -27,6 +29,79 @@ def period_clause(col, period: str):
     if period.endswith("-All"):
         return col.like(f"{period.split('-')[0]}-%")
     return col == period
+
+
+def live_team_points_expression():
+    """Return an outer-join target and effective value for the live activity-points view.
+
+    `point_entry.points` remains the immutable award-time ledger amount.  For the
+    current assessment period only, the activity-points views resolve automatic
+    team-contribution events against the currently effective rule.  A disabled
+    rule contributes zero without deleting or rewriting the original ledger.
+    """
+    live_rule = aliased(PointRule)
+    join_condition = and_(
+        live_rule.code == PointEntry.source_type,
+        live_rule.is_deleted.is_(False),
+        live_rule.contribution_bucket == "team_contribution",
+    )
+    effective_points = case(
+        (
+            PointEntry.period == current_period(),
+            case(
+                (
+                    live_rule.id.is_not(None),
+                    case((live_rule.active.is_(True), live_rule.points), else_=0.0),
+                ),
+                else_=PointEntry.points,
+            ),
+        ),
+        else_=PointEntry.points,
+    )
+    return live_rule, effective_points, join_condition
+
+
+def _is_in_period(value: str | None, period: str) -> bool:
+    if not value:
+        return False
+    return value == period
+
+
+def effective_team_entry_points(
+    db: Session,
+    entries: list[PointEntry],
+    period: str,
+    *,
+    use_live_rules: bool = True,
+) -> dict[str, float]:
+    """Resolve display values while retaining every award-time entry unchanged.
+
+    Only entries inside the current assessment period use the live activity rule;
+    historical and published-period callers retain their ledger values.
+    """
+    values = {entry.id: float(entry.points) for entry in entries}
+    if not use_live_rules or period != current_period():
+        return values
+
+    in_period = [entry for entry in entries if _is_in_period(entry.period, period)]
+    if not in_period:
+        return values
+    codes = {entry.source_type for entry in in_period if entry.source_type}
+    if not codes:
+        return values
+    rules = {
+        rule.code: rule
+        for rule in db.query(PointRule).filter(
+            PointRule.code.in_(codes),
+            PointRule.is_deleted.is_(False),
+            PointRule.contribution_bucket == "team_contribution",
+        )
+    }
+    for entry in in_period:
+        rule = rules.get(entry.source_type)
+        if rule:
+            values[entry.id] = float(rule.points) if rule.active else 0.0
+    return values
 
 
 def award(
@@ -69,6 +144,23 @@ def award_by_rule(db: Session, rule_code: str, person_id: str | None, source_ref
     )
 
 
+def award_by_rule_once(db: Session, rule_code: str, person_id: str | None, source_ref: str | None, note: str | None = None):
+    """幂等自动积分：同一规则和来源单据只能产生一条有效流水。"""
+    if not person_id or not source_ref:
+        return
+    # 领域事件可能在同一事务内连续投递；先 flush 让本事务已新增的流水
+    # 参与查询，避免同一 session 内重复生成。
+    db.flush()
+    exists = db.query(PointEntry.id).filter(
+        PointEntry.source_type == rule_code,
+        PointEntry.source_ref == source_ref,
+        PointEntry.is_deleted.is_(False),
+    ).first()
+    if exists:
+        return
+    award_by_rule(db, rule_code, person_id, source_ref, note)
+
+
 def _person_of_user(db: Session, user_id: str | None) -> str | None:
     if not user_id:
         return None
@@ -88,7 +180,7 @@ def register_subscribers():
         return
     _REGISTERED = True
     from app.events.bus import subscribe
-    from app.models import KnowledgeArticle, Milestone, Requirement, RequirementTask, Ticket, WbsTask
+    from app.models import BugFixTask, KnowledgeArticle, Milestone, Requirement, RequirementTask, Ticket, WbsTask, WorkTask
 
     @subscribe("ticket.resolved")
     def _on_ticket_resolved(db: Session, event_type, entity_type, entity_id, payload):
@@ -143,6 +235,27 @@ def register_subscribers():
         if not r or r.is_example or not r.owner:
             return
         award_by_rule(db, "requirement_closed", r.owner, r.id, f"需求交付 {r.requirement_code}")
+
+    @subscribe("bug_fix_task.completed")
+    def _on_bug_fix_task_completed(db: Session, event_type, entity_type, entity_id, payload):
+        task = db.get(BugFixTask, payload.get("task_id", entity_id))
+        if not task or task.is_deleted or task.status != "关闭":
+            return
+        award_by_rule_once(db, "bug_fix_task_done", task.assignee, task.id, f"Bug 修复任务完成 {task.name[:30]}")
+
+    @subscribe("work_task.closed")
+    def _on_work_task_closed(db: Session, event_type, entity_type, entity_id, payload):
+        task = db.get(WorkTask, entity_id)
+        if not task or task.is_deleted or task.status != "关闭" or not task.assignee:
+            return
+        if task.performance_bucket == "team_contribution":
+            from app.services.task_management import TEAM_CONTRIBUTION_TASK_RULES
+
+            rule_code = TEAM_CONTRIBUTION_TASK_RULES.get(task.task_type)
+            if rule_code:
+                award_by_rule_once(db, rule_code, task.assignee, task.id, f"团队贡献任务完成 {task.title[:30]}")
+        else:
+            award_by_rule_once(db, "delegated_work_done", task.assignee, task.id, f"委派任务完成 {task.title[:30]}")
 
     @subscribe("knowledge.published")
     def _on_kb_published(db: Session, event_type, entity_type, entity_id, payload):

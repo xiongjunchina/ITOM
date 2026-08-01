@@ -3,7 +3,7 @@
 > English translation of [../05-API契约与架构设计.md](../05-API契约与架构设计.md). For the authoritative version, the Chinese source prevails.
 
 > Based on [03-PRD.md](03-PRD.md), [04-data-model.md](04-data-model.md).
-> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. P2.1 now uses Feishu's new signed `card.action.trigger` callback. The Aily Workflow/Skill path does not perform card mutations because it cannot provide a trusted `x-aily-jwt`; the live unresolved → reopen → resolve and close → rate button loop has passed. P3 is deferred by user decision. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
+> P0 protocol/identity/live bot receipt, P1 intake, and P2 service closure are implemented on `feature/aily-agent-mcp`. P2 passed the real-Aily multi-role conversation, live bot receipt, and the normal-user same-ticket end-to-end run. P2.1 now uses Feishu's new signed `card.action.trigger` callback. The Aily Workflow/Skill path does not perform card mutations because it cannot provide a trusted `x-aily-jwt`; the historical unresolved → reopen → resolve and close → rate button loop has passed. A 2026-07-31 IDC recheck found that the public certificate for `itom.snnc.cc:30443` fails standard CA verification and the current card POST did not reach ingress logs, so current-IDC “confirm closure” acceptance remains pending trusted TLS and a newly generated ticket/card. P3 Feishu Approval is deferred by user decision, while IDC release hardening and formal acceptance continue. Helpdesk routes belong only to the frozen `v1.0.0-feishu-helpdesk` baseline.
 
 ## 1. System Architecture
 
@@ -158,7 +158,45 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-Registration creates a separate `Requirement`, never a Ticket. Normal employees reuse existing `requirements.create/view` permissions with enforced own-record scope; review, scoring, project conversion, and closure retain existing edit/process permissions.
+Registration creates a separate `Requirement`, never a Ticket. Normal business users have no Requirement-module permission; only BDOs and authorized IT roles reuse `requirements.create/view` with enforced own-record scope. The domain service also checks the BDO/IT role boundary, so a historical or manually added requester permission row cannot bypass it; review, scoring, project conversion, and closure retain existing edit/process permissions.
+
+#### Requirement implementation-task APIs
+
+```text
+POST /api/requirements/{requirement_id}/tasks
+PATCH /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/{task_id}
+GET /api/requirements/tasks/active
+```
+
+The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. No database migration is involved; existing tasks remain readable under their original IDs and soft-delete state.
+
+#### Task-management APIs (M82)
+
+The frontend routes are `/task-management/development` and `/task-management/delegated`; `tab=requirement|bug` only selects the Development Tasks view and does not change backend resources. Historical requirement-task routes redirect to the Requirement Development tab so existing bookmarks and data remain compatible.
+
+```text
+GET/POST/PATCH /api/task-management/bugs
+GET /api/task-management/bugs/{id}
+GET /api/task-management/reference/cis              # read-only CMDB system candidates for Bug registration
+POST /api/task-management/bugs/{id}/confirm
+POST /api/task-management/bugs/{id}/reject-confirm
+POST /api/task-management/bugs/{id}/fix-tasks
+PATCH /api/task-management/bug-fix-tasks/{id}
+POST /api/task-management/bugs/{id}/verify
+POST /api/task-management/bugs/{id}/reopen
+
+GET/POST/PATCH /api/task-management/work-tasks
+GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/transition
+DELETE /api/task-management/work-tasks/{id}
+```
+
+Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
+
+`GET /api/task-management/reference/cis` returns only non-deleted, non-retired CMDB configuration items and readable product-manager information for the Bug form's “Affected system” field. It does not create a second system dictionary or grant CMDB write access. CMDB `owner` is the required technical owner for every CI; only an Application's `product_manager_id` is its Bug-confirmation and verification product manager. They may be the same person but are not duplicate fields. The backend rejects creating or editing an Application without a product manager. A legacy Application missing the value returns `PRODUCT_MANAGER_REQUIRED` on Bug registration; configure it and retry, then the registration snapshots that person.
+
+Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
 
 #### Forbidden tools
 
@@ -175,6 +213,27 @@ Protocol references: Feishu Open Platform's [handling card callbacks](https://op
 Delivery keeps event idempotency, retry/backoff, and redacted errors. Disabled or incomplete bot configuration preserves pending rows without consuming attempts. The most recently used active Feishu identity is selected, and internal notes, root cause, approval details, and sensitive fields never leave ITOM. Administrators write the two callback secrets through `GET/PUT /api/admin/integrations/aily`; responses expose only `has_card_callback_verification_token`, `has_card_callback_encrypt_key`, and `interactive_cards_ready`. Startup migration idempotently adds the two encrypted fields to existing PostgreSQL databases; no business table is added.
 
 All `/api/integrations/feishu/helpdesk/*` routes, subscriptions, handoffs, queues, and Helpdesk-specific outbox have been removed from the new runtime. Existing PostgreSQL structures are previewed by `python -m app.scripts.migrate_aily_mcp` and are permanently removed only with explicit `--confirm`.
+
+### 4.1c IT-staff routing and cross-record relations (phases A/B/C implemented)
+
+The following contracts serve only the IT-staff web experience and add no Aily/MCP tool. Routing, guidance, scope-constrained relation reads, and create-target-and-relate endpoints are live:
+
+```text
+POST /api/staff-intake/recommend
+    # live: IT staff; temporary answers → recommendation, rationale, counterexample, target entry filtered by real create permission; no persistence
+GET  /api/it-document-guide
+    # live: signed-in user; one-line guidance and case library for six records; server returns IT-staff capability switch
+POST /api/record-relations/prepare
+    # live: source record + relation_type; validates source read/target create and returns safe prefill/required target fields
+POST /api/record-relations/submit
+    # live: target form + relation_type + reason + idempotency_key; source lock + submission digest prevent duplication, then target domain service creates the target, starts its workflow, writes relation and audit
+GET  /api/records/{entity_type}/{entity_id}/relations
+    # live: after source visibility is checked, returns only counterparts also visible to the current user; it does not leak an invisible record's existence, code, or title
+```
+
+`prepare` and `submit` accept only the four server-whitelisted source/target combinations. `submit` does not accept a client-selected target entity type; the server derives it from the source record and `relation_type`, verifies source data scope plus target `create` permission, then invokes the ticket, problem, or project domain service. A retry using the same actor/source/target-kind/idempotency key and normalized request returns the first target; same-key different input returns `IDEMPOTENCY_CONFLICT` (409).
+
+`recommend` questions and answers are not persisted. Active source/target/relation uniqueness plus creator/source/target-type/idempotency-key uniqueness are enforced; a request digest rejects a reused key with different parameters. `prepare/submit` do not write domain tables directly; `submit` invokes the incident, problem, change, project, or other target domain service for its own fields, status, workflow, approval, RBAC, audit, and event publishing. A server whitelist controls first-phase relation types. Idempotent retries return the first result and never alter the source record's type, status, or workflow.
 
 ### 4.2 ITSM
 
@@ -217,7 +276,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
-# P1: requirements.create/view plus enforced own-record scope; no second requirement entity
+# P1: only BDO/authorized IT roles use requirements.create/view plus enforced own-record scope; no second requirement entity
 ```
 
 ### 4.5 Process
@@ -228,12 +287,14 @@ GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue 
 POST /api/process-tasks/{id}/complete | /reassign
 ```
 
+The stable display order for process definitions is ITSM (Service Request) → ITSM (Change) → ITSM (Incident) → ITSM (Problem) → Project → Requirement → Bug Management. The backend normalizes ordering by trigger entity and the UI keeps the same grouping order as the left navigation; it must not depend on database row order.
+
 ### 4.6 Team
 
 ```text
 GET /api/team/overview                   # load / points Top / training count / hiring progress aggregation
 GET/POST/PATCH /api/positions | /api/hiring-needs; Excel template/export/import endpoints are also available at `/api/positions/{template,export,import}` and `/api/hiring-needs/{template,export,import}`.
-GET/POST /api/trainings                  # training activities
+GET/POST/PATCH/DELETE /api/trainings     # training activities; PATCH/DELETE only admin/CIO/registrar
 GET/PUT /api/team-charter
 GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
@@ -262,11 +323,17 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # legacy compatibility endpoint; canonical team config is /api/point-rules/team-config
 ```
 
+`POST/PATCH /api/trainings` accepts `participant_ids` plus optional `participant_department_ids`. The latter represents full-department attendance: the server validates the department and its currently active IT-team members, expands and freezes `participant_ids`, and stores a department ID, display name, and attendee-scope snapshot. Omitting the field on `PATCH` preserves the existing snapshot for old-client compatibility; an explicit `[]` clears the department-display semantics but does not remove the supplied people. `GET /api/trainings` returns `participant_ids`, compatibility field `participant_names`, list-summary fields `participant_departments` / `participant_individual_names`, and `can_manage` for the current account. Creation writes `created_by`; migration backfills it from the earliest `development_activity.create` audit record. `PATCH` and `DELETE` are record-scoped rather than generic activity-edit operations: only administrator, CIO, or registrar may act, with server-side rechecks. A host/participant change soft-deletes the activity's current-period `training_host` / `training_attend` entries and re-awards from current rules; deletion retracts those entries. Point-affecting edits and deletion in historical, published, or locked periods return `TRAINING_POINTS_LOCKED`; non-point metadata remains editable and audited.
+
+The `points` value from `/api/points/leaderboard` aggregates `contribution_bucket=team_contribution` entries for the period. In the current assessment period, automatic activity events resolve against the current effective `point_rule`, and a disabled rule displays zero; other entries retain their original algebraic value. `/api/points/mine`, the Team Overview leaderboard, and the Dashboard people-points ranking use the same current-period semantics, and the response may include a `breakdown` grouped by `source_type`. Original `point_entry.points`, historical periods, and published/locked performance are never rewritten. `role_result` rows remain in the ledger for role scoring and audit but are excluded from Activity Points reads. This is distinct from the role/target/weight-normalized result shown by Performance.
+
 ### 4.7 Dashboard
 
 ```text
 GET /api/dashboard    # a single endpoint returning all data for the four panels + alert area (one aggregation)
 ```
+
+When the account has task-module view permission, the response also contains a read-only `task` aggregate with `open_total`, `open_bugs`, `open_bug_fix_tasks`, `open_delegated_tasks`, and `open_requirement_tasks`. These are live counts of non-terminal tasks and do not change existing Dashboard fields.
 
 ## 5. Domain Event List
 
@@ -291,6 +358,11 @@ Events are published by the service layer within the transaction; `→points` me
 | requirement.stage_changed | Four-stage transition | →notify |
 | requirement.task_completed | Requirement task completed | →points |
 | requirement.closed | Requirement closed | →points |
+| bug.registered / confirmed | Bug registered / product-manager confirmation | →notify, →process |
+| bug.fix_tasks_created | Bug development/test child tasks generated | →notify |
+| bug.ready_for_verification | All Bug child tasks closed | →notify, →process |
+| bug.reopened / closed | Bug verification rejected/reopened or verified closed | →audit, →notify, →points (future metric) |
+| work_task.created / closed | Delegated task registered/closed | →notify, →points (future metric) |
 | knowledge.published | Published | →points |
 | knowledge.voted | Marked helpful | →points (author) |
 | activity.registered | Training registered | →points (presenter/organizer/participant scored separately) |
@@ -309,7 +381,7 @@ Scheduled tasks cover SLA, contracts, milestones, one reminder at 80% of the req
 5. **SLA timing**: on-hold time accumulates into paused_minutes; the attainment check = (resolved_at − submitted_at − paused) ≤ target.
 6. **Matrix-role performance review**: the system first generates reference scores from ITSM, requirements, projects, processes, and points events. Business-line leads can write only business-role proposals; professional-line leads can write only professional-role proposals; platform roles and leaders' own scores are entered directly by the CIO. The backend enforces `performance_role_assignment.review_scope`; UI hiding is not an authorization boundary.
 7. **External-input and publication isolation**: external business satisfaction is stored in `performance_external_input` and must be submitted, verified, and locked before it affects scoring. `performance_score_component` keeps reference, stage proposal, and effective values separately. `/api/my/performance` returns published snapshots only.
-8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again.
+8. **Point buckets**: `point_rule`/`point_entry` use `contribution_bucket=role_result|team_contribution` to separate role outcomes from the fixed 20% team-contribution score. A fact already used by a role metric cannot enter team contribution again. Activity Points read APIs aggregate only `team_contribution`.
 9. **MCP boundary (implemented in P1)**: tools call domain services only. `x-aily-jwt` passes allowlist and `external_identity` mapping before creating request-scoped `AuthUser` context. Prompts are never the sole business validator.
 10. **Confirmation/idempotency (implemented in P1)**: preview stores `mcp_operation_intent`; submission validates token hash, user, tool, expiry, and idempotency key. Payload digest prevents key reuse with different content; retries return the first result.
 11. **Form snapshots (implemented in P1)**: published versions are immutable; ticket creation stores version, answers, and schema. Person/department choices are revalidated at submit time.
@@ -318,17 +390,28 @@ Scheduled tasks cover SLA, contracts, milestones, one reminder at 80% of the req
 ## 7. Deployment Architecture
 
 ```yaml
-# deploy/docker-compose.yml form
-services:
-  db:        postgres:16  (volume + daily pg_dump to a host backup directory)
-  backend:   uvicorn, depends on db, runs alembic upgrade + seed (idempotent) on startup; with `SEED_INITIAL_CONFIG=1`, a fresh database also receives the six workflows and the verified login/Logo branding, while existing branding drafts/releases are preserved
-  frontend:  nginx serving the build output, /api and /mcp reverse-proxied to the backend
+# Default delivery path
+GitHub Actions:
+  backend:   Python 3.12 + temporary SQLite, complete pytest
+  frontend:  Node.js 22, npm ci + TypeScript + Vite production build
+  contract:  deployment YAML/script/diff checks + bilingual documentation guard
+Harbor:
+  backend:   git-<commit>-linux-amd64
+  frontend:  git-<commit>-linux-amd64
+IDC Kubernetes:
+  db:        PostgreSQL 16 + persistent volume
+  backend:   uvicorn, incremental migration + idempotent seed on startup
+  frontend:  nginx serving the build output and proxying /api and /mcp
 ```
 
 - Environment variables: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_INIT_PASSWORD`, `TZ=Asia/Shanghai`.
-- IDC Kubernetes remains final release acceptance. While current IDC infrastructure is blocked, the user explicitly authorizes local Docker plus ngrok on the full `127.0.0.1:8180` origin for the web app, `/api`, OAuth callback, and `/mcp/`.
+- IDC Kubernetes is the sole runtime, integration, and acceptance environment. Starting a local application stack, database, Compose, port 8180, or ngrok is prohibited by default. It is allowed only for an explicitly requested isolated investigation and never counts as delivery acceptance.
+- `.github/workflows/quality-gate.yml` runs the complete backend regression, frontend production build, deployment-file checks, and bilingual documentation guard for pushes and pull requests on feature/develop/main. Test fixtures use temporary SQLite and never the IDC business database.
+- After the gate passes, `deploy/k8s/push-images.sh` accepts only a clean commit; obtains Python, Node, Nginx, and PostgreSQL from the verified `mirror.gcr.io` Docker Library cache at pinned digests; builds and verifies linux/amd64 images; applies the default immutable `git-<first-12-commit-chars>-linux-amd64` tag; and pushes to Harbor. Image building does not start a local ITOM runtime or depend on anonymous Docker Hub limits.
+- `deploy/k8s/k8s-deploy.sh` deploys that same tag while preserving existing Secrets, PVCs, database, uploads, and Feishu configuration. It fails on rollout, Ready Endpoint, image-identity, in-cluster frontend proxy, external `/api/health`, or MCP `initialize` errors. Schema-affecting releases require the approved in-cluster backup/checkpoint first.
+- Administrators persist the external entry point in `public_base_url`, including the scheme, domain/IP, and optional service port; the same root serves the web app, `/api`, Feishu OAuth callback, and `/mcp/`. The current root is `https://itom.snnc.cc:30443`.
 - `/mcp/` preserves streaming and a suitable read timeout. Aily uses the canonical URL with its trailing slash. Secrets belong in headers, never URLs, logs, or frontend build variables.
-- Logging: structured JSON to stdout (viewable via docker logs).
+- Logging: structured JSON to stdout through the Kubernetes logging path.
 
 ## 8. Milestone Mapping (development order)
 
@@ -341,9 +424,9 @@ services:
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path and live bot receipt complete) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |
-| Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, requirement self-service, dispatch | service-item form/dispatch config | PRD §5/7 |
-| Aily-MCP P2 (code/automation, real-Aily conversational loop, and bot receipt passed separately; normal-user same-ticket end-to-end UAT pending) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
-| Aily-MCP P3 | Feishu Approval, IDC release, real UAT | approval/operations config | docs/10 §10 |
+| Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, BDO requirement registration, dispatch | service-item form/dispatch config | PRD §5/7 |
+| Aily-MCP P2 (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
+| Aily-MCP P3 / release hardening | Feishu Approval deferred; trusted TLS plus IDC security/performance/recovery/real-role UAT | approval/operations config | docs/10 §10 |
 
 ## 8.1 Business-domain Service Department API (M41)
 

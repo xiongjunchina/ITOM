@@ -7,15 +7,17 @@ import {
   Drawer,
   Form,
   Input,
+  Popconfirm,
   Select,
   Space,
   Tag,
+  TreeSelect,
   Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -41,6 +43,12 @@ interface TrainingFormValues {
   remarks?: string;
 }
 
+interface ParticipantDepartment {
+  id: string | null;
+  name: string;
+  members: Member[];
+}
+
 /** 培训提升：内部交叉培训 / 外部技术交流 / 新技术研究登记（登记即自动计分） */
 export default function Activities() {
   const t = useT();
@@ -54,6 +62,7 @@ export default function Activities() {
   const [tablePageSize, setTablePageSize] = useState(20);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editing, setEditing] = useState<TrainingRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<TrainingFormValues>();
   const [members, setMembers] = useState<Member[]>([]);
@@ -74,9 +83,7 @@ export default function Activities() {
     void load();
   }, [load]);
 
-  const openCreate = () => {
-    form.resetFields();
-    setDrawerOpen(true);
+  const ensureMembers = () => {
     if (members.length === 0) {
       api
         .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
@@ -85,21 +92,74 @@ export default function Activities() {
     }
   };
 
+  const openCreate = () => {
+    setEditing(null);
+    form.resetFields();
+    setDrawerOpen(true);
+    ensureMembers();
+  };
+
+  const openEdit = (row: TrainingRow) => {
+    setEditing(row);
+    form.setFieldsValue({
+      activity_type: row.activity_type,
+      topic: row.topic,
+      activity_date: dayjs(row.activity_date),
+      host_id: row.host_id ?? undefined,
+      participant_ids: row.participant_ids ?? [],
+      output_link: row.output_link ?? undefined,
+      remarks: row.remarks ?? undefined,
+    });
+    setDrawerOpen(true);
+    ensureMembers();
+  };
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setEditing(null);
+  };
+
   const handleSave = async () => {
     const values = await form.validateFields();
     setSaving(true);
     try {
-      await api.post('/trainings', {
+      const participantIds = values.participant_ids ?? [];
+      const existingParticipantIds = editing?.participant_ids ?? [];
+      const participantsUnchanged = Boolean(
+        editing
+        && participantIds.length === existingParticipantIds.length
+        && participantIds.every((participantId) => existingParticipantIds.includes(participantId)),
+      );
+      // 只改资料时不传部门字段，服务端保留原活动快照；参与人实际变化才按当前目录重新计算。
+      const participantDepartmentIds = editing && participantsUnchanged
+        ? undefined
+        : members.length > 0
+        ? participantDepartments
+            .filter((department) => (
+              department.id
+              && department.members.length > 0
+              && department.members.every((member) => participantIds.includes(member.id))
+            ))
+            .map((department) => department.id as string)
+        : [];
+      const payload = {
         activity_type: values.activity_type,
         topic: values.topic,
         activity_date: values.activity_date.format('YYYY-MM-DD'),
         host_id: values.host_id ?? null,
-        participant_ids: values.participant_ids ?? [],
+        participant_ids: participantIds,
+        participant_department_ids: participantDepartmentIds,
         output_link: values.output_link || null,
         remarks: values.remarks || null,
-      });
-      message.success(t('team.activities.registered'));
-      setDrawerOpen(false);
+      };
+      if (editing) {
+        await api.patch(`/trainings/${editing.id}`, payload);
+        message.success(t('team.activities.updated'));
+      } else {
+        await api.post('/trainings', payload);
+        message.success(t('team.activities.registered'));
+      }
+      closeDrawer();
       void load();
     } catch {
       // 已统一提示
@@ -108,9 +168,42 @@ export default function Activities() {
     }
   };
 
+  const handleDelete = async (row: TrainingRow) => {
+    try {
+      await api.delete(`/trainings/${row.id}`);
+      message.success(t('team.activities.deleted'));
+      void load();
+    } catch {
+      // 已统一提示
+    }
+  };
+
   const memberOptions = members.map((m) => ({
     value: m.id,
     label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+  }));
+  const participantDepartments = Object.entries(
+    members.reduce<Record<string, ParticipantDepartment>>((groups, member) => {
+      const departmentId = member.department_id || 'unassigned';
+      const departmentName = member.department_name || t('team.activities.form.unassignedDepartment');
+      (groups[departmentId] ??= {
+        id: member.department_id ?? null,
+        name: departmentName,
+        members: [],
+      }).members.push(member);
+      return groups;
+    }, {}),
+  )
+    .sort(([, left], [, right]) => left.name.localeCompare(right.name, 'zh-CN'))
+    .map(([, department]) => department);
+  const participantTreeData = participantDepartments.map((department) => ({
+    key: `department:${department.id ?? 'unassigned'}`,
+    value: `department:${department.id ?? 'unassigned'}`,
+    title: department.name,
+    selectable: false,
+    children: department.members
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+      .map((member) => ({ key: member.id, value: member.id, title: member.name })),
   }));
 
   const columns: ColumnsType<TrainingRow> = [
@@ -133,16 +226,22 @@ export default function Activities() {
       title: t('team.activities.col.participants'),
       dataIndex: 'participant_names',
       width: 240,
-      render: (names: string[]) =>
-        names.length > 0 ? (
+      render: (_names: string[], row) => {
+        const departments = row.participant_departments ?? [];
+        const individualNames = row.participant_individual_names ?? row.participant_names ?? [];
+        return departments.length > 0 || individualNames.length > 0 ? (
           <Space size={4} wrap>
-            {names.map((n, i) => (
+            {departments.map((department) => (
+              <Tag color="blue" key={`department-${department.id}`}>{department.name}</Tag>
+            ))}
+            {individualNames.map((n, i) => (
               <Tag key={`${n}-${i}`}>{n}</Tag>
             ))}
           </Space>
         ) : (
           '-'
-        ),
+        );
+      },
     },
     {
       title: t('team.activities.col.output'),
@@ -159,6 +258,27 @@ export default function Activities() {
         ),
     },
     { title: t('common.remark'), dataIndex: 'remarks', ellipsis: true, render: (v) => v || '-' },
+    {
+      title: t('common.actions'),
+      key: 'actions',
+      width: 130,
+      fixed: 'right',
+      render: (_, row) =>
+        row.can_manage ? (
+          <Space size={4}>
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
+              {t('common.edit')}
+            </Button>
+            <Popconfirm title={t('team.activities.deleteConfirm')} onConfirm={() => void handleDelete(row)}>
+              <Button type="link" danger size="small" icon={<DeleteOutlined />}>
+                {t('common.delete')}
+              </Button>
+            </Popconfirm>
+          </Space>
+        ) : (
+          '-'
+        ),
+    },
   ];
 
   return (
@@ -190,7 +310,7 @@ export default function Activities() {
         dataSource={items}
         standardToolbar={{ exportFileName: '培训提升记录', searchPlaceholder: '搜索主题、类型、主持人或参与人' }}
         sticky
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1320 }}
         pagination={{
           current: tablePage,
           pageSize: tablePageSize,
@@ -205,14 +325,14 @@ export default function Activities() {
       />
 
       <Drawer
-        title={t('team.activities.register')}
+        title={editing ? t('team.activities.edit') : t('team.activities.register')}
         width={480}
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDrawer}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
+            <Button onClick={closeDrawer}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
               {t('common.save')}
             </Button>
@@ -236,15 +356,22 @@ export default function Activities() {
           <Form.Item name="host_id" label={t('team.activities.form.host')}>
             <Select allowClear showSearch optionFilterProp="label" placeholder={t('team.activities.form.hostPlaceholder')} options={memberOptions} />
           </Form.Item>
-          <Form.Item name="participant_ids" label={t('team.activities.col.participants')}>
-            <Select
-              mode="multiple"
+          <Form.Item
+            name="participant_ids"
+            label={t('team.activities.col.participants')}
+            extra={t('team.activities.form.participantsDepartmentHint')}
+          >
+            <TreeSelect
               allowClear
               showSearch
-              optionFilterProp="label"
+              treeCheckable
+              showCheckedStrategy={TreeSelect.SHOW_CHILD}
+              treeNodeFilterProp="title"
               maxTagCount="responsive"
               placeholder={t('team.activities.form.participantsPlaceholder')}
-              options={memberOptions}
+              treeData={participantTreeData}
+              treeDefaultExpandAll={false}
+              style={{ width: '100%' }}
             />
           </Form.Item>
           <Form.Item name="output_link" label={t('team.activities.form.output')}>

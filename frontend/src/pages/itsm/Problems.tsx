@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Badge, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Tag, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
@@ -14,6 +14,7 @@ import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type { Member, ProblemRow, ServiceItem, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS, PROBLEM_STATUS_LABELS } from '../../api/types';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 
 export function problemStatusBadge(
   status: string,
@@ -35,11 +36,14 @@ interface ProblemFormValues {
 
 export default function Problems() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const t = useT();
   const et = useEnums();
   const user = useAuthStore((s) => s.user);
   const canDelete = hasPermission(user, 'problems', 'delete'); // M21：默认矩阵仅 admin
   const isAdmin = !!user?.permissions?.['*'];
+  const canCreate = user?.permissions ? hasPermission(user, 'problems', 'create') : true;
+  const createRequested = searchParams.get('create') === '1';
   const [items, setItems] = useState<ProblemRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -57,6 +61,7 @@ export default function Problems() {
   const [form] = Form.useForm<ProblemFormValues>();
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const directCreateStarted = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +102,14 @@ export default function Problems() {
         .catch(() => undefined);
     }
   };
+
+  useEffect(() => {
+    if (!createRequested || !canCreate || directCreateStarted.current) return;
+    directCreateStarted.current = true;
+    openCreate();
+    // openCreate intentionally captures the current form and option loaders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createRequested, canCreate]);
 
   const handleCreate = async () => {
     const values = await form.validateFields();
@@ -209,6 +222,7 @@ export default function Problems() {
         </Button>
       }
     >
+      <DocumentTypeHint documentType="problem" />
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
           placeholder={t('itsm.searchCodeTitle')}
@@ -276,6 +290,7 @@ export default function Problems() {
         destroyOnClose
         width={560}
       >
+        <DocumentTypeHint documentType="problem" />
         <Form<ProblemFormValues> form={form} layout="vertical" preserve={false} initialValues={{ priority: 'P3' }}>
           <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
             <Input maxLength={200} placeholder={t('itsm.problem.titlePlaceholder')} />

@@ -66,7 +66,7 @@ def test_vendor_blocked_then_contract_then_vendor(client, ctx):
 
 def test_ci_delete_cascades_relations(client, ctx):
     owner = client.post("/api/members", json={"name": "CI管理员M21"}, headers=ctx["admin"]).json()["data"]["id"]
-    a = client.post("/api/cis", json={"name": "应用A-M21", "category": "application", "owner": owner}, headers=ctx["admin"]).json()["data"]
+    a = client.post("/api/cis", json={"name": "应用A-M21", "category": "application", "owner": owner, "product_manager_id": owner}, headers=ctx["admin"]).json()["data"]
     b = client.post("/api/cis", json={"name": "库B-M21", "category": "database", "owner": owner}, headers=ctx["admin"]).json()["data"]
     client.post("/api/ci-relationships", json={"source_ci_id": a["id"], "target_ci_id": b["id"], "relation_type": "依赖"},
                 headers=ctx["admin"])

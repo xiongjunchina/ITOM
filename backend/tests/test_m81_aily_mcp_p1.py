@@ -18,6 +18,7 @@ APP_ID = "agent-p1"
 ORIGIN = "https://aily.feishu.cn"
 REQUESTER_SUBJECT = "ou_p1_requester"
 OTHER_SUBJECT = "ou_p1_other"
+REQUESTER_ONLY_SUBJECT = "ou_p1_requester_only"
 
 
 def _token(subject: str = REQUESTER_SUBJECT) -> str:
@@ -108,10 +109,13 @@ def p1(client, admin_headers):
         return person, user
 
     requester_person, requester_user = create_account(
-        "P1 业务用户", "p1_requester", ["requester"], business_department["id"]
+        "P1 BDO", "p1_requester", ["bdo"], business_department["id"]
     )
     other_person, other_user = create_account(
-        "P1 其他用户", "p1_other", ["requester"], business_department["id"]
+        "P1 其他 BDO", "p1_other", ["bdo"], business_department["id"]
+    )
+    requester_only_person, requester_only_user = create_account(
+        "P1 普通业务用户", "p1_requester_only", ["requester"], business_department["id"]
     )
     support_person, support_user = create_account(
         "P1 支持工程师", "p1_supporter", ["it_ops"], support_department["id"]
@@ -119,7 +123,11 @@ def p1(client, admin_headers):
     requester_headers = _login(client, "p1_requester")
     support_headers = _login(client, "p1_supporter")
 
-    for subject, user in ((REQUESTER_SUBJECT, requester_user), (OTHER_SUBJECT, other_user)):
+    for subject, user in (
+        (REQUESTER_SUBJECT, requester_user),
+        (OTHER_SUBJECT, other_user),
+        (REQUESTER_ONLY_SUBJECT, requester_only_user),
+    ):
         response = client.post(
             "/api/admin/integrations/aily/identities",
             json={
@@ -264,6 +272,7 @@ def p1(client, admin_headers):
         "requester_person": requester_person,
         "requester_headers": requester_headers,
         "other_user": other_user,
+        "requester_only_user": requester_only_user,
         "support_person": support_person,
         "support_user": support_user,
         "support_headers": support_headers,
@@ -447,6 +456,10 @@ def test_prepare_and_submit_service_request_is_confirmed_idempotent_and_dispatch
 
 
 def test_requirement_form_prepare_register_and_own_scope(client, p1):
+    ordinary = _mcp_call(client, "get_it_requirement_form", {}, subject=REQUESTER_ONLY_SUBJECT)
+    assert ordinary["success"] is False
+    assert ordinary["error"]["code"] in {"FORBIDDEN", "BDO_REQUIRED"}
+
     form = _mcp_call(client, "get_it_requirement_form", {})
     assert form["success"] is True
     assert form["submission_available"] is True

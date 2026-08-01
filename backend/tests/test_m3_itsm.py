@@ -93,10 +93,13 @@ def test_ticket_escalate_to_problem(client, ctx):
 
 def test_ci_crud_and_impact(client, ctx, admin_headers):
     def mk_ci(name, category, attrs=None):
+        payload = {"name": name, "category": category, "owner": ctx["ops_person"],
+                   "environment": "生产", "attrs": attrs or {}}
+        if category in {"应用", "app", "application"}:
+            payload["product_manager_id"] = ctx["ops_person"]
         r = client.post(
             "/api/cis",
-            json={"name": name, "category": category, "owner": ctx["ops_person"],
-                  "environment": "生产", "attrs": attrs or {}},
+            json=payload,
             headers=ctx["ops"],
         )
         assert r.json()["success"], r.text

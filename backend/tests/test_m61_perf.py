@@ -30,10 +30,12 @@ def ctx(client, admin_headers):
 
 def test_seeded_schemes_and_dimensions(client, ctx):
     dims = client.get("/api/perf/dimensions", headers=ctx["cio_h"]).json()["data"]
-    assert {d["code"] for d in dims} == {
+    dimension_codes = {d["code"] for d in dims}
+    assert {
         "ticket_service", "change_compliance", "project_delivery", "requirement_delivery",
         "domain_satisfaction", "knowledge_contrib", "activity_points",
-    }
+    } <= dimension_codes
+    assert {"bug_fix_delivery", "delegated_work_delivery"} <= dimension_codes
     schemes = client.get("/api/perf/schemes", headers=ctx["cio_h"]).json()["data"]
     names = [s["name"] for s in schemes]
     assert "默认方案（兜底）" in names and "运维序列（参考模板）" in names

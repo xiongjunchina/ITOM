@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Badge,
@@ -43,6 +43,7 @@ import { HealthDot, StatusBadge, fetchLinkableRequirements } from './shared';
 import CharterImportModal from './CharterImportModal';
 import ReasonModal from './ReasonModal';
 import ProjectEditModal, { type ProjectEditModalProject } from './ProjectEditModal';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 
 const STATUS_KEYS = Object.keys(PROJECT_STATUS) as ProjectStatus[];
 
@@ -71,6 +72,7 @@ function ProjectList() {
   const et = useEnums();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const createRequested = searchParams.get('create') === '1';
   const canCreate = useProjectPerm('create');
   const canEdit = useProjectPerm('edit');
   const canDelete = useProjectPerm('delete');
@@ -99,6 +101,7 @@ function ProjectList() {
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [linkableReqs, setLinkableReqs] = useState<RequirementRow[]>([]);
   const [charterOpen, setCharterOpen] = useState(false);
+  const directCreateStarted = useRef(false);
 
   // 行内编辑（共享编辑弹窗）：列表行缺 service_item_id/description，先取详情再打开
   const [editing, setEditing] = useState<ProjectEditModalProject | null>(null);
@@ -226,6 +229,14 @@ function ProjectList() {
       .then(setLinkableReqs)
       .catch(() => undefined);
   };
+
+  useEffect(() => {
+    if (!createRequested || !canCreate || directCreateStarted.current) return;
+    directCreateStarted.current = true;
+    openCreate();
+    // openCreate intentionally captures the current form and option loaders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createRequested, canCreate]);
 
   const submitCreate = async () => {
     const values = await form.validateFields();
@@ -477,6 +488,7 @@ function ProjectList() {
         onCancel={() => setCreateOpen(false)}
         destroyOnClose
       >
+        <DocumentTypeHint documentType="project" />
         <Form<ProjectFormValues> form={form} layout="vertical" preserve={false}>
           <Form.Item
             name="name"
@@ -802,6 +814,7 @@ export default function Projects({ pane }: { pane: 'list' | 'portfolios' }) {
   const t = useT();
   return (
     <Card title={t(pane === 'portfolios' ? 'proj.tab.portfolios' : 'proj.tab.list')}>
+      {pane === 'list' && <DocumentTypeHint documentType="project" />}
       {pane === 'portfolios' ? <PortfolioPane /> : <ProjectList />}
     </Card>
   );

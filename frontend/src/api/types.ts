@@ -7,7 +7,25 @@ export interface Envelope<T = unknown> {
   error?: { code: string; message: string };
 }
 
-/** 系统角色（16 个内置角色，矩阵式 IT 组织） */
+/** M84：通用跨域单据关联（详情页只展示当前用户同时有权查看的两端）。 */
+export interface RecordRelationRow {
+  id: string;
+  direction: 'outbound' | 'inbound';
+  relation_type: string;
+  relation_name: string;
+  reason: string;
+  created_at?: string | null;
+  created_by_name?: string | null;
+  counterpart: {
+    entity_type: 'ticket' | 'problem' | 'requirement' | 'project';
+    id: string;
+    code: string;
+    title: string;
+    record_type?: string;
+  };
+}
+
+/** 系统角色（17 个内置角色，矩阵式 IT 组织） */
 export type Role =
   | 'admin'
   | 'cio'
@@ -24,6 +42,7 @@ export type Role =
   | 'is_mgr'
   | 'it_bp'
   | 'auditor'
+  | 'bdo'
   | 'requester';
 
 export const ROLE_LABELS: Record<Role, string> = {
@@ -42,6 +61,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   is_mgr: '信息安全管理员',
   it_bp: 'IT业务合作伙伴',
   auditor: '审计员',
+  bdo: 'BDO(业务数字化经理)',
   requester: '业务用户',
 };
 
@@ -175,6 +195,7 @@ export interface AilyConfig {
   bot_app_id: string | null;
   has_bot_app_secret: boolean;
   api_base: string;
+  public_base_url: string;
   message_enabled: boolean;
   has_card_callback_verification_token: boolean;
   has_card_callback_encrypt_key: boolean;
@@ -353,6 +374,13 @@ export interface DashboardData {
     trainings: number;
     hirings: number;
   };
+  task?: {
+    open_total: number;
+    open_bugs: number;
+    open_bug_fix_tasks: number;
+    open_delegated_tasks: number;
+    open_requirement_tasks: number;
+  };
   alerts: { type: string; title: string; link?: string | null }[];
 }
 
@@ -492,7 +520,7 @@ export interface TicketDetail extends TicketRow {
 
 // ============ M2.5 自配置：角色 / 用户组 ============
 
-/** 角色定义（16 个内置角色 + 自定义角色） */
+/** 角色定义（17 个内置角色 + 自定义角色） */
 export interface RoleDef {
   id: string;
   code: string;
@@ -636,7 +664,7 @@ export interface ProvisionRule {
 
 // ============ M2.5 自配置：状态机 ============
 
-export type WorkflowEntityType = 'ticket' | 'ticket_change' | 'requirement' | 'project' | 'problem';
+export type WorkflowEntityType = 'ticket' | 'ticket_change' | 'requirement' | 'project' | 'problem' | 'bug';
 
 export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   ticket: '工单（事件/服务请求）',
@@ -644,6 +672,7 @@ export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   requirement: '需求',
   project: '项目',
   problem: '问题',
+  bug: 'Bug 管理',
 };
 
 /** 状态定义 */
@@ -888,6 +917,8 @@ export interface CiRow {
   status: string;
   owner: string | null;
   owner_name: string | null;
+  product_manager_id?: string | null;
+  product_manager_name?: string | null;
   environment: string | null;
   business_owner: string | null;
   vendor_id: string | null;
@@ -898,6 +929,93 @@ export interface CiRow {
   remarks: string | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+}
+
+// ============ M82 任务管理 ============
+
+export type BugStatus = 'registered' | 'confirmed' | 'fixing' | 'resolved' | 'closed' | 'rejected';
+export type BugFixTaskStatus = '登记' | '排期' | '执行' | '暂停' | '关闭';
+export type WorkTaskStatus = '登记' | '排期' | '执行' | '暂停' | '关闭' | '中止';
+
+export interface TaskCapabilities {
+  edit?: boolean;
+  delete?: boolean;
+  transition?: boolean;
+  confirm?: boolean;
+  generate_fix_tasks?: boolean;
+  verify?: boolean;
+  reopen?: boolean;
+}
+
+export interface BugFixTaskRow {
+  id: string;
+  bug_id: string;
+  name: string;
+  task_type: string;
+  description: string | null;
+  assignee: string;
+  assignee_name: string | null;
+  plan_start: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: BugFixTaskStatus;
+  done_at: string | null;
+  completion_note: string | null;
+}
+
+export interface BugRow {
+  id: string;
+  bug_code: string;
+  title: string;
+  description: string;
+  priority: TicketPriority;
+  status: BugStatus;
+  ci_id: string;
+  ci_name: string | null;
+  product_manager_id: string | null;
+  product_manager_name: string | null;
+  dev_leader_id: string | null;
+  dev_leader_name: string | null;
+  reporter_id: string;
+  reproduction: string | null;
+  expected_result: string | null;
+  actual_result: string | null;
+  environment: string | null;
+  evidence: string | null;
+  resolution_note: string | null;
+  verification_note: string | null;
+  rejection_reason: string | null;
+  reopened_at: string | null;
+  closed_at: string | null;
+  fix_tasks: BugFixTaskRow[];
+  capabilities: TaskCapabilities;
+}
+
+export interface WorkTaskRow {
+  id: string;
+  task_code: string;
+  title: string;
+  description: string;
+  task_type: string;
+  source_type: string;
+  source_id: string | null;
+  registrar: string;
+  registrar_name: string | null;
+  assignee: string | null;
+  assignee_name: string | null;
+  priority: TicketPriority;
+  plan_start: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: WorkTaskStatus;
+  performance_bucket: string;
+  pause_reason: string | null;
+  abort_reason: string | null;
+  completion_note: string | null;
+  closed_at: string | null;
+  capabilities: TaskCapabilities;
 }
 
 /** CI 摘要（影响分析中的关联方） */
@@ -1130,6 +1248,9 @@ export interface LinkedRequirementBrief {
   status: string;
   status_name: string;
   moscow?: string | null;
+  /** 通过通用关联“转为项目”时的业务说明；旧关联为空。 */
+  relation_reason?: string | null;
+  relation_created_at?: string | null;
 }
 
 /** 章程组织条目（主要成员：role=角色 duty=职责；关键干系人：role=角色/单位 duty=关注点） */
@@ -1142,6 +1263,8 @@ export interface ProjectOrgEntry {
 export interface ProjectDetail extends ProjectRow {
   /** 关联需求（需求实现阶段挂接本项目） */
   linked_requirements?: LinkedRequirementBrief[];
+  /** 通过“创建关联项目”写入的关联说明；旧 project_id 关联为空。 */
+  project_relation_reason?: string | null;
   /** 其他说明（章程分字段后仅存放补充说明，兼容存量描述） */
   description: string | null;
   service_item_id: string | null;
@@ -1467,6 +1590,8 @@ export interface ActiveTaskRow {
   quadrant: string | null;
   /** 所属需求加权总分（列表已按其降序返回） */
   weighted_total: number | null;
+  /** 当前用户是否可维护该实现中需求的任务 */
+  can_manage_tasks?: boolean;
 }
 
 /** 需求列表行 */
@@ -1509,6 +1634,8 @@ export interface RequirementRow {
   prd_effort?: number | null;
   /** 开发人天 */
   dev_effort?: number | null;
+  /** 当前用户是否可维护该实现中需求的任务 */
+  can_manage_tasks?: boolean;
   // ---- M16 需求评审分流 ----
   /** 方案类型（中文权威值：二次开发/新购系统；方案评估阶段填写） */
   solution_type: string | null;
@@ -1598,6 +1725,8 @@ export interface RequirementDetail extends RequirementRow {
   analyzing_at: string | null;
   implementing_at: string | null;
   project_name: string | null;
+  /** 通过“创建关联项目”写入的关联说明；旧 project_id 关联为空。 */
+  project_relation_reason?: string | null;
   tasks: RequirementTask[];
   /** 关闭收尾已转出清单 */
   handover: {
@@ -1609,6 +1738,10 @@ export interface RequirementDetail extends RequirementRow {
   process: TicketProcess | null;
   /** 当前用户是否有 requirements.edit 权限 */
   can_edit: boolean;
+  /** 当前用户是否可维护该需求的任务 */
+  can_manage_tasks: boolean;
+  /** 当前用户是否可删除该需求的任务 */
+  can_delete_tasks: boolean;
   /** 可主动/强制关闭（M28）：admin 或需求提出人本人 */
   can_close?: boolean;
 }
@@ -1656,7 +1789,11 @@ export interface MyPoints {
 /** 本期积分排行榜（GET /points/leaderboard） */
 export interface PointsLeaderboard {
   period: string;
-  board: { person_name: string | null; points: number }[];
+  board: {
+    person_name: string | null;
+    points: number;
+    breakdown: { source_type: string; points: number }[];
+  }[];
 }
 
 /** 积分规则（自动事件分值，可调可停用） */
@@ -1778,9 +1915,16 @@ export interface TrainingRow {
   activity_date: string;
   host_id?: string | null;
   host_name: string | null;
+  participant_ids: string[];
+  /** 按整部门勾选时服务端冻结的部门显示快照。 */
+  participant_departments?: Array<{ id: string; name: string }>;
+  /** 未被整部门快照覆盖的个别参与人姓名。 */
+  participant_individual_names?: string[];
   participant_names: string[];
   output_link: string | null;
   remarks: string | null;
+  /** 当前用户是否为管理员、CIO 或该活动登记人。 */
+  can_manage: boolean;
 }
 
 /** 团队文化（单例） */

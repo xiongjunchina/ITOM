@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Button, Card, Col, Row, Statistic, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
-import { FundOutlined, SettingOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons';
+import { FundOutlined, ReloadOutlined, SettingOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { WidgetBoardDrawer, WidgetTitle, useWidgetBoard } from '../../components/WidgetBoard';
@@ -48,6 +48,11 @@ export default function Overview() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(timer);
   }, [load]);
 
   const workload = data?.workload ?? [];
@@ -169,7 +174,10 @@ export default function Overview() {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
+          {t('common.refresh')}
+        </Button>
         <Button icon={<SettingOutlined />} onClick={board.openCustomize}>
           {t('team.overview.customize')}
         </Button>

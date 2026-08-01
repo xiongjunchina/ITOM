@@ -14,13 +14,13 @@
 | Person | `org_member` | Who you are (Chinese/English name / department / position / contact / skills) | Personnel Master Data | **None** |
 | Department | `department` | Where you sit in the company org structure (one person, one department; tree-shaped; types it/business/audit) | Department Management | **None** (used only as the basis for provisioning-rule matching) |
 | User group | `user_group` | Who you work with, and who tickets get assigned to | User Groups | **Group-granted roles**: a person joining the group inherits them automatically |
-| Role | `role` | What you can do in the system | Role Management | 10 built-in + custom (inheriting a built-in) |
+| Role | `role` | What you can do in the system | Role Management | 17 built-in + custom (inheriting a built-in) |
 | Business domain | `business_domain` | Which business line you serve and who owns it | Business Domain | **None** (owner is a field, not a role) |
 | External identity | `external_identity` [implemented in P0] | Which ITOM account a Feishu tenant/app identity maps to | Aily/Feishu integration | **None** (identity mapping grants no role) |
 
 **Effective roles = direct roles ∪ the roles granted by the groups you belong to ∪ the built-in roles inherited by your custom roles.** The `roles` in the login response are the effective roles (the front-end menu renders from them), and `direct_roles` are the direct roles.
 
-## 2. The 10th Built-in Role: auditor (Auditor)
+## 2. Built-in Role: auditor (Auditor)
 
 - Permission boundary: **read-only across all modules + audit-log viewing**; cannot modify any record (enforced by a global read-only middleware, exceptions: login and notification handling, including the notification popover's Mark all as read and Clear read actions).
 - Multi-role unrestricted: a user with auditor + it_ops can write normally (the read-only restriction applies only to users who hold *only* auditor).
@@ -37,6 +37,7 @@ Auth-source adapter (AuthProvider) → on success returns a user profile (Provis
 
 - **Provisioning rules** (admin-configurable, first-login-only): match by department type (it/business/audit) or specific department → a list of default roles; a specific-department rule takes priority, lower `sort` first, and matching stops on the first hit. Seed default: all three department types → `requester`.
 - **Auth sources**: `auth_user.auth_source` (local/ad/feishu/sms/wechat) + `external_id`. Local and Feishu are implemented: Feishu supports QR OAuth, workplace app login, first-time provisioning approval, and post-login binding/rebinding. AD/SMS/WeChat remain reserved adapters.
+- **Automatic business-user provisioning**: during Feishu workplace login, when the person is already synced to ITOM, outside the digital/IT scope, has a valid email local part, and has no person/external-identity/username collision, ITOM idempotently creates or binds an account, uses the email prefix before `@` as the username, initializes the `requester` role, and activates login. The configured initial password is stored only in encrypted form and never logged or returned. IT-scope people continue through administrator approval and never receive business-user access through this branch. Until a synced department tree is classified, a path explicitly named Information Technology, Digitalization, Informatization, or IT is also treated as IT; failed safety checks fall back to the existing pending-approval flow.
 - When an admin creates an account manually without selecting a role, the default is likewise taken from the rules (based on the associated person's department).
 
 ## 4. Source of Organization Data: Feishu is the Source of Truth (finalized M3.9)
@@ -55,6 +56,7 @@ Auth-source adapter (AuthProvider) → on success returns a user profile (Provis
 - Account provisioning is company-wide: user management and Feishu approval load people without `scope` and may link any non-deleted `org_member`. The digital-team scope applies only to IT operational owners, user groups, and performance subjects; it must not block a business user account. List responses provide readable person and department names instead of exposing the internal GLID as display text.
 - User updates distinguish an omitted `person_id` from an explicit `person_id: null`: omission preserves the current link, while explicit null unlinks the account without deleting personnel master data, department placement, user-group membership, or historical business records.
 - Browser QR login and Feishu workplace login share identity handling: an active bound account signs in directly, while a new identity enters the `login_request` approval flow.
+- The Organization UI initially expands only the company and first-level department names for readability. Clicking a department name or its expand arrow recursively reveals child departments and then people. The backend retains the complete department/person tree for selectors, synchronization, data scope, and authorization; no existing organization data is deleted or truncated.
 - A signed-in account may bind or rebind one Feishu open_id; the identity cannot be occupied by another active account. Unbinding requires a local password and does not unlink the person record.
 - Aily no longer uses a Helpdesk guest identity or handoff token. MCP validates `x-aily-jwt`, then maps provider, tenant, app, subject type, and subject ID through `external_identity` to one active `auth_user`. Missing mapping, disabled accounts, or non-allowlisted tenants/agents are rejected.
 - Existing `auth_user.external_id` remains for login/binding compatibility but cannot represent all identities from multiple apps. OAuth/org-sync and Aily-bot apps may produce different `open_id` values and therefore use separate verified identity rows.
@@ -79,7 +81,7 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 | Organizational concept | System carrier |
 | --- | --- |
 | Horizontal · service line (business domain) | `business_domain`: owner/backup owner and service-team members use the `org_settings` digital-team union (department members plus individually selected people); `business_domain_department` stores the served organization scope |
-| IT operational person-selector scope | Project/requirement/ticket/problem/service-item/CI/contract/user-group selectors load `GET /api/members?scope=it`; account linking is excluded and must allow every non-deleted company person |
+| IT operational person-selector scope | Project/requirement/ticket/problem/service-item/CI (technical owner and Application product manager)/contract/user-group selectors load `GET /api/members?scope=it`; account linking is excluded and must allow every non-deleted company person |
 | Vertical · technical line (resource pool: a TM centrally manages personnel in a technical direction) | `user_group`: owner = TM (field) + roles group-granted roles (e.g. the development resource pool grants it_dev) + members |
 | Professional identity | Roles: it_pdm/it_pm/it_dev/it_ops/is_mgr/it_bp + custom additions (data governance, AI, etc.) |
 | Management layer | cio (IT Head) / it_bm / it_tm, three built-in roles (manager was removed on 2026-07-11) |
@@ -87,7 +89,9 @@ How IT's internal matrix management (2026-07-11 product input) is expressed in t
 
 Performance review does not treat `auth_user` roles as the evaluator assignment. Each period creates a `performance_role_assignment` snapshot with the person's business/professional role, business-domain or professional-pool scope, evaluator, and `review_mode`. A business-line lead proposes only business-role scores in scope; a professional-line lead proposes only professional-role scores in scope. Platform roles default to `review_mode=cio_direct` and are scored directly by the CIO. No leader may self-score; the CIO finalizes leaders' own scores.
 
-The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it_pdm_leader, it_pm, it_pmo, it_dev, it_dev_leader, it_ops, it_op_leader, is_mgr, it_bp, auditor, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
+The built-in roles are finalized at **17**: admin, cio, it_bm, it_tm, it_pdm, it_pdm_leader, it_pm, it_pmo, it_dev, it_dev_leader, it_ops, it_op_leader, is_mgr, it_bp, auditor, bdo, requester (manager removed, no reason to exist). **Built-in role names/descriptions are editable** (code, inheritance relationship, and deletion are locked).
+
+`bdo` = **Business Digital Owner**. Appointed by a business department, this business-side Business PO and Data Steward consolidates and filters front-line needs, defines business rules, holds the business UAT veto, drives adoption training, and stewards business terminology and data quality. BDO is a controlled subset of business users: its baseline grants service requests, knowledge lookup, and `requirements.create/view`; its data scope remains `requester == current auth_user.id`, and it gains no review, project, process, or IT-internal-task authority. A normal `requester` no longer has Requirement-module permission. Startup idempotently removes the legacy `requester → requirements` permission row without rewriting historical requirements.
 
 ## 7 (M3.6). Function Permission Matrix
 
@@ -97,10 +101,12 @@ The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it
   1. Function matrix: page visibility and create/edit/delete toggles (this section).
   2. Data scope: e.g. requester sees only their own tickets, and a knowledge draft is visible only to its author — built into the business code, not in the matrix.
   3. Process permissions: state-machine transition allowed_roles, process-step default_role — managed on the state-machine-config / process-definition pages.
+- **Task-management permission modules**: `task_development` (development tasks), `task_bug` (Bug fixes), and `task_delegated` (delegated tasks) are separate from the legacy `req_tasks` (requirement implementation tasks). IT team members may register Bugs and delegated tasks by default; the development leader may maintain development, Bug, and delegated tasks; the product manager of the affected system receives the `task_bug` permission needed for Bug confirmation and verification. Record-level edit, assignment, and deletion remain guarded by the task service using reporter, assignee, process-node, and administrator scope; a front-end button or function-matrix entry alone is never sufficient.
 - **Performance modules**: use separate modules for `performance_result` (result view), `performance_review` (staged review), `performance_external` (external raw input), and `performance_admin` (rules/period/publication). The function matrix controls page/actions; `performance_role_assignment.review_scope` then restricts business-domain, professional-pool, and editable line scope.
 - **Performance visibility**: business/professional leads see reference scores and proposal fields only in their scope; the CIO sees all internal details and performs final review; evaluated employees have only `performance_result.view`, and the endpoint returns published final results only.
 - **Performance field authority**: leads cannot edit raw team-contribution points, external raw facts, or the other line's components. Platform roles and leaders' own scores are entered directly by the CIO. Locked external facts are corrected by a new version only.
-- **Point-rule authority**: team-contribution activity rules belong to the `ideas` Activity Points page; reads use `ideas.view`, while writes are hard-guarded to admin (implicit full authority) and CIO. Role-result rules belong to Team Management → Performance → Scoring Rules and use role profiles, dimensions, source mappings, and process/RACI step mappings. The two ledgers and period snapshots remain separate; changes never recalculate historical `point_entry` rows or published periods, and each change is audited against its own entity.
+- **Point-rule authority**: team-contribution activity rules belong to the `ideas` Activity Points page; reads use `ideas.view`, while writes are hard-guarded to admin (implicit full authority) and CIO. Role-result rules belong to Team Management → Performance → Scoring Rules and use role profiles, dimensions, source mappings, and process/RACI step mappings. Current-period activity reads resolve automatic events against the latest effective team rule and a disabled rule displays zero; original `point_entry` rows, historical periods, and published/locked periods are not rewritten. Every change is audited against its own entity.
+- **Training-activity record authority**: creation records `development_activity.created_by`. Editing or deleting a training activity is limited to admin, CIO, or its registrar and is rechecked against the record server-side; an existing row without a registrar that cannot be backfilled from creation audit is administrator/CIO-only. A host/participant change or deletion that changes training points is allowed only in the current unpublished, unlocked period; metadata-only edits remain audited.
 - **Custom roles**: on creation, **copy** the matrix of the selected template role (base_role) as the initial value, then edit independently; base_role also retains the "process-reference inheritance matching" semantics (when a transition rule specifies it_ops, a custom role inheriting it_ops also matches).
 - The default matrix is coded in `services/permissions.py` (DEFAULT_MATRIX), seeded only on first startup, after which the in-database configuration is authoritative.
 
@@ -121,8 +127,12 @@ The built-in roles are finalized at **16**: admin, cio, it_bm, it_tm, it_pdm, it
 After Aily + MCP confirmed submission, a service request enters the service item's bound process directly; ITOM does not add an Aily-routing step. IT completion moves only to `resolved`; the requester confirms through web or Aily before closure, or rejects to reopen. Rating is stored in `ticket_satisfaction` and copied to `Ticket.satisfaction` for compatibility.
 | Change management | Change Enablement | Change request (it_ops) → Change approval (it_op_leader; CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr; CC cio) |
 | Problem analysis | Problem Management | Problem confirmation (professional-line owner, dynamically assigned, approval) → Root-cause analysis (handler selected by owner) → Resolution & verification (same handler) → Resolution confirmation & closure (professional-line owner, approval) |
+| Bug fix | Bug Management | Register Bug (IT team member) → Bug confirmation (affected-system product manager, approval) → Generate fix tasks (development leader) → Development fix (assigned developer) → Verification & closure (affected-system product manager, approval) |
 | Requirement delivery (pre-configured, attached in M5) | — | Requirement review (it_bm, approval) → Solution assessment & routing (it_pdm_leader, approval) → Delivery (it_dev_leader / project manager) → Acceptance & closure (it_bm, approval) |
+
 | Project key milestones | Project Management | Project kickoff (it_pm, approval) → Execution monitoring (it_pm) → Closure retrospective (it_pmo, approval) |
+
+Implementation-task permission supplement: after the workflow writes the requirement owner to `requirement.owner`, that owner may maintain multiple task rows while the requirement is `implementing`. This is a record-scope rule based on the document owner; it does not grant global `requirements.edit` or `req_tasks.edit`. Without global edit permission, a task assignee may update only the status and actual effort of their own task, while deletion still requires global Requirement/Task Tracking edit permission. The server evaluates the current account and live requirement status; front-end capability flags are not authorization.
 
 Current published runtime: the change approval/rejection transition has `allowed_roles = [cio, it_tm, it_op_leader]`; the approval task defaults to `it_op_leader` and CCs `it_bm`; the PIR task is handled by `is_mgr` and CCs `cio`. Approval recipients are resolved dynamically from `allowed_roles` (including groups and inheritance). All of this remains adjustable on the state-machine-config / process-definition pages; the published runtime version takes precedence over code seeds.
 
@@ -154,14 +164,20 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 6. Only active accounts continue; existing role matrix, data scope, and process guards then authorize the operation.
 7. Every tool call writes a redacted `mcp_tool_call`. `get_current_user_context` returns verification/account status and a readable name only. P1 business tools return public business codes and user-visible summaries, never open_id, tenant_id, agent_id, or an internal ITOM primary key.
 
-### 11.2 Normal employee capability
+### 11.2 Business-user and BDO capability
 
 - Search published service items eligible for the employee and retrieve their real forms.
 - Create `service_request` and read own requests; P2 lists the user's pending confirmations, confirms or reopens an explicit own ticket, and rates an own closed request.
-- Register/read own IT requirements through existing `requirements.create/view`, with `requester == current auth_user.id` enforced by the service.
+- A normal business user may create and read only own service requests. Only a BDO may register/read own IT requirements through existing `requirements.create/view`, with `requester == current auth_user.id` enforced by the service.
 - Never create incidents/changes, read another user's records, or perform review, reassignment, approval, or internal process tasks.
 
 The service-request tool does not accept `ticket_type`; requirement registration calls the separate Requirement domain service. UI hiding is not authorization: web APIs, MCP tools, and domain services enforce the same server-side boundary.
+
+### 11.2a IT-staff web routing and transfer permission (phases A/B/C implemented)
+
+“Record Creation Guide” is visible to IT staff and system administrators in the ITOM web experience, but not granted to normal business users. Routing recommendations are temporary, overrideable assistance and persist no answers. The server checks IT-staff-or-administrator eligibility plus at least one real target create permission, then filters each jump target by the current permissions; the flow cannot bypass target-record authorization. This web guide is separate from Aily MCP tools; Aily requirement tools are available only to BDOs and authorized IT roles.
+
+Phase-B relation reads are trimmed by visibility of both source and target, and detail pages display only that safe result, so a related record cannot leak access to another record. Phase-C `prepare/submit` is implemented: an actor needs both source-record read scope and the target record's `create` permission; the server derives the target kind from its whitelist, checks idempotency key/request digest while holding the source-row lock, then lets the target domain service validate required fields, workflow node, approval, role, and data scope and writes the relation in the same transaction. System-level administrator authority does not replace a business submitter's service-request confirmation and does not change the Aily normal-user boundary.
 
 ### 11.3 Confirmation, idempotency, and cross-ticket safety
 

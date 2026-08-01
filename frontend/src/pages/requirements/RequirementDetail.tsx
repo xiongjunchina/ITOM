@@ -38,9 +38,13 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useGoBack } from '../../utils/nav';
+import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -622,6 +626,8 @@ export default function RequirementDetail() {
 
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
+  const canManageTasks = detail?.can_manage_tasks ?? canEdit;
+  const canDeleteTasks = detail?.can_delete_tasks ?? canEdit;
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   // M28 主动关闭（登记人/admin）
   const [closeOpen, setCloseOpen] = useState(false);
@@ -912,6 +918,7 @@ export default function RequirementDetail() {
 
   const st = detail.status;
   const isFinal = st === 'closed' || st === 'cancelled';
+  const canCreateLinkedProject = !isExample && !isFinal && !!user && !isRequesterOnly(user);
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
   const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
@@ -926,7 +933,7 @@ export default function RequirementDetail() {
   const pendingAcceptance = criteria.length - checkedCount;
 
   const canChangeTaskStatus = (t: RequirementTask): boolean =>
-    !isExample && !isFinal && (canEdit || (!!user?.person_id && user.person_id === t.assignee));
+    !isExample && !isFinal && (canManageTasks || (!!user?.person_id && user.person_id === t.assignee));
 
   // ----- 阶段进度条 -----
   const currentStep = st === 'closed'
@@ -1013,7 +1020,7 @@ export default function RequirementDetail() {
         ),
     },
     { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => fmtDt(v) ?? '-' },
-    ...(canEditNow
+    ...(canDeleteTasks
       ? [
           {
             title: t('common.actions'),
@@ -1036,6 +1043,7 @@ export default function RequirementDetail() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {isExample && <ExampleAlert />}
+      <DocumentTypeHint documentType="requirement" />
       {/* 头部 */}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>
@@ -1049,6 +1057,14 @@ export default function RequirementDetail() {
             <ReqStatusBadge status={detail.status} name={detail.status_name} />
             <MoscowTag value={detail.moscow} empty={null} />
           </Space>
+          {canCreateLinkedProject && id && (
+            <RecordRelationCreateButton
+              sourceEntityType="requirement"
+              sourceId={id}
+              relationType="converted_to_project"
+              onCreated={() => void load()}
+            />
+          )}
           {canEdit && (
             <Space wrap>
               {detail.can_close && (
@@ -1191,6 +1207,13 @@ export default function RequirementDetail() {
           )}
         </Descriptions>
       </Card>
+
+      <RecordRelationsPanel
+        entityType="requirement"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
 
       {/* 评估评分（登记/评估阶段或已有评分时显示） */}
       {id && (st === 'registered' || st === 'evaluating' || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
@@ -1356,7 +1379,7 @@ export default function RequirementDetail() {
           title={t('req.implementation')}
           size="small"
           extra={
-            canEditNow && (
+            canManageTasks && (
               <Button
                 size="small"
                 type="primary"
@@ -1386,9 +1409,17 @@ export default function RequirementDetail() {
                     onChange={(v) => void patchField({ project_id: v ?? null }, t('req.linkedProjectUpdated'))}
                   />
                   {detail.project_id && <Link to={`/projects/${detail.project_id}`}>{t('req.viewProject')}</Link>}
+                  {detail.project_relation_reason && (
+                    <Typography.Text type="secondary">{detail.project_relation_reason}</Typography.Text>
+                  )}
                 </Space>
               ) : detail.project_id ? (
-                <Link to={`/projects/${detail.project_id}`}>{detail.project_name || t('req.viewProject')}</Link>
+                <Space direction="vertical" size={0}>
+                  <Link to={`/projects/${detail.project_id}`}>{detail.project_name || t('req.viewProject')}</Link>
+                  {detail.project_relation_reason && (
+                    <Typography.Text type="secondary">{detail.project_relation_reason}</Typography.Text>
+                  )}
+                </Space>
               ) : (
                 '-'
               )}

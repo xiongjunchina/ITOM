@@ -74,13 +74,25 @@ function MyPointsCard() {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    api
-      .get<MyPoints>('/points/mine')
-      .then(setData)
-      .catch(() => undefined)
-      .finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await api.get<MyPoints>('/points/mine'));
+    } catch {
+      // 已统一提示
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
 
   const entryColumns: ColumnsType<MyPoints['entries'][number]> = [
     { title: t('team.col.time'), dataIndex: 'created_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v: string) => fmtTime(v) },
@@ -806,6 +818,7 @@ interface IdeaFormValues {
 
 function IdeasTab() {
   const t = useT();
+  const et = useEnums();
   const canCreate = useIdeasPerm('create');
   const canManage = useIdeasPerm('edit');
   const user = useAuthStore((s) => s.user);
@@ -892,14 +905,26 @@ function IdeasTab() {
     }
   };
 
+  const loadBoard = useCallback(async () => {
+    setBoardLoading(true);
+    try {
+      setBoard(await api.get<PointsLeaderboard>('/points/leaderboard'));
+    } catch {
+      // 已统一提示
+    } finally {
+      setBoardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!boardOpen) return undefined;
+    void loadBoard();
+    const timer = window.setInterval(() => void loadBoard(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [boardOpen, loadBoard]);
+
   const openBoard = () => {
     setBoardOpen(true);
-    setBoardLoading(true);
-    api
-      .get<PointsLeaderboard>('/points/leaderboard')
-      .then(setBoard)
-      .catch(() => undefined)
-      .finally(() => setBoardLoading(false));
   };
 
   const columns: ColumnsType<IdeaRow> = [
@@ -1117,6 +1142,15 @@ function IdeasTab() {
               { title: t('team.col.person'), dataIndex: 'person_name', render: (v) => v || '-' },
               { title: t('team.col.points'), dataIndex: 'points', width: 100 },
             ]}
+            expandable={{
+              expandedRowRender: (row) => (
+                <Space wrap size={[6, 4]}>
+                  {row.breakdown.length === 0 ? <Typography.Text type="secondary">{t('team.points.noBreakdown')}</Typography.Text> : row.breakdown.map((item) => (
+                    <Tag key={item.source_type}>{et.pointSource(item.source_type)}：{item.points}</Tag>
+                  ))}
+                </Space>
+              ),
+            }}
             dataSource={board?.board ?? []}
             pagination={false}
             locale={{ emptyText: t('team.overview.board.empty') }}

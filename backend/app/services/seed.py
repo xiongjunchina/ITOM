@@ -27,7 +27,8 @@ BUILTIN_ROLES = [
     ("is_mgr", "信息安全管理员", "专业线：安全工单/变更复盘与安全审计/审计查看"),
     ("it_bp", "IT业务合作伙伴", "服务线成员：需求登记与业务对齐/代提单"),
     ("auditor", "审计员", "全模块只读 + 审计日志查看，不可修改任何单据"),
-    ("requester", "业务用户", "提交工单和需求、查询自己的单据、满意度评价"),
+    ("bdo", "BDO(业务数字化经理)", "业务侧 Business PO + Data Steward：汇总并登记 IT 需求、定义业务规则、组织 UAT 与推广培训、维护业务数据标准"),
+    ("requester", "业务用户", "提交服务请求、查询自己的单据、满意度评价；IT 需求由业务部门指定的 BDO 统一登记"),
 ]
 
 DEFAULT_PROVISION_RULES = [
@@ -79,6 +80,11 @@ def run_seed(db: Session):
         ("wbs_done_on_time", "项目任务按期完成", 5),
         ("milestone_achieved", "里程碑达成", 10),
         ("requirement_task_done", "需求任务完成", 5),
+        ("bug_fix_task_done", "Bug 修复任务完成", 5),
+        ("delegated_work_done", "委派任务完成", 5),
+        ("work_task_learning_growth", "技术研究任务完成", 5),
+        ("work_task_cross_team_support", "跨团队支援任务完成", 5),
+        ("work_task_training_knowledge", "知识分享任务完成", 5),
         ("requirement_closed", "需求关闭交付", 10),
         ("knowledge_published", "发表知识文章", 8),
         ("knowledge_voted", "知识被点有用（每次）", 2),
@@ -91,11 +97,18 @@ def run_seed(db: Session):
             rule = PointRule(code=code, name=name, points=points)
             db.add(rule)
         if code in {"ticket_resolved", "ticket_sla_met", "ticket_satisfaction", "wbs_done_on_time",
-                    "milestone_achieved", "requirement_task_done", "requirement_closed"}:
+                    "milestone_achieved", "requirement_task_done", "requirement_closed", "bug_fix_task_done",
+                    "delegated_work_done"}:
             rule.contribution_bucket = "role_result"
             rule.contribution_dimension = None
         else:
             rule.contribution_bucket = "team_contribution"
+        if code == "work_task_learning_growth":
+            rule.contribution_dimension = "learning_growth"
+        elif code == "work_task_cross_team_support":
+            rule.contribution_dimension = "cross_team_support"
+        elif code == "work_task_training_knowledge":
+            rule.contribution_dimension = "training_knowledge"
     if not db.query(AuthUser).filter(AuthUser.username == "admin").first():
         db.add(
             AuthUser(
@@ -204,8 +217,10 @@ BPLUS_ROLE_PROFILES = [
         ("professional_governance", "工程治理与培养", 30, "manual"),
     ]),
     ("it_dev", "IT 开发", "professional", "manager_review", [
-        ("requirement_delivery", "需求交付", 45, "requirement_delivery"),
-        ("project_delivery", "项目交付", 45, "project_delivery"),
+        ("requirement_delivery", "需求交付", 35, "requirement_delivery"),
+        ("project_delivery", "项目交付", 25, "project_delivery"),
+        ("bug_fix_delivery", "Bug 修复交付", 20, "bug_fix_delivery"),
+        ("delegated_work_delivery", "委派任务交付", 10, "delegated_work_delivery"),
         ("change_quality", "变更质量", 10, "change_compliance"),
     ]),
     ("it_op_leader", "IT 运维负责人", "professional", "cio_direct", [
@@ -254,6 +269,7 @@ def run_seed_perf_bplus(db: Session):
 
     for code, name, line_type, review_mode, dimensions in BPLUS_ROLE_PROFILES:
         profile = db.query(PerformanceRoleProfile).filter(PerformanceRoleProfile.role_code == code).first()
+        created_profile = profile is None
         if not profile:
             profile = PerformanceRoleProfile(
                 role_code=code, name=name, line_type=line_type, review_mode=review_mode,
@@ -272,6 +288,10 @@ def run_seed_perf_bplus(db: Session):
             if not dimension:
                 db.add(PerformanceRoleDimension(
                     profile_id=profile.id, dimension_code=dimension_code, name=dimension_name,
-                    weight=weight, source_config={"metric": metric}, sort=sort, active=True,
+                    # Existing profiles may have been adjusted by CIO. Add new M82
+                    # metrics at zero so startup never changes their effective weights;
+                    # fresh installations receive the recommended default weights.
+                    weight=weight if created_profile else (weight if dimension_code not in {"bug_fix_delivery", "delegated_work_delivery"} else 0),
+                    source_config={"metric": metric}, sort=sort, active=True,
                 ))
     db.commit()

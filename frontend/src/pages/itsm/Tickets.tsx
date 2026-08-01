@@ -31,6 +31,7 @@ import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
 import type { Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
 
 /** 状态 → Badge 样式（按语义猜测，未匹配用 processing；含变更状态机 rejected/rolled_back） */
 function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning' | 'processing' {
@@ -269,7 +270,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
 
   // create=1 直达新建表单；一次性 guard 避免 React StrictMode 重复打开。
   useEffect(() => {
-    if (fixedType !== 'service_request' || !createRequested || !canCreate || directCreateStarted.current) return;
+    if (!createRequested || !canCreate || directCreateStarted.current) return;
     directCreateStarted.current = true;
     openCreate();
     // openCreate intentionally captures the current form/service-item loaders.
@@ -510,6 +511,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         )
       }
     >
+      <DocumentTypeHint documentType={fixedType} />
       <Space wrap style={{ marginBottom: 16 }}>
         <Input.Search
           placeholder={t('itsm.searchCodeTitle')}
@@ -593,6 +595,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           </Space>
         }
       >
+        <DocumentTypeHint documentType={fixedType} />
         <Form<TicketFormValues>
           form={form}
           layout="vertical"

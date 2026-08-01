@@ -18,6 +18,7 @@ from app.services.team_scope import require_it_member_if_configured
 router = APIRouter(tags=["itsm"])
 
 RELATION_TYPES = ("运行于", "依赖", "连接")
+APPLICATION_CATEGORIES = {"应用", "app", "application"}
 
 
 class CiCreate(BaseModel):
@@ -25,6 +26,7 @@ class CiCreate(BaseModel):
     category: str
     status: str = "运行中"
     owner: str
+    product_manager_id: str | None = None
     environment: str | None = None
     business_owner: str | None = None
     vendor_id: str | None = None
@@ -39,6 +41,7 @@ class CiUpdate(BaseModel):
     category: str | None = None
     status: str | None = None
     owner: str | None = None
+    product_manager_id: str | None = None
     environment: str | None = None
     business_owner: str | None = None
     vendor_id: str | None = None
@@ -60,11 +63,19 @@ def _row(c: Ci, db: Session) -> dict:
     return {
         "id": c.id, "ci_code": c.ci_code, "is_example": c.is_example, "name": c.name, "category": c.category,
         "status": c.status, "owner": c.owner, "owner_name": owner.name if owner else None,
+        "product_manager_id": c.product_manager_id,
+        "product_manager_name": db.get(OrgMember, c.product_manager_id).name if c.product_manager_id and db.get(OrgMember, c.product_manager_id) else None,
         "environment": c.environment, "business_owner": c.business_owner,
         "vendor_id": c.vendor_id, "vendor_name": vendor.name if vendor else None,
         "description": c.description, "launch_date": c.launch_date,
         "attrs": c.attrs or {}, "remarks": c.remarks,
     }
+
+
+def _validate_application_product_manager(category: str, product_manager_id: str | None):
+    """应用 CI 必须明确产品经理，作为 Bug 确认和验证关闭责任人。"""
+    if category in APPLICATION_CATEGORIES and not product_manager_id:
+        raise AppError("PRODUCT_MANAGER_REQUIRED", "应用配置项必须配置产品经理，供 Bug 确认与验证关闭使用", 422)
 
 
 @router.get("/api/cis")
@@ -87,8 +98,10 @@ def list_cis(
 
 @router.post("/api/cis")
 def create_ci(body: CiCreate, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "create"))):
+    _validate_application_product_manager(body.category, body.product_manager_id)
     require_it_member_if_configured(db, body.owner, "配置项负责人")
     require_it_member_if_configured(db, body.business_owner, "配置项业务负责人")
+    require_it_member_if_configured(db, body.product_manager_id, "配置项产品经理")
     ci = Ci(**body.model_dump(), ci_code=gen_code(db, Ci, "ci_code", "CI"))
     db.add(ci)
     db.flush()
@@ -104,8 +117,13 @@ def update_ci(ci_id: str, body: CiUpdate, db: Session = Depends(get_db), actor=D
         raise AppError("NOT_FOUND", "配置项不存在", 404)
     ensure_not_example(ci)
     data = body.model_dump(exclude_unset=True)
+    final_category = data.get("category", ci.category)
+    final_product_manager_id = data.get("product_manager_id", ci.product_manager_id)
+    _validate_application_product_manager(final_category, final_product_manager_id)
     if "owner" in data:
         require_it_member_if_configured(db, data["owner"], "配置项负责人")
+    if "product_manager_id" in data:
+        require_it_member_if_configured(db, data["product_manager_id"], "配置项产品经理")
     if "business_owner" in data:
         require_it_member_if_configured(db, data["business_owner"], "配置项业务负责人")
     for k, v in data.items():

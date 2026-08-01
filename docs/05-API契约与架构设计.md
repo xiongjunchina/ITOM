@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。P3 按用户决定暂缓。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，历史真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。2026-07-31 IDC 复核发现 `itom.snnc.cc:30443` 公网证书无法通过标准 CA 校验且当前卡片 POST 未到达入口日志，因此当前 IDC 的“确认关闭”仍待受信 TLS 和新工单卡片复验。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -156,7 +156,45 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-需求登记写入独立 `Requirement`，不创建 Ticket。普通员工复用现有 `requirements.create/view` 功能权限并强制本人数据范围；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
+需求登记写入独立 `Requirement`，不创建 Ticket。普通业务用户不拥有需求模块权限；仅 BDO 和授权 IT 角色复用现有 `requirements.create/view`，并强制本人数据范围。领域服务还会校验 BDO/IT 角色边界，防止历史或手工追加的 `requester` 权限行绕过限制；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
+
+#### 需求实现任务接口
+
+```text
+POST /api/requirements/{requirement_id}/tasks
+PATCH /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/{task_id}
+GET /api/requirements/tasks/active
+```
+
+同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。该接口变更不涉及数据库迁移，存量任务按原主键和软删除状态继续可读。
+
+#### 任务管理接口（M82）
+
+前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
+
+```text
+GET/POST/PATCH /api/task-management/bugs
+GET /api/task-management/bugs/{id}
+GET /api/task-management/reference/cis              # Bug 所属系统候选；只读 CMDB 配置项
+POST /api/task-management/bugs/{id}/confirm
+POST /api/task-management/bugs/{id}/reject-confirm
+POST /api/task-management/bugs/{id}/fix-tasks
+PATCH /api/task-management/bug-fix-tasks/{id}
+POST /api/task-management/bugs/{id}/verify
+POST /api/task-management/bugs/{id}/reopen
+
+GET/POST/PATCH /api/task-management/work-tasks
+GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/transition
+DELETE /api/task-management/work-tasks/{id}
+```
+
+Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+
+`GET /api/task-management/reference/cis` 只返回未删除、未退役的 CMDB 配置项及其产品经理可读信息，供 Bug 登记页选择“所属系统”；它不维护第二套系统字典，也不放宽 `cmdb.view` 之外的写权限。CMDB 的 `owner` 是全部配置项均必填的技术负责人；仅“应用”类别的 `product_manager_id` 是 Bug 确认和验证关闭的产品经理，二者可为同一人但不是重复字段。后端拒绝新建或编辑时缺少产品经理的应用；历史应用缺值的 Bug 登记返回 `PRODUCT_MANAGER_REQUIRED`，补配后重新登记即可，登记成功后保存快照。
+
+绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
 
 #### 禁止工具
 
@@ -173,6 +211,27 @@ MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理�
 发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。管理员通过 `GET/PUT /api/admin/integrations/aily` 只写配置两个回调秘密；响应仅返回 `has_card_callback_verification_token`、`has_card_callback_encrypt_key` 和 `interactive_cards_ready`，绝不回显秘密。存量 PostgreSQL 由启动迁移幂等补列两个密文字段，不新增业务表。
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
+
+### 4.1c IT 员工分流与跨单据关联（阶段 A/B/C 已实现）
+
+以下契约只服务 IT 员工网页，不增加 Aily/MCP 工具。分流、说明、受范围约束的关联读取和创建目标并关联接口均已上线：
+
+```text
+POST /api/staff-intake/recommend
+    # 已实现：IT 员工；临时问题→推荐单据类型、理由、反例、按真实创建权限过滤的目标入口；不落库
+GET  /api/it-document-guide
+    # 已实现：已登录用户；六类单据的一行说明和案例库；服务端返回 IT 员工能力开关
+POST /api/record-relations/prepare
+    # 已实现：源单据 + relation_type；复核源查看/目标创建权限，返回安全预填和目标必填字段
+POST /api/record-relations/submit
+    # 已实现：目标表单 + relation_type + reason + idempotency_key；来源锁 + 提交摘要防重，调用目标领域服务创建目标、启动流程、写关系和审计
+GET  /api/records/{entity_type}/{entity_id}/relations
+    # 已实现：当前用户可见源记录后，只返回其同时有权查看的关联对端；不泄露不可见单据的关系、编号或标题
+```
+
+`prepare` 与 `submit` 仅接受服务端白名单的四类来源/目标组合。`submit` 不接受客户端指定目标实体类型；服务端从来源记录和 `relation_type` 推导目标类型，先复核来源数据范围和目标 `create` 权限，再调用工单、问题或项目领域服务。重复调用同一操作者/来源/目标类型/幂等键且规范化请求一致时返回首次目标；同键异参返回 `IDEMPOTENCY_CONFLICT`（409）。
+
+`recommend` 的问题和答案不得持久化。活动关系已建立来源/目标/关系类型唯一约束，并对创建人、来源、目标类型、幂等键建立唯一约束；同键异参由请求摘要拒绝。`prepare/submit` 不直接写领域表；`submit` 已通过事件、问题、变更或项目等领域服务完成各自的字段、状态、流程、审批、RBAC、审计和事件发布。允许的首期关系类型由服务端白名单控制；任何重复提交按幂等键返回首次结果，不得改变源单据类型、状态或流程。
 
 ### 4.2 ITSM
 
@@ -215,7 +274,7 @@ GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
-# P1：普通员工复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
+# P1：仅 BDO/授权 IT 角色复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
 ```
 
 ### 4.5 流程
@@ -226,12 +285,14 @@ GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时�
 POST /api/process-tasks/{id}/complete | /reassign
 ```
 
+流程定义列表的稳定展示顺序为：ITSM（服务请求）→ ITSM（变更）→ ITSM（事件）→ ITSM（问题）→ 项目 → 需求 → Bug 管理；后端按触发实体归一排序，前端分组与左侧菜单保持一致，不能依赖数据库返回顺序。
+
 ### 4.6 团队
 
 ```text
 GET /api/team/overview                   # 负载/积分Top/培训数/招聘进度聚合
 GET/POST/PATCH /api/positions | /api/hiring-needs；岗位与招聘需求另提供 `GET /api/positions/template`、`GET /api/positions/export`、`POST /api/positions/import`，以及对应的 `/api/hiring-needs/template`、`GET /api/hiring-needs/export`、`POST /api/hiring-needs/import` Excel 闭环。
-GET/POST /api/trainings                  # 培训提升活动
+GET/POST/PATCH/DELETE /api/trainings     # 培训提升活动；PATCH/DELETE 仅 admin/CIO/登记人
 GET/PUT /api/team-charter
 GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
@@ -263,11 +324,17 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # 兼容旧客户端；团队贡献权重、目标及满意度组合的规范入口是 /api/point-rules/team-config
 ```
 
+`POST/PATCH /api/trainings` 接受 `participant_ids`，以及可选的 `participant_department_ids`。后者仅用于“整部门参与”：服务端校验部门及其当时在岗 IT 团队成员，展开并冻结 `participant_ids`，同时保存部门 ID、显示名和人员范围快照。若 `PATCH` 省略该字段，保留现有部门快照以兼容旧客户端；显式 `[]` 清除部门显示语义但不自动删除已传的人员。`GET /api/trainings` 返回 `participant_ids`、兼容字段 `participant_names`、清单摘要 `participant_departments` / `participant_individual_names` 与当前账号的 `can_manage`。创建时服务端写入 `created_by`；存量记录在迁移时从最早 `development_activity.create` 审计记录回填。`PATCH` 和 `DELETE` 不依赖通用活动编辑权限：仅管理员、CIO 或登记人可操作，后端逐次复核。主讲或参与人变化会在当前未发布、未锁定周期软删除原活动的 `training_host` / `training_attend` 流水并按当前规则重算；删除亦撤销这两类流水。历史、已发布或锁定周期的计分改动和删除返回 `TRAINING_POINTS_LOCKED`，但不改变积分对象的资料可继续编辑并审计。
+
+`/api/points/leaderboard` 的 `points` 聚合该周期 `contribution_bucket=team_contribution` 流水；当前考核期内，自动活动事件按当前有效 `point_rule` 分值计算，规则停用显示为 0，其他流水保留原始代数值。`/api/points/mine`、`/api/team/overview` 和 Dashboard 人员积分排行采用同一当前期口径，响应可带 `breakdown` 按 `source_type` 汇总来源。原始 `point_entry.points`、历史周期和已发布/锁定绩效不被改写。`role_result` 岗位结果流水不进入这些活动积分读接口，但仍保留在台账中供人效角色结果和审计使用。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
+
 ### 4.7 Dashboard
 
 ```text
 GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚合)
 ```
+
+当账号具有任务模块查看权限时，响应额外包含 `task` 聚合块：`open_total`、`open_bugs`、`open_bug_fix_tasks`、`open_delegated_tasks` 和 `open_requirement_tasks`。该块只读、按当前非终态任务实时统计，不改变原有 Dashboard 字段。
 
 ## 5. 领域事件清单
 
@@ -292,6 +359,11 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 | requirement.stage_changed | 四阶段流转 | →通知 |
 | requirement.task_completed | 需求任务完成 | →积分 |
 | requirement.closed | 需求关闭 | →积分 |
+| bug.registered / confirmed | Bug 登记/产品经理确认 | →通知、→流程 |
+| bug.fix_tasks_created | 生成 Bug 开发/测试子任务 | →通知 |
+| bug.ready_for_verification | 全部 Bug 子任务关闭 | →通知、→流程 |
+| bug.reopened / closed | Bug 验证不通过/重新打开或验证关闭 | →审计、→通知、→积分（后续指标） |
+| work_task.created / closed | 委派任务登记/关闭 | →通知、→积分（后续指标） |
 | knowledge.published | 发表 | →积分 |
 | knowledge.voted | 被点有用 | →积分(作者) |
 | activity.registered | 培训登记 | →积分(主讲/组织/参与分别计) |
@@ -310,7 +382,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 5. **SLA 计时**：挂起时累计 paused_minutes，达成判定 = (resolved_at − submitted_at − paused) ≤ 目标。
 6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。
 7. **外部原数据与发布隔离**：外部业务满意度先写入 `performance_external_input`，完成提交/核验/锁定后才参与折算；`performance_score_component` 保存系统参考分、阶段建议分和生效分，`/api/my/performance` 只返回已发布快照。
-8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。
+8. **积分分桶**：`point_rule`/`point_entry` 通过 `contribution_bucket=role_result|team_contribution` 区分岗位结果与团队贡献；已经进入角色结果指标的事实不得再次进入固定 20% 团队贡献。活动积分相关读接口只聚合 `team_contribution`，避免把角色结果重复计算为活动积分。
 9. **MCP 适配边界（P1 已实现）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
 10. **确认与幂等（P1 已实现）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、过期时间和 idempotency key；payload digest 在准备阶段防止同键异内容，重复调用返回首次结果，不重复建单或启动流程。
 11. **动态表单快照（P1 已实现）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项在提交时二次校验。
@@ -319,17 +391,28 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 ## 7. 部署架构
 
 ```yaml
-# deploy/docker-compose.yml 形态
-services:
-  db:        postgres:16  (volume + 每日 pg_dump 到宿主机备份目录)
-  backend:   uvicorn, 依赖 db, 启动时 alembic upgrade + seed(幂等)；`SEED_INITIAL_CONFIG=1` 时在全新数据库初始化六条流程定义以及已验证的登录页/Logo 品牌配置，已有品牌草稿或发布版本不会覆盖
-  frontend:  nginx 托管构建产物, /api 与 /mcp 反代 backend
+# 默认交付链路
+GitHub Actions:
+  backend:   Python 3.12 + 临时 SQLite，完整 pytest
+  frontend:  Node.js 22，npm ci + TypeScript + Vite 生产构建
+  contract:  部署 YAML/脚本/差异检查 + 中英文文档交付守卫
+Harbor:
+  backend:   git-<commit>-linux-amd64
+  frontend:  git-<commit>-linux-amd64
+IDC Kubernetes:
+  db:        PostgreSQL 16 + 持久卷
+  backend:   uvicorn，启动时增量迁移 + 幂等 seed
+  frontend:  nginx 托管构建产物，反代 /api 与 /mcp
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
-- 正式发布仍以 IDC Kubernetes 为最终验收环境：使用 `deploy/k8s/push-images.sh` 构建/推送镜像，再执行 `deploy/k8s/k8s-deploy.sh` 发布。当前 IDC 基础设施阻塞期间，用户已授权 Aily + MCP 使用本地 Docker 开发，并由 ngrok 暴露完整 `127.0.0.1:8180`；同一 HTTPS 根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。
+- IDC Kubernetes 是唯一运行、联调和验收环境；默认禁止在本地启动应用栈、数据库、Compose、8180 或 ngrok。只有用户明确要求临时隔离排障时才允许例外，且结果不属于交付验收。
+- `.github/workflows/quality-gate.yml` 在 feature/develop/main 的推送和 PR 上运行完整后端回归、前端生产构建、部署文件检查及中英文文档交付守卫。测试夹具使用临时 SQLite，不连接 IDC 业务数据库。
+- 质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，使用已验证的 `mirror.gcr.io` 官方 Docker Library 缓存与固定摘要取得 Python/Node/Nginx/PostgreSQL 基础镜像，构建并校验 linux/amd64，以 `git-<commit前12位>-linux-amd64` 为默认不可变标签后推送 Harbor；镜像构建不启动本地 ITOM，也不依赖 Docker Hub 匿名限流。
+- `deploy/k8s/k8s-deploy.sh` 部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。脚本对 rollout、Ready Endpoint、实际镜像、集群内前端代理、外部 `/api/health` 与 MCP `initialize` 采用失败即停止；涉及数据库结构的版本在部署前必须执行批准的集群内备份/检查点。
+- 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。
 - `/mcp/` 必须保留流式响应并设置合理读超时；Aily 配置使用带末尾斜杠的规范地址，密钥只放请求头，不放 URL、日志或前端构建变量。
-- 日志：结构化 JSON 到 stdout（docker logs 可查）。
+- 日志：结构化 JSON 到 stdout（由 Kubernetes 日志链路查询）。
 
 ## 8. 里程碑映射（开发顺序）
 
@@ -342,9 +425,9 @@ services:
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份及机器人真实收件已完成） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
-| Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、需求自助、派单 | 服务项表单/派单配置 | PRD §5/7 |
-| Aily-MCP P2（代码/自动化、真实 Aily 对话闭环及机器人收件分别完成；普通用户同单端到端待验收） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
-| Aily-MCP P3 | 飞书审批、IDC 发布与真实 UAT | 审批与运维配置 | docs/10 §10 |
+| Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
+| Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
+| Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
 
 ## 8.1 业务域服务部门 API（M41）
 

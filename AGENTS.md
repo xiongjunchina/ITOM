@@ -42,17 +42,39 @@ on this branch:
 The frozen Feishu Helpdesk baseline remains recoverable from the annotated tag
 `v1.0.0-feishu-helpdesk` at commit `f13f702`.
 
+## Mandatory pre-development Git synchronization
+
+Before starting every new development task or modifying code:
+
+1. Check the worktree and current branch with `git status` and `git branch`.
+2. If local changes exist, commit them as a separate baseline/version record;
+   never mix those changes with the new task.
+3. Push the current development branch to GitHub and verify that the local
+   `HEAD` equals the remote branch tip.
+4. Only after synchronization succeeds may new implementation changes begin.
+
+If GitHub synchronization is unavailable or the local and remote tips differ,
+stop before editing code and report the exact blocker. This gate applies to
+every subsequent update, not only large refactors or releases.
+
 ## Deployment and verification environment
 
-The IDC Kubernetes cluster is the sole delivery and acceptance environment. Do not deploy or validate changes with the local Docker environment unless the user explicitly asks for a temporary local investigation.
+The IDC Kubernetes cluster is the sole runtime delivery and acceptance environment. The user's workstation must not start the ITOM application stack, a local database, Docker Compose, port 8180, or ngrok for routine development validation. A local application environment is allowed only when the user explicitly requests a temporary isolated investigation.
+
+The distinction is:
+
+- GitHub Actions runs the complete backend regression, frontend production build, deployment-file checks, and documentation-delivery guard without using the IDC business database.
+- Building linux/amd64 release images on the workstation is allowed because it does not start a local ITOM runtime. The release scripts must build from a clean commit and use an immutable Git-derived tag.
+- Real application, Aily, MCP, callback, identity, and user-workflow validation runs only in IDC.
 
 For every user-visible fix or feature, the default completion flow is:
 
 1. Implement the code and synchronize affected Chinese and English documentation.
-2. Run the relevant automated tests and production frontend build locally.
-3. Build and publish the backend/frontend images required by `deploy/k8s`.
-4. Deploy to the IDC Kubernetes cluster with the repository deployment scripts.
-5. Verify rollout status, pod/service health, the frontend-to-backend `/api/health` path, and the changed user workflow in the IDC environment.
-6. Treat the work as delivered only after IDC verification succeeds; report any infrastructure blocker explicitly.
+2. Push the feature branch and require `.github/workflows/quality-gate.yml` to pass. Automated tests use an isolated temporary database and must never target the IDC business database.
+3. For schema-affecting releases, complete the approved in-cluster backup/checkpoint procedure before deployment. Never reset or replace IDC PVCs, Secrets, uploads, accounts, or integration configuration.
+4. Build and publish the backend/frontend linux/amd64 images with `deploy/k8s/push-images.sh`. Publish only a clean commit, use the same immutable tag for both images, and verify the architecture.
+5. Deploy that exact tag with `deploy/k8s/k8s-deploy.sh`.
+6. Verify strict rollout success, expected image identities, pod/service/ingress health, the frontend-to-backend `/api/health` path, external `/api/health`, MCP `initialize`, and the changed real user workflow in IDC.
+7. Treat the work as delivered only after IDC verification succeeds; report any infrastructure blocker explicitly and retain the previous image tag as the rollback point.
 
-Do not treat a successful local build, test run, or local Docker deployment as final acceptance.
+Do not treat CI, a successful image build, `/api/health`, or MCP initialization alone as complete business acceptance.

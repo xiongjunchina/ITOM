@@ -26,6 +26,7 @@ from app.models.requirement import (
     RequirementScoringConfig,
     RequirementTask,
 )
+from app.models.tasks import Bug, BugFixTask, WorkTask
 from app.models.team import (
     ActivityCampaign,
     CampaignTask,
@@ -57,6 +58,7 @@ from app.models.support import (
     BusinessDomainMember,
     Department,
     ProvisionRule,
+    RecordRelation,
     AuditLog,
     AilyIntegrationConfig,
     AuthUser,
@@ -92,6 +94,7 @@ __all__ = [
     "DevelopmentActivity",
     "HiringNeed",
     "ProvisionRule",
+    "RecordRelation",
     "AuditLog",
     "AilyIntegrationConfig",
     "CampaignTask",
@@ -141,6 +144,9 @@ __all__ = [
     "RequirementScore",
     "RequirementScoringConfig",
     "RequirementTask",
+    "Bug",
+    "BugFixTask",
+    "WorkTask",
     "ProcessDefinition",
     "ProcessInstance",
     "ProcessStep",

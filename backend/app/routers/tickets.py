@@ -4,7 +4,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
-from app.core.rbac import REQUESTER
+from app.core.rbac import BDO, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, OrgMember, ServiceItem, Ticket, TicketSatisfaction
@@ -52,7 +52,8 @@ def _is_requester_only(db: Session, user: AuthUser) -> bool:
     from app.services.rbac import effective_roles
 
     roles = effective_roles(db, user)
-    return roles == {REQUESTER}  # auditor 等其他角色可全局只读
+    # BDO 是业务用户的受控子集；无 IT/审计等其他角色时，仍只能处理本人单据。
+    return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
 def _row(t: Ticket, db: Session, names: dict) -> dict:

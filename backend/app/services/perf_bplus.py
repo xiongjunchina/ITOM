@@ -27,6 +27,7 @@ from app.models import (
     PointEntry,
     ProcessTask,
     Project,
+    Role,
     Requirement,
     UserGroup,
     UserGroupMember,
@@ -34,6 +35,8 @@ from app.models import (
 )
 from app.services.perf import (
     _score_change_compliance,
+    _score_bug_fix_delivery,
+    _score_delegated_work_delivery,
     _score_domain_satisfaction,
     _score_knowledge_contrib,
     _score_project_delivery,
@@ -41,7 +44,7 @@ from app.services.perf import (
     _score_ticket_service,
     period_range,
 )
-from app.services.points import period_clause
+from app.services.points import effective_team_entry_points, period_clause
 from app.services.rbac import effective_roles
 from app.core.rbac import IT_PMO
 from app.services.team_scope import it_member_ids
@@ -139,6 +142,18 @@ METRIC_DEFINITIONS = {
         "source_type": "system",
         "collection_mode": "auto",
         "description": "按考核期内到期需求任务的按期完成率计算。",
+    },
+    "bug_fix_delivery": {
+        "name": "Bug 修复交付",
+        "source_type": "system",
+        "collection_mode": "auto",
+        "description": "按 Bug 开发/测试子任务的计划完成日期与实际关闭日期计算按期交付率。",
+    },
+    "delegated_work_delivery": {
+        "name": "委派任务交付",
+        "source_type": "system",
+        "collection_mode": "auto",
+        "description": "按委派任务的计划完成日期与实际关闭日期计算按期交付率；中止任务不计为完成。",
     },
     "domain_satisfaction": {
         "name": "业务域满意度",
@@ -249,7 +264,29 @@ def _person_roles(db: Session, member: OrgMember) -> set[str]:
     for user in users:
         roles |= effective_roles(db, user)
     roles |= set((member.position.primary_roles if member.position else []) or [])
-    return roles - EXCLUDED_ROLES
+    # 系统自定义角色通过 base_role 继承权限时，绩效也应沿用对应内置角色档案。
+    # 否则“已分配系统角色”会在绩效页错误显示为“未配置角色”。
+    bases = {
+        row.code: row.base_role
+        for row in db.query(Role).filter(Role.is_deleted.is_(False), Role.code.in_(roles or {"-"})).all()
+    }
+    normalized = {bases.get(code) or code for code in roles}
+    return normalized - EXCLUDED_ROLES
+
+
+def _role_status(db: Session, member: OrgMember) -> str:
+    """返回无绩效角色人员的可执行诊断，避免把系统角色和绩效角色混为一谈。"""
+    roles = _person_roles(db, member)
+    profiles = {
+        profile.role_code
+        for profile in db.query(PerformanceRoleProfile).filter(
+            PerformanceRoleProfile.is_deleted.is_(False), PerformanceRoleProfile.active.is_(True)
+        )
+    }
+    missing = sorted(roles - profiles)
+    if missing:
+        return f"系统角色未配置绩效档案：{','.join(missing)}"
+    return "未配置绩效角色"
 
 
 def _domain_scope(db: Session, person_id: str) -> tuple[list[str], list[str]]:
@@ -352,6 +389,10 @@ def ensure_assignments(db: Session, period: PerformancePeriod, actor_id: str | N
 
     assignments: list[PerformanceRoleAssignment] = []
     snapshot: list[dict] = []
+    active_keys = {(member.id, role_code) for member, role_code, *_ in specs}
+    for key, row in existing.items():
+        if key not in active_keys:
+            row.is_deleted = True
     for member, role_code, profile, domain_ids, group_ids, evaluator_ids, scope_ids in specs:
         key = (member.id, role_code)
         both_sides = business_count[member.id] > 0 and professional_count[member.id] > 0
@@ -398,6 +439,39 @@ def ensure_assignments(db: Session, period: PerformancePeriod, actor_id: str | N
     period.updated_by = actor_id
     db.flush()
     return assignments
+
+
+def role_snapshot_needs_refresh(db: Session, period: PerformancePeriod) -> bool:
+    """判断实际系统角色是否已偏离当前考核周期的绩效角色快照。"""
+    profiles = _profiles(db)
+    expected: set[tuple[str, str]] = set()
+    members = db.query(OrgMember).filter(
+        OrgMember.id.in_(it_member_ids(db) or {"-"}),
+        OrgMember.is_deleted.is_(False),
+        OrgMember.status == "在岗",
+    ).all()
+    for member in members:
+        expected.update(
+            (member.id, role_code)
+            for role_code in _person_roles(db, member)
+            if role_code in profiles
+        )
+    actual = {
+        (row.person_id, row.role_code)
+        for row in db.query(PerformanceRoleAssignment).filter(
+            PerformanceRoleAssignment.period_id == period.id,
+            PerformanceRoleAssignment.is_deleted.is_(False),
+        ).all()
+    }
+    return expected != actual
+
+
+def refresh_bplus_if_role_snapshot_changed(db: Session, period: PerformancePeriod, actor_id: str | None = None) -> bool:
+    """读取活动周期时补齐新增角色；已发布/锁定周期保持版本隔离。"""
+    if period.status in {"published", "locked"} or not role_snapshot_needs_refresh(db, period):
+        return False
+    recompute_bplus(db, period.period_code, actor_id)
+    return True
 
 
 def _rate(hits: int, total: int) -> float | None:
@@ -542,6 +616,12 @@ def _team_contribution_scores(db: Session, period: str, member_ids: list[str], p
         ),
         PointEntry.person_id.in_(member_ids), PointEntry.is_deleted.is_(False),
     ).all()
+    entry_points = effective_team_entry_points(
+        db,
+        rows,
+        period,
+        use_live_rules=not period_row or period_row.status not in {"published", "locked"},
+    )
     aliases = {
         "campaign_award": "special_activity", "training_host": "training_knowledge", "training_attend": "training_knowledge",
         "knowledge_published": "knowledge_asset", "knowledge_voted": "knowledge_asset",
@@ -551,7 +631,7 @@ def _team_contribution_scores(db: Session, period: str, member_ids: list[str], p
     for row in rows:
         dimension = row.contribution_dimension or aliases.get(row.source_type)
         if dimension:
-            totals[row.person_id][dimension] += row.points
+            totals[row.person_id][dimension] += entry_points[row.id]
     config = _period_contribution_config(db, period_row) if period_row else get_contribution_config(db)
     scores: dict[str, dict[str, float]] = {}
     for pid in member_ids:
@@ -569,6 +649,8 @@ def _system_scores(db: Session, period: str, member_ids: list[str], period_row: 
         "change_compliance": _score_change_compliance(db, member_ids, start, end),
         "project_delivery": _score_project_delivery(db, member_ids, start, end),
         "requirement_delivery": _score_requirement_delivery(db, member_ids, start, end),
+        "bug_fix_delivery": _score_bug_fix_delivery(db, member_ids, start, end),
+        "delegated_work_delivery": _score_delegated_work_delivery(db, member_ids, start, end),
         "domain_satisfaction": _score_domain_satisfaction(db, member_ids, start, end),
         "knowledge_contrib": _score_knowledge_contrib(db, member_ids, start, end),
         "requirement_owner_delivery": _score_requirement_owner_delivery(db, member_ids, start, end),
@@ -577,7 +659,7 @@ def _system_scores(db: Session, period: str, member_ids: list[str], period_row: 
         "domain_demand_outcome": _score_domain_demand_outcome(db, member_ids, start, end),
         "external_business_satisfaction": _external_scores(db, period_row, member_ids),
     }
-    scores["team_contribution"] = _team_contribution_scores(db, period, member_ids)
+    scores["team_contribution"] = _team_contribution_scores(db, period, member_ids, period_row)
     return scores
 
 
@@ -743,7 +825,7 @@ def build_internal_result(db: Session, period: PerformancePeriod) -> dict:
             "person_id": person_id,
             "person_name": member.name,
             "roles": [],
-            "role_status": "未配置角色",
+            "role_status": _role_status(db, member),
             "business_contribution": 0.0,
             "professional_contribution": 0.0,
         })

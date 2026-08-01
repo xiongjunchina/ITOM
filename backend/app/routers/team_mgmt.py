@@ -9,16 +9,19 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_example_delete_allowed
+from app.core.rbac import ADMIN, CIO
 from app.db import get_db
-from app.deps import get_current_user, require_perm
+from app.deps import require_perm
 from app.models import (
     ActivityCampaign,
     AuthUser,
+    Department,
     DevelopmentActivity,
     HiringNeed,
     Idea,
     KnowledgeArticle,
     OrgMember,
+    PerformancePeriod,
     PointEntry,
     Position,
     Requirement,
@@ -29,7 +32,8 @@ from app.models import (
 )
 from app.schemas.common import ok
 from app.services.audit import audit
-from app.services.points import award_by_rule, current_period, period_clause
+from app.services.points import award_by_rule, current_period, live_team_points_expression, period_clause
+from app.services.rbac import effective_roles
 from app.services.team_scope import is_it_member, it_member_ids
 
 router = APIRouter(tags=["team"])
@@ -42,7 +46,9 @@ class TrainingIn(BaseModel):
     topic: str = Field(min_length=2, max_length=200)
     activity_date: date
     host_id: str | None = None
-    participant_ids: list[str] = []
+    participant_ids: list[str] = Field(default_factory=list)
+    # None 表示旧客户端/不含部门语义的 PATCH，保留原有部门快照；[] 表示明确取消部门范围。
+    participant_department_ids: list[str] | None = None
     output_link: str | None = None
     remarks: str | None = None
 
@@ -64,8 +70,177 @@ class HiringIn(BaseModel):
 
 # ---------- 培训发展 ----------
 
+TRAINING_POINT_TYPES = ("training_host", "training_attend")
+
+
+def _normalise_training(body: TrainingIn) -> TrainingIn:
+    """去重参与人，保持前端勾选顺序，避免同一活动重复发分。"""
+    departments = body.participant_department_ids
+    return body.model_copy(update={
+        "participant_ids": list(dict.fromkeys(body.participant_ids or [])),
+        "participant_department_ids": list(dict.fromkeys(departments)) if departments is not None else None,
+    })
+
+
+def _resolve_training_departments(db: Session, body: TrainingIn) -> tuple[TrainingIn, list[dict] | None]:
+    """展开整部门选择，并冻结部门显示名及活动登记当日的 IT 人员范围。"""
+    selected_ids = body.participant_department_ids
+    if selected_ids is None:
+        return body, None
+    if not selected_ids:
+        return body, []
+
+    departments = {
+        department.id: department
+        for department in db.query(Department).filter(
+            Department.id.in_(selected_ids),
+            Department.active.is_(True),
+            Department.is_deleted.is_(False),
+        )
+    }
+    if missing_ids := set(selected_ids) - set(departments):
+        raise AppError("INVALID_TRAINING_DEPARTMENT", "参与部门不存在或已停用", 422)
+
+    team_ids = it_member_ids(db)
+    members = (
+        db.query(OrgMember)
+        .filter(
+            OrgMember.id.in_(team_ids or {"-"}),
+            OrgMember.department_id.in_(selected_ids),
+            OrgMember.is_deleted.is_(False),
+            OrgMember.status == "在岗",
+        )
+        .order_by(OrgMember.name, OrgMember.id)
+        .all()
+    )
+    by_department: dict[str, list[str]] = {department_id: [] for department_id in selected_ids}
+    for member in members:
+        if member.department_id:
+            by_department[member.department_id].append(member.id)
+
+    snapshots: list[dict] = []
+    expanded_ids: list[str] = []
+    for department_id in selected_ids:
+        member_ids = by_department[department_id]
+        if not member_ids:
+            raise AppError("EMPTY_TRAINING_DEPARTMENT", "参与部门没有可选择的 IT 团队成员", 422)
+        snapshots.append({
+            "id": department_id,
+            "name": departments[department_id].name,
+            "member_ids": member_ids,
+        })
+        expanded_ids.extend(member_ids)
+    return body.model_copy(update={"participant_ids": list(dict.fromkeys((body.participant_ids or []) + expanded_ids))}), snapshots
+
+
+def _validate_training_people(db: Session, body: TrainingIn) -> tuple[TrainingIn, list[dict] | None]:
+    if body.activity_type not in ACTIVITY_TYPES:
+        raise AppError("INVALID_TYPE", f"活动类型须为 {'/'.join(ACTIVITY_TYPES)}")
+    normalized = _normalise_training(body)
+    normalized, department_snapshots = _resolve_training_departments(db, normalized)
+    people = set(normalized.participant_ids or []) | ({normalized.host_id} if normalized.host_id else set())
+    outside = people - it_member_ids(db)
+    if outside:
+        raise AppError("NOT_IT_TEAM_MEMBER", "培训发展仅可选择 IT 团队成员")
+    return normalized, department_snapshots
+
+
+def _training_point_entries(db: Session, activity_id: str) -> list[PointEntry]:
+    return (
+        db.query(PointEntry)
+        .filter(
+            PointEntry.source_ref == activity_id,
+            PointEntry.source_type.in_(TRAINING_POINT_TYPES),
+            PointEntry.is_deleted.is_(False),
+        )
+        .all()
+    )
+
+
+def _ensure_training_points_mutable(db: Session, activity_id: str) -> list[PointEntry]:
+    """仅允许修正当前且未发布/锁定考核期的培训积分。"""
+    entries = _training_point_entries(db, activity_id)
+    if not entries:
+        return entries
+    period = current_period()
+    if any(entry.period != period for entry in entries):
+        raise AppError("TRAINING_POINTS_LOCKED", "历史考核期的培训积分不可重算或撤销", 409)
+    performance_period = (
+        db.query(PerformancePeriod)
+        .filter(
+            PerformancePeriod.period_code == period,
+            PerformancePeriod.status.in_(("published", "locked")),
+            PerformancePeriod.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if performance_period:
+        raise AppError("TRAINING_POINTS_LOCKED", "当前考核期已发布/锁定，不能修改会影响培训积分的内容", 409)
+    return entries
+
+
+def _award_training_points(db: Session, row: DevelopmentActivity):
+    """按当前生效规则写入主讲/参与培训积分。"""
+    if row.host_id:
+        award_by_rule(db, "training_host", row.host_id, row.id, f"主讲培训 {row.topic[:30]}")
+    for person_id in row.participant_ids or []:
+        if person_id != row.host_id:
+            award_by_rule(db, "training_attend", person_id, row.id, f"参与培训 {row.topic[:30]}")
+
+
+def _can_manage_training(row: DevelopmentActivity, user: AuthUser, roles: set[str]) -> bool:
+    return ADMIN in roles or CIO in roles or row.created_by == user.id
+
+
+def _training_department_snapshots(row: DevelopmentActivity) -> list[dict]:
+    """兼容历史空值和异常旧快照；清单只使用完整、可读的部门快照。"""
+    snapshots: list[dict] = []
+    for value in row.participant_department_selections or []:
+        if not isinstance(value, dict):
+            continue
+        department_id = value.get("id")
+        name = value.get("name")
+        member_ids = value.get("member_ids")
+        if isinstance(department_id, str) and isinstance(name, str) and isinstance(member_ids, list):
+            snapshots.append({
+                "id": department_id,
+                "name": name,
+                "member_ids": [member_id for member_id in member_ids if isinstance(member_id, str)],
+            })
+    return snapshots
+
+
+def _training_row(row: DevelopmentActivity, names: dict[str, str], can_manage: bool) -> dict:
+    department_snapshots = _training_department_snapshots(row)
+    department_member_ids = {
+        person_id
+        for snapshot in department_snapshots
+        for person_id in snapshot["member_ids"]
+    }
+    participant_ids = row.participant_ids or []
+    return {
+        "id": row.id,
+        "activity_type": row.activity_type,
+        "topic": row.topic,
+        "activity_date": row.activity_date,
+        "host_id": row.host_id,
+        "host_name": names.get(row.host_id),
+        "participant_ids": participant_ids,
+        # participant_names 保留给旧客户端；新版清单优先读部门和范围外个人摘要。
+        "participant_names": [names.get(person_id) for person_id in participant_ids if names.get(person_id)],
+        "participant_departments": [{"id": snapshot["id"], "name": snapshot["name"]} for snapshot in department_snapshots],
+        "participant_individual_names": [
+            names.get(person_id)
+            for person_id in participant_ids
+            if person_id not in department_member_ids and names.get(person_id)
+        ],
+        "output_link": row.output_link,
+        "remarks": row.remarks,
+        "can_manage": can_manage,
+    }
+
 @router.get("/api/trainings")
-def list_trainings(db: Session = Depends(get_db), _=Depends(require_perm("activities", "view"))):
+def list_trainings(db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("activities", "view"))):
     team_ids = it_member_ids(db)
     rows = (
         db.query(DevelopmentActivity)
@@ -75,35 +250,88 @@ def list_trainings(db: Session = Depends(get_db), _=Depends(require_perm("activi
         .all()
     )
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.id.in_(team_ids or {"-"}))}
-    return ok([
-        {"id": r.id, "activity_type": r.activity_type, "topic": r.topic,
-         "activity_date": r.activity_date, "host_id": r.host_id, "host_name": names.get(r.host_id),
-         "participant_names": [names.get(p) for p in (r.participant_ids or []) if names.get(p)],
-         "output_link": r.output_link, "remarks": r.remarks}
-        for r in rows
-    ], total=len(rows))
+    roles = effective_roles(db, user)
+    return ok([_training_row(row, names, _can_manage_training(row, user, roles)) for row in rows], total=len(rows))
 
 
 @router.post("/api/trainings")
 def create_training(body: TrainingIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("activities", "create"))):
-    if body.activity_type not in ACTIVITY_TYPES:
-        raise AppError("INVALID_TYPE", f"活动类型须为 {'/'.join(ACTIVITY_TYPES)}")
-    people = set(body.participant_ids or []) | ({body.host_id} if body.host_id else set())
-    outside = people - it_member_ids(db)
-    if outside:
-        raise AppError("NOT_IT_TEAM_MEMBER", "培训发展仅可选择 IT 团队成员")
-    row = DevelopmentActivity(**body.model_dump())
+    body, department_snapshots = _validate_training_people(db, body)
+    row = DevelopmentActivity(
+        **body.model_dump(exclude={"participant_department_ids"}),
+        participant_department_selections=department_snapshots or [],
+        created_by=user.id,
+    )
     db.add(row)
     db.flush()
-    # 登记即触发培训积分：主讲/组织人 + 参与人
-    if row.host_id:
-        award_by_rule(db, "training_host", row.host_id, row.id, f"主讲培训 {row.topic[:30]}")
-    for pid in row.participant_ids or []:
-        if pid != row.host_id:
-            award_by_rule(db, "training_attend", pid, row.id, f"参与培训 {row.topic[:30]}")
-    audit(db, "development_activity", row.id, "create", user, {"topic": body.topic})
+    _award_training_points(db, row)
+    audit(db, "development_activity", row.id, "create", user, {
+        "topic": body.topic,
+        "participant_department_ids": [snapshot["id"] for snapshot in department_snapshots or []],
+    })
     db.commit()
     return ok({"id": row.id})
+
+
+@router.patch("/api/trainings/{activity_id}")
+def update_training(
+    activity_id: str,
+    body: TrainingIn,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_perm("activities", "view")),
+):
+    row = db.get(DevelopmentActivity, activity_id)
+    if not row or row.is_deleted:
+        raise AppError("NOT_FOUND", "培训活动不存在", 404)
+    roles = effective_roles(db, user)
+    if not _can_manage_training(row, user, roles):
+        raise AppError("FORBIDDEN", "仅管理员、CIO 或登记人可编辑该培训活动", 403)
+    body, department_snapshots = _validate_training_people(db, body)
+    scores_changed = row.host_id != body.host_id or (row.participant_ids or []) != (body.participant_ids or [])
+    existing_entries = _ensure_training_points_mutable(db, row.id) if scores_changed else []
+    for field, value in body.model_dump(exclude={"participant_department_ids"}).items():
+        setattr(row, field, value)
+    if department_snapshots is not None:
+        row.participant_department_selections = department_snapshots
+    if scores_changed:
+        for entry in existing_entries:
+            entry.is_deleted = True
+        _award_training_points(db, row)
+    audit(
+        db,
+        "development_activity",
+        row.id,
+        "update",
+        user,
+        {
+            "fields": list(body.model_dump(exclude={"participant_department_ids"}).keys()),
+            "participant_departments_changed": department_snapshots is not None,
+            "points_recalculated": scores_changed,
+        },
+    )
+    db.commit()
+    return ok({"id": row.id, "points_recalculated": scores_changed})
+
+
+@router.delete("/api/trainings/{activity_id}")
+def delete_training(
+    activity_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_perm("activities", "view")),
+):
+    row = db.get(DevelopmentActivity, activity_id)
+    if not row or row.is_deleted:
+        raise AppError("NOT_FOUND", "培训活动不存在", 404)
+    roles = effective_roles(db, user)
+    if not _can_manage_training(row, user, roles):
+        raise AppError("FORBIDDEN", "仅管理员、CIO 或登记人可删除该培训活动", 403)
+    entries = _ensure_training_points_mutable(db, row.id)
+    for entry in entries:
+        entry.is_deleted = True
+    row.is_deleted = True
+    audit(db, "development_activity", row.id, "delete", user, {"points_retracted": len(entries)})
+    db.commit()
+    return ok({"id": row.id, "points_retracted": len(entries)})
 
 
 # ---------- 团队文化（单例） ----------
@@ -314,11 +542,18 @@ def _workload(db: Session) -> list[dict]:
 def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_overview", "view"))):
     period = current_period()
     team_ids = it_member_ids(db)
+    live_rule, effective_points, join_condition = live_team_points_expression()
     board = (
-        db.query(PointEntry.person_id, func.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
+        db.query(PointEntry.person_id, func.sum(effective_points))
+        .outerjoin(live_rule, join_condition)
+        .filter(
+            period_clause(PointEntry.period, period),
+            PointEntry.person_id.in_(team_ids or {"-"}),
+            PointEntry.contribution_bucket == "team_contribution",
+            PointEntry.is_deleted.is_(False),
+        )
         .group_by(PointEntry.person_id)
-        .order_by(func.sum(PointEntry.points).desc())
+        .order_by(func.sum(effective_points).desc())
         .limit(10)
         .all()
     )

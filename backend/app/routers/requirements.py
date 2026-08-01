@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
-from app.core.rbac import ADMIN, IT_PDM, REQUESTER
+from app.core.rbac import ADMIN, BDO, IT_PDM, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events import notifier
@@ -20,6 +20,7 @@ from app.models import (
     OrgMember,
     Problem,
     Project,
+    RecordRelation,
     Requirement,
     RequirementScore,
     RequirementScoringConfig,
@@ -135,8 +136,24 @@ class ToProblemIn(BaseModel):
     description: str = Field(min_length=1)
 
 
-def _is_requester_only(db: Session, user: AuthUser) -> bool:
-    return effective_roles(db, user) == {REQUESTER}
+def _is_business_portal_only(db: Session, user: AuthUser) -> bool:
+    """业务门户账号仅可查看本人需求；BDO 也不因登记权限获得全局查看权。"""
+    roles = effective_roles(db, user)
+    return bool(roles) and roles.issubset({REQUESTER, BDO})
+
+
+def _can_manage_requirement_tasks(db: Session, user: AuthUser, requirement: Requirement) -> bool:
+    """任务维护权：全局任务/需求编辑者，或当前实现中需求的负责人。"""
+    if requirement.is_example or requirement.status != "implementing":
+        return False
+    if has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit"):
+        return True
+    return bool(user.person_id and requirement.owner == user.person_id)
+
+
+def _can_delete_requirement_tasks(db: Session, user: AuthUser) -> bool:
+    """删除仍保持原有管理权限，不因需求负责人身份自动扩大。"""
+    return has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit")
 
 
 def _task_progress(db: Session, requirement_id: str) -> dict:
@@ -184,10 +201,10 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
 def list_requirements(
     page: int = 1, page_size: int = 50, q: str = "", status: str = "",
     business_domain_id: str = "", moscow: str = "", decision: str = "", scope: str = "",
-    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view")),
 ):
     query = db.query(Requirement).filter(Requirement.is_deleted.is_(False))
-    if _is_requester_only(db, user):
+    if _is_business_portal_only(db, user):
         query = query.filter(Requirement.requester == user.id)
     elif scope == "mine":
         query = query.filter(or_(Requirement.requester == user.id,
@@ -208,7 +225,14 @@ def list_requirements(
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     cfg = requirement_scoring.get_config(db)
-    return ok([{**_row(r, db, names, domains, status_map, cfg), "pending_step": pend.get(r.id)} for r in items], total=total, page=page)
+    return ok([
+        {
+            **_row(r, db, names, domains, status_map, cfg),
+            "pending_step": pend.get(r.id),
+            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
+        }
+        for r in items
+    ], total=total, page=page)
 
 
 def _current_process_task(db: Session, requirement_id: str):
@@ -356,6 +380,7 @@ def _notify_pdm(db: Session, requirement: Requirement):
 
 @router.post("")
 def create_requirement(body: RequirementCreate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
+    requirement_intake.ensure_registration_authorized(db, user)
     r = requirement_intake.create_requirement(db, body.model_dump(), user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
@@ -433,12 +458,13 @@ def _import_sheet() -> "Sheet":
 
 
 @router.get("/template")
-def requirement_template(_: AuthUser = Depends(require_perm("requirements", "create"))):
+def requirement_template(db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
     from urllib.parse import quote
 
     from fastapi.responses import Response
 
     from app.services.excel_io import build_template
+    requirement_intake.ensure_registration_authorized(db, user)
     content = build_template([_import_sheet()])
     return Response(
         content=content,
@@ -451,6 +477,7 @@ def requirement_template(_: AuthUser = Depends(require_perm("requirements", "cre
 @router.post("/import")
 async def import_requirements(file: UploadFile, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
     from app.services.excel_io import parse_sheet
+    requirement_intake.ensure_registration_authorized(db, user)
     rows, errors = parse_sheet(await file.read(), _import_sheet())
     domains = {d.name: d for d in db.query(BusinessDomain).filter(
         BusinessDomain.is_deleted.is_(False), BusinessDomain.active.is_(True))}
@@ -504,19 +531,33 @@ def _get_requirement(db: Session, requirement_id: str, user: AuthUser) -> Requir
     r = db.get(Requirement, requirement_id)
     if not r or r.is_deleted:
         raise AppError("NOT_FOUND", "需求不存在", 404)
-    if _is_requester_only(db, user) and r.requester != user.id:
+    if _is_business_portal_only(db, user) and r.requester != user.id:
         raise AppError("FORBIDDEN", "无权查看他人需求", 403)
     return r
 
 
 @router.get("/{requirement_id}")
-def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view"))):
     r = _get_requirement(db, requirement_id, user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     detail = _row(r, db, names, domains, status_map, requirement_scoring.get_config(db))
     project = db.get(Project, r.project_id) if r.project_id else None
+    project_relation = None
+    if project:
+        project_relation = (
+            db.query(RecordRelation)
+            .filter(
+                RecordRelation.is_deleted.is_(False),
+                RecordRelation.source_entity_type == "requirement",
+                RecordRelation.source_entity_id == r.id,
+                RecordRelation.target_entity_type == "project",
+                RecordRelation.target_entity_id == project.id,
+                RecordRelation.relation_type == "converted_to_project",
+            )
+            .first()
+        )
     tasks = (
         db.query(RequirementTask)
         .filter(RequirementTask.requirement_id == r.id, RequirementTask.is_deleted.is_(False))
@@ -542,6 +583,7 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         "evaluating_at": r.evaluating_at,
         "analyzing_at": r.analyzing_at, "implementing_at": r.implementing_at,
         "project_name": project.name if project else None,
+        "project_relation_reason": project_relation.reason if project_relation else None,
         "scores": [
             {"id": s.id, "reviewer_name": s.reviewer_name, "reviewer_role": s.reviewer_role,
              "d1_strategy": s.d1_strategy, "d2_value": s.d2_value, "d3_tech": s.d3_tech,
@@ -569,6 +611,8 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
         "process": process_engine.instance_view(db, "requirement", r.id),
         "can_edit": (not r.is_example) and has_perm(db, user, "requirements", "edit"),
+        "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
+        "can_delete_tasks": _can_delete_requirement_tasks(db, user),
     })
     return ok(detail)
 
@@ -962,6 +1006,7 @@ def active_tasks(
                 requirement_scoring.requirement_scores(r), cfg.weights),
             "quadrant": requirement_scoring.compute_quadrant(
                 requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights),
+            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
         }
         for t, r in rows
     ])
@@ -969,19 +1014,17 @@ def active_tasks(
 
 # ---------- 实现阶段：任务分解 ----------
 
-def _require_task_perm(db: Session, user: AuthUser):
-    """任务维护权限：需求编辑 或 任务跟踪编辑 任一即可（详情页/任务跟踪页两个入口）。"""
-    from app.services.permissions import has_perm
-
-    if not (has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit")):
-        raise AppError("FORBIDDEN", "无任务维护权限（需 需求管理编辑 或 任务跟踪编辑）", 403)
+def _require_task_perm(db: Session, user: AuthUser, requirement: Requirement | None = None):
+    """任务维护权限：全局编辑者或实现中需求负责人。"""
+    if not requirement or not _can_manage_requirement_tasks(db, user, requirement):
+        raise AppError("FORBIDDEN", "无任务维护权限（需需求/任务编辑权限，或为实现中需求负责人）", 403)
 
 
 @router.post("/{requirement_id}/tasks")
 def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_perm(db, user)
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
+    _require_task_perm(db, user, r)
     from datetime import date as _date
 
     task = RequirementTask(
@@ -1004,16 +1047,15 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    ensure_not_example(db.get(Requirement, task.requirement_id))
+    requirement = db.get(Requirement, task.requirement_id)
+    ensure_not_example(requirement)
     data = body.model_dump(exclude_unset=True)
     if data.get("assignee"):
         require_it_member_if_configured(db, data["assignee"], "需求任务负责人")
     is_assignee = user.person_id and task.assignee == user.person_id
-    from app.services.permissions import has_perm as _hp
-
-    if not (_hp(db, user, "requirements", "edit") or _hp(db, user, "req_tasks", "edit")):
-        if not (is_assignee and set(data) <= {"status"}):
-            raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的状态；其他修改需 需求管理/任务跟踪 编辑权限", 403)
+    can_manage = _can_manage_requirement_tasks(db, user, requirement)
+    if not can_manage and not (is_assignee and set(data) <= {"status", "actual_effort"}):
+        raise AppError("FORBIDDEN", "仅需求负责人可维护任务；任务负责人只能更新自己的状态和实际工时", 403)
     if data.get("status") and data["status"] not in ("待处理", "进行中", "已完成"):
         raise AppError("INVALID_STATUS", "状态必须为 待处理/进行中/已完成")
     if "plan_date" in data and data["plan_date"]:
@@ -1032,7 +1074,8 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
 
 @router.delete("/tasks/{task_id}")
 def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_perm(db, user)
+    if not _can_delete_requirement_tasks(db, user):
+        raise AppError("FORBIDDEN", "无任务删除权限（需 需求管理编辑 或 任务跟踪编辑）", 403)
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)

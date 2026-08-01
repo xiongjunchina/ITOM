@@ -34,6 +34,9 @@ ENSURE_COLUMNS = {
     "org_settings": [
         ("digital_team_member_ids", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
     ],
+    "ci": [
+        ("product_manager_id", "VARCHAR(26)"),
+    ],
     "wbs_task": [
         ("stage", "VARCHAR(64)"),
         ("wbs_dict", "TEXT"),
@@ -114,6 +117,7 @@ ENSURE_COLUMNS = {
     "aily_integration_config": [
         ("card_callback_verification_token_encrypted", "TEXT"),
         ("card_callback_encrypt_key_encrypted", "TEXT"),
+        ("public_base_url", "VARCHAR(300)"),
     ],
     "user_group": [
         ("roles", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
@@ -138,6 +142,11 @@ ENSURE_COLUMNS = {
     "point_entry": [
         ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),
         ("contribution_dimension", "VARCHAR(48)"),
+    ],
+    "development_activity": [
+        ("created_by", "VARCHAR(26)"),
+        # M86：只增列、不回填历史活动；避免组织后续变化改写历史参与范围。
+        ("participant_department_selections", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
     ],
     "performance_role_assignment": [
         ("evaluator_weights", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
@@ -215,6 +224,77 @@ def ensure_aily_indexes(db: Session):
     db.execute(text(
         "ALTER TABLE external_identity ALTER COLUMN auth_user_id DROP NOT NULL"
     ))
+    db.commit()
+
+
+def ensure_record_relation_schema(db: Session):
+    """M84：为已有 PostgreSQL 库增量创建通用关联表及有效记录唯一索引。
+
+    仅新增表/列/索引，不修改既有单据或历史关联数据；SQLite 测试库由 metadata.create_all
+    自动建表，生产库由此幂等迁移补齐。
+    """
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS record_relation ("
+        "id VARCHAR(26) PRIMARY KEY, "
+        "source_entity_type VARCHAR(32) NOT NULL, source_entity_id VARCHAR(26) NOT NULL, "
+        "target_entity_type VARCHAR(32) NOT NULL, target_entity_id VARCHAR(26) NOT NULL, "
+        "relation_type VARCHAR(64) NOT NULL, reason TEXT NOT NULL, "
+        "created_by VARCHAR(26) NOT NULL REFERENCES auth_user(id), "
+        "idempotency_key VARCHAR(128), request_digest VARCHAR(64) NOT NULL, "
+        "deleted_at TIMESTAMP, deleted_by VARCHAR(26) REFERENCES auth_user(id), delete_reason TEXT, "
+        "created_at TIMESTAMP NOT NULL DEFAULT now(), updated_at TIMESTAMP NOT NULL DEFAULT now(), "
+        "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false"
+        ")"
+    ))
+    for name, ddl in (
+        ("idempotency_key", "VARCHAR(128)"),
+        ("request_digest", "VARCHAR(64)"),
+        ("deleted_at", "TIMESTAMP"),
+        ("deleted_by", "VARCHAR(26)"),
+        ("delete_reason", "TEXT"),
+    ):
+        if name not in _columns(db, "record_relation"):
+            db.execute(text(f"ALTER TABLE record_relation ADD COLUMN {name} {ddl}"))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_record_relation_active "
+        "ON record_relation (source_entity_type, source_entity_id, target_entity_type, target_entity_id, relation_type) "
+        "WHERE is_deleted=false"
+    ))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_record_relation_idempotency "
+        "ON record_relation (created_by, source_entity_type, source_entity_id, target_entity_type, idempotency_key) "
+        "WHERE is_deleted=false AND idempotency_key IS NOT NULL"
+    ))
+    db.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_record_relation_source_active "
+        "ON record_relation (source_entity_type, source_entity_id, relation_type) WHERE is_deleted=false"
+    ))
+    db.execute(text(
+        "CREATE INDEX IF NOT EXISTS ix_record_relation_target_active "
+        "ON record_relation (target_entity_type, target_entity_id, relation_type) WHERE is_deleted=false"
+    ))
+    db.commit()
+
+
+def backfill_development_activity_creator(db: Session):
+    """M85：从最早的创建审计回填培训活动登记人。
+
+    只补空值，不改写已有数据；找不到历史创建审计的记录保持为空，后续仅
+    管理员与 CIO 可维护，避免把操作权限错误地授予任意成员。
+    """
+    result = db.execute(text(
+        "UPDATE development_activity activity "
+        "SET created_by = source.actor "
+        "FROM ("
+        "  SELECT DISTINCT ON (entity_id) entity_id, actor "
+        "  FROM audit_log "
+        "  WHERE entity_type = 'development_activity' AND action = 'create' AND actor IS NOT NULL "
+        "  ORDER BY entity_id, created_at ASC"
+        ") source "
+        "WHERE activity.id = source.entity_id AND activity.created_by IS NULL"
+    ))
+    if result.rowcount:
+        logger.info("M85：从审计日志回填培训活动登记人 %d 行", result.rowcount)
     db.commit()
 
 
@@ -306,7 +386,7 @@ def fix_pmo_performance_review_mode(db: Session):
 
 
 def fix_process_node_types_m75(db: Session):
-    """M75：为六条内置流程补齐审批/处理节点语义。"""
+    """M75：为七条内置流程补齐审批/处理节点语义。"""
     approval_steps = {
         "incident_flow": ("受理定级", "解决与用户确认"),
         "sr_flow": ("用户确认关闭",),
@@ -327,6 +407,46 @@ def fix_process_node_types_m75(db: Session):
             changed += result.rowcount or 0
     if changed:
         logger.info("M75：内置流程审批节点补齐 %d 个", changed)
+    db.commit()
+
+
+def fix_bug_flow_assignment_m83(db: Session):
+    """M83：Bug「开发修复」由修复子任务执行人负责，不再错误指派给开发负责人。"""
+    from app.models import ProcessDefinition, ProcessInstance, ProcessTask
+
+    definitions = db.query(ProcessDefinition).filter(
+        ProcessDefinition.code.like("bug_flow%"),
+        ProcessDefinition.is_deleted.is_(False),
+    ).all()
+    step_ids: list[str] = []
+    changed = 0
+    for definition in definitions:
+        for step in definition.steps:
+            if step.seq != 4 or step.is_deleted:
+                continue
+            step_ids.append(step.id)
+            description = "执行人以开发负责人在修复任务中指定的开发/测试人员为准；全部修复任务完成后进入产品经理验证"
+            if step.default_role is not None or step.description != description:
+                step.default_role = None
+                step.description = description
+                changed += 1
+    if step_ids:
+        active_tasks = db.query(ProcessTask).join(
+            ProcessInstance, ProcessInstance.id == ProcessTask.instance_id
+        ).filter(
+            ProcessTask.step_id.in_(step_ids),
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+            ProcessInstance.entity_type == "bug",
+            ProcessInstance.is_deleted.is_(False),
+        ).all()
+        for task in active_tasks:
+            if task.assignee:
+                task.assignee = None
+                task.raci_snapshot = {**(task.raci_snapshot or {}), "responsible": None, "accountable": None}
+                changed += 1
+    if changed:
+        logger.info("M83：修正 %d 个 Bug 开发修复节点/任务的错误负责人指派", changed)
     db.commit()
 
 
@@ -717,6 +837,8 @@ def migrate_m35_org(db: Session):
     widen_department_sort_m341(db)
     ensure_columns(db)
     ensure_aily_indexes(db)
+    ensure_record_relation_schema(db)
+    backfill_development_activity_creator(db)
     backfill_process_step_codes(db)
     separate_role_result_point_entries(db)
     backfill_password_set_m362(db)
@@ -736,6 +858,7 @@ def migrate_m35_org(db: Session):
     sync_process_status_m24(db)
     rebuild_problem_flow_m29(db)
     fix_process_node_types_m75(db)
+    fix_bug_flow_assignment_m83(db)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

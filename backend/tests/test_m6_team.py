@@ -1,5 +1,10 @@
 """M6 团队管理：建言积分 / 专项活动发放与上限 / 自动事件积分 / 培训 / 人效框架 / 流程监控 / 示例只读。"""
+from datetime import date
+
 import pytest
+
+from app.db import SessionLocal
+from app.models import Department, DevelopmentActivity, OrgMember, PerformancePeriod, PointEntry, PointRule
 
 
 @pytest.fixture(scope="module")
@@ -165,7 +170,7 @@ def test_example_campaign_seeded_and_readonly(client, admin_headers, ctx):
 # ---------- 自动事件积分（M6b） ----------
 
 def test_ticket_resolution_awards_points(client, admin_headers, ctx):
-    """工单 解决+5 / 关单 SLA 双达成+3 —— 事件订阅自动计分。"""
+    """工单 解决+5 / 关单 SLA 双达成+3 —— 自动写入岗位结果积分，不混入活动积分。"""
     pid, h = ctx["member_and_user"]("积分运维", "pt_ops", ["it_ops"])
     item = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
     r = client.post("/api/tickets", json={"title": "积分事件测试工单", "ticket_type": "incident",
@@ -179,11 +184,22 @@ def test_ticket_resolution_awards_points(client, admin_headers, ctx):
                     json={"to": "resolved", "fields": {"solution": "done", "root_cause": "n/a"}}, headers=admin_headers)
     assert r.json()["success"], r.text
     pts = my_points(client, h)
-    assert pts["total"] == 5 and pts["entries"][0]["source_type"] == "ticket_resolved"
+    assert pts["total"] == 0 and pts["entries"] == []
+    with SessionLocal() as db:
+        entries = db.query(PointEntry).filter(PointEntry.person_id == pid, PointEntry.source_ref == t["id"]).all()
+        assert {(entry.source_type, entry.points, entry.contribution_bucket) for entry in entries} == {
+            ("ticket_resolved", 5, "role_result"),
+        }
     r = client.post(f"/api/tickets/{t['id']}/transition",
                     json={"to": "closed", "fields": {"closure_code": "已解决"}}, headers=admin_headers)
     assert r.json()["success"], r.text
-    assert my_points(client, h)["total"] == 8  # +ticket_sla_met（P4 时限宽裕必达成）
+    assert my_points(client, h)["total"] == 0  # 岗位结果积分不进入活动积分
+    with SessionLocal() as db:
+        entries = db.query(PointEntry).filter(PointEntry.person_id == pid, PointEntry.source_ref == t["id"]).all()
+        assert {(entry.source_type, entry.points, entry.contribution_bucket) for entry in entries} == {
+            ("ticket_resolved", 5, "role_result"),
+            ("ticket_sla_met", 3, "role_result"),
+        }
 
 
 def test_training_awards_points(client, admin_headers, ctx):
@@ -192,7 +208,7 @@ def test_training_awards_points(client, admin_headers, ctx):
                                             "activity_date": "2026-07-10"}, headers=admin_headers)
     assert r.json()["error"]["code"] == "INVALID_TYPE"
     r = client.post("/api/trainings", json={
-        "activity_type": "内部交叉培训", "topic": "PostgreSQL 调优分享", "activity_date": "2026-07-10",
+        "activity_type": "内部交叉培训", "topic": "PostgreSQL 调优分享", "activity_date": date.today().isoformat(),
         "host_id": ctx["tm_pid"], "participant_ids": [ctx["tm_pid"], ctx["dev_pid"]],
     }, headers=admin_headers)
     assert r.json()["success"], r.text
@@ -201,6 +217,234 @@ def test_training_awards_points(client, admin_headers, ctx):
     dev_entries = my_points(client, ctx["dev_h"])["entries"]
     assert any(e["source_type"] == "training_attend" and e["points"] == 3 for e in dev_entries)
     assert not any(e["source_type"] == "training_attend" for e in tm_entries)  # 主讲不重复计参与分
+
+
+def test_training_department_selection_freezes_display_and_point_recipients(client, ctx):
+    """整部门登记保存部门摘要与人员快照；后来调岗或资料编辑不得改写历史范围。"""
+    dev_id, dev_headers = ctx["member_and_user"]("部门培训开发", "dept_training_dev", ["it_dev"])
+    tm_id, _ = ctx["member_and_user"]("部门培训组长", "dept_training_tm", ["it_tm"])
+    with SessionLocal() as db:
+        department = Department(code="IT-TRAINING-DEPT", name="培训全员组", dept_type="it")
+        db.add(department)
+        db.flush()
+        db.get(OrgMember, dev_id).department_id = department.id
+        db.get(OrgMember, tm_id).department_id = department.id
+        db.commit()
+        department_id = department.id
+
+    created = client.post(
+        "/api/trainings",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "整部门参与快照", "activity_date": date.today().isoformat(),
+            "participant_ids": [], "participant_department_ids": [department_id],
+        },
+        headers=dev_headers,
+    )
+    assert created.status_code == 200, created.text
+    activity_id = created.json()["data"]["id"]
+
+    listed = next(row for row in client.get("/api/trainings", headers=dev_headers).json()["data"] if row["id"] == activity_id)
+    assert set(listed["participant_ids"]) == {dev_id, tm_id}
+    assert listed["participant_departments"] == [{"id": department_id, "name": "培训全员组"}]
+    assert listed["participant_individual_names"] == []
+    with SessionLocal() as db:
+        activity = db.get(DevelopmentActivity, activity_id)
+        assert activity.participant_department_selections[0]["id"] == department_id
+        assert activity.participant_department_selections[0]["name"] == "培训全员组"
+        assert set(activity.participant_department_selections[0]["member_ids"]) == {dev_id, tm_id}
+        active_entries = db.query(PointEntry).filter(
+            PointEntry.source_ref == activity_id,
+            PointEntry.is_deleted.is_(False),
+        ).all()
+        assert {(entry.person_id, entry.source_type) for entry in active_entries} == {
+            (dev_id, "training_attend"), (tm_id, "training_attend"),
+        }
+        # 调岗不会反向改写已经登记的培训活动快照。
+        db.get(OrgMember, tm_id).department_id = None
+        db.commit()
+
+    metadata_update = client.patch(
+        f"/api/trainings/{activity_id}",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "整部门参与快照（补充资料）", "activity_date": date.today().isoformat(),
+            "participant_ids": [dev_id, tm_id], "remarks": "不改计分对象",
+        },
+        headers=dev_headers,
+    )
+    assert metadata_update.status_code == 200, metadata_update.text
+    assert metadata_update.json()["data"]["points_recalculated"] is False
+    after_move = next(row for row in client.get("/api/trainings", headers=dev_headers).json()["data"] if row["id"] == activity_id)
+    assert after_move["participant_departments"] == [{"id": department_id, "name": "培训全员组"}]
+    assert after_move["participant_individual_names"] == []
+
+
+def test_training_manage_by_creator_admin_or_cio_and_reconciles_points(client, admin_headers, ctx):
+    """登记人可维护，其他成员不可越权；主讲/参与人调整需软作废旧流水后重算。"""
+    created = client.post(
+        "/api/trainings",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "培训权限与积分重算",
+            "activity_date": date.today().isoformat(),
+            "host_id": ctx["tm_pid"],
+            "participant_ids": [ctx["dev_pid"]],
+        },
+        headers=ctx["dev_h"],
+    )
+    assert created.status_code == 200, created.text
+    activity_id = created.json()["data"]["id"]
+
+    visible_to_creator = next(
+        row for row in client.get("/api/trainings", headers=ctx["dev_h"]).json()["data"] if row["id"] == activity_id
+    )
+    assert visible_to_creator["can_manage"] is True
+    assert visible_to_creator["participant_ids"] == [ctx["dev_pid"]]
+
+    # it_tm 有模块编辑权限，但不是登记人、管理员或 CIO，仍不可编辑此活动。
+    forbidden = client.patch(
+        f"/api/trainings/{activity_id}",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "越权编辑",
+            "activity_date": date.today().isoformat(),
+            "host_id": ctx["tm_pid"],
+            "participant_ids": [ctx["dev_pid"]],
+        },
+        headers=ctx["tm_h"],
+    )
+    assert forbidden.status_code == 403
+
+    updated = client.patch(
+        f"/api/trainings/{activity_id}",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "培训权限与积分重算（修订）",
+            "activity_date": date.today().isoformat(),
+            "host_id": ctx["cio_pid"],
+            "participant_ids": [ctx["tm_pid"]],
+        },
+        headers=ctx["dev_h"],
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["points_recalculated"] is True
+    with SessionLocal() as db:
+        all_entries = db.query(PointEntry).filter(PointEntry.source_ref == activity_id).all()
+        active = [entry for entry in all_entries if not entry.is_deleted]
+        assert {(entry.person_id, entry.source_type) for entry in active} == {
+            (ctx["cio_pid"], "training_host"),
+            (ctx["tm_pid"], "training_attend"),
+        }
+        assert len(all_entries) == 4 and len(active) == 2
+
+    deleted = client.delete(f"/api/trainings/{activity_id}", headers=ctx["cio_h"])
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["data"]["points_retracted"] == 2
+    with SessionLocal() as db:
+        assert all(entry.is_deleted for entry in db.query(PointEntry).filter(PointEntry.source_ref == activity_id).all())
+
+
+def test_current_period_activity_points_follow_live_rules_everywhere(client, admin_headers, ctx):
+    """当前考核期的活动积分应随规则实时变化，不改写原始积分台账。"""
+    from app.services.points import current_period
+
+    rule_code = "m84_live_activity_rule"
+    with SessionLocal() as db:
+        db.add(PointRule(
+            code=rule_code,
+            name="M84 当前周期动态积分测试",
+            points=1000,
+            contribution_bucket="team_contribution",
+            active=True,
+        ))
+        db.add(PointEntry(
+            person_id=ctx["tm_pid"],
+            points=1000,
+            source_type=rule_code,
+            period=current_period(),
+            contribution_bucket="team_contribution",
+        ))
+        db.commit()
+
+    def team_points() -> float:
+        board = client.get("/api/team/overview", headers=ctx["tm_h"]).json()["data"]["points_board"]
+        return next(row["points"] for row in board if row["person_name"] == "积分组长")
+
+    def dashboard_points() -> float:
+        board = client.get("/api/dashboard", headers=admin_headers).json()["data"]["team"]["top_points"]
+        return next(row["value"] for row in board if row["name"] == "积分组长")
+
+    def leaderboard_points() -> float:
+        board = client.get("/api/points/leaderboard", headers=ctx["tm_h"]).json()["data"]["board"]
+        return next(row["points"] for row in board if row["person_name"] == "积分组长")
+
+    before_team = team_points()
+    before_dashboard = dashboard_points()
+    before_leaderboard = leaderboard_points()
+    before_mine = my_points(client, ctx["tm_h"])["period_total"]
+
+    response = client.patch(
+        f"/api/admin/point-rules/{rule_code}",
+        json={"points": 1023, "active": True},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    assert team_points() == before_team + 23
+    assert dashboard_points() == before_dashboard + 23
+    assert leaderboard_points() == before_leaderboard + 23
+    assert my_points(client, ctx["tm_h"])["period_total"] == before_mine + 23
+
+    response = client.patch(
+        f"/api/admin/point-rules/{rule_code}",
+        json={"points": 1023, "active": False},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert team_points() == before_team - 1000
+    assert dashboard_points() == before_dashboard - 1000
+    assert leaderboard_points() == before_leaderboard - 1000
+    assert my_points(client, ctx["tm_h"])["period_total"] == before_mine - 1000
+
+
+def test_live_activity_rule_keeps_prior_period_ledger_amounts(ctx):
+    """全年视图可汇总历史，但当前规则只能作用于当前考核期的自动事件。"""
+    from sqlalchemy import func
+
+    from app.services.points import current_period, live_team_points_expression
+
+    period = current_period()
+    year = period.split("-", 1)[0]
+    prior_period = f"{year}-Q2" if period != f"{year}-Q2" else f"{year}-Q1"
+    rule_code = "m84_live_rule_history_guard"
+    with SessionLocal() as db:
+        db.add(PointRule(
+            code=rule_code,
+            name="M84 历史周期保护测试",
+            points=77,
+            contribution_bucket="team_contribution",
+            active=True,
+        ))
+        current = PointEntry(
+            person_id=ctx["tm_pid"], points=10, source_type=rule_code,
+            period=period, contribution_bucket="team_contribution",
+        )
+        prior = PointEntry(
+            person_id=ctx["tm_pid"], points=10, source_type=rule_code,
+            period=prior_period, contribution_bucket="team_contribution",
+        )
+        db.add_all([current, prior])
+        db.flush()
+        live_rule, effective_points, join_condition = live_team_points_expression()
+        total = (
+            db.query(func.sum(effective_points))
+            .outerjoin(live_rule, join_condition)
+            .filter(PointEntry.id.in_([current.id, prior.id]))
+            .scalar()
+        )
+        assert total == 87  # 当前周期 77，历史周期仍保留台账 10
+        db.rollback()
 
 
 def test_point_rule_inactive_skips(client, admin_headers, ctx):
@@ -312,3 +556,44 @@ def test_point_rules_api(client, admin_headers, ctx):
         "/api/admin/audit-logs?entity_type=team_contribution_config&page_size=20", headers=admin_headers
     ).json()["data"]
     assert config_audits and config_audits[0]["action"] == "update"
+
+
+def test_training_score_changes_blocked_after_period_publish(client, ctx):
+    """已发布/锁定考核期不能修改培训参与人或撤销已记入的积分。"""
+    from app.services.points import current_period
+
+    created = client.post(
+        "/api/trainings",
+        json={
+            "activity_type": "新技术研究",
+            "topic": "已发布周期培训保护",
+            "activity_date": date.today().isoformat(),
+            "host_id": ctx["tm_pid"],
+            "participant_ids": [ctx["dev_pid"]],
+        },
+        headers=ctx["dev_h"],
+    )
+    assert created.status_code == 200, created.text
+    activity_id = created.json()["data"]["id"]
+    with SessionLocal() as db:
+        db.add(PerformancePeriod(period_code=current_period(), status="published"))
+        db.commit()
+
+    metadata_only = client.patch(
+        f"/api/trainings/{activity_id}",
+        json={
+            "activity_type": "新技术研究",
+            "topic": "已发布周期培训保护（补充资料）",
+            "activity_date": date.today().isoformat(),
+            "host_id": ctx["tm_pid"],
+            "participant_ids": [ctx["dev_pid"]],
+            "remarks": "不改变主讲或参与人",
+        },
+        headers=ctx["dev_h"],
+    )
+    assert metadata_only.status_code == 200, metadata_only.text
+    assert metadata_only.json()["data"]["points_recalculated"] is False
+
+    blocked = client.delete(f"/api/trainings/{activity_id}", headers=ctx["dev_h"])
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "TRAINING_POINTS_LOCKED"

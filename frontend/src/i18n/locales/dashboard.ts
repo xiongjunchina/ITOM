@@ -18,6 +18,7 @@ export const zh: Dict = {
   'dash.widget.itsm_problem': '问题',
   'dash.widget.project': '项目',
   'dash.widget.requirement': '需求',
+  'dash.widget.task': '任务管理',
   'dash.widget.team': '团队动态',
 
   // 告警类型标签
@@ -57,6 +58,11 @@ export const zh: Dict = {
   'dash.team.hirings': '招聘中',
   'dash.team.topWorkload': '负载 Top5',
   'dash.team.topPoints': '本期积分 Top5',
+  'dash.task.openTotal': '未关闭任务',
+  'dash.task.bugs': 'Bug',
+  'dash.task.bugFixes': '修复任务',
+  'dash.task.delegated': '委派任务',
+  'dash.task.requirements': '需求开发任务',
 };
 
 export const en: Dict = {
@@ -76,6 +82,7 @@ export const en: Dict = {
   'dash.widget.itsm_problem': 'Problems',
   'dash.widget.project': 'Projects',
   'dash.widget.requirement': 'Requirements',
+  'dash.widget.task': 'Task Management',
   'dash.widget.team': 'Team Activity',
 
   // Alert type labels
@@ -115,4 +122,9 @@ export const en: Dict = {
   'dash.team.hirings': 'Hiring',
   'dash.team.topWorkload': 'Top 5 Workload',
   'dash.team.topPoints': 'Top 5 Points',
+  'dash.task.openTotal': 'Open tasks',
+  'dash.task.bugs': 'Bugs',
+  'dash.task.bugFixes': 'Fix tasks',
+  'dash.task.delegated': 'Delegated',
+  'dash.task.requirements': 'Requirement dev tasks',
 };

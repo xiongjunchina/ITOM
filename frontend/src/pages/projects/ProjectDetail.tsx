@@ -7,6 +7,7 @@ import {
   Col,
   DatePicker,
   Descriptions,
+  Empty,
   Form,
   Input,
   InputNumber,
@@ -41,6 +42,8 @@ import { useGoBack } from '../../utils/nav';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
+import DocumentTypeHint from '../../components/DocumentTypeHint';
+import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
@@ -423,6 +426,13 @@ export default function ProjectDetail() {
   const [expandedKeys, setExpandedKeys] = useState<readonly React.Key[]>([]);
 
   const wbsTree = useMemo(() => buildWbsTree(wbs), [wbs]);
+  const phaseTasks = useMemo(
+    () => wbs
+      .filter((task) => !task.parent_task_id)
+      .slice()
+      .sort((a, b) => a.wbs_code.localeCompare(b.wbs_code, undefined, { numeric: true })),
+    [wbs],
+  );
   useEffect(() => {
     setExpandedKeys(wbs.map((t) => t.id));
   }, [wbs]);
@@ -789,16 +799,30 @@ export default function ProjectDetail() {
         ) : (
           <Space direction="vertical" size={4} style={{ width: '100%' }}>
             {(detail.linked_requirements ?? []).map((r) => (
-              <Space key={r.id} size={8}>
-                <Link to={`/requirements/${r.id}`}>{r.requirement_code}</Link>
-                <span>{r.title}</span>
-                {r.moscow && <Tag>{et.moscow(r.moscow)}</Tag>}
-                <Tag>{r.status_name}</Tag>
-              </Space>
+              <div key={r.id}>
+                <Space size={8}>
+                  <Link to={`/requirements/${r.id}`}>{r.requirement_code}</Link>
+                  <span>{r.title}</span>
+                  {r.moscow && <Tag>{et.moscow(r.moscow)}</Tag>}
+                  <Tag>{r.status_name}</Tag>
+                </Space>
+                {r.relation_reason && (
+                  <Typography.Text type="secondary" style={{ display: 'block', marginTop: 2 }}>
+                    {r.relation_reason}
+                  </Typography.Text>
+                )}
+              </div>
             ))}
           </Space>
         )}
       </Card>
+
+      <RecordRelationsPanel
+        entityType="project"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
 
       <Card title={t('proj.progress')} size="small">
         {detail.progress == null ? (
@@ -978,6 +1002,29 @@ export default function ProjectDetail() {
           </Space>
         </Card>
       )}
+      <Card title={t('proj.phaseProgress')} size="small">
+          {phaseTasks.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('proj.phaseEmpty')} />
+          ) : (
+            <div style={{ overflowX: 'auto', padding: '12px 4px 4px' }}>
+              <div style={{ position: 'relative', minWidth: Math.max(phaseTasks.length * 180, 640), padding: '0 24px' }}>
+                <div style={{ position: 'absolute', left: 42, right: 42, top: 16, height: 2, background: '#d9d9d9' }} />
+                <Space size={0} style={{ position: 'relative', width: '100%', justifyContent: 'space-between' }}>
+                  {phaseTasks.map((phase) => (
+                    <div key={phase.id} style={{ width: 160, textAlign: 'center' }}>
+                      <div style={{ width: 14, height: 14, margin: '0 auto 8px', borderRadius: '50%', background: WBS_TAG_COLORS[phase.status] === 'success' ? '#52c41a' : '#1677ff', border: '2px solid #fff', boxShadow: '0 0 0 1px #91caff' }} />
+                      <Typography.Text strong ellipsis={{ tooltip: phase.name }}>{phase.name}</Typography.Text>
+                      <div style={{ marginTop: 6 }}>
+                        <Progress percent={phase.progress} size="small" status={phase.status === '已延期' ? 'exception' : undefined} />
+                      </div>
+                      <WbsStatusTag status={phase.status} label={et.wbsStatus(phase.status)} />
+                    </div>
+                  ))}
+                </Space>
+              </div>
+            </div>
+          )}
+      </Card>
       <Card title={t('proj.gantt')} size="small">
         <GanttChart
           tasks={wbs}
@@ -1308,6 +1355,7 @@ export default function ProjectDetail() {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       {isExample && <ExampleAlert />}
+      <DocumentTypeHint documentType="project" />
       {/* 头部 */}
       <Card>
         <Space style={{ width: '100%', justifyContent: 'space-between', flexWrap: 'wrap' }}>

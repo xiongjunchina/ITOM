@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_perm
-from app.models import Contract, Milestone, Problem, Project, Requirement, Ticket
+from app.models import Bug, BugFixTask, Contract, Milestone, Problem, Project, Requirement, RequirementTask, Ticket, WorkTask
 from app.schemas.common import ok
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -164,17 +164,24 @@ def _project_section(db: Session) -> tuple[dict, list]:
 
 def _team_section(db: Session) -> dict:
     from app.models import DevelopmentActivity, HiringNeed, PointEntry, OrgMember
-    from app.services.points import current_period, period_clause
+    from app.services.points import current_period, live_team_points_expression, period_clause
     from sqlalchemy import func as _f
     from app.services.team_scope import it_member_ids
 
     period = current_period()
     team_ids = it_member_ids(db)
+    live_rule, effective_points, join_condition = live_team_points_expression()
     board = (
-        db.query(PointEntry.person_id, _f.sum(PointEntry.points))
-        .filter(period_clause(PointEntry.period, period), PointEntry.person_id.in_(team_ids or {"-"}), PointEntry.is_deleted.is_(False))
+        db.query(PointEntry.person_id, _f.sum(effective_points))
+        .outerjoin(live_rule, join_condition)
+        .filter(
+            period_clause(PointEntry.period, period),
+            PointEntry.person_id.in_(team_ids or {"-"}),
+            PointEntry.contribution_bucket == "team_contribution",
+            PointEntry.is_deleted.is_(False),
+        )
         .group_by(PointEntry.person_id)
-        .order_by(_f.sum(PointEntry.points).desc())
+        .order_by(_f.sum(effective_points).desc())
         .limit(5)
         .all()
     )
@@ -213,6 +220,25 @@ def _requirement_section(db: Session) -> dict:
     return {"by_stage": by_stage, "avg_lead_days": avg_lead}
 
 
+def _task_section(db: Session) -> dict:
+    """任务管理总览：只统计未进入终态的存量，保持与任务清单一致。"""
+    bugs = db.query(Bug).filter(Bug.is_deleted.is_(False)).all()
+    bug_tasks = db.query(BugFixTask).filter(BugFixTask.is_deleted.is_(False)).all()
+    work_tasks = db.query(WorkTask).filter(WorkTask.is_deleted.is_(False)).all()
+    requirement_tasks = db.query(RequirementTask).filter(RequirementTask.is_deleted.is_(False)).all()
+    open_bugs = sum(1 for row in bugs if row.status not in {"closed", "rejected"})
+    open_bug_tasks = sum(1 for row in bug_tasks if row.status != "关闭")
+    open_work_tasks = sum(1 for row in work_tasks if row.status not in {"关闭", "中止"})
+    open_requirement_tasks = sum(1 for row in requirement_tasks if row.status != "已完成")
+    return {
+        "open_total": open_bugs + open_bug_tasks + open_work_tasks + open_requirement_tasks,
+        "open_bugs": open_bugs,
+        "open_bug_fix_tasks": open_bug_tasks,
+        "open_delegated_tasks": open_work_tasks,
+        "open_requirement_tasks": open_requirement_tasks,
+    }
+
+
 @router.get("")
 def dashboard(db: Session = Depends(get_db), user=Depends(require_perm("dashboard", "view"))):  # M19：接口层强制，不只菜单隐藏
     """总览聚合（M22：按用户权限矩阵裁剪板块——无权限的模块不聚合、不下发）。"""
@@ -247,4 +273,7 @@ def dashboard(db: Session = Depends(get_db), user=Depends(require_perm("dashboar
         payload["requirement"] = _requirement_section(db)
     if can("team_overview"):
         payload["team"] = _team_section(db)
+    task_modules = ("task_development", "task_bug", "task_delegated")
+    if any(can(module) for module in task_modules):
+        payload["task"] = _task_section(db)
     return ok(payload)

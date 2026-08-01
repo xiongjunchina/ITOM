@@ -32,6 +32,7 @@ class AilyConfigIn(BaseModel):
     bot_app_id: str | None = Field(default=None, max_length=64)
     bot_app_secret: str | None = Field(default=None, max_length=512)
     api_base: str | None = Field(default=None, max_length=100)
+    public_base_url: str | None = Field(default=None, max_length=300)
     message_enabled: bool | None = None
     card_callback_verification_token: str | None = Field(default=None, max_length=512)
     card_callback_encrypt_key: str | None = Field(default=None, max_length=512)
@@ -78,6 +79,42 @@ def _validate_origins(values: list[str]) -> list[str]:
     return values
 
 
+def _normalize_public_base_url(value: str | None) -> str | None:
+    """校验并规范化管理员填写的公网入口根地址。"""
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    try:
+        port = parsed.port
+    except ValueError:
+        raise AppError(
+            "AILY_PUBLIC_BASE_URL_INVALID",
+            f"公网访问根地址的端口无效：{value}",
+            422,
+        )
+    if (
+        any(char.isspace() for char in value)
+        or parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or (port is not None and not 1 <= port <= 65535)
+    ):
+        raise AppError(
+            "AILY_PUBLIC_BASE_URL_INVALID",
+            "公网访问根地址必须是仅含 http/https、域名或 IP 和可选端口的地址，不能包含路径、查询参数或片段",
+            422,
+        )
+    return parsed._replace(path="", params="", query="", fragment="").geturl().rstrip("/")
+
+
 def _config_payload(cfg) -> dict:
     secret_present = bool(cfg.mcp_jwt_secret_encrypted)
     discovery_ready = bool(cfg.enabled and cfg.allowed_origins)
@@ -99,6 +136,7 @@ def _config_payload(cfg) -> dict:
         "bot_app_id": cfg.bot_app_id,
         "has_bot_app_secret": bool(cfg.bot_app_secret_encrypted),
         "api_base": cfg.api_base,
+        "public_base_url": cfg.public_base_url or "",
         "message_enabled": cfg.message_enabled,
         "has_card_callback_verification_token": bool(
             cfg.card_callback_verification_token_encrypted
@@ -159,6 +197,11 @@ def update_config(
     tenants = _unique_strings(data.get("allowed_tenant_ids", cfg.allowed_tenant_ids or []))
     agents = _unique_strings(data.get("allowed_agent_ids", cfg.allowed_agent_ids or []))
     origins = _validate_origins(_unique_strings(data.get("allowed_origins", cfg.allowed_origins or [])))
+    public_base_url = (
+        _normalize_public_base_url(data.get("public_base_url"))
+        if "public_base_url" in data
+        else cfg.public_base_url
+    )
     target_enabled = data.get("enabled", cfg.enabled)
     if target_enabled and not origins:
         raise AppError(
@@ -208,6 +251,9 @@ def update_config(
             continue
         if key == "allowed_origins":
             cfg.allowed_origins = origins
+            continue
+        if key == "public_base_url":
+            cfg.public_base_url = public_base_url
             continue
         setattr(cfg, key, value)
     audit(

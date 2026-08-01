@@ -5,6 +5,7 @@ import {
   DashboardOutlined,
   FileTextOutlined,
   ProjectOutlined,
+  ScheduleOutlined,
   SettingOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
@@ -26,10 +27,11 @@ export interface MenuNode {
   children?: MenuNode[];
 }
 
-/** 除业务用户(requester)之外的内部角色（权限缺失时的回退过滤用） */
+/** 除业务门户角色（requester / bdo）之外的内部角色（权限缺失时的回退过滤用） */
 const STAFF: Role[] = [
   'admin', 'cio', 'it_bm', 'it_tm',
   'it_pdm', 'it_pm', 'it_dev', 'it_ops', 'is_mgr', 'it_bp',
+  'it_pdm_leader', 'it_dev_leader', 'it_op_leader', 'it_pmo',
 ];
 
 export const MENU_TREE: MenuNode[] = [
@@ -67,8 +69,16 @@ export const MENU_TREE: MenuNode[] = [
     icon: <FileTextOutlined />,
     children: [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
-      { key: '/requirements/tasks', path: '/requirements/tasks', label: '任务跟踪', module: 'req_tasks' },
       { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'req_scoring' },
+    ],
+  },
+  {
+    key: 'task-management',
+    label: '任务管理',
+    icon: <ScheduleOutlined />,
+    children: [
+      { key: '/task-management/development', path: '/task-management/development', label: '开发任务', modules: ['task_development', 'task_bug'], roles: STAFF },
+      { key: '/task-management/delegated', path: '/task-management/delegated', label: '委派任务', module: 'task_delegated', roles: STAFF },
     ],
   },
   {
@@ -156,9 +166,10 @@ export function filterMenu(nodes: MenuNode[], user: AuthUser | null): MenuNode[]
     .filter((n) => !n.children || n.children.length > 0);
 }
 
-/** 仅持业务用户角色的账号进入 F 服务门户；混合角色仍使用内部工作台。 */
+/** 仅持业务门户角色的账号进入 F 服务门户；混合角色仍使用内部工作台。 */
 export function isRequesterOnly(user: AuthUser | null): boolean {
-  return !!user?.roles.includes('requester') && !user.roles.some((role) => role !== 'requester');
+  const roles = user?.roles ?? [];
+  return roles.length > 0 && roles.every((role) => role === 'requester' || role === 'bdo');
 }
 
 /**
@@ -167,7 +178,7 @@ export function isRequesterOnly(user: AuthUser | null): boolean {
  */
 export function firstAccessiblePath(user: AuthUser | null): string {
   const rolePaths = useBrandingStore.getState().current?.config.roles;
-  const preferred = user?.roles.includes('requester') ? rolePaths?.requester_landing
+  const preferred = user?.roles.some((role) => role === 'requester' || role === 'bdo') ? rolePaths?.requester_landing
     : user?.roles.includes('it_op_leader') ? rolePaths?.noc_landing
     : user?.roles.some((r) => ['cio','it_bm','it_tm','it_pdm_leader','it_dev_leader'].includes(r)) ? rolePaths?.manager_landing
     : user?.roles.includes('it_ops') ? rolePaths?.operator_landing

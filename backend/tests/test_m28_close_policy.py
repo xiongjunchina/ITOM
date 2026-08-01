@@ -15,7 +15,7 @@ def ctx(client, admin_headers):
         token = client.post("/api/auth/login", json={"username": username, "password": "pass123"}).json()["data"]["token"]
         return m["id"], {"Authorization": f"Bearer {token}"}
 
-    req_pid, req_h = member_and_user("业务提出人M28", "m28_req", ["requester"])
+    req_pid, req_h = member_and_user("业务数字化经理M28", "m28_req", ["bdo"])
     pdm_pid, pdm_h = member_and_user("产品M28", "m28_pdm", ["it_pdm"])
     pm_pid, pm_h = member_and_user("项目经理M28", "m28_pm", ["it_pm"])
     item = client.get("/api/service-items", headers=admin_headers).json()["data"][0]["id"]
