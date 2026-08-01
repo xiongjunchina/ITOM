@@ -566,6 +566,56 @@ def _published_profile_config(version: AiAgentProfileVersion) -> dict[str, Any]:
     return {key: snapshot[key] for key in PROFILE_CONFIG_FIELDS}
 
 
+def runtime_published_profile(
+    db: Session,
+    profile: AiAgentProfile,
+    *,
+    audience: str | None = None,
+) -> tuple[AiAgentProfileVersion, dict[str, Any]] | None:
+    """Return a publish-proven runtime profile, or ``None`` without disclosure.
+
+    The active row is only a denormalized pointer to its newest immutable
+    published version.  Runtime consumers must therefore prove both the
+    version snapshot and the active-row agreement instead of treating either
+    one independently as authorization to enable the assistant.
+    """
+    if (
+        profile.is_deleted
+        or not profile.enabled
+        or profile.status != "published"
+        or (audience is not None and profile.audience != audience)
+    ):
+        return None
+    version = _latest_published(db, profile.id)
+    if version is None or version.published_at is None:
+        return None
+    try:
+        config = _published_profile_config(version)
+        if (
+            config["enabled"] is not True
+            or profile.name != config["name"]
+            or profile.default_provider_id != config["default_provider_id"]
+            or profile.retention_days != config["retention_days"]
+            or profile.enabled != config["enabled"]
+            or profile.max_risk_level != version.max_risk_level
+        ):
+            return None
+        _validate_publishable(db, profile, version, config)
+    except AppError:
+        return None
+    return version, config
+
+
+def immutable_retention_days(version: AiAgentProfileVersion | None) -> int | None:
+    """Read retention only from a complete, schema-marked captured version."""
+    if version is None or version.status != "published" or version.is_deleted or version.published_at is None:
+        return None
+    try:
+        return _published_profile_config(version)["retention_days"]
+    except AppError:
+        return None
+
+
 def _apply_profile_config(
     profile: AiAgentProfile,
     config: dict[str, Any],

@@ -76,3 +76,72 @@ The two full-suite warnings are pre-existing third-party `ldap3` deprecations fo
 - Retention 0 is enforced at the only ordinary-message persistence boundary; both user and assistant roles share it, including failed status. Positive retention has a bounded 1–90 policy and fixed creation-time expiry.
 - Archive neither soft-deletes the conversation nor modifies `AiAction`; a future cleanup task remains responsible for expiry deletion semantics.
 - No Task 6 action endpoint, Task 7 message/SSE endpoint, provider invocation, or business-domain write was introduced.
+
+## Fix round 1 — frozen retention and runtime-proof repair
+
+### Boundary and root cause
+
+- Reviewed fix base and initial `HEAD`: `ae9dfcebeccd320233d766bc1c21f6f40c960a8d` on `feature/AI-agent-version`; the worktree was clean before this round.
+- No branch operation, push, deployment, IDC access, network request, provider call, local ITOM runtime, migration, SSE/tool loop, action/business handler, UI, scheduler work, or WA1 work occurred.
+- Root cause 1: `persist_ordinary_message()` reread mutable `AiAgentProfile.retention_days`, allowing a zero-retention conversation to start retaining after a later positive publication and stopping an already-positive captured conversation after a later zero publication.
+- Root cause 2: bootstrap/create treated any enabled published row/version as usable, without proving the schema-marked snapshot, bilingual prompts, fixed capability/risk limits, provider health/compatibility, publication, or active-row/latest-version agreement.
+- Root cause 3: bootstrap hard-coded `fallback_available=True` instead of deriving it from the existing authenticated, permission-aware document-guide payload.
+- Root cause 4: list pagination had no explicit upper page bound.
+
+### Strict TDD evidence
+
+1. **RED:** the updated Task 5 fixture first created a genuinely publishable requester profile: complete `schema_version=1` snapshot, bilingual prompts, valid limits/scope, publication timestamp, and an enabled freshly-probed compatible provider. The focused suite then failed exactly on the reviewed behavior: five malformed published-profile variants stayed enabled, malformed guide payload still claimed fallback availability, zero→positive republish wrote a body, positive→zero stopped it, deletion still wrote, a legacy captured snapshot still wrote, and page `10001` returned 200. Command: `.venv/bin/python -m pytest tests/test_wa0_assistant_conversations.py -q`; result: `11 failed, 27 passed` (exit 1).
+2. **GREEN:** extracted Task 4 runtime validation and immutable captured-version retention helpers; bootstrap/create use the runtime proof, creation takes retention only from that immutable snapshot, and ordinary-message writes read only the captured version then lock/revalidate the current profile and database-loaded audience before flushing. The guide now exposes an explicit safe authenticated-payload helper, and `page` is limited to 1–10,000. The focused suite passed `38 passed`.
+3. **Additional RED/GREEN:** a complete but timestamp-less captured version followed by a valid newer publication initially still wrote a body (`1 failed`). `immutable_retention_days()` was tightened to require publication proof; the exact test then passed (`1 passed`).
+4. **Final GREEN:** all Task 5 tests pass with republish 0→positive and positive→0, disabled/deleted profile, missing legacy snapshot, missing publication proof, malformed runtime variants, safe/unsafe guide fallback, and page boundary coverage.
+
+### Final verification
+
+```text
+Focused Task 5:
+Command: .venv/bin/python -m pytest tests/test_wa0_assistant_conversations.py -q
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 39 passed in 9.20s
+Exit: 0
+
+Affected Task 4 profile-governance regression:
+Command: .venv/bin/python -m pytest tests/test_wa0_ai_admin_api.py -q
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 33 passed in 5.54s
+Exit: 0
+
+All WA0:
+Command: .venv/bin/python -m pytest tests/test_wa0_*.py -q
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 183 passed in 18.93s
+Exit: 0
+
+Full backend:
+Command: .venv/bin/python -m pytest -q
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 493 passed, 2 warnings in 116.22s
+Exit: 0
+
+Compile/import/router/diff:
+Command: .venv/bin/python -m compileall -q app tests/test_wa0_assistant_conversations.py
+Command: .venv/bin/python -c "import app.main; from app.routers.assistant import router; assert any(route.path == '/api/assistant/bootstrap' for route in router.routes); assert any(route.path == '/api/assistant/conversations/{conversation_id}/archive' for route in router.routes); assert any(route.path == '/api/assistant/conversations' for route in router.routes)"
+Command: git diff --check
+Result: no output
+Exit: 0
+```
+
+The two full-suite warnings are the existing third-party `ldap3` deprecations for pyasn1 `tagMap` and `typeMap`; this round adds no warnings.
+
+### Documentation synchronization
+
+- Updated Chinese authority and English mirror pairs for `README.md`, PRD (`03`), data model (`04`), API/architecture (`05`), identity/organization (`06`), and the Aily/MCP handoff (`10`).
+- The contracts now state the captured-version-only retention decision, no live-profile/`expires_at` inference, zero never becoming positive, current-profile withdrawal/audience/runtime-proof stop rules, complete runtime publication proof, the authenticated permission-aware document-guide fallback contract without claiming WA1, and the 1–10,000 page limit.
+- The English README milestone/status now correctly says WA0 Tasks 1–5 implemented; no Chinese/English status remains at Tasks 1–4.
+
+### Fix-round self-review
+
+- The write boundary returns before creating or flushing `AiMessage` whenever captured version, schema marker, retention, or publication proof is absent/malformed; retention 0 therefore never reaches a body write on normal or failure paths.
+- Positive retained conversations keep their captured version decision, but profile-row locking plus current database identity/audience/runtime validation prevents an in-flight message from crossing a concurrent publish/withdraw boundary. The code never uses live retention to decide historical retention.
+- Runtime validation reuses the Task 4 publish rules for prompts, capability/risk/scope, provider health and compatibility, then checks complete snapshot and active-row/latest-version agreement. Bootstrap conceals all failure causes.
+- `fallback_available` evaluates the real existing authenticated guide service and rejects malformed or exceptional payloads; it returns no guide content through bootstrap.
+- The change adds no schema/migration, route that exposes transcripts, provider call, SSE, tool loop, L3 action, domain write, UI, scheduler, deployment, or WA1 behavior.

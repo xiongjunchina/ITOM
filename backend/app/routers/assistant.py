@@ -36,7 +36,7 @@ def create_conversation(
 @router.get("/conversations")
 def list_conversations(
     include_archived: bool = False,
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=10_000),
     page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),

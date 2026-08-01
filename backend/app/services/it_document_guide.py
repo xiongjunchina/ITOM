@@ -122,6 +122,41 @@ def guide_payload(db: Session, user: AuthUser) -> dict:
     }
 
 
+def authenticated_guide_available(db: Session, user: AuthUser) -> bool:
+    """Confirm the authenticated deterministic guide can be returned safely.
+
+    The assistant bootstrap may advertise this existing endpoint as its
+    fallback only when the same role- and permission-aware payload the route
+    serves has its complete, non-sensitive shape.  Errors or malformed data
+    fail closed instead of turning a UI hint into an availability claim.
+    """
+    try:
+        payload = guide_payload(db, user)
+        staff_intake = payload.get("staff_intake") if isinstance(payload, dict) else None
+        documents = payload.get("documents") if isinstance(payload, dict) else None
+        if (
+            not isinstance(staff_intake, dict)
+            or not isinstance(staff_intake.get("enabled"), bool)
+            or not isinstance(staff_intake.get("available_types"), list)
+            or not all(isinstance(value, str) for value in staff_intake["available_types"])
+            or not isinstance(documents, list)
+            or not documents
+        ):
+            return False
+        for document in documents:
+            if not isinstance(document, dict) or not isinstance(document.get("type"), str):
+                return False
+            can_create = document.get("can_create")
+            target_path = document.get("target_path")
+            if not isinstance(can_create, bool) or (can_create and not isinstance(target_path, str)):
+                return False
+            if not can_create and target_path is not None:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def recommend(*, broad_impact: bool, recurring_or_root_cause: bool, planned_production_change: bool, new_capability: bool) -> dict:
     if broad_impact:
         selected = "incident"

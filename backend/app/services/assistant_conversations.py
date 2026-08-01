@@ -9,13 +9,14 @@ from app.assistant.redaction import redact_for_message
 from app.assistant.types import AssistantChannel, RiskLevel
 from app.core.errors import AppError
 from app.models import AiAgentProfile, AiAgentProfileVersion, AiConversation, AiMessage, AuthUser
+from app.services import assistant_config, it_document_guide
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _active_profile(db: Session, actor: AuthUser) -> tuple[AiAgentProfile, AiAgentProfileVersion]:
+def _active_profile(db: Session, actor: AuthUser) -> tuple[AiAgentProfile, AiAgentProfileVersion, dict]:
     """Resolve one current, published web profile from database-backed identity."""
     context = capability_context_for_user(db, actor.id, AssistantChannel.WEB, RiskLevel.L3)
     if context is None:
@@ -33,21 +34,11 @@ def _active_profile(db: Session, actor: AuthUser) -> tuple[AiAgentProfile, AiAge
     if len(profiles) != 1:
         raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号没有可用的智能体档案", 403)
     profile = profiles[0]
-    version = (
-        db.query(AiAgentProfileVersion)
-        .filter(
-            AiAgentProfileVersion.profile_id == profile.id,
-            AiAgentProfileVersion.status == "published",
-            AiAgentProfileVersion.is_deleted.is_(False),
-        )
-        .order_by(AiAgentProfileVersion.version.desc())
-        .first()
-    )
-    if version is None or not isinstance(profile.retention_days, int) or isinstance(profile.retention_days, bool):
+    runtime = assistant_config.runtime_published_profile(db, profile, audience=context.audience)
+    if runtime is None:
         raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号没有可用的智能体档案", 403)
-    if not 0 <= profile.retention_days <= 90:
-        raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号没有可用的智能体档案", 403)
-    return profile, version
+    version, config = runtime
+    return profile, version, config
 
 
 def bootstrap_payload(db: Session, actor: AuthUser) -> dict:
@@ -56,8 +47,9 @@ def bootstrap_payload(db: Session, actor: AuthUser) -> dict:
     An unavailable profile is reported as disabled so the client can use the
     deterministic fallback without learning why governance withheld access.
     """
+    fallback_available = it_document_guide.authenticated_guide_available(db, actor)
     try:
-        profile, version = _active_profile(db, actor)
+        profile, version, config = _active_profile(db, actor)
     except AppError:
         return {
             "enabled": False,
@@ -65,15 +57,15 @@ def bootstrap_payload(db: Session, actor: AuthUser) -> dict:
             "max_risk": None,
             "suggested_prompts": [],
             "retention_days": None,
-            "fallback_available": True,
+            "fallback_available": fallback_available,
         }
     return {
         "enabled": True,
         "profile": {"code": profile.code, "version": version.version},
         "max_risk": version.max_risk_level,
         "suggested_prompts": [],
-        "retention_days": profile.retention_days,
-        "fallback_available": True,
+        "retention_days": config["retention_days"],
+        "fallback_available": fallback_available,
     }
 
 
@@ -111,7 +103,7 @@ def create_conversation(
     language: str,
     page_context: dict,
 ) -> dict:
-    profile, version = _active_profile(db, actor)
+    profile, version, config = _active_profile(db, actor)
     now = _utcnow()
     row = AiConversation(
         auth_user_id=actor.id,
@@ -119,7 +111,7 @@ def create_conversation(
         profile_version_id=version.id,
         language=language,
         page_context=page_context,
-        expires_at=now + timedelta(days=profile.retention_days) if profile.retention_days else None,
+        expires_at=now + timedelta(days=config["retention_days"]) if config["retention_days"] else None,
     )
     db.add(row)
     db.commit()
@@ -136,22 +128,37 @@ def persist_ordinary_message(
     redacted_text: str | None,
     status: str = "completed",
 ) -> AiMessage | None:
-    """Stage an already-redacted ordinary message only when the active policy permits it.
+    """Stage an already-redacted ordinary message only when policy permits it.
 
     The caller owns the transaction.  This allows normal and exception paths
     to use the same retention guard before they commit any ordinary body.
     """
     if role not in {"user", "assistant"}:
         raise ValueError("ordinary assistant messages must be user or assistant roles")
-    profile = db.get(AiAgentProfile, conversation.profile_id)
-    retention_days = getattr(profile, "retention_days", None)
+    version = db.get(AiAgentProfileVersion, conversation.profile_version_id)
+    if version is None or version.profile_id != conversation.profile_id:
+        return None
+    retention_days = assistant_config.immutable_retention_days(version)
+    if retention_days is None or retention_days == 0:
+        return None
+
+    # Publishing acquires the same profile-row lock, so a valid active runtime
+    # profile cannot be republished/withdrawn between this check and the
+    # caller's eventual commit of the message body.
+    profile = (
+        db.query(AiAgentProfile)
+        .filter(AiAgentProfile.id == conversation.profile_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    context = capability_context_for_user(
+        db, conversation.auth_user_id, AssistantChannel.WEB, RiskLevel.L3
+    )
     if (
         profile is None
-        or not profile.enabled
-        or profile.status != "published"
-        or not isinstance(retention_days, int)
-        or isinstance(retention_days, bool)
-        or not 1 <= retention_days <= 90
+        or context is None
+        or assistant_config.runtime_published_profile(db, profile, audience=context.audience) is None
     ):
         return None
     row = AiMessage(

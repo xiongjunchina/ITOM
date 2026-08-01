@@ -4,9 +4,9 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from app.db import SessionLocal
-from app.models import AiAction, AiAgentProfile, AiAgentProfileVersion, AiConversation, AiMessage
+from app.models import AiAction, AiAgentProfile, AiAgentProfileVersion, AiConversation, AiMessage, AiProviderConfig
 from app.routers.admin_ai import ProfileDraftUpdateIn
-from app.services import assistant_conversations
+from app.services import assistant_conversations, it_document_guide
 import pytest
 from pydantic import ValidationError
 
@@ -28,8 +28,41 @@ def _create_user(client, admin_headers, username: str) -> dict:
     return {"Authorization": f"Bearer {logged_in.json()['data']['token']}"}
 
 
-def _publish_requester_profile(*, retention_days: int = 30) -> None:
+def _published_snapshot(profile: AiAgentProfile, *, retention_days: int) -> dict:
+    return {
+        "schema_version": 1,
+        "name": profile.name,
+        "default_provider_id": profile.default_provider_id,
+        "retention_days": retention_days,
+        "enabled": True,
+    }
+
+
+def _usable_provider(db) -> AiProviderConfig:
+    provider = AiProviderConfig(
+        code=f"wa0-conversation-provider-{db.query(AiProviderConfig).count()}",
+        name="WA0 conversation provider",
+        provider_type="openai_compatible",
+        api_base_url="https://provider.example.test/v1",
+        model="wa0-test",
+        enabled=True,
+        probe_status="success",
+        last_probed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        capability_probe={
+            "authentication": True,
+            "supports_streaming": True,
+            "supports_tools": True,
+            "supports_json_schema": True,
+        },
+    )
+    db.add(provider)
+    db.flush()
+    return provider
+
+
+def _publish_requester_profile(*, retention_days: int = 30) -> tuple[str, str]:
     with SessionLocal() as db:
+        provider = _usable_provider(db)
         profile = AiAgentProfile(
             code=f"wa0-conversation-{db.query(AiAgentProfile).count()}",
             name="WA0 conversations",
@@ -38,18 +71,53 @@ def _publish_requester_profile(*, retention_days: int = 30) -> None:
             status="published",
             max_risk_level="L1",
             retention_days=retention_days,
+            default_provider_id=provider.id,
         )
         db.add(profile)
         db.flush()
-        db.add(AiAgentProfileVersion(
+        version = AiAgentProfileVersion(
             profile_id=profile.id,
             version=1,
             status="published",
+            system_prompt_zh="你是 ITOM 助手。",
+            system_prompt_en="You are an ITOM assistant.",
             enabled_capabilities=[],
-            knowledge_scope=[],
+            knowledge_scope=["public"],
+            config_snapshot=_published_snapshot(profile, retention_days=retention_days),
             max_risk_level="L1",
-        ))
+            published_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(version)
         db.commit()
+        return profile.id, version.id
+
+
+def _publish_next_version(db, profile: AiAgentProfile, *, retention_days: int) -> AiAgentProfileVersion:
+    profile.retention_days = retention_days
+    profile.enabled = True
+    profile.status = "published"
+    version = AiAgentProfileVersion(
+        profile_id=profile.id,
+        version=2,
+        status="published",
+        system_prompt_zh="你是 ITOM 助手。",
+        system_prompt_en="You are an ITOM assistant.",
+        enabled_capabilities=[],
+        knowledge_scope=["public"],
+        config_snapshot=_published_snapshot(profile, retention_days=retention_days),
+        max_risk_level="L1",
+        published_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db.add(version)
+    db.commit()
+    return version
+
+
+def _disable_other_requester_profiles(db, active_profile_id: str | None = None) -> None:
+    for profile in db.query(AiAgentProfile).filter(AiAgentProfile.audience == "requester"):
+        if profile.id != active_profile_id:
+            profile.enabled = False
+    db.commit()
 
 
 def test_create_rejects_client_authority_fields_before_any_conversation_is_created(client, admin_headers):
@@ -186,6 +254,76 @@ def test_bootstrap_is_a_safe_allowlist_and_disabled_profile_fails_closed(client,
     assert data["fallback_available"] is True
 
 
+@pytest.mark.parametrize(
+    "malformation",
+    [
+        "missing_snapshot",
+        "missing_bilingual_prompt",
+        "unknown_capability",
+        "missing_capabilities",
+        "unhealthy_provider",
+        "active_config_mismatch",
+    ],
+)
+def test_bootstrap_and_create_fail_closed_for_malformed_published_runtime_profiles(
+    client, admin_headers, malformation
+):
+    """A published row without its complete runtime proof must never enable the assistant or create a conversation."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, version_id = _publish_requester_profile(retention_days=30)
+    with SessionLocal() as db:
+        profile = db.get(AiAgentProfile, profile_id)
+        version = db.get(AiAgentProfileVersion, version_id)
+        if malformation == "missing_snapshot":
+            version.config_snapshot = {}
+        elif malformation == "missing_bilingual_prompt":
+            version.system_prompt_en = " "
+        elif malformation == "unknown_capability":
+            version.enabled_capabilities = ["unknown.capability"]
+        elif malformation == "missing_capabilities":
+            version.enabled_capabilities = None
+        elif malformation == "unhealthy_provider":
+            db.get(AiProviderConfig, profile.default_provider_id).enabled = False
+        else:
+            profile.retention_days = 31
+        db.commit()
+    headers = _create_user(client, admin_headers, f"wa0_malformed_{malformation}")
+
+    bootstrap = client.get("/api/assistant/bootstrap", headers=headers)
+    assert bootstrap.status_code == 200, bootstrap.text
+    assert bootstrap.json()["data"]["enabled"] is False
+    create = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert create.status_code == 403, create.text
+    assert create.json()["error"]["code"] == "AI_ASSISTANT_UNAVAILABLE"
+
+
+def test_bootstrap_fallback_uses_the_authenticated_permission_aware_document_guide(client, admin_headers, monkeypatch):
+    """A literal fallback flag would falsely advertise a deterministic guide when its safe authenticated payload is unavailable."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    _publish_requester_profile(retention_days=30)
+    headers = _create_user(client, admin_headers, "wa0_guide_fallback")
+
+    guide = client.get("/api/it-document-guide", headers=headers)
+    assert guide.status_code == 200, guide.text
+    documents = guide.json()["data"]["documents"]
+    assert {document["type"] for document in documents} == {
+        "service_request", "incident", "problem", "change", "requirement", "project"
+    }
+    assert all(isinstance(document["can_create"], bool) for document in documents)
+    assert all(
+        document["target_path"] is not None if document["can_create"] else document["target_path"] is None
+        for document in documents
+    )
+    assert client.get("/api/assistant/bootstrap", headers=headers).json()["data"]["fallback_available"] is True
+
+    monkeypatch.setattr(it_document_guide, "guide_payload", lambda *_args: {"documents": "unsafe"})
+    unavailable = client.get("/api/assistant/bootstrap", headers=headers)
+    assert unavailable.status_code == 200, unavailable.text
+    assert unavailable.json()["data"]["fallback_available"] is False
+
+
 def test_inactive_account_cannot_bootstrap_or_create_a_conversation(client, admin_headers):
     """Trusting an earlier login after account deactivation would bypass the database-loaded identity gate."""
     headers = _create_user(client, admin_headers, "wa0_inactive_conversation")
@@ -250,6 +388,147 @@ def test_retention_zero_never_persists_ordinary_message_bodies_on_success_or_fai
             content={"text": "failed secret", "authorization": "failed-token-raw"},
             redacted_text="failed secret",
             status="failed",
+        ) is None
+        db.commit()
+        assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
+
+
+def test_zero_retention_remains_nonpersistent_when_a_positive_republish_interleaves_before_message_write(
+    client, admin_headers
+):
+    """Reading current retention at write time would turn a zero-retention conversation into a transcript."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, _version_id = _publish_requester_profile(retention_days=0)
+    headers = _create_user(client, admin_headers, "wa0_retention_zero_republish")
+    created = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert created.status_code == 200, created.text
+
+    with SessionLocal() as db:
+        conversation = db.get(AiConversation, created.json()["data"]["id"])
+        _publish_next_version(db, db.get(AiAgentProfile, profile_id), retention_days=30)
+        assert assistant_conversations.persist_ordinary_message(
+            db,
+            conversation,
+            role="user",
+            content={"text": "must never become a retained transcript"},
+            redacted_text="must never become a retained transcript",
+        ) is None
+        db.commit()
+        assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
+
+
+def test_positive_retention_remains_persistent_when_current_profile_is_republished_to_zero(client, admin_headers):
+    """A later zero-retention policy must not retroactively erase the immutable version decision for an existing conversation."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, _version_id = _publish_requester_profile(retention_days=30)
+    headers = _create_user(client, admin_headers, "wa0_retention_positive_republish")
+    created = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert created.status_code == 200, created.text
+
+    with SessionLocal() as db:
+        conversation = db.get(AiConversation, created.json()["data"]["id"])
+        _publish_next_version(db, db.get(AiAgentProfile, profile_id), retention_days=0)
+        stored = assistant_conversations.persist_ordinary_message(
+            db,
+            conversation,
+            role="assistant",
+            content={"text": "retained by the original version"},
+            redacted_text="retained by the original version",
+        )
+        assert stored is not None
+        db.commit()
+        assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 1
+
+
+@pytest.mark.parametrize("state", ["disabled", "deleted"])
+def test_ordinary_messages_stop_when_the_current_profile_is_disabled_or_deleted(client, admin_headers, state):
+    """A stale active conversation must not continue recording messages after its current profile is withdrawn."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, _version_id = _publish_requester_profile(retention_days=30)
+    headers = _create_user(client, admin_headers, f"wa0_profile_{state}")
+    created = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert created.status_code == 200, created.text
+
+    with SessionLocal() as db:
+        profile = db.get(AiAgentProfile, profile_id)
+        if state == "disabled":
+            profile.enabled = False
+        else:
+            profile.is_deleted = True
+        db.commit()
+        conversation = db.get(AiConversation, created.json()["data"]["id"])
+        assert assistant_conversations.persist_ordinary_message(
+            db,
+            conversation,
+            role="user",
+            content={"text": "withdrawn profile"},
+            redacted_text="withdrawn profile",
+        ) is None
+        db.commit()
+        assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
+
+
+def test_ordinary_messages_fail_closed_when_the_captured_version_has_no_complete_snapshot(client, admin_headers):
+    """Falling back to live retention when an old version lacks proof would persist an ungoverned transcript."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, _version_id = _publish_requester_profile(retention_days=30)
+    headers = _create_user(client, admin_headers, "wa0_legacy_conversation")
+    created = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert created.status_code == 200, created.text
+
+    with SessionLocal() as db:
+        legacy = AiAgentProfileVersion(
+            profile_id=profile_id,
+            version=0,
+            status="published",
+            system_prompt_zh="旧版",
+            system_prompt_en="Legacy",
+            enabled_capabilities=[],
+            knowledge_scope=["public"],
+            config_snapshot={},
+            max_risk_level="L1",
+        )
+        db.add(legacy)
+        db.flush()
+        conversation = db.get(AiConversation, created.json()["data"]["id"])
+        conversation.profile_version_id = legacy.id
+        db.commit()
+        assert assistant_conversations.persist_ordinary_message(
+            db,
+            conversation,
+            role="user",
+            content={"text": "legacy retention cannot be inferred"},
+            redacted_text="legacy retention cannot be inferred",
+        ) is None
+        db.commit()
+        assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
+
+
+def test_ordinary_messages_fail_closed_when_the_captured_version_lacks_publication_proof(client, admin_headers):
+    """A timestamp-less captured version is not proof that its retention policy was ever published."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, version_id = _publish_requester_profile(retention_days=30)
+    headers = _create_user(client, admin_headers, "wa0_unpublished_capture")
+    created = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert created.status_code == 200, created.text
+
+    with SessionLocal() as db:
+        profile = db.get(AiAgentProfile, profile_id)
+        _publish_next_version(db, profile, retention_days=30)
+        db.get(AiAgentProfileVersion, version_id).published_at = None
+        conversation = db.get(AiConversation, created.json()["data"]["id"])
+        db.commit()
+        assert assistant_conversations.persist_ordinary_message(
+            db,
+            conversation,
+            role="assistant",
+            content={"text": "unproved published version"},
+            redacted_text="unproved published version",
         ) is None
         db.commit()
         assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
@@ -356,3 +635,11 @@ def test_owner_pagination_has_stable_order_and_never_counts_other_users(client, 
     assert len(second_ids) == 1
     assert not set(first_ids).intersection(second_ids)
     assert set(first_ids + second_ids) == set(alice_ids)
+
+
+@pytest.mark.parametrize("page", [0, 10_001])
+def test_conversation_page_rejects_values_outside_the_bounded_offset_window(client, admin_headers, page):
+    """Allowing an unbounded page would turn an otherwise bounded API into an overflowing database offset."""
+    response = client.get(f"/api/assistant/conversations?page={page}", headers=admin_headers)
+
+    assert response.status_code == 422, response.text
