@@ -101,3 +101,23 @@ def test_redaction_handles_credential_key_variants_and_header_assignment_and_gen
         assert output["client_secret"] == "[REDACTED]"
         assert output["apiKey"] == "[REDACTED]"
         assert "release.2026.version" in output["note"]
+
+
+def test_redaction_scrubs_all_sensitive_assignment_name_variants_without_losing_normal_text():
+    """A divergent assignment denylist would leak credential forms that mapping-key redaction already protects."""
+    raw = {
+        "note": (
+            "before authorization=authorization-raw Api_Access_Key: api-access-key-raw "
+            "ID-TOKEN=id-token-raw PRIVATE_key:private-key-raw "
+            "status=ok project=printer after"
+        )
+    }
+    secrets = {"authorization-raw", "api-access-key-raw", "id-token-raw", "private-key-raw"}
+
+    outputs = [redact_for_model(raw), redact_for_message(raw), redact_for_log(raw)]
+
+    assert raw["note"].endswith("status=ok project=printer after")
+    for output in outputs:
+        rendered = json.dumps(output, ensure_ascii=False)
+        assert not any(secret in rendered for secret in secrets)
+        assert "status=ok project=printer after" in output["note"]

@@ -2,9 +2,11 @@
 from dataclasses import dataclass, field
 from enum import Enum
 import re
-from typing import Any, Callable, Mapping, get_args, get_origin
+from typing import Any, Callable, Mapping, get_args
 
 from pydantic import BaseModel
+
+from app.assistant.redaction import is_sensitive_name
 
 
 _UNSAFE_INPUT_NAMES = frozenset({
@@ -23,11 +25,18 @@ def _normalise_name(value: object) -> str:
 
 def _unsafe_input_name(value: object) -> bool:
     normalized = _normalise_name(value)
+    segments = _name_segments(value)
     return (
-        normalized in _UNSAFE_INPUT_NAMES
+        is_sensitive_name(value)
+        or normalized in _UNSAFE_INPUT_NAMES
         or normalized.startswith("internal")
-        or any(marker in normalized for marker in ("password", "secret", "token", "credential"))
+        or bool(segments.intersection({"authorization", "auth", "permission", "permissions", "role", "roles", "audience"}))
     )
+
+
+def _name_segments(value: object) -> set[str]:
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value))
+    return {segment.lower() for segment in re.split(r"[^A-Za-z0-9]+", text) if segment}
 
 
 def _field_aliases(field_name: str, field: object) -> set[str]:
@@ -69,21 +78,26 @@ def validate_capability_input_model(input_model: type[BaseModel]) -> None:
     check(input_model)
 
 
-def _sanitize_schema(value: object) -> object:
+def _sanitize_schema(value: object, *, property_map: bool = False) -> object:
     """Remove default/example values and unsafe keys before a model sees JSON Schema."""
     from app.assistant.redaction import redact_for_model
 
     if isinstance(value, Mapping):
         clean: dict[object, object] = {}
         for key, child in value.items():
+            if property_map:
+                if _unsafe_input_name(key):
+                    continue
+                clean[key] = _sanitize_schema(child)
+                continue
             if _normalise_name(key) in _SCHEMA_VALUE_KEYS or _unsafe_input_name(key):
                 continue
-            clean[key] = _sanitize_schema(child)
+            clean[key] = _sanitize_schema(child, property_map=key == "properties")
         return clean
     if isinstance(value, list):
-        return [_sanitize_schema(item) for item in value]
+        return [_sanitize_schema(item, property_map=property_map) for item in value]
     if isinstance(value, tuple):
-        return tuple(_sanitize_schema(item) for item in value)
+        return tuple(_sanitize_schema(item, property_map=property_map) for item in value)
     return redact_for_model(value)
 
 

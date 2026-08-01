@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from app.assistant.policy import capabilities_for_user
 from app.assistant.registry import CapabilityRegistry
@@ -34,6 +34,12 @@ class _SchemaDefaultsInput(BaseModel):
         default="token=default-token-raw",
         examples=["Authorization: Basic default-basic-raw"],
     )
+
+
+class _ReservedPropertyNamesInput(BaseModel):
+    default: str = Field(default="default-value-raw", examples=["default-example-raw"])
+    example: str = Field(default="example-value-raw", examples=["example-example-raw"])
+    examples: str = Field(default="examples-value-raw", examples=["examples-example-raw"])
 
 
 def _handler(*_args):
@@ -289,3 +295,78 @@ def test_registry_rejects_dangerous_input_fields_and_sanitizes_schema_defaults_a
     assert "default" not in rendered
     assert "examples" not in rendered
     assert all(name not in rendered for name in ("access_token", "clientSecret", "roles"))
+
+
+@pytest.mark.parametrize(
+    ("field_name", "alias"),
+    [
+        ("authorization_url", None),
+        ("permission_scope", None),
+        ("role_ids", None),
+        ("auth_context", None),
+        ("subject", "authorizationUrl"),
+        ("subject", "permissionScope"),
+        ("subject", "roleIds"),
+        ("subject", "authContext"),
+    ],
+)
+def test_registry_rejects_authorization_internal_name_segments_and_aliases(field_name, alias):
+    """Permitting authorization/context, permission, or role segments would export model-controlled authority."""
+    registry = CapabilityRegistry()
+    field = Field(alias=alias) if alias else ...
+    input_model = create_model("UnsafeVariantInput", **{field_name: (str, field)})
+    with pytest.raises(ValueError, match="unsafe input field"):
+        registry.register(CapabilityDefinition(
+            code=f"unsafe.{field_name}.{alias or 'field'}",
+            channels=frozenset({AssistantChannel.WEB}),
+            audiences=frozenset({"requester"}),
+            module="knowledge",
+            action="view",
+            risk=RiskLevel.L1,
+            input_model=input_model,
+            handler=_handler,
+        ))
+
+
+@pytest.mark.parametrize("field_name", ["service_url", "scope_description", "contact_context", "roleplay_title"])
+def test_registry_keeps_safe_business_neighbour_fields(field_name):
+    """Over-broad substring matching would reject ordinary business fields that are not authorization inputs."""
+    registry = CapabilityRegistry()
+    input_model = create_model("SafeNeighbourInput", **{field_name: (str, ...)})
+    definition = CapabilityDefinition(
+        code=f"safe.{field_name}",
+        channels=frozenset({AssistantChannel.WEB}),
+        audiences=frozenset({"requester"}),
+        module="knowledge",
+        action="view",
+        risk=RiskLevel.L1,
+        input_model=input_model,
+        handler=_handler,
+    )
+    assert registry.register(definition).model_schema()["input_schema"]["properties"][field_name]
+
+
+def test_schema_sanitizer_preserves_safe_property_names_while_removing_property_metadata_values():
+    """Stripping keys without JSON-Schema context would delete legitimate fields named default/example/examples."""
+    registry = CapabilityRegistry()
+    definition = CapabilityDefinition(
+        code="safe.reserved-properties",
+        channels=frozenset({AssistantChannel.WEB}),
+        audiences=frozenset({"requester"}),
+        module="knowledge",
+        action="view",
+        risk=RiskLevel.L1,
+        input_model=_ReservedPropertyNamesInput,
+        handler=_handler,
+    )
+    schema = registry.register(definition).model_schema()["input_schema"]
+    rendered = str(schema)
+
+    assert {"default", "example", "examples"} <= set(schema["properties"])
+    assert not any(raw in rendered for raw in (
+        "default-value-raw", "default-example-raw", "example-value-raw", "example-example-raw",
+        "examples-value-raw", "examples-example-raw",
+    ))
+    for field in schema["properties"].values():
+        assert "default" not in field
+        assert "examples" not in field
