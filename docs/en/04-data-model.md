@@ -453,3 +453,9 @@ erDiagram
 `feishu_config` retains only Feishu OAuth, workplace login, organization sync, and generic app credentials. All `helpdesk_*` fields are removed. The Aily bot may be a different app, so its credentials and tenant/agent allowlists live in `aily_integration_config`; its `open_id` is never assumed equal to the login app's value.
 
 Remove `feishu_helpdesk_handoff`, `feishu_helpdesk_intake`, `feishu_helpdesk_sync_event`, and `feishu_helpdesk_outbox`. The user confirmed there is no valuable production history to migrate or archive. The migration safely drops those dedicated tables/fields while the frozen Git tag remains recoverable.
+
+### 1.15 Web-agent target models (WA0; design approved)
+
+The web agent adds structures instead of reusing or rewriting `aily_integration_config`: `ai_provider_config` stores provider connection, encrypted secret, capability probes, primary/fallback, and enablement; `ai_agent_profile` / `ai_agent_profile_version` store audience, maximum level, versioned bilingual instructions, capability/knowledge settings, publish, and rollback; `ai_conversation` / `ai_message` store the current ITOM user's web session and redacted structured messages; `ai_action` stores capability, risk, payload digest, confirmation, result, and business entity; `ai_provider_call` stores only model, tokens, latency, result code, and redacted error metadata.
+
+Capability handlers are code-registered. Database configuration may disable a registered capability but cannot invent an executable handler. Migration adds tables, indexes, and default permissions only; it does not backfill, recalculate, or rewrite business records, process instances, Aily identities, or MCP audit. Conversation retention defaults to 30 days and is configurable from 0–90 days; business-action audit follows the independent audit policy. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).

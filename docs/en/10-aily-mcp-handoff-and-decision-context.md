@@ -66,9 +66,13 @@ An incident means a broad network, server, or application outage. Only IT staff 
 
 When a user describes a potentially broad outage, Aily still creates that user's service request and marks it as suspected major impact. IT staff decide whether to associate an existing incident or create a new one. Aily and normal users do not classify it directly as an incident.
 
-### 3.4 IT-staff web routing does not change the Aily boundary (approved, not implemented)
+### 3.4 IT-staff web routing does not change the Aily boundary (phases A/B/C implemented)
 
-IT staff and system administrators receive a Web “Record Creation Guide” and cross-record relation capability. It supports internal ITIL judgment only and does not burden normal business users with web type selection. In Aily, a normal business user continues to create only service requests, while a department-appointed BDO may register IT requirements. Aily does not transfer service request → incident, service request/incident → problem, incident/problem → change, or requirement → project. Any future MCP scope expansion needs separate confirmation of architecture, permission, audit, and user experience.
+IT staff and system administrators now have a Web “Record Creation Guide” and cross-record relation capability. It supports internal ITIL judgment only and does not burden normal business users with web type selection. In Aily, a normal business user continues to create only service requests, while a department-appointed BDO may register IT requirements. Aily does not transfer service request → incident, service request/incident → problem, incident/problem → change, or requirement → project. Any future MCP scope expansion needs separate confirmation of architecture, permission, audit, and user experience.
+
+### 3.5 ITOM web agent (design approved; implementation pending)
+
+The web agent uses two entrances and one capability core: web uses the current ITOM login, Aily retains its JWT/MCP identity, and both reuse only lower-level domain services and business guards. A normal business user's web agent remains limited to own service requests; BDO adds own IT requirements; IT staff receive system-wide guidance and progressively enabled writes under actual permissions and process assignment. Models, prompts, and administrator profiles are never authorization sources. The existing Record Creation Guide remains a deterministic fallback. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
 
 ## 4. Approved architecture
 
@@ -102,6 +106,8 @@ IDC Kubernetes is the sole runtime, integration, and acceptance environment at t
 | MCP Server | Tool discovery, authentication, identity mapping, normalization, domain-service calls, structured errors, audit | Direct table writes, bypassing RBAC/state machines, exposing secrets or general HTTP/SQL |
 | ITOM | Sole source for catalog, forms, SLA, dispatch, workflow, permissions, records, ratings, and audit | Delegating authorization or final business state to an LLM |
 | Feishu platform | Aily conversation, identity/organization, bot messaging, static knowledge, later approvals | Treating external payloads as trusted business facts |
+
+The web agent adds a web-session adapter, model gateway, capability registry, orchestration, and safe knowledge retrieval without changing these responsibilities. Web identity remains isolated from Aily identity; models never write tables; ITOM domain services, RBAC, data scope, workflow, confirmation, idempotency, and audit remain authoritative.
 
 Static IT knowledge is provided through Aily's Feishu knowledge-base integration, not duplicated by V1 MCP. Feishu Approval is deferred to phase 3; ITOM still validates and persists final workflow state.
 

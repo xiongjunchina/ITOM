@@ -529,6 +529,12 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 
 **Process-definition management** (process center): processes/steps are fully configurable — stable step code, step name, node type, default assignment (role / user group), CC parties, L1–L4 autonomy level, step SLA, trigger condition (the trigger condition activating a process for the same record type must be unique). Task creation stores process version, step code, and RACI (responsible/informed) snapshots; node/handler/CC/node-type/SLA changes on a used version are locked and evolve via **Save as a new version** (old records keep the old version; new records use the new version).
 
+### 10.1 ITOM Web Agent (design approved; implementation pending)
+
+The approved design isolates the web-login entrance from Aily MCP identity while sharing lower-level domain capabilities. A normal business user still works only with own service requests; a BDO additionally registers and follows own IT requirements; IT staff receive module guidance, query, draft, and progressively enabled controlled actions based on effective role, feature permission, data scope, record state, and current process assignment. Administrators configure models, profiles, knowledge scope, and maximum action level, but configuration may only restrict and never grant business authority.
+
+Capabilities are L0 explanation/navigation, L1 authorized query, L2 draft/preview, L3 explicit-confirmation writes, and initially prohibited L4 administrative risk. Every executable capability is server-registered and invokes a domain service; no general SQL, HTTP, shell, or direct table write exists. The existing Record Creation Guide remains a deterministic fallback. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
+
 ---
 
 ## 11. Non-Functional Requirements
@@ -563,5 +569,6 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 | Aily-MCP P1 Intake (real Aily write UAT complete for service requests and IT requirements) | 5, 7, 8 | Live catalog, dynamic forms, preview/confirmation, request/requirement registration, workflow/dispatch; normal business users cannot create incidents or IT requirements, while BDOs can register IT requirements |
 | Aily-MCP P2 Closure Loop (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | 3, 5, 8 | Dispatch, accept, resolve, reliable outbox, button/text confirm or reopen, close, and rate across real roles |
 | Aily-MCP P3 Approval & Release Hardening | 8, 10, 11 | Feishu Approval idempotency is deferred by user decision; complete trusted TLS, IDC security/performance/recovery/real-role UAT, and a user-approved PR to `main` |
+| Web Agent WA0–WA4 (design approved; implementation pending) | 2, 3, 5–10, 11 | Model/profile governance, role-aware read-only advisor, requester service-request and BDO requirement loops, controlled IT-staff writes, and quality governance; ITOM permission/domain services remain authoritative |
 
 **System-level overall acceptance**: all creation forms require ≤ 5 items; no page manually maintains statistics; all six point-event categories trigger automatically; real acceptance covers “Aily request → MCP create → ITOM dispatch/accept/resolve → Aily proactive notification → requester confirm/reopen → close → rate” and “BDO requirement registration through Aily → ITOM evaluation → delivery/project → acceptance and closure.”

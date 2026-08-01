@@ -235,6 +235,27 @@ GET  /api/records/{entity_type}/{entity_id}/relations
 
 `recommend` questions and answers are not persisted. Active source/target/relation uniqueness plus creator/source/target-type/idempotency-key uniqueness are enforced; a request digest rejects a reused key with different parameters. `prepare/submit` do not write domain tables directly; `submit` invokes the incident, problem, change, project, or other target domain service for its own fields, status, workflow, approval, RBAC, audit, and event publishing. A server whitelist controls first-phase relation types. Idempotent retries return the first result and never alter the source record's type, status, or workflow.
 
+### 4.1d ITOM web agent (WA0–WA4; design approved)
+
+The web agent uses the existing ITOM Bearer login and an independent `/api/assistant` entrance; it does not self-connect through Aily `/mcp/`. The two channels share only domain services, permission, forms, workflow, confirmation, idempotency, and audit. Target APIs are:
+
+```text
+GET/POST /api/assistant/conversations
+GET      /api/assistant/conversations/{id}
+POST     /api/assistant/conversations/{id}/messages    # SSE
+POST     /api/assistant/actions/{id}/confirm|cancel
+POST     /api/assistant/conversations/{id}/archive
+GET      /api/assistant/bootstrap
+
+GET/POST/PATCH /api/admin/ai/providers
+POST           /api/admin/ai/providers/{id}/test
+GET/PATCH      /api/admin/ai/profiles/{code}/draft
+POST           /api/admin/ai/profiles/{code}/publish|rollback
+GET            /api/admin/ai/health|usage|action-audits
+```
+
+The model receives only code-registered capabilities available to the current user. An L3 action first issues a single-use token bound to user, conversation, capability, normalized payload digest, and expiry; confirmation rechecks account, permission, data scope, record state, and workflow assignment. Only a domain service may return success. Provider reads expose `has_secret` only. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
+
 ### 4.2 ITSM
 
 ```text
@@ -427,6 +448,7 @@ IDC Kubernetes:
 | Aily-MCP P1 (real Aily write UAT complete for service requests and IT requirements) | dynamic forms, search, confirmed submit, BDO requirement registration, dispatch | service-item form/dispatch config | PRD §5/7 |
 | Aily-MCP P2 (normal-user text same-ticket loop and P2.1 live signed-button loop both passed) | acceptance, resolution message, confirm/reopen, rating | ticket detail + three closure MCP tools | PRD §5.1 |
 | Aily-MCP P3 / release hardening | Feishu Approval deferred; trusted TLS plus IDC security/performance/recovery/real-role UAT | approval/operations config | docs/10 §10 |
+| Web Agent WA0–WA4 (design approved; implementation pending) | model gateway, capability registry, role policy, conversation/action audit, domain-service reuse | global assistant, structured cards, AI Assistant administration | web-agent design baseline |
 
 ## 8.1 Business-domain Service Department API (M41)
 

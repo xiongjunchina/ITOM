@@ -233,6 +233,27 @@ GET  /api/records/{entity_type}/{entity_id}/relations
 
 `recommend` 的问题和答案不得持久化。活动关系已建立来源/目标/关系类型唯一约束，并对创建人、来源、目标类型、幂等键建立唯一约束；同键异参由请求摘要拒绝。`prepare/submit` 不直接写领域表；`submit` 已通过事件、问题、变更或项目等领域服务完成各自的字段、状态、流程、审批、RBAC、审计和事件发布。允许的首期关系类型由服务端白名单控制；任何重复提交按幂等键返回首次结果，不得改变源单据类型、状态或流程。
 
+### 4.1d ITOM 网页智能体（WA0–WA4，设计已确认）
+
+网页智能体使用现有 ITOM Bearer 登录身份和独立 `/api/assistant` 入口，不调用 Aily `/mcp/` 进行自连接；两种渠道只在领域服务、权限、表单、流程、确认、幂等和审计层复用。目标接口如下：
+
+```text
+GET/POST /api/assistant/conversations
+GET      /api/assistant/conversations/{id}
+POST     /api/assistant/conversations/{id}/messages    # SSE
+POST     /api/assistant/actions/{id}/confirm|cancel
+POST     /api/assistant/conversations/{id}/archive
+GET      /api/assistant/bootstrap
+
+GET/POST/PATCH /api/admin/ai/providers
+POST           /api/admin/ai/providers/{id}/test
+GET/PATCH      /api/admin/ai/profiles/{code}/draft
+POST           /api/admin/ai/profiles/{code}/publish|rollback
+GET            /api/admin/ai/health|usage|action-audits
+```
+
+模型只收到当前用户可用的代码注册能力。L3 动作先生成绑定用户、会话、能力、规范化参数摘要和有效期的单次确认凭证，确认时再次校验账号、权限、数据范围、记录状态和流程任务；成功结果只能来自领域服务。读取模型配置只返回 `has_secret`。详细架构、安全和降级见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
+
 ### 4.2 ITSM
 
 ```text
@@ -428,6 +449,7 @@ IDC Kubernetes:
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
+| 网页智能体 WA0–WA4（设计已确认，待实施） | 模型网关、能力注册、角色策略、会话/动作审计、领域服务复用 | 全局助手、结构化卡片、AI 智能体管理 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 
