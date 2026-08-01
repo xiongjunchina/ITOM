@@ -334,7 +334,7 @@ position_id FK, level (senior/mid/junior), count, qualification, status (To Recr
 
 ### 6.3 development_activity — training activity
 
-activity_type (internal cross-training / external technical exchange / new-technology research), topic, activity_date, host_id FK (presenter/organizer), participant_ids JSONB (array of org_member ids), output_link, remarks, created_by FK→auth_user. Registration triggers host/participant training-point events; `created_by` is recorded from the current account and existing rows are idempotently backfilled from the earliest creation audit. Activity deletion and point recalculation use soft deletion, preserving sources, audit, and historical ledger rows.
+activity_type (internal cross-training / external technical exchange / new-technology research), topic, activity_date, host_id FK (presenter/organizer), participant_ids JSONB (frozen array of org_member ids used for point recipients), participant_department_selections JSONB (`[{id,name,member_ids}]`, the selected full-department display and attendee snapshot), output_link, remarks, created_by FK→auth_user. The list prefers department snapshots plus individual participants outside those snapshots; points always use `participant_ids`, so later transfers, renames, or hires never reinterpret an activity. Existing activities are not backfilled with department snapshots and retain their original person-list presentation. Registration triggers host/participant training-point events; `created_by` is recorded from the current account and existing rows are idempotently backfilled from the earliest creation audit. Activity deletion and point recalculation use soft deletion, preserving sources, audit, and historical ledger rows.
 
 ### 6.4 team_charter — team culture
 

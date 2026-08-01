@@ -324,7 +324,7 @@ GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # 兼容旧客户端；团队贡献权重、目标及满意度组合的规范入口是 /api/point-rules/team-config
 ```
 
-`GET /api/trainings` 返回 `participant_ids` 与当前账号的 `can_manage`。创建时服务端写入 `created_by`；存量记录在迁移时从最早 `development_activity.create` 审计记录回填。`PATCH` 和 `DELETE` 不依赖通用活动编辑权限：仅管理员、CIO 或登记人可操作，后端逐次复核。主讲或参与人变化会在当前未发布、未锁定周期软删除原活动的 `training_host` / `training_attend` 流水并按当前规则重算；删除亦撤销这两类流水。历史、已发布或锁定周期的计分改动和删除返回 `TRAINING_POINTS_LOCKED`，但不改变积分对象的资料可继续编辑并审计。
+`POST/PATCH /api/trainings` 接受 `participant_ids`，以及可选的 `participant_department_ids`。后者仅用于“整部门参与”：服务端校验部门及其当时在岗 IT 团队成员，展开并冻结 `participant_ids`，同时保存部门 ID、显示名和人员范围快照。若 `PATCH` 省略该字段，保留现有部门快照以兼容旧客户端；显式 `[]` 清除部门显示语义但不自动删除已传的人员。`GET /api/trainings` 返回 `participant_ids`、兼容字段 `participant_names`、清单摘要 `participant_departments` / `participant_individual_names` 与当前账号的 `can_manage`。创建时服务端写入 `created_by`；存量记录在迁移时从最早 `development_activity.create` 审计记录回填。`PATCH` 和 `DELETE` 不依赖通用活动编辑权限：仅管理员、CIO 或登记人可操作，后端逐次复核。主讲或参与人变化会在当前未发布、未锁定周期软删除原活动的 `training_host` / `training_attend` 流水并按当前规则重算；删除亦撤销这两类流水。历史、已发布或锁定周期的计分改动和删除返回 `TRAINING_POINTS_LOCKED`，但不改变积分对象的资料可继续编辑并审计。
 
 `/api/points/leaderboard` 的 `points` 聚合该周期 `contribution_bucket=team_contribution` 流水；当前考核期内，自动活动事件按当前有效 `point_rule` 分值计算，规则停用显示为 0，其他流水保留原始代数值。`/api/points/mine`、`/api/team/overview` 和 Dashboard 人员积分排行采用同一当前期口径，响应可带 `breakdown` 按 `source_type` 汇总来源。原始 `point_entry.points`、历史周期和已发布/锁定绩效不被改写。`role_result` 岗位结果流水不进入这些活动积分读接口，但仍保留在台账中供人效角色结果和审计使用。它与人效页经过角色、目标和权重折算后的结果不是同一指标。
 

@@ -43,6 +43,12 @@ interface TrainingFormValues {
   remarks?: string;
 }
 
+interface ParticipantDepartment {
+  id: string | null;
+  name: string;
+  members: Member[];
+}
+
 /** 培训提升：内部交叉培训 / 外部技术交流 / 新技术研究登记（登记即自动计分） */
 export default function Activities() {
   const t = useT();
@@ -117,12 +123,32 @@ export default function Activities() {
     const values = await form.validateFields();
     setSaving(true);
     try {
+      const participantIds = values.participant_ids ?? [];
+      const existingParticipantIds = editing?.participant_ids ?? [];
+      const participantsUnchanged = Boolean(
+        editing
+        && participantIds.length === existingParticipantIds.length
+        && participantIds.every((participantId) => existingParticipantIds.includes(participantId)),
+      );
+      // 只改资料时不传部门字段，服务端保留原活动快照；参与人实际变化才按当前目录重新计算。
+      const participantDepartmentIds = editing && participantsUnchanged
+        ? undefined
+        : members.length > 0
+        ? participantDepartments
+            .filter((department) => (
+              department.id
+              && department.members.length > 0
+              && department.members.every((member) => participantIds.includes(member.id))
+            ))
+            .map((department) => department.id as string)
+        : [];
       const payload = {
         activity_type: values.activity_type,
         topic: values.topic,
         activity_date: values.activity_date.format('YYYY-MM-DD'),
         host_id: values.host_id ?? null,
-        participant_ids: values.participant_ids ?? [],
+        participant_ids: participantIds,
+        participant_department_ids: participantDepartmentIds,
         output_link: values.output_link || null,
         remarks: values.remarks || null,
       };
@@ -156,24 +182,29 @@ export default function Activities() {
     value: m.id,
     label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
   }));
-  const participantTreeData = Object.entries(
-    members.reduce<Record<string, { name: string; members: Member[] }>>((groups, member) => {
+  const participantDepartments = Object.entries(
+    members.reduce<Record<string, ParticipantDepartment>>((groups, member) => {
       const departmentId = member.department_id || 'unassigned';
       const departmentName = member.department_name || t('team.activities.form.unassignedDepartment');
-      (groups[departmentId] ??= { name: departmentName, members: [] }).members.push(member);
+      (groups[departmentId] ??= {
+        id: member.department_id ?? null,
+        name: departmentName,
+        members: [],
+      }).members.push(member);
       return groups;
     }, {}),
   )
     .sort(([, left], [, right]) => left.name.localeCompare(right.name, 'zh-CN'))
-    .map(([departmentId, department]) => ({
-      key: `department:${departmentId}`,
-      value: `department:${departmentId}`,
-      title: department.name,
-      selectable: false,
-      children: department.members
-        .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
-        .map((member) => ({ key: member.id, value: member.id, title: member.name })),
-    }));
+    .map(([, department]) => department);
+  const participantTreeData = participantDepartments.map((department) => ({
+    key: `department:${department.id ?? 'unassigned'}`,
+    value: `department:${department.id ?? 'unassigned'}`,
+    title: department.name,
+    selectable: false,
+    children: department.members
+      .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
+      .map((member) => ({ key: member.id, value: member.id, title: member.name })),
+  }));
 
   const columns: ColumnsType<TrainingRow> = [
     {
@@ -195,16 +226,22 @@ export default function Activities() {
       title: t('team.activities.col.participants'),
       dataIndex: 'participant_names',
       width: 240,
-      render: (names: string[]) =>
-        names.length > 0 ? (
+      render: (_names: string[], row) => {
+        const departments = row.participant_departments ?? [];
+        const individualNames = row.participant_individual_names ?? row.participant_names ?? [];
+        return departments.length > 0 || individualNames.length > 0 ? (
           <Space size={4} wrap>
-            {names.map((n, i) => (
+            {departments.map((department) => (
+              <Tag color="blue" key={`department-${department.id}`}>{department.name}</Tag>
+            ))}
+            {individualNames.map((n, i) => (
               <Tag key={`${n}-${i}`}>{n}</Tag>
             ))}
           </Space>
         ) : (
           '-'
-        ),
+        );
+      },
     },
     {
       title: t('team.activities.col.output'),

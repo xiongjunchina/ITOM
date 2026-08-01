@@ -4,7 +4,7 @@ from datetime import date
 import pytest
 
 from app.db import SessionLocal
-from app.models import PerformancePeriod, PointEntry, PointRule
+from app.models import Department, DevelopmentActivity, OrgMember, PerformancePeriod, PointEntry, PointRule
 
 
 @pytest.fixture(scope="module")
@@ -217,6 +217,67 @@ def test_training_awards_points(client, admin_headers, ctx):
     dev_entries = my_points(client, ctx["dev_h"])["entries"]
     assert any(e["source_type"] == "training_attend" and e["points"] == 3 for e in dev_entries)
     assert not any(e["source_type"] == "training_attend" for e in tm_entries)  # 主讲不重复计参与分
+
+
+def test_training_department_selection_freezes_display_and_point_recipients(client, ctx):
+    """整部门登记保存部门摘要与人员快照；后来调岗或资料编辑不得改写历史范围。"""
+    dev_id, dev_headers = ctx["member_and_user"]("部门培训开发", "dept_training_dev", ["it_dev"])
+    tm_id, _ = ctx["member_and_user"]("部门培训组长", "dept_training_tm", ["it_tm"])
+    with SessionLocal() as db:
+        department = Department(code="IT-TRAINING-DEPT", name="培训全员组", dept_type="it")
+        db.add(department)
+        db.flush()
+        db.get(OrgMember, dev_id).department_id = department.id
+        db.get(OrgMember, tm_id).department_id = department.id
+        db.commit()
+        department_id = department.id
+
+    created = client.post(
+        "/api/trainings",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "整部门参与快照", "activity_date": date.today().isoformat(),
+            "participant_ids": [], "participant_department_ids": [department_id],
+        },
+        headers=dev_headers,
+    )
+    assert created.status_code == 200, created.text
+    activity_id = created.json()["data"]["id"]
+
+    listed = next(row for row in client.get("/api/trainings", headers=dev_headers).json()["data"] if row["id"] == activity_id)
+    assert set(listed["participant_ids"]) == {dev_id, tm_id}
+    assert listed["participant_departments"] == [{"id": department_id, "name": "培训全员组"}]
+    assert listed["participant_individual_names"] == []
+    with SessionLocal() as db:
+        activity = db.get(DevelopmentActivity, activity_id)
+        assert activity.participant_department_selections[0]["id"] == department_id
+        assert activity.participant_department_selections[0]["name"] == "培训全员组"
+        assert set(activity.participant_department_selections[0]["member_ids"]) == {dev_id, tm_id}
+        active_entries = db.query(PointEntry).filter(
+            PointEntry.source_ref == activity_id,
+            PointEntry.is_deleted.is_(False),
+        ).all()
+        assert {(entry.person_id, entry.source_type) for entry in active_entries} == {
+            (dev_id, "training_attend"), (tm_id, "training_attend"),
+        }
+        # 调岗不会反向改写已经登记的培训活动快照。
+        db.get(OrgMember, tm_id).department_id = None
+        db.commit()
+
+    metadata_update = client.patch(
+        f"/api/trainings/{activity_id}",
+        json={
+            "activity_type": "内部交叉培训",
+            "topic": "整部门参与快照（补充资料）", "activity_date": date.today().isoformat(),
+            "participant_ids": [dev_id, tm_id], "remarks": "不改计分对象",
+        },
+        headers=dev_headers,
+    )
+    assert metadata_update.status_code == 200, metadata_update.text
+    assert metadata_update.json()["data"]["points_recalculated"] is False
+    after_move = next(row for row in client.get("/api/trainings", headers=dev_headers).json()["data"] if row["id"] == activity_id)
+    assert after_move["participant_departments"] == [{"id": department_id, "name": "培训全员组"}]
+    assert after_move["participant_individual_names"] == []
 
 
 def test_training_manage_by_creator_admin_or_cio_and_reconciles_points(client, admin_headers, ctx):

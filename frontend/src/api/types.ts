@@ -1916,6 +1916,10 @@ export interface TrainingRow {
   host_id?: string | null;
   host_name: string | null;
   participant_ids: string[];
+  /** 按整部门勾选时服务端冻结的部门显示快照。 */
+  participant_departments?: Array<{ id: string; name: string }>;
+  /** 未被整部门快照覆盖的个别参与人姓名。 */
+  participant_individual_names?: string[];
   participant_names: string[];
   output_link: string | null;
   remarks: string | null;

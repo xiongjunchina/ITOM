@@ -145,6 +145,8 @@ ENSURE_COLUMNS = {
     ],
     "development_activity": [
         ("created_by", "VARCHAR(26)"),
+        # M86：只增列、不回填历史活动；避免组织后续变化改写历史参与范围。
+        ("participant_department_selections", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
     ],
     "performance_role_assignment": [
         ("evaluator_weights", "JSONB NOT NULL DEFAULT '{}'::jsonb"),

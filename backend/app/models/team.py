@@ -317,7 +317,11 @@ class PerformanceScore(GlidBase):
 
 
 class DevelopmentActivity(GlidBase):
-    """培训发展活动（PRD §9.4）：登记即触发培训积分并保留登记人。"""
+    """培训发展活动（PRD §9.4）：登记即触发培训积分并保留登记人。
+
+    ``participant_ids`` 是积分对象的冻结快照；整部门勾选另存部门、名称与
+    当时覆盖人员，供清单显示和审计，不能在组织变动后重新按当前组织推导。
+    """
 
     __tablename__ = "development_activity"
 
@@ -326,6 +330,11 @@ class DevelopmentActivity(GlidBase):
     activity_date: Mapped[date] = mapped_column(Date)
     host_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="主讲/组织人")
     participant_ids: Mapped[list | None] = mapped_column(JsonCol, default=list)
+    participant_department_selections: Mapped[list | None] = mapped_column(
+        JsonCol,
+        default=list,
+        comment="整部门参与快照：[{id,name,member_ids}]；人员快照仍以 participant_ids 为准",
+    )
     output_link: Mapped[str | None] = mapped_column(String(500), comment="产出链接（课件/纪要/报告）")
     remarks: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[str | None] = mapped_column(String(26), comment="登记人 auth_user.id；存量记录由审计日志回填")
