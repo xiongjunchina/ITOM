@@ -2,7 +2,8 @@
 from dataclasses import dataclass, field
 from enum import Enum
 import re
-from typing import Any, Callable, Mapping, get_args
+from collections.abc import Mapping as MappingABC
+from typing import Any, Callable, Mapping, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -42,22 +43,46 @@ def _name_segments(value: object) -> set[str]:
 def _field_aliases(field_name: str, field: object) -> set[str]:
     aliases = {field_name}
     for attribute in ("alias", "validation_alias", "serialization_alias"):
-        value = getattr(field, attribute, None)
-        if isinstance(value, str):
-            aliases.add(value)
-        for choice in getattr(value, "choices", ()):
-            if isinstance(choice, str):
-                aliases.add(choice)
+        aliases.update(_alias_segments(getattr(field, attribute, None)))
     return aliases
 
 
-def _nested_models(annotation: object) -> set[type[BaseModel]]:
+def _alias_segments(alias: object) -> set[str]:
+    """Return every string segment used by Pydantic's supported alias forms."""
+    if isinstance(alias, str):
+        return {alias}
+    segments: set[str] = set()
+    for segment in getattr(alias, "path", ()):
+        if isinstance(segment, str):
+            segments.add(segment)
+    for choice in getattr(alias, "choices", ()):
+        segments.update(_alias_segments(choice))
+    return segments
+
+
+def _is_unbounded_mapping(annotation: object) -> bool:
+    origin = get_origin(annotation)
+    return annotation in {dict, Mapping, MappingABC} or origin in {dict, MappingABC}
+
+
+def _check_input_annotation(annotation: object, check_model: Callable[[type[BaseModel]], None]) -> None:
+    if annotation in {Any, object} or _is_unbounded_mapping(annotation):
+        raise ValueError("unbounded mapping input is forbidden")
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return {annotation}
-    nested: set[type[BaseModel]] = set()
+        check_model(annotation)
+        return
     for argument in get_args(annotation):
-        nested.update(_nested_models(argument))
-    return nested
+        _check_input_annotation(argument, check_model)
+
+
+def _has_unbounded_schema_object(value: object) -> bool:
+    if isinstance(value, Mapping):
+        if "additionalProperties" in value and value["additionalProperties"] is not False:
+            return True
+        return any(_has_unbounded_schema_object(child) for child in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_has_unbounded_schema_object(child) for child in value)
+    return False
 
 
 def validate_capability_input_model(input_model: type[BaseModel]) -> None:
@@ -72,8 +97,9 @@ def validate_capability_input_model(input_model: type[BaseModel]) -> None:
             unsafe = next((name for name in _field_aliases(field_name, field) if _unsafe_input_name(name)), None)
             if unsafe:
                 raise ValueError(f"unsafe input field: {unsafe}")
-            for nested in _nested_models(field.annotation):
-                check(nested)
+            _check_input_annotation(field.annotation, check)
+        if _has_unbounded_schema_object(model.model_json_schema()):
+            raise ValueError("unbounded mapping input is forbidden")
 
     check(input_model)
 
@@ -164,6 +190,7 @@ class CapabilityDefinition:
 
     def model_schema(self) -> dict[str, Any]:
         """Return the only capability representation permitted to reach a model."""
+        validate_capability_input_model(self.input_model)
         return {
             "code": self.code,
             "description": self.description or self.code,

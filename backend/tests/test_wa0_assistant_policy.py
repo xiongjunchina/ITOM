@@ -1,9 +1,10 @@
 """WA0 capability discovery must derive authority from persisted ITOM state."""
 
 from types import SimpleNamespace
+from typing import Mapping
 
 import pytest
-from pydantic import BaseModel, Field, create_model
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, create_model
 
 from app.assistant.policy import capabilities_for_user
 from app.assistant.registry import CapabilityRegistry
@@ -42,6 +43,32 @@ class _ReservedPropertyNamesInput(BaseModel):
     examples: str = Field(default="examples-value-raw", examples=["examples-example-raw"])
 
 
+class _UnboundedDictInput(BaseModel):
+    attributes: dict[str, str]
+
+
+class _UnboundedMappingInput(BaseModel):
+    attributes: Mapping[str, str]
+
+
+class _NestedUnboundedMappingInput(BaseModel):
+    attributes: dict[str, str]
+
+
+class _ListContainedUnboundedMappingInput(BaseModel):
+    entries: list[_NestedUnboundedMappingInput]
+
+
+class _SafeNestedDetails(BaseModel):
+    service_url: str
+    region: str
+
+
+class _SafeNestedObjectInput(BaseModel):
+    details: _SafeNestedDetails
+    related_details: list[_SafeNestedDetails]
+
+
 def _handler(*_args):
     return CapabilityResult(status="ok", data={})
 
@@ -57,6 +84,19 @@ def _definition(code, *, audiences, module, action, risk=RiskLevel.L2, confirmat
         input_model=_CapabilityInput,
         handler=_handler,
         requires_confirmation=confirmation,
+    )
+
+
+def _input_definition(code, input_model):
+    return CapabilityDefinition(
+        code=code,
+        channels=frozenset({AssistantChannel.WEB}),
+        audiences=frozenset({"requester"}),
+        module="knowledge",
+        action="view",
+        risk=RiskLevel.L1,
+        input_model=input_model,
+        handler=_handler,
     )
 
 
@@ -370,3 +410,73 @@ def test_schema_sanitizer_preserves_safe_property_names_while_removing_property_
     for field in schema["properties"].values():
         assert "default" not in field
         assert "examples" not in field
+
+
+@pytest.mark.parametrize(
+    "validation_alias",
+    [
+        AliasPath("authorization_url"),
+        AliasPath("request", "auth_context"),
+        AliasChoices("safe_value", AliasPath("request", "permission_scope")),
+    ],
+)
+def test_registry_rejects_dangerous_validation_alias_paths_and_choices(validation_alias):
+    """Every alias segment is an effective model-controlled input name, including nested paths and choices."""
+    registry = CapabilityRegistry()
+    input_model = create_model(
+        "UnsafeAliasPathInput",
+        subject=(str, Field(validation_alias=validation_alias)),
+    )
+
+    with pytest.raises(ValueError, match="unsafe input field"):
+        registry.register(_input_definition("unsafe.alias-path", input_model))
+
+
+def test_registry_rejects_dangerous_serialization_alias_and_accepts_safe_alias_path():
+    """Validation and serialization aliases must be checked without rejecting ordinary nested business paths."""
+    registry = CapabilityRegistry()
+    unsafe = create_model(
+        "UnsafeSerializationAliasInput",
+        subject=(str, Field(serialization_alias="roleIds")),
+    )
+    safe = create_model(
+        "SafeAliasPathInput",
+        subject=(str, Field(validation_alias=AliasPath("request", "service_url"))),
+    )
+
+    with pytest.raises(ValueError, match="unsafe input field"):
+        registry.register(_input_definition("unsafe.serialization-alias", unsafe))
+    assert registry.register(_input_definition("safe.alias-path", safe)).model_schema()["input_schema"]["properties"]
+
+
+@pytest.mark.parametrize(
+    ("code", "input_model"),
+    [
+        ("unsafe.dict", _UnboundedDictInput),
+        ("unsafe.mapping", _UnboundedMappingInput),
+        ("unsafe.nested-mapping", _ListContainedUnboundedMappingInput),
+    ],
+)
+def test_registry_rejects_direct_and_nested_unbounded_mapping_inputs(code, input_model):
+    """Arbitrary object keys cannot be made safe with schema redaction, including below list items."""
+    with pytest.raises(ValueError, match="unbounded mapping"):
+        CapabilityRegistry().register(_input_definition(code, input_model))
+
+
+def test_registry_exports_safe_nested_objects_without_unbounded_additional_properties():
+    """Accepted input schemas must use explicit nested fields and never re-export arbitrary object keys."""
+    schema = CapabilityRegistry().register(
+        _input_definition("safe.nested-object", _SafeNestedObjectInput)
+    ).model_schema()["input_schema"]
+
+    def unbounded_object(value):
+        if isinstance(value, dict):
+            if value.get("additionalProperties") is True:
+                return True
+            return any(unbounded_object(child) for child in value.values())
+        if isinstance(value, list):
+            return any(unbounded_object(child) for child in value)
+        return False
+
+    assert schema["properties"]["details"]
+    assert not unbounded_object(schema)
