@@ -1,6 +1,6 @@
 # ITOM 网页智能体设计基线
 
-> 状态：**设计已确认；WA0 Task 1–6 已实现并完成 Task 6 Fix Round 4；Task 7+ 待实施**
+> 状态：**设计已确认；WA0 Task 1–6 已实现并完成 Task 6 Fix Round 5；Task 7+ 待实施**
 > 确认日期：2026-08-01
 > 中文为权威版本；英文镜像见 `docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`。
 
@@ -157,7 +157,7 @@ GET            /api/admin/ai/action-audits
 ## 12. 安全、确认与降级
 
 - 每次调用重新检查活动账号、有效角色、权限、数据范围、记录状态和流程任务；
-- L3 预览授权先于记录元数据，并在独立且最终回滚/关闭的 Session 执行；PostgreSQL 事务只读，处理器仅看到独立 Session 中重新加载的不可变 actor context 与无 Session-like 属性的 `ReadOnlyActionData` 门面。门面递归校验完整 SQLAlchemy AST，只接受一个直接映射表的显式直接标量列、同表安全比较/布尔条件与排序，以及编译期非负且在固定服务端上限内的 limit/offset，并以“上限 + 1”检测溢出；实体/关系/eager、join/alias/subquery/CTE、聚合/窗口/函数、text/raw SQL、跨表引用、任意层级行锁、动态/负数/超限分页均失败关闭。结果为递归冻结的 `FrozenActionRecord`；写入、DML/text 事务语句、bind/get_bind/connection/begin/get_transaction/scalar/scalars、flush、commit、rollback 均失败关闭，预览状态必须精确为 `prepared`；
+- L3 预览授权先于记录元数据，并在独立且最终回滚/关闭的 Session 执行；PostgreSQL 事务只读，处理器仅看到独立 Session 中重新加载的不可变 actor context 与无 Session-like 属性的 `ReadOnlyActionData` 门面。门面递归校验完整 SQLAlchemy AST，只接受一个直接映射表的显式直接标量列、同表安全比较/布尔条件与排序，以及编译期非负且在固定服务端上限内的 limit/offset，并以“上限 + 1”检测溢出；实体/关系/eager、join/alias/subquery/CTE、聚合/窗口/函数、text/raw SQL、跨表引用、任意层级行锁、动态/负数/超限分页均失败关闭。任何 SQLAlchemy prefix、suffix、statement hint 或 table hint 也在执行前无条件拒绝，不解析、不设置字符串白名单。结果为递归冻结的 `FrozenActionRecord`；写入、DML/text 事务语句、bind/get_bind/connection/begin/get_transaction/scalar/scalars、flush、commit、rollback 均失败关闭，预览状态必须精确为 `prepared`；
 - 规范化输入若会被递归脱敏改变则整体拒绝；不得持久化/执行脱敏替代值，也不得以其计算幂等摘要；
 - L3 确认凭证绑定用户、会话、能力、规范化参数摘要和有效期，单次使用；
 - 重试使用命名唯一约束下的幂等键；同键同参只返回赢家且不重发 Token，同键异参拒绝；状态已变化时重新预览；

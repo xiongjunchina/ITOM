@@ -1273,6 +1273,40 @@ def test_read_only_action_data_accepts_only_one_direct_mapped_scalar_query(
         assert rows[0].status == "new"
 
 
+def test_action_ports_reject_raw_query_modifiers_before_execution(monkeypatch):
+    unsafe_statements = {
+        "statement_hint_for_update": select(Ticket.id).with_statement_hint(
+            "FOR UPDATE"
+        ),
+        "suffix_for_update": select(Ticket.id).suffix_with("FOR UPDATE"),
+        "statement_hint_offset": select(Ticket.id).with_statement_hint(
+            "OFFSET 100000"
+        ),
+        "prefix_distinct": select(Ticket.id).prefix_with("DISTINCT"),
+        "table_hint": select(Ticket.id).with_hint(Ticket, "FOR UPDATE"),
+    }
+    with SessionLocal() as db:
+        read_port = assistant_types.ReadOnlyActionData(db)
+        mutation_port = assistant_types.ActionUnitOfWork(db)
+        execution_attempts: list[str] = []
+
+        def unexpected_execute(*_args, **_kwargs):
+            execution_attempts.append("execute")
+            raise AssertionError("unsafe query modifier reached database execution")
+
+        monkeypatch.setattr(db, "execute", unexpected_execute)
+        for name, statement in unsafe_statements.items():
+            with pytest.raises(AppError) as read_error:
+                read_port.fetch_all(statement)
+            _assert_code(read_error, "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION")
+
+            with pytest.raises(AppError) as mutation_error:
+                mutation_port.lock_one(statement)
+            _assert_code(mutation_error, "AI_ACTION_TRANSACTION_VIOLATION")
+
+        assert execution_attempts == [], name
+
+
 def test_read_only_action_data_recursively_rejects_unsafe_query_ast():
     ticket_alias = aliased(Ticket)
     ticket_cte = select(Ticket.id).cte("ticket_ids")

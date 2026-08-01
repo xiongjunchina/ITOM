@@ -1,6 +1,6 @@
 # ITOM Web Agent Design Baseline
 
-> Status: **design approved; WA0 Tasks 1–6 implemented with Task 6 Fix Round 4 complete; Task 7+ pending**
+> Status: **design approved; WA0 Tasks 1–6 implemented with Task 6 Fix Round 5 complete; Task 7+ pending**
 > Approval date: 2026-08-01
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -136,7 +136,7 @@ Read APIs return only `has_secret`, never secret values. Bootstrap returns the c
 ## 10. Security and degradation
 
 - Recheck active account, effective roles, permission, data scope, record state, and process assignment per call.
-- Authorize an L3 preview before record metadata and run it in an independent Session that is always rolled back and closed. PostgreSQL is transaction-read-only; the handler sees only an immutable actor context plus a `ReadOnlyActionData` facade with no Session-like attributes. The facade recursively validates the complete SQLAlchemy AST and accepts only explicit direct scalar columns from one direct mapped table, same-table safe comparison/boolean predicates and ordering, and compile-time nonnegative limit/offset within fixed server bounds, while max + 1 fetching detects overflow. Entity/relationship/eager projection, joins/aliases/subqueries/CTEs, aggregates/windows/functions, text/raw SQL, cross-table references, row locks at any depth, and dynamic/negative/excessive pagination fail closed. Results are recursively frozen `FrozenActionRecord` snapshots; raw Session/Engine/Connection/transaction surfaces, DML/text transaction statements, handler writes, flush, commit, and rollback all fail closed, while preview status must be exactly `prepared`.
+- Authorize an L3 preview before record metadata and run it in an independent Session that is always rolled back and closed. PostgreSQL is transaction-read-only; the handler sees only an immutable actor context plus a `ReadOnlyActionData` facade with no Session-like attributes. The facade recursively validates the complete SQLAlchemy AST and accepts only explicit direct scalar columns from one direct mapped table, same-table safe comparison/boolean predicates and ordering, and compile-time nonnegative limit/offset within fixed server bounds, while max + 1 fetching detects overflow. Entity/relationship/eager projection, joins/aliases/subqueries/CTEs, aggregates/windows/functions, text/raw SQL, cross-table references, row locks at any depth, and dynamic/negative/excessive pagination fail closed. Any SQLAlchemy prefix, suffix, statement hint, or table hint is also unconditionally rejected before execution without parsing or a string allowlist. Results are recursively frozen `FrozenActionRecord` snapshots; raw Session/Engine/Connection/transaction surfaces, DML/text transaction statements, handler writes, flush, commit, and rollback all fail closed, while preview status must be exactly `prepared`.
 - Reject normalized input if recursive redaction would change it. Never persist or execute the redacted substitute and never use it for the idempotency digest.
 - Bind an L3 token to user, conversation, capability, normalized payload digest, and expiry; make it single-use.
 - Use the named unique idempotency target; same-key/same-input returns only the winner without a new token, same-key/different-input is rejected, and state drift requires a new preview.

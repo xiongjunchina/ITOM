@@ -79,6 +79,8 @@ Task 6 建立了通用 L3 动作边界：注册的固定 handler 必须实现 `a
 
 Fix Round 4 已把 Task 6 支持接口进一步固定为可验证的查询与 mutation 范围：`ReadOnlyActionData` 递归校验完整 SQLAlchemy AST，只允许单表直接标量列、同表安全条件/排序和编译期有界分页，拒绝任意层级子查询/CTE/行锁、join/alias、实体/关系、聚合/窗口/函数、text/raw SQL、跨表引用及动态/负数/超限分页；`LockedActionRecord` 绑定精确签发 UoW、Session、外层事务和 savepoint，成功更新即消费旧句柄并返回合并快照的新句柄。伪造、跨范围、事务结束后或重复使用均失败关闭。此轮没有新增具体业务能力或数据库字段，PostgreSQL 双会话运行证明仍归 Task 9 IDC 验收。
 
+Fix Round 5 封闭了 SQLAlchemy 不进入 visitor AST 的原始查询修饰入口：`_prefixes/_suffixes/_statement_hints/_hints` 任一非空即在执行前拒绝，字符串不解析、不设白名单；只读预览和 mutation `lock_one()` 共用此门禁。该修复不新增能力、字段或迁移，也不改变 Task 9 PostgreSQL/IDC 延后证据范围。
+
 网页智能体采用双入口、统一能力内核：网页使用当前 ITOM 登录会话，Aily 保持现有 JWT/MCP 身份，两者只复用下层领域服务和业务约束。WA0 Task 1–6 已实现默认关闭的持久化与 `admin_ai` 权限基础、固定能力注册/请求级策略/递归脱敏、安全 OpenAI-compatible 模型网关、仅限 `admin_ai` 的提供商/四类固定档案管理 API、当前登录用户的会话 API，以及 L3 预览/确认/取消通用动作边界。会话和动作均按数据库 `auth_user_id` 隔离，模型、提示词和客户端声明不是授权来源；动作确认必须重新鉴权并经领域处理器验证，不绕过业务服务。已有的提供商安全、档案发布、会话归属/保留、递归脱敏、审计原子性和失败关闭契约继续有效。管理员 UI、消息 SSE/提供商工具循环、动作编排和具体业务处理器仍待后续任务实现。普通业务用户网页智能体仍只处理本人服务请求，BDO 增加本人 IT 需求；IT 员工按实际权限和流程任务获得全模块指导及分阶段写操作。现有“创建单据指引”保留为模型不可用时的确定性降级。正式设计见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
 
 ## 4. 已确认的架构

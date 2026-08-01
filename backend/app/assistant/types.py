@@ -465,6 +465,10 @@ def _projection_metadata(statement: Any, *, violation: Callable[[], AppError]) -
         or getattr(statement, "_having_criteria", ())
         or bool(getattr(statement, "_distinct", False))
         or getattr(statement, "_distinct_on", ())
+        or getattr(statement, "_prefixes", ())
+        or getattr(statement, "_suffixes", ())
+        or getattr(statement, "_statement_hints", ())
+        or getattr(statement, "_hints", {})
     ):
         raise violation()
     for node in visitors.iterate(statement):

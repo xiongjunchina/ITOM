@@ -279,6 +279,8 @@ WA0 Task 6 已实现 `prepare_action(db, actor, conversation_id, capability_code
 
 Fix Round 4 进一步固定 handler 数据端口：`ReadOnlyActionData` 对完整 SQLAlchemy AST 递归白名单校验，只接受单个直接映射表的显式直接标量列、同表安全比较/布尔条件与排序，以及编译期非负且在服务端上限内的 limit/offset；任意层级的子查询/CTE/行锁、join/alias、实体/关系、聚合/窗口/函数、text/raw SQL、跨表引用和动态/负数/超限分页均拒绝，执行时仍最多抓取“上限 + 1”行检测溢出。`LockedActionRecord` 则绑定模块私有的签发 UoW token、Session、外层事务和当前 savepoint identity；`update_locked()` 只接受同一活跃事务中未消费的真实锁定句柄及原选定非主键标量字段，成功后消费旧句柄并返回带合并快照的新句柄。伪造、跨 UoW（即使共用 Session）、跨 Session/外层事务/savepoint、事务结束后和重复使用均失败关闭。
 
+Fix Round 5 补齐 SQLAlchemy 原始查询修饰面：`_projection_metadata()` 在任何 SQL 执行前对非空 `_prefixes`、`_suffixes`、`_statement_hints` 或 `_hints` 一律返回对应端口 violation，不解析也不允许字符串白名单。由此 `prefix_with()`、`suffix_with()`、`with_statement_hint()` 和 `with_hint()` 不能注入 `FOR UPDATE`、大 offset、`DISTINCT` 或其他方言 SQL；`ReadOnlyActionData` 与共用校验的 `ActionUnitOfWork.lock_one()` 使用同一 fail-closed 契约。
+
 ### 4.2 ITSM
 
 ```text
