@@ -26,6 +26,10 @@ class CapabilityRegistry:
         validate_capability_input_model(definition.input_model)
         if not callable(definition.handler):
             raise ValueError("capability handler is required")
+        if definition.risk is RiskLevel.L3:
+            for method_name in ("authorize_preview", "preview", "authorize_record"):
+                if not callable(getattr(definition.handler, method_name, None)):
+                    raise ValueError(f"L3 capability handler requires {method_name}")
         self._definitions[definition.code] = definition
         return definition
 

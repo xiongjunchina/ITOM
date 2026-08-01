@@ -1,6 +1,6 @@
 # ITOM Web Agent Design Baseline
 
-> Status: **design approved; implementation pending**
+> Status: **design approved; WA0 Tasks 1–6 implemented with Task 6 Fix Round 1 complete; Task 7+ pending**
 > Approval date: 2026-08-01
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -75,7 +75,7 @@ ITOM web ─ login/Bearer ─▶ web-session adapter ───────┘   
 
 An administrator may lower a profile's maximum level or disable a capability, never raise it beyond the user's business authorization.
 
-Every executable capability is code-registered with code/name, channel/audience, required permission, data-scope checker, allowed states, input JSON Schema, structured output, risk, confirmation and idempotency rules, domain handler, audit, timeout, and degradation. The database may disable registered capabilities but cannot invent executable handlers. The model receives only capabilities available for the current request.
+Every executable capability is code-registered with code/name, channel/audience, required permission, data-scope checker, allowed states, input JSON Schema, structured output, risk, confirmation and idempotency rules, domain handler, audit, timeout, and degradation. Every L3 handler separately implements pre-preview record authorization through `authorize_preview`, read-only `preview`, and confirmation-lock `authorize_record`; a missing method prevents registration. The database may disable registered capabilities but cannot invent executable handlers. The model receives only capabilities available for the current request.
 
 ## 6. Web experience
 
@@ -102,7 +102,7 @@ Four profiles are preseeded: business user, BDO, IT staff, and administrator. Ea
 | `ai_agent_profile_version` | Versioned instruction/capability/knowledge settings and publish history |
 | `ai_conversation` | Web session, user, language, allowlisted page context, lifecycle |
 | `ai_message` | Redacted message, structured content, usage, latency |
-| `ai_action` | Capability, risk, request digest, confirmation, result, business entity |
+| `ai_action` | Capability, risk, safe request digest, one-use confirmation, named idempotency uniqueness, result, business entity |
 | `ai_provider_call` | Model, token, latency, result code, redacted error metadata |
 
 Migration is additive only and does not rewrite historical business data, process instances, `AilyIntegrationConfig`, or `/mcp/`. The feature remains disabled until a provider test and profile publication succeed.
@@ -136,11 +136,16 @@ Read APIs return only `has_secret`, never secret values. Bootstrap returns the c
 ## 10. Security and degradation
 
 - Recheck active account, effective roles, permission, data scope, record state, and process assignment per call.
+- Authorize an L3 preview before record metadata and run it in an independent Session that is always rolled back and closed. PostgreSQL is transaction-read-only; handler writes, flush, commit, and rollback fail closed, and preview status must be exactly `prepared`.
+- Reject normalized input if recursive redaction would change it. Never persist or execute the redacted substitute and never use it for the idempotency digest.
 - Bind an L3 token to user, conversation, capability, normalized payload digest, and expiry; make it single-use.
-- Use idempotency; reject same-key/different-payload and regenerate a preview after state drift.
+- Use the named unique idempotency target; same-key/same-input returns only the winner without a new token, same-key/different-input is rejected, and state drift requires a new preview.
+- Confirmation retains the action row lock, proves that the conversation-captured profile/version/provider remains runnable under the governance lock order, and places domain mutation, success result, and audit in a nested savepoint. Failure rolls back only the savepoint and lets the same outer transaction commit the bounded terminal fact.
 - Treat user text, knowledge, and record content as untrusted data that cannot override system instructions or capability boundaries.
 - Allow only administrator-approved HTTPS model endpoints; redact credentials and sensitive answers.
 - Model failure returns to deterministic guidance, search, and native pages. Invalid structure, timeout, or broken streaming never triggers a mutation.
+
+SQLite automation proves only service-call order, rollback outcomes, injected races, and savepoint semantics. Task 9 IDC must add real two-Session PostgreSQL evidence: preview is read-only and rejects writes; same/different-payload preparation has one winner; a waiter after handler/audit failure sees `failed` with exactly one handler call; and failure-state commit faults are never reported as durable.
 - Switch to a fallback model only when the same data policy applies; otherwise degrade safely.
 
 ## 11. Delivery phases and acceptance

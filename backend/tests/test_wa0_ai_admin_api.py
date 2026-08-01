@@ -105,8 +105,21 @@ class _CapabilityInput(BaseModel):
     subject: str
 
 
-def _capability_handler(*_args) -> CapabilityResult:
-    return CapabilityResult(status="ok", data={})
+class _CapabilityHandler:
+    def authorize_preview(self, *_args) -> None:
+        return None
+
+    def preview(self, *_args) -> CapabilityResult:
+        return CapabilityResult(status="prepared", data={})
+
+    def authorize_record(self, *_args) -> None:
+        return None
+
+    def __call__(self, *_args) -> CapabilityResult:
+        return CapabilityResult(status="ok", data={})
+
+
+_capability_handler = _CapabilityHandler()
 
 
 def _test_registry() -> CapabilityRegistry:

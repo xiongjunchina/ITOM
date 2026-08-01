@@ -69,8 +69,21 @@ class _SafeNestedObjectInput(BaseModel):
     related_details: list[_SafeNestedDetails]
 
 
-def _handler(*_args):
-    return CapabilityResult(status="ok", data={})
+class _PolicyHandler:
+    def authorize_preview(self, *_args):
+        return None
+
+    def preview(self, *_args):
+        return CapabilityResult(status="prepared", data={})
+
+    def authorize_record(self, *_args):
+        return None
+
+    def __call__(self, *_args):
+        return CapabilityResult(status="ok", data={})
+
+
+_handler = _PolicyHandler()
 
 
 def _definition(code, *, audiences, module, action, risk=RiskLevel.L2, confirmation=False):

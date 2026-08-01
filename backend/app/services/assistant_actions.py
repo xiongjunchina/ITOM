@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.assistant.policy import capabilities_for_user
@@ -15,12 +17,15 @@ from app.assistant.redaction import redact_for_message
 from app.assistant.registry import registry
 from app.assistant.types import AssistantChannel, CapabilityDefinition, CapabilityResult, RiskLevel
 from app.core.errors import AppError
+from app.db import SessionLocal
 from app.models import AiAction, AiConversation, AuthUser
+from app.services import assistant_conversations
 from app.services.audit import audit
 from app.services.service_forms import canonical_json
 
 
 _TOKEN_TTL_MINUTES = 10
+_IDEMPOTENCY_CONSTRAINT = "uq_ai_action_user_capability_idempotency"
 
 
 def _utcnow() -> datetime:
@@ -93,24 +98,126 @@ def _normalized_payload(definition: CapabilityDefinition, payload: object) -> tu
         parsed = definition.input_model.model_validate(payload)
         normalized = parsed.model_dump(mode="json")
         redacted = redact_for_message(normalized)
-        if not isinstance(redacted, dict):
-            raise ValueError("redacted action payload is not an object")
-        # Confirmation executes only the persisted, redacted canonical payload.
-        # This prevents credentials embedded in free text from becoming durable
-        # action state while retaining the exact registered Pydantic contract.
-        return redacted, definition.input_model.model_validate(redacted)
+        if not isinstance(normalized, dict) or not isinstance(redacted, dict) or redacted != normalized:
+            raise ValueError("sensitive action payload")
+        return normalized, parsed
     except (ValidationError, ValueError):
         raise AppError("AI_ACTION_PAYLOAD_INVALID", "动作参数无效")
 
 
+def _preview_violation() -> AppError:
+    return AppError(
+        "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION",
+        "动作预览不得修改数据或控制事务",
+        409,
+    )
+
+
+def _set_preview_transaction_read_only(db: Session) -> None:
+    """Apply PostgreSQL's transaction-level read-only boundary before preview access."""
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SET TRANSACTION READ ONLY"))
+
+
+def _is_mutating_statement(statement: object) -> bool:
+    if any(
+        bool(getattr(statement, name, False))
+        for name in ("is_insert", "is_update", "is_delete", "is_dml")
+    ):
+        return True
+    if statement.__class__.__name__ == "TextClause":
+        keyword = str(statement).lstrip().split(None, 1)[0].lower() if str(statement).strip() else ""
+        return keyword in {
+            "insert", "update", "delete", "merge", "truncate", "create", "alter", "drop", "grant", "revoke",
+        }
+    return False
+
+
+@contextmanager
+def _preview_transaction_boundary(db: Session):
+    """Expose reads while rejecting handler transaction control and write APIs."""
+    guarded_names = (
+        "add",
+        "add_all",
+        "delete",
+        "flush",
+        "commit",
+        "rollback",
+        "bulk_save_objects",
+        "bulk_insert_mappings",
+        "bulk_update_mappings",
+    )
+    originals = {name: getattr(db, name) for name in guarded_names}
+    original_execute = db.execute
+    original_connection = db.connection
+
+    def reject(*_args, **_kwargs):
+        raise _preview_violation()
+
+    def guarded_execute(statement, *args, **kwargs):
+        if _is_mutating_statement(statement):
+            raise _preview_violation()
+        return original_execute(statement, *args, **kwargs)
+
+    for name in guarded_names:
+        setattr(db, name, reject)
+    db.execute = guarded_execute  # type: ignore[method-assign]
+    db.connection = reject  # type: ignore[method-assign]
+    try:
+        yield
+        if db.new or db.dirty or db.deleted:
+            raise _preview_violation()
+    finally:
+        for name, original in originals.items():
+            setattr(db, name, original)
+        db.execute = original_execute  # type: ignore[method-assign]
+        db.connection = original_connection  # type: ignore[method-assign]
+
+
+def _uniform_preview_unavailable() -> AppError:
+    return AppError(
+        "AI_ACTION_PREVIEW_UNAVAILABLE",
+        "当前记录不可用于该动作预览",
+        404,
+    )
+
+
 def _preview_result(handler: object, db: Session, actor: AuthUser, data: BaseModel) -> CapabilityResult:
+    authorize_preview = getattr(handler, "authorize_preview", None)
     preview = getattr(handler, "preview", None)
-    if not callable(preview):
-        raise AppError("AI_ACTION_PREVIEW_UNAVAILABLE", "该动作没有可验证的服务端预览", 409)
-    result = preview(db, actor, data)
-    if not isinstance(result, CapabilityResult):
+    authorize_record = getattr(handler, "authorize_record", None)
+    if not all(callable(item) for item in (authorize_preview, preview, authorize_record)):
+        raise _uniform_preview_unavailable()
+    try:
+        authorize_preview(db, actor, data)
+        result = preview(db, actor, data)
+    except AppError as exc:
+        if exc.code == "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION":
+            raise
+        raise _uniform_preview_unavailable() from None
+    except Exception:
+        raise _uniform_preview_unavailable() from None
+    if not isinstance(result, CapabilityResult) or result.status != "prepared":
         raise AppError("AI_ACTION_PREVIEW_INVALID", "服务端预览结果无效", 409)
     return result
+
+
+def _run_rollback_only_preview(handler: object, actor: AuthUser, data: BaseModel) -> CapabilityResult:
+    preview_db = SessionLocal()
+    try:
+        _set_preview_transaction_read_only(preview_db)
+        with _preview_transaction_boundary(preview_db):
+            return _preview_result(handler, preview_db, actor, data)
+    finally:
+        try:
+            preview_db.rollback()
+        finally:
+            preview_db.close()
+
+
+def _is_named_idempotency_conflict(exc: IntegrityError) -> bool:
+    diag = getattr(exc.orig, "diag", None)
+    return getattr(diag, "constraint_name", None) == _IDEMPOTENCY_CONSTRAINT
 
 
 def _safe_result(result: CapabilityResult) -> tuple[dict, str | None]:
@@ -180,7 +287,7 @@ def prepare_action(
             db.rollback()
             return _action_payload(existing)
 
-        preview_result = _preview_result(definition.handler, db, actor, parsed)
+        preview_result = _run_rollback_only_preview(definition.handler, actor, parsed)
         preview, preview_message = _safe_result(preview_result)
         raw_token = secrets.token_urlsafe(32)
         row = AiAction(
@@ -198,7 +305,38 @@ def prepare_action(
             result_summary={"preview": preview, "message": preview_message},
         )
         db.add(row)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            if not _is_named_idempotency_conflict(exc):
+                raise
+            db.rollback()
+            winner = (
+                db.query(AiAction)
+                .filter(
+                    AiAction.auth_user_id == actor.id,
+                    AiAction.capability_code == definition.code,
+                    AiAction.idempotency_key == key,
+                    AiAction.is_deleted.is_(False),
+                )
+                .with_for_update()
+                .populate_existing()
+                .first()
+            )
+            if winner is None:
+                raise AppError(
+                    "AI_ACTION_IDEMPOTENCY_RECOVERY_FAILED",
+                    "动作准备状态已变化，请安全重试",
+                    409,
+                ) from None
+            if winner.payload_digest != payload_digest:
+                raise AppError(
+                    "AI_ACTION_IDEMPOTENCY_CONFLICT",
+                    "同一幂等键不能用于不同动作内容",
+                    409,
+                )
+            db.rollback()
+            return _action_payload(winner)
         audit(
             db,
             "ai_action",
@@ -236,47 +374,14 @@ def _locked_owned_action(db: Session, actor: AuthUser, action_id: str) -> AiActi
     return row
 
 
-def _persist_failed_action(
-    db: Session,
-    actor_id: str,
-    action_id: str,
-    *,
-    code: str,
-) -> None:
-    """Commit only a bounded failure fact after the business transaction rolled back."""
-    try:
-        row = (
-            db.query(AiAction)
-            .filter(
-                AiAction.id == action_id,
-                AiAction.auth_user_id == actor_id,
-                AiAction.is_deleted.is_(False),
-            )
-            .with_for_update()
-            .first()
-        )
-        if row is not None and row.status == "prepared":
-            row.status = "failed"
-            row.consumed_at = _utcnow()
-            row.result_code = code
-            row.result_summary = {
-                "result": {},
-                "error": {"code": code, "message": "操作未执行"},
-            }
-            db.commit()
-        else:
-            db.rollback()
-    except Exception:
-        db.rollback()
-
-
 @contextmanager
 def _handler_transaction_boundary(db: Session):
     """Keep a fixed handler inside the action service's atomic transaction."""
     original_commit = db.commit
     original_rollback = db.rollback
+    original_flush = db.flush
 
-    def reject_transaction_control() -> None:
+    def reject_transaction_control(*_args, **_kwargs) -> None:
         raise AppError(
             "AI_ACTION_TRANSACTION_VIOLATION",
             "动作处理器不能自行提交或回滚事务",
@@ -285,11 +390,112 @@ def _handler_transaction_boundary(db: Session):
 
     db.commit = reject_transaction_control  # type: ignore[method-assign]
     db.rollback = reject_transaction_control  # type: ignore[method-assign]
+    db.flush = reject_transaction_control  # type: ignore[method-assign]
     try:
         yield
     finally:
         db.commit = original_commit  # type: ignore[method-assign]
         db.rollback = original_rollback  # type: ignore[method-assign]
+        db.flush = original_flush  # type: ignore[method-assign]
+
+
+def _reauthorized_runtime(
+    db: Session,
+    actor: AuthUser,
+    row: AiAction,
+) -> tuple[AuthUser, CapabilityDefinition, BaseModel]:
+    active_actor = (
+        db.query(AuthUser)
+        .filter(
+            AuthUser.id == actor.id,
+            AuthUser.is_active.is_(True),
+            AuthUser.is_deleted.is_(False),
+        )
+        .populate_existing()
+        .first()
+    )
+    if active_actor is None:
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "当前账号已失效", 403)
+    try:
+        profile, version, _config = assistant_conversations._active_profile(
+            db,
+            active_actor,
+            lock_runtime_profile=True,
+        )
+    except AppError:
+        raise AppError(
+            "AI_ACTION_REAUTHORIZATION_FAILED",
+            "当前智能体运行档案已失效",
+            403,
+        ) from None
+    conversation = _owned_conversation(db, active_actor, row.conversation_id)
+    if (
+        conversation.auth_user_id != row.auth_user_id
+        or conversation.profile_id != profile.id
+        or conversation.profile_version_id != version.id
+    ):
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作运行档案绑定已变化", 403)
+    definition = _current_l3_definition(
+        db,
+        active_actor,
+        row.capability_code,
+        unavailable_code="AI_ACTION_REAUTHORIZATION_FAILED",
+    )
+    if row.capability_code not in set(version.enabled_capabilities or []):
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作能力已从运行档案撤回", 403)
+    if row.risk_level != definition.risk.value:
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作安全级别已变化", 403)
+    if not isinstance(row.normalized_payload, dict) or _digest(row.normalized_payload) != row.payload_digest:
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作参数摘要校验失败", 403)
+    try:
+        parsed = definition.input_model.model_validate(row.normalized_payload)
+    except ValidationError:
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作参数已失效", 403) from None
+    if not callable(getattr(definition.handler, "authorize_record", None)):
+        raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作缺少记录级授权校验", 403)
+    return active_actor, definition, parsed
+
+
+def _public_execution_error(exc: Exception) -> tuple[AppError, str]:
+    if isinstance(exc, AppError):
+        return (
+            AppError(
+                exc.code,
+                "操作未执行，请检查当前权限和记录状态后重试",
+                exc.status_code,
+            ),
+            exc.code,
+        )
+    return (
+        AppError(
+            "AI_ACTION_EXECUTION_FAILED",
+            "操作未执行，请检查当前权限和记录状态后重试",
+            409,
+        ),
+        "AI_ACTION_EXECUTION_FAILED",
+    )
+
+
+def _commit_locked_failure(db: Session, row: AiAction, code: str) -> None:
+    """Persist failure on the already locked row without releasing the outer lock."""
+    row.status = "failed"
+    row.consumed_at = _utcnow()
+    row.result_code = code
+    row.result_summary = {
+        "result": {},
+        "error": {"code": code, "message": "操作未执行"},
+    }
+    try:
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        finally:
+            raise AppError(
+                "AI_ACTION_FAILURE_PERSISTENCE_FAILED",
+                "操作未执行，失败状态未能持久化，请稍后重试",
+                503,
+            ) from None
 
 
 def confirm_action(
@@ -321,89 +527,50 @@ def confirm_action(
         raise AppError("AI_ACTION_TOKEN_INVALID", "确认凭证无效", 403)
 
     try:
-        conversation = _owned_conversation(db, actor, row.conversation_id)
-        if conversation.auth_user_id != row.auth_user_id:
-            raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作归属校验失败", 403)
-        active_actor = (
-            db.query(AuthUser)
-            .filter(
-                AuthUser.id == actor.id,
-                AuthUser.is_active.is_(True),
-                AuthUser.is_deleted.is_(False),
-            )
-            .populate_existing()
-            .first()
-        )
-        if active_actor is None:
-            raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "当前账号已失效", 403)
-        definition = _current_l3_definition(
-            db,
-            active_actor,
-            row.capability_code,
-            unavailable_code="AI_ACTION_REAUTHORIZATION_FAILED",
-        )
-        if row.risk_level != definition.risk.value:
-            raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作安全级别已变化", 403)
-        if not isinstance(row.normalized_payload, dict) or _digest(row.normalized_payload) != row.payload_digest:
-            raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作参数摘要校验失败", 403)
-        parsed = definition.input_model.model_validate(row.normalized_payload)
-        authorize_record = getattr(definition.handler, "authorize_record", None)
-        if not callable(authorize_record):
-            raise AppError("AI_ACTION_REAUTHORIZATION_FAILED", "动作缺少记录级授权校验", 403)
-        with _handler_transaction_boundary(db):
-            authorize_record(db, active_actor, parsed)
-            result = definition.handler(db, active_actor, parsed)
-        if not isinstance(result, CapabilityResult) or result.status != "succeeded":
-            raise AppError("AI_ACTION_RESULT_INVALID", "动作处理器未返回已提交结果", 409)
-        result_data, result_message = _safe_result(result)
-        entity_type = result_data.get("entity_type")
-        entity_id = result_data.get("entity_id")
-        if entity_type is not None and not isinstance(entity_type, str):
-            raise AppError("AI_ACTION_RESULT_INVALID", "动作结果实体类型无效", 409)
-        if entity_id is not None and not isinstance(entity_id, str):
-            raise AppError("AI_ACTION_RESULT_INVALID", "动作结果实体标识无效", 409)
+        active_actor, definition, parsed = _reauthorized_runtime(db, actor, row)
+        with db.begin_nested():
+            with _handler_transaction_boundary(db):
+                definition.handler.authorize_record(db, active_actor, parsed)
+                result = definition.handler(db, active_actor, parsed)
+            if not isinstance(result, CapabilityResult) or result.status != "succeeded":
+                raise AppError("AI_ACTION_RESULT_INVALID", "动作处理器未返回已提交结果", 409)
+            result_data, result_message = _safe_result(result)
+            entity_type = result_data.get("entity_type")
+            entity_id = result_data.get("entity_id")
+            if entity_type is not None and not isinstance(entity_type, str):
+                raise AppError("AI_ACTION_RESULT_INVALID", "动作结果实体类型无效", 409)
+            if entity_id is not None and not isinstance(entity_id, str):
+                raise AppError("AI_ACTION_RESULT_INVALID", "动作结果实体标识无效", 409)
 
-        row.status = "succeeded"
-        row.consumed_at = _utcnow()
-        row.result_code = result.status
-        row.result_summary = {"result": result_data, "message": result_message}
-        row.result_entity_type = entity_type
-        row.result_entity_id = entity_id
-        audit(
-            db,
-            "ai_action",
-            row.id,
-            "succeeded",
-            active_actor,
-            {
-                "capability_code": row.capability_code,
-                "risk_level": row.risk_level,
-                "payload_digest": row.payload_digest,
-                "result_code": result.status,
-                "result_entity_type": entity_type,
-                "result_entity_id": entity_id,
-            },
-        )
+            row.status = "succeeded"
+            row.consumed_at = _utcnow()
+            row.result_code = result.status
+            row.result_summary = {"result": result_data, "message": result_message}
+            row.result_entity_type = entity_type
+            row.result_entity_id = entity_id
+            audit(
+                db,
+                "ai_action",
+                row.id,
+                "succeeded",
+                active_actor,
+                {
+                    "capability_code": row.capability_code,
+                    "risk_level": row.risk_level,
+                    "payload_digest": row.payload_digest,
+                    "result_code": result.status,
+                    "result_entity_type": entity_type,
+                    "result_entity_id": entity_id,
+                },
+            )
         db.commit()
         db.refresh(row)
         return _action_payload(row)
     except Exception as exc:
-        db.rollback()
-        if isinstance(exc, AppError):
-            public_error = AppError(
-                exc.code,
-                "操作未执行，请检查当前权限和记录状态后重试",
-                exc.status_code,
-            )
-            failure_code = exc.code
-        else:
-            public_error = AppError(
-                "AI_ACTION_EXECUTION_FAILED",
-                "操作未执行，请检查当前权限和记录状态后重试",
-                409,
-            )
-            failure_code = public_error.code
-        _persist_failed_action(db, actor.id, action_id, code=failure_code)
+        if isinstance(exc, AppError) and exc.code == "AI_ACTION_FAILURE_PERSISTENCE_FAILED":
+            raise
+        public_error, failure_code = _public_execution_error(exc)
+        _commit_locked_failure(db, row, failure_code)
         raise public_error from None
 
 

@@ -94,7 +94,14 @@ class AiMessage(GlidBase):
 
 class AiAction(GlidBase):
     __tablename__ = "ai_action"
-    __table_args__ = (UniqueConstraint("auth_user_id", "capability_code", "idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "auth_user_id",
+            "capability_code",
+            "idempotency_key",
+            name="uq_ai_action_user_capability_idempotency",
+        ),
+    )
 
     conversation_id: Mapped[str] = mapped_column(ForeignKey("ai_conversation.id"), index=True)
     auth_user_id: Mapped[str] = mapped_column(ForeignKey("auth_user.id"), index=True)
