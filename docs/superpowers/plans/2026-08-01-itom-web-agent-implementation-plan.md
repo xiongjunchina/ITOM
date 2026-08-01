@@ -412,7 +412,7 @@ def prepare_action(...) -> PreparedAction:
 
 - [ ] **Step 3: 实现行锁、重授权和事务结果**
 
-确认时 `SELECT ... FOR UPDATE` 先锁动作，再锁定并刷新所属 active 会话，之后才进入 Task 4 governance/provider/profile 锁序；`authorize_record()` 和 mutation 仅接收 `ActionUnitOfWork.lock_one()/update_locked()`、`FrozenActionRecord` 快照和不暴露真实 ORM 身份的 `LockedActionRecord`，预览授权/预览仅接收独立 Session actor 上下文和无 Session-like 属性的 `ReadOnlyActionData`。预览门面只接受显式、有界的 SQLAlchemy `Select` 标量投影，并统一拒绝实体/关系结果、eager 结果、所有行锁、text/DML、过大 offset 与超限读取。成功业务写入、`AiAction.succeeded`、结果实体和通用审计在同一事务提交。失败先回滚业务事务，再单独写脱敏失败状态；任何失败响应不得使用“已创建/已关闭”。
+确认时 `SELECT ... FOR UPDATE` 先锁动作，再锁定并刷新所属 active 会话，之后才进入 Task 4 governance/provider/profile 锁序；`authorize_record()` 和 mutation 仅接收 `ActionUnitOfWork.lock_one()/update_locked()`、`FrozenActionRecord` 快照和不暴露真实 ORM 身份的 `LockedActionRecord`，预览授权/预览仅接收独立 Session actor 上下文和无 Session-like 属性的 `ReadOnlyActionData`。预览门面递归校验完整 SQLAlchemy AST，只接受单个直接映射表的显式直接标量列、同表安全条件/排序和编译期非负有界 limit/offset，并以固定 max + 1 检测溢出；实体/关系/eager、join/alias/subquery/CTE、聚合/窗口/函数、text/raw SQL、跨表引用、任意层级行锁及动态/负数/超限分页均拒绝。mutation 句柄以模块私有状态绑定精确 UoW、Session、外层事务与 savepoint；成功更新消费旧句柄并返回合并快照的新句柄，伪造、跨范围、事务结束后及重复使用均失败关闭。成功业务写入、`AiAction.succeeded`、结果实体和通用审计在同一事务提交。失败先回滚业务事务，再单独写脱敏失败状态；任何失败响应不得使用“已创建/已关闭”。
 
 Fix Round 2 还要求：准备在预览结束后、动作插入/幂等赢家处理前先 `FOR UPDATE + populate_existing` 锁定并重检所属 active 会话；`archive_own_conversation()` 在提交前同样锁定并刷新所属会话行。
 

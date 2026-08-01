@@ -13,6 +13,31 @@ from weakref import WeakKeyDictionary
 from pydantic import BaseModel
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import operators, visitors
+from sqlalchemy.sql.elements import (
+    BindParameter,
+    BinaryExpression,
+    BooleanClauseList,
+    False_,
+    Grouping,
+    Label,
+    Null,
+    TextClause,
+    True_,
+    UnaryExpression,
+)
+from sqlalchemy.sql.functions import FunctionElement
+from sqlalchemy.sql.schema import Column, Table
+from sqlalchemy.sql.selectable import (
+    Alias,
+    CTE,
+    CompoundSelect,
+    Join,
+    ScalarSelect,
+    Select,
+    Subquery,
+    _OffsetLimitParam,
+)
 
 from app.core.errors import AppError
 from app.assistant.redaction import is_sensitive_name
@@ -309,6 +334,7 @@ class LockedActionRecord:
 class _PortState:
     db: Session
     violation: Callable[[], AppError]
+    owner_token: object
 
 
 @dataclass(frozen=True)
@@ -317,6 +343,10 @@ class _LockedRecordState:
     entity: Any
     selected_fields: frozenset[str]
     primary_key_fields: frozenset[str]
+    owner_token: object
+    outer_transaction: Any
+    nested_transaction: Any
+    nonce: object
 
 
 _PORT_STATE: WeakKeyDictionary[Any, _PortState] = WeakKeyDictionary()
@@ -337,57 +367,172 @@ def _freeze_value(value: Any) -> Any:
     raise ValueError("non-scalar action record value")
 
 
-def _clause_int(value: Any) -> int | None:
+_ALLOWED_BINARY_OPERATORS = frozenset({
+    operators.eq,
+    operators.ne,
+    operators.lt,
+    operators.le,
+    operators.gt,
+    operators.ge,
+    operators.is_,
+    operators.is_not,
+    operators.like_op,
+    operators.not_like_op,
+    operators.in_op,
+    operators.not_in_op,
+})
+_ALLOWED_BOOLEAN_OPERATORS = frozenset({operators.and_, operators.or_})
+_ALLOWED_ORDER_MODIFIERS = frozenset({operators.asc_op, operators.desc_op})
+
+
+def _literal_bound_value(value: Any, *, violation: Callable[[], AppError]) -> None:
+    try:
+        _freeze_value(value)
+    except ValueError:
+        raise violation() from None
+
+
+def _direct_column(value: Any, table: Table, *, violation: Callable[[], AppError]) -> Column:
+    column = value.element if isinstance(value, Label) else value
+    if not isinstance(column, Column) or column.table is not table:
+        raise violation()
+    return column
+
+
+def _validate_predicate(value: Any, table: Table, *, violation: Callable[[], AppError]) -> None:
+    if isinstance(value, Grouping):
+        _validate_predicate(value.element, table, violation=violation)
+        return
+    if isinstance(value, BooleanClauseList):
+        if value.operator not in _ALLOWED_BOOLEAN_OPERATORS:
+            raise violation()
+        for clause in value.clauses:
+            _validate_predicate(clause, table, violation=violation)
+        return
+    if isinstance(value, BinaryExpression):
+        if value.operator not in _ALLOWED_BINARY_OPERATORS:
+            raise violation()
+        for operand in (value.left, value.right):
+            if isinstance(operand, Column):
+                _direct_column(operand, table, violation=violation)
+            elif isinstance(operand, BindParameter):
+                _literal_bound_value(operand.value, violation=violation)
+            elif isinstance(operand, (True_, False_, Null)):
+                continue
+            else:
+                raise violation()
+        return
+    if isinstance(value, UnaryExpression) and value.operator is operators.inv:
+        _validate_predicate(value.element, table, violation=violation)
+        return
+    raise violation()
+
+
+def _validate_ordering(value: Any, table: Table, *, violation: Callable[[], AppError]) -> None:
+    if isinstance(value, Column):
+        _direct_column(value, table, violation=violation)
+        return
+    if isinstance(value, UnaryExpression) and value.modifier in _ALLOWED_ORDER_MODIFIERS:
+        _direct_column(value.element, table, violation=violation)
+        return
+    raise violation()
+
+
+def _compile_time_int(
+    value: Any,
+    *,
+    maximum: int,
+    violation: Callable[[], AppError],
+) -> int | None:
     if value is None:
         return None
-    if isinstance(value, int):
-        return value
-    literal = getattr(value, "value", None)
-    if isinstance(literal, int):
-        return literal
-    return None
+    if not isinstance(value, _OffsetLimitParam) or type(value.value) is not int:
+        raise violation()
+    literal = value.value
+    if literal < 0 or literal > maximum:
+        raise violation()
+    return literal
 
 
 def _projection_metadata(statement: Any, *, violation: Callable[[], AppError]) -> tuple[str, tuple[tuple[str, str], ...], Any | None]:
-    if not bool(getattr(statement, "is_select", False)):
+    if not isinstance(statement, Select):
         raise violation()
-    if getattr(statement, "_with_options", ()):
+    if (
+        getattr(statement, "_with_options", ())
+        or getattr(statement, "_for_update_arg", None) is not None
+        or getattr(statement, "_independent_ctes", ())
+        or getattr(statement, "_group_by_clauses", ())
+        or getattr(statement, "_having_criteria", ())
+        or bool(getattr(statement, "_distinct", False))
+        or getattr(statement, "_distinct_on", ())
+    ):
         raise violation()
-    if getattr(statement, "_for_update_arg", None) is not None:
-        raise violation()
+    for node in visitors.iterate(statement):
+        if node is statement:
+            continue
+        if isinstance(
+            node,
+            (Select, CompoundSelect, ScalarSelect, CTE, Join, Alias, Subquery, FunctionElement, TextClause),
+        ):
+            raise violation()
+        if getattr(node, "_for_update_arg", None) is not None:
+            raise violation()
     descriptions = tuple(getattr(statement, "column_descriptions", ()) or ())
-    if not descriptions:
+    selected = tuple(statement.selected_columns)
+    if not descriptions or len(descriptions) != len(selected):
         raise violation()
-    entity_candidates = {desc.get("entity") for desc in descriptions if desc.get("entity") is not None}
-    entity = next(iter(entity_candidates)) if len(entity_candidates) == 1 else None
+    if any(desc.get("entity") is None or desc.get("aliased") for desc in descriptions):
+        raise violation()
+    entity_candidates = {desc.get("entity") for desc in descriptions}
+    if len(entity_candidates) != 1:
+        raise violation()
+    entity = next(iter(entity_candidates))
+    try:
+        mapper = sa_inspect(entity)
+    except Exception:
+        raise violation() from None
+    table = mapper.local_table
+    if not isinstance(table, Table):
+        raise violation()
+    final_froms = tuple(statement.get_final_froms())
+    if len(final_froms) != 1 or final_froms[0] is not table:
+        raise violation()
     fields: list[tuple[str, str]] = []
-    for desc in descriptions:
+    for desc, selected_value in zip(descriptions, selected):
         expr = desc.get("expr")
         desc_entity = desc.get("entity")
         if expr is desc_entity or isinstance(expr, type):
             raise violation()
-        annotations = getattr(expr, "_annotations", {})
-        proxy_owner = annotations.get("proxy_owner")
-        proxy_key = annotations.get("proxy_key")
-        if proxy_owner is not None and proxy_key:
-            mapped_property = getattr(getattr(proxy_owner, "attrs", None), "get", lambda _key: None)(proxy_key)
-            if mapped_property is not None and hasattr(mapped_property, "direction"):
-                raise violation()
+        column = _direct_column(selected_value, table, violation=violation)
+        try:
+            mapper.get_property_by_column(column)
+        except Exception:
+            raise violation() from None
         field_name = str(desc.get("name") or "")
-        source_key = getattr(getattr(expr, "element", None), "key", None) or getattr(expr, "key", None) or field_name
+        source_key = column.key
         if not field_name or not source_key:
             raise violation()
         fields.append((field_name, str(source_key)))
-    model_name = entity.__name__ if entity is not None else "Projection"
+    for criterion in tuple(getattr(statement, "_where_criteria", ()) or ()):
+        _validate_predicate(criterion, table, violation=violation)
+    for criterion in tuple(getattr(statement, "_order_by_clauses", ()) or ()):
+        _validate_ordering(criterion, table, violation=violation)
+    model_name = mapper.class_.__name__
     return model_name, tuple(fields), entity
 
 
 def _bounded_select(statement: Any, *, violation: Callable[[], AppError], max_rows: int = _ACTION_PORT_MAX_ROWS) -> Any:
-    offset = _clause_int(getattr(statement, "_offset_clause", None)) or 0
-    if offset > _ACTION_PORT_MAX_OFFSET:
-        raise violation()
-    limit = _clause_int(getattr(statement, "_limit_clause", None))
-    if limit is None or limit > max_rows + 1:
+    _compile_time_int(
+        getattr(statement, "_offset_clause", None),
+        maximum=_ACTION_PORT_MAX_OFFSET,
+        violation=violation,
+    )
+    limit = _compile_time_int(
+        getattr(statement, "_limit_clause", None),
+        maximum=max_rows,
+        violation=violation,
+    )
+    if limit is None:
         return statement.limit(max_rows + 1)
     return statement
 
@@ -440,7 +585,11 @@ class ReadOnlyActionData:
     scalars = _blocked_readonly_method
 
     def __init__(self, db: Session) -> None:
-        _PORT_STATE[self] = _PortState(db=db, violation=_preview_violation)
+        _PORT_STATE[self] = _PortState(
+            db=db,
+            violation=_preview_violation,
+            owner_token=object(),
+        )
 
     def fetch_first(self, statement: Any, *, with_for_update: bool = False) -> FrozenActionRecord | None:
         if with_for_update:
@@ -499,7 +648,11 @@ class ActionUnitOfWork:
     scalars = _blocked_uow_method
 
     def __init__(self, db: Session) -> None:
-        _PORT_STATE[self] = _PortState(db=db, violation=_transaction_violation)
+        _PORT_STATE[self] = _PortState(
+            db=db,
+            violation=_transaction_violation,
+            owner_token=object(),
+        )
 
     def lock_one(self, statement: Any) -> LockedActionRecord | None:
         state = _state_for(self)
@@ -509,8 +662,16 @@ class ActionUnitOfWork:
         if any(field_name != source_key for field_name, source_key in fields):
             raise state.violation()
         bounded = _bounded_select(statement, violation=state.violation, max_rows=1)
-        offset = _clause_int(getattr(bounded, "_offset_clause", None))
-        limit = _clause_int(getattr(bounded, "_limit_clause", None))
+        offset = _compile_time_int(
+            getattr(bounded, "_offset_clause", None),
+            maximum=_ACTION_PORT_MAX_OFFSET,
+            violation=state.violation,
+        )
+        limit = _compile_time_int(
+            getattr(bounded, "_limit_clause", None),
+            maximum=2,
+            violation=state.violation,
+        )
         query = state.db.query(entity)
         where_criteria = tuple(getattr(bounded, "_where_criteria", ()) or ())
         if where_criteria:
@@ -538,29 +699,65 @@ class ActionUnitOfWork:
             entity=row,
             selected_fields=frozenset(field_name for field_name, _source_key in fields),
             primary_key_fields=primary_key_fields,
+            owner_token=state.owner_token,
+            outer_transaction=state.db.get_transaction(),
+            nested_transaction=state.db.get_nested_transaction(),
+            nonce=object(),
         )
         return handle
 
-    def update_locked(self, handle: LockedActionRecord, values: Mapping[str, Any]) -> FrozenActionRecord:
+    def update_locked(self, handle: LockedActionRecord, values: Mapping[str, Any]) -> LockedActionRecord:
         state = _state_for(self)
         locked_state = _LOCKED_STATE.get(handle)
-        if locked_state is None or locked_state.db is not state.db:
+        if (
+            locked_state is None
+            or locked_state.db is not state.db
+            or locked_state.owner_token is not state.owner_token
+            or state.db.get_transaction() is not locked_state.outer_transaction
+            or state.db.get_nested_transaction() is not locked_state.nested_transaction
+            or locked_state.outer_transaction is None
+            or not locked_state.outer_transaction.is_active
+            or (
+                locked_state.nested_transaction is not None
+                and not locked_state.nested_transaction.is_active
+            )
+        ):
+            raise state.violation()
+        inspection = sa_inspect(locked_state.entity)
+        if (
+            inspection.session is not state.db
+            or not inspection.persistent
+            or inspection.detached
+            or inspection.deleted
+        ):
             raise state.violation()
         updates = dict(values)
-        if not updates:
-            return handle.snapshot
         for key, value in updates.items():
             if key not in locked_state.selected_fields or key in locked_state.primary_key_fields:
                 raise state.violation()
             _freeze_value(value)
+        _LOCKED_STATE.pop(handle, None)
+        for key, value in updates.items():
             setattr(locked_state.entity, key, value)
         merged = handle.snapshot.as_dict()
         merged.update(updates)
-        return _record_from_mapping(
+        snapshot = _record_from_mapping(
             handle.snapshot.model_name,
             merged,
             violation=state.violation,
         )
+        rotated = LockedActionRecord(snapshot=snapshot)
+        _LOCKED_STATE[rotated] = _LockedRecordState(
+            db=locked_state.db,
+            entity=locked_state.entity,
+            selected_fields=locked_state.selected_fields,
+            primary_key_fields=locked_state.primary_key_fields,
+            owner_token=locked_state.owner_token,
+            outer_transaction=locked_state.outer_transaction,
+            nested_transaction=locked_state.nested_transaction,
+            nonce=object(),
+        )
+        return rotated
 
     def __dir__(self) -> list[str]:
         return ["lock_one", "update_locked"]

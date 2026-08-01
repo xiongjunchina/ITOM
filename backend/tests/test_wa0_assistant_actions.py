@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, text, update
+from sqlalchemy import bindparam, func, literal_column, select, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Query, joinedload, object_session
+from sqlalchemy.orm import Query, aliased, joinedload, object_session
 
 from app.assistant import types as assistant_types
 from app.assistant.registry import register_capability, registry
@@ -1243,6 +1243,85 @@ def test_read_only_action_data_rejects_offset_abuse_and_overflowing_reads(
         _assert_code(first_overflow_error, "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION")
 
 
+def test_read_only_action_data_accepts_only_one_direct_mapped_scalar_query(
+    client, admin_headers, action_capability_and_profile
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_action_direct_query")
+    _, conversation_id, ticket_code = _context(
+        "wa0_action_direct_query", profile_id, version_id
+    )
+    del conversation_id
+    with SessionLocal() as db:
+        port = assistant_types.ReadOnlyActionData(db)
+        rows = port.fetch_all(
+            select(
+                Ticket.id.label("id"),
+                Ticket.ticket_code.label("ticket_code"),
+                Ticket.status.label("status"),
+            )
+            .where(
+                Ticket.ticket_code == ticket_code,
+                Ticket.is_deleted.is_(False),
+            )
+            .order_by(Ticket.ticket_code.desc())
+            .limit(25)
+            .offset(0)
+        )
+        assert len(rows) == 1
+        assert rows[0].ticket_code == ticket_code
+        assert rows[0].status == "new"
+
+
+def test_read_only_action_data_recursively_rejects_unsafe_query_ast():
+    ticket_alias = aliased(Ticket)
+    ticket_cte = select(Ticket.id).cte("ticket_ids")
+    independent_cte = select(ServiceItem.id).cte("independent_items")
+    unsafe_statements = {
+        "nested_for_update": select(Ticket.id).where(
+            Ticket.service_item_id
+            == select(ServiceItem.id).with_for_update().scalar_subquery()
+        ),
+        "aggregate_scalar_subquery": select(Ticket.id).where(
+            select(func.count(ServiceItem.id)).scalar_subquery() > 0
+        ),
+        "nested_select": select(Ticket.id).where(
+            Ticket.service_item_id.in_(select(ServiceItem.id))
+        ),
+        "referenced_cte": select(ticket_cte.c.id),
+        "independent_cte": select(Ticket.id).add_cte(independent_cte),
+        "join": select(Ticket.id).select_from(
+            Ticket.__table__.join(
+                ServiceItem.__table__,
+                ServiceItem.id == Ticket.service_item_id,
+            )
+        ),
+        "alias": select(ticket_alias.id),
+        "aggregate": select(func.count(Ticket.id)),
+        "window": select(func.row_number().over(order_by=Ticket.id)),
+        "function": select(func.lower(Ticket.title)),
+        "textual_column": select(literal_column("ticket.id")),
+        "textual_where": select(Ticket.id).where(text("ticket.id IS NOT NULL")),
+        "textual_order": select(Ticket.id).order_by(text("ticket.id")),
+        "negative_limit": select(Ticket.id).limit(-1),
+        "dynamic_limit": select(Ticket.id).limit(bindparam("dynamic_limit", 1)),
+        "excessive_limit": select(Ticket.id).limit(26),
+        "negative_offset": select(Ticket.id).offset(-1),
+        "dynamic_offset": select(Ticket.id).offset(bindparam("dynamic_offset", 0)),
+        "excessive_offset": select(Ticket.id).offset(1001),
+        "second_table_where": select(Ticket.id).where(
+            ServiceItem.id == Ticket.service_item_id
+        ),
+        "second_table_order": select(Ticket.id).order_by(ServiceItem.name),
+    }
+    with SessionLocal() as db:
+        port = assistant_types.ReadOnlyActionData(db)
+        for name, statement in unsafe_statements.items():
+            with pytest.raises(AppError) as raised:
+                port.fetch_all(statement)
+            _assert_code(raised, "AI_ACTION_PREVIEW_TRANSACTION_VIOLATION")
+
+
 def test_action_unit_of_work_requires_locked_snapshot_and_selected_field_updates_only(
     client, admin_headers, action_capability_and_profile
 ):
@@ -1280,6 +1359,123 @@ def test_action_unit_of_work_requires_locked_snapshot_and_selected_field_updates
                 .limit(1)
             )
         _assert_code(alias_error, "AI_ACTION_TRANSACTION_VIOLATION")
+
+
+def _ticket_lock_statement(ticket_code: str):
+    return (
+        select(
+            Ticket.id.label("id"),
+            Ticket.ticket_code.label("ticket_code"),
+            Ticket.status.label("status"),
+            Ticket.remarks.label("remarks"),
+        )
+        .where(Ticket.ticket_code == ticket_code)
+        .limit(1)
+    )
+
+
+def test_locked_action_record_rejects_forged_cross_uow_and_cross_session_handles(
+    client, admin_headers, action_capability_and_profile
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_action_handle_owner")
+    _, conversation_id, ticket_code = _context(
+        "wa0_action_handle_owner", profile_id, version_id
+    )
+    del conversation_id
+    with SessionLocal() as db, db.begin():
+        with db.begin_nested():
+            owner_uow = assistant_types.ActionUnitOfWork(db)
+            other_uow = assistant_types.ActionUnitOfWork(db)
+            handle = owner_uow.lock_one(_ticket_lock_statement(ticket_code))
+            forged = assistant_types.LockedActionRecord(snapshot=handle.snapshot)
+            for uow, candidate in ((owner_uow, forged), (other_uow, handle)):
+                with pytest.raises(AppError) as raised:
+                    uow.update_locked(candidate, {"remarks": "forbidden"})
+                _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+            with SessionLocal() as other_db, other_db.begin():
+                with other_db.begin_nested():
+                    cross_session_uow = assistant_types.ActionUnitOfWork(other_db)
+                    with pytest.raises(AppError) as raised:
+                        cross_session_uow.update_locked(handle, {"remarks": "forbidden"})
+                    _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+
+
+def test_locked_action_record_rejects_cross_outer_and_cross_savepoint_reuse(
+    client, admin_headers, action_capability_and_profile
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_action_handle_transaction")
+    _, conversation_id, ticket_code = _context(
+        "wa0_action_handle_transaction", profile_id, version_id
+    )
+    del conversation_id
+    with SessionLocal() as db:
+        uow = assistant_types.ActionUnitOfWork(db)
+        with db.begin():
+            outer_handle = uow.lock_one(_ticket_lock_statement(ticket_code))
+        with db.begin():
+            with pytest.raises(AppError) as raised:
+                uow.update_locked(outer_handle, {"remarks": "wrong outer"})
+            _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+
+        with db.begin():
+            with db.begin_nested():
+                savepoint_handle = uow.lock_one(_ticket_lock_statement(ticket_code))
+            with db.begin_nested():
+                with pytest.raises(AppError) as raised:
+                    uow.update_locked(savepoint_handle, {"remarks": "wrong savepoint"})
+                _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+
+
+@pytest.mark.parametrize("transaction_end", ["rollback", "commit"])
+def test_locked_action_record_rejects_use_after_transaction_end(
+    client, admin_headers, action_capability_and_profile, transaction_end
+):
+    profile_id, version_id = action_capability_and_profile
+    username = f"wa0_action_handle_{transaction_end}"
+    _create_user(client, admin_headers, username)
+    _, conversation_id, ticket_code = _context(username, profile_id, version_id)
+    del conversation_id
+    with SessionLocal() as db:
+        uow = assistant_types.ActionUnitOfWork(db)
+        db.begin()
+        db.begin_nested()
+        handle = uow.lock_one(_ticket_lock_statement(ticket_code))
+        getattr(db, transaction_end)()
+        with pytest.raises(AppError) as raised:
+            uow.update_locked(handle, {"remarks": "stale transaction"})
+        _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+
+
+def test_locked_action_record_is_single_use_and_rotates_for_sequential_updates(
+    client, admin_headers, action_capability_and_profile
+):
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_action_handle_rotation")
+    _, conversation_id, ticket_code = _context(
+        "wa0_action_handle_rotation", profile_id, version_id
+    )
+    del conversation_id
+    with SessionLocal() as db, db.begin():
+        with db.begin_nested():
+            uow = assistant_types.ActionUnitOfWork(db)
+            first = uow.lock_one(_ticket_lock_statement(ticket_code))
+            second = uow.update_locked(first, {"remarks": "first update"})
+            assert isinstance(second, assistant_types.LockedActionRecord)
+            assert second is not first
+            assert second.snapshot.remarks == "first update"
+            with pytest.raises(AppError) as raised:
+                uow.update_locked(first, {"status": "processing"})
+            _assert_code(raised, "AI_ACTION_TRANSACTION_VIOLATION")
+            third = uow.update_locked(second, {"status": "processing"})
+            assert isinstance(third, assistant_types.LockedActionRecord)
+            assert third.snapshot.remarks == "first update"
+            assert third.snapshot.status == "processing"
+    with SessionLocal() as db:
+        ticket = db.query(Ticket).filter(Ticket.ticket_code == ticket_code).one()
+        assert ticket.remarks == "first update"
+        assert ticket.status == "processing"
 
 
 @pytest.mark.parametrize(
