@@ -496,7 +496,7 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 
 ### 9.4 Training & Development
 
-- Activity registration, 5 items: type ✔ (internal cross-training / external technical exchange / new-technology research), topic ✔, date ✔, presenter/organizer, participants (multi-select) + optional output link. Participants are grouped in collapsible department directories; each person is a checkbox so multiple IT team members can be selected at once.
+- Activity registration, 5 items: type ✔ (internal cross-training / external technical exchange / new-technology research), topic ✔, date ✔, presenter/organizer, participants (multi-select) + optional output link. Participants are grouped in collapsible department directories, and both department and person nodes have checkboxes. Selecting a department cascades to all of its IT-team members; individuals can still be added or removed, while submitted values remain person IDs.
 - Completing registration automatically awards points to the presenter and participants and records the registrar. Administrators, CIO, or the registrar may edit or delete; the backend rechecks record scope rather than relying on UI buttons. Existing rows are backfilled from create-audit records where possible; rows that cannot be attributed are manageable only by administrator/CIO.
 - In the current unpublished and unlocked period, changing the presenter or participants soft-deletes the old training-point entries and re-awards from current rules; deletion likewise retracts the activity's points. Historical, published, and locked periods reject point-affecting edits and deletions, while metadata that does not change point recipients remains editable and audited.
 

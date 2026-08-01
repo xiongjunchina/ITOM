@@ -157,20 +157,20 @@ export default function Activities() {
     label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
   }));
   const participantTreeData = Object.entries(
-    members.reduce<Record<string, Member[]>>((groups, member) => {
-      const department = member.department_name || t('team.activities.form.unassignedDepartment');
-      (groups[department] ??= []).push(member);
+    members.reduce<Record<string, { name: string; members: Member[] }>>((groups, member) => {
+      const departmentId = member.department_id || 'unassigned';
+      const departmentName = member.department_name || t('team.activities.form.unassignedDepartment');
+      (groups[departmentId] ??= { name: departmentName, members: [] }).members.push(member);
       return groups;
     }, {}),
   )
-    .sort(([left], [right]) => left.localeCompare(right, 'zh-CN'))
-    .map(([department, departmentMembers]) => ({
-      key: `department:${department}`,
-      value: `department:${department}`,
-      title: department,
+    .sort(([, left], [, right]) => left.name.localeCompare(right.name, 'zh-CN'))
+    .map(([departmentId, department]) => ({
+      key: `department:${departmentId}`,
+      value: `department:${departmentId}`,
+      title: department.name,
       selectable: false,
-      disableCheckbox: true,
-      children: departmentMembers
+      children: department.members
         .sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'))
         .map((member) => ({ key: member.id, value: member.id, title: member.name })),
     }));
@@ -319,11 +319,16 @@ export default function Activities() {
           <Form.Item name="host_id" label={t('team.activities.form.host')}>
             <Select allowClear showSearch optionFilterProp="label" placeholder={t('team.activities.form.hostPlaceholder')} options={memberOptions} />
           </Form.Item>
-          <Form.Item name="participant_ids" label={t('team.activities.col.participants')}>
+          <Form.Item
+            name="participant_ids"
+            label={t('team.activities.col.participants')}
+            extra={t('team.activities.form.participantsDepartmentHint')}
+          >
             <TreeSelect
               allowClear
               showSearch
               treeCheckable
+              showCheckedStrategy={TreeSelect.SHOW_CHILD}
               treeNodeFilterProp="title"
               maxTagCount="responsive"
               placeholder={t('team.activities.form.participantsPlaceholder')}
