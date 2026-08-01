@@ -3,7 +3,7 @@
 > 版本：v1.2（2026-07-29，纳入已确认的 Aily + MCP 正式设计基线）
 > 上游依据：[01-系统改造建议.md](01-系统改造建议.md)、[02-字段裁剪清单.md](02-字段裁剪清单.md)
 > 本文档自成一体，是后续技术设计、开发与逐里程碑验收的唯一基准。
-> Aily + MCP 章节为 `feature/aily-agent-mcp` 的正式契约。P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环代码均已完成；P1 已通过真实 Aily 写入 UAT，P2 已通过自动化回归、真实 Aily 多角色对话闭环、普通用户机器人收件及普通用户同单完整闭环。P2.1 已从无法取得可信 JWT 的 Aily Workflow/Skill 路径调整为飞书新版 `card.action.trigger`：普通对话仍只走 MCP，卡片按钮作为唯一例外由 ITOM 验签、映射点击人并调用同一领域服务；自动化及“未解决 → 重开 → 再次解决并关闭 → 评价”的真实按钮 UAT 均已通过。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。冻结版 Helpdesk 事实见标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 章节最初作为现已封存的 `feature/aily-agent-mcp` 正式契约形成，当前由 `feature/AI-agent-version` 继承并用于 Web Agent 后续开发。P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环代码均已完成；P1 已通过真实 Aily 写入 UAT，P2 已通过自动化回归、真实 Aily 多角色对话闭环、普通用户机器人收件及普通用户同单完整闭环。P2.1 已从无法取得可信 JWT 的 Aily Workflow/Skill 路径调整为飞书新版 `card.action.trigger`：普通对话仍只走 MCP，卡片按钮作为唯一例外由 ITOM 验签、映射点击人并调用同一领域服务；自动化及“未解决 → 重开 → 再次解决并关闭 → 评价”的真实按钮 UAT 均已通过。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。冻结版 Helpdesk 事实见标签 `v1.0.0-feishu-helpdesk`。
 
 ---
 

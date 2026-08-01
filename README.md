@@ -36,7 +36,7 @@ FastAPI（Kubernetes Service backend:6800，uvicorn）
 PostgreSQL 16（StatefulSet + PVC 持久化）
 ```
 关键机制：单据（工单/问题/需求/项目/Bug）创建即挂接流程实例，状态由流程编排自动同步（详见「关键概念」）；
-权限=功能矩阵×数据范围×流程节点三层；飞书组织同步、扫码登录继续保留。`feature/aily-agent-mcp` 已完成 P0 底座和 P1 服务入口：清除服务台运行路径、内嵌 `/mcp`、Aily JWT 与精确身份映射、脱敏工具审计、真实服务项检索、版本化动态表单、预览确认/幂等提交、服务项流程与派单，以及独立 IT 需求登记和本人单据查询。网页与 MCP 共用领域校验；ITOM 始终是服务目录、表单、流程和权限的唯一事实来源，详见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)。
+权限=功能矩阵×数据范围×流程节点三层；飞书组织同步、扫码登录继续保留。现已封存的 `feature/aily-agent-mcp` 完成了 P0 底座和 P1 服务入口：清除服务台运行路径、内嵌 `/mcp`、Aily JWT 与精确身份映射、脱敏工具审计、真实服务项检索、版本化动态表单、预览确认/幂等提交、服务项流程与派单，以及独立 IT 需求登记和本人单据查询；当前 `feature/AI-agent-version` 继承这些能力并作为 Web Agent 后续唯一开发线。网页与 MCP 共用领域校验；ITOM 始终是服务目录、表单、流程和权限的唯一事实来源，详见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)。
 
 ### 临时本地隔离排障（默认不使用）
 
@@ -51,7 +51,7 @@ cd deploy && docker compose up --build
 
 ### 自动化质量门禁
 
-默认由 [`.github/workflows/quality-gate.yml`](.github/workflows/quality-gate.yml) 在 `feature/aily-agent-mcp`、`develop`、`main` 的推送和 Pull Request 上执行：
+默认由 [`.github/workflows/quality-gate.yml`](.github/workflows/quality-gate.yml) 在 `feature/AI-agent-version`、`develop`、`main` 的推送和 Pull Request 上执行：
 
 - Python 3.12 完整后端 `pytest`，使用测试夹具创建的临时 SQLite 数据库，不连接 IDC 业务库；
 - Node.js 22 的 `npm ci`、TypeScript 检查和 Vite 生产构建；
@@ -77,7 +77,7 @@ npm run build                          # tsc --noEmit + vite build（提交前�
 
 ```bash
 # 1) 将 feature 分支推送到 GitHub，等待 ITOM Quality Gate 全绿
-git push origin feature/aily-agent-mcp
+git push origin feature/AI-agent-version
 
 # 2) 如有数据库结构变化，先完成批准的 IDC 集群内备份/检查点
 
@@ -146,7 +146,8 @@ deploy/          docker-compose、Nginx、备份
 - `main`：稳定分支，受保护——只接受 Pull Request 合入，禁止直推（本地 pre-push 钩子拦截；紧急放行 `ALLOW_MAIN_PUSH=1 git push`）。
 - `develop`：日常开发集成分支；功能开发从 `develop` 拉 `feature/<名称>` 分支，完成后 PR 合回。
 - `release/feishu-helpdesk-v1` 与标签 `v1.0.0-feishu-helpdesk`：飞书服务台版本的冻结基线；标签固定在提交 `f13f702`，不得重写。
-- `feature/aily-agent-mcp`：基于上述冻结基线的新版本开发线；方案背景、架构边界和新会话启动要求见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)，完成后由用户确认并通过 Pull Request 合入 `main`。
+- `feature/aily-agent-mcp`：已封存的 Aily + MCP 开发线，只保留历史记录，不再接收提交。
+- `feature/AI-agent-version`：继承 Aily + MCP 能力的 Web Agent 唯一开发线；方案背景、架构边界和新会话启动要求见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)，完成后由用户确认并通过 Pull Request 合入 `main`。
 - **开发前同步门禁**：每次开始新的开发任务前，必须先检查工作区；有本地变更时先单独提交版本记录，再推送当前开发分支并确认本地 `HEAD` 与 GitHub 分支指针一致。同步失败或分支不一致时，停止编辑代码，不得把旧变更与新任务混在一起。
 - 首次 clone 后启用钩子：`git config core.hooksPath scripts/git-hooks`。
 - 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误；按改动影响同步更新 `README.md`、`docs/03–06` 及对应英文译本。
@@ -186,7 +187,7 @@ PostgreSQL 16 (StatefulSet + persistent PVC)
 ```
 Key mechanics: every ticket/problem/requirement/project gets a process instance on creation and its
 status is synced by orchestration (see Key concepts); permissions = functional matrix × data scope ×
-process-step operator. Feishu org sync and QR sign-in remain. `feature/aily-agent-mcp` has implemented the P0 embedded-MCP/identity/audit/outbox foundation, P1 intake tools, and P2 requester confirmation/reopen/rating tools plus user-visible lifecycle messages. Web and MCP use the same domain validation, while ITOM remains the sole source for catalog, forms, workflow, authorization, and ratings.
+process-step operator. Feishu org sync and QR sign-in remain. The now-archived `feature/aily-agent-mcp` implemented the P0 embedded-MCP/identity/audit/outbox foundation, P1 intake tools, and P2 requester confirmation/reopen/rating tools plus user-visible lifecycle messages. The current `feature/AI-agent-version` inherits those capabilities and is the sole Web Agent development line. Web and MCP use the same domain validation, while ITOM remains the sole source for catalog, forms, workflow, authorization, and ratings.
 
 ### Temporary isolated local troubleshooting (disabled by default)
 
@@ -201,7 +202,7 @@ cd deploy && docker compose up --build
 
 ### Automated quality gate
 
-By default, [`.github/workflows/quality-gate.yml`](.github/workflows/quality-gate.yml) runs on pushes and pull requests for `feature/aily-agent-mcp`, `develop`, and `main`:
+By default, [`.github/workflows/quality-gate.yml`](.github/workflows/quality-gate.yml) runs on pushes and pull requests for `feature/AI-agent-version`, `develop`, and `main`:
 
 - the complete Python 3.12 backend regression against the fixture-created temporary SQLite database, never the IDC business database;
 - Node.js 22 `npm ci`, TypeScript checking, and the Vite production build;
@@ -227,7 +228,7 @@ npm run build                          # tsc --noEmit + vite build (must be 0 er
 
 ```bash
 # 1) Push the feature branch and wait for ITOM Quality Gate to pass
-git push origin feature/aily-agent-mcp
+git push origin feature/AI-agent-version
 
 # 2) For schema changes, complete the approved in-cluster backup/checkpoint
 
@@ -289,7 +290,8 @@ deploy/          docker-compose, Nginx, backups
 - `main`: stable, protected — merged via Pull Request only; direct pushes are blocked by a local pre-push hook (override with `ALLOW_MAIN_PUSH=1 git push` in emergencies).
 - `develop`: day-to-day integration branch; cut `feature/<name>` branches from it and PR back.
 - `release/feishu-helpdesk-v1` and `v1.0.0-feishu-helpdesk`: immutable frozen Helpdesk baseline at `f13f702`.
-- `feature/aily-agent-mcp`: sole Aily + MCP development line; see the [final design baseline](docs/en/10-aily-mcp-handoff-and-decision-context.md) and merge to `main` only through a user-approved PR.
+- `feature/aily-agent-mcp`: archived Aily + MCP development line retained for history only; it receives no new commits.
+- `feature/AI-agent-version`: sole Web Agent development line inheriting the Aily + MCP capabilities; see the [final design baseline](docs/en/10-aily-mcp-handoff-and-decision-context.md) and merge to `main` only through a user-approved PR.
 - **Pre-development synchronization gate**: before every new development task, inspect the worktree; commit any existing local changes as a separate version record, push the current development branch, and verify that local `HEAD` equals the GitHub branch tip. If synchronization fails or tips differ, stop before editing code and report the blocker; never mix the previous changes with the new task.
 - After cloning, enable the hooks once: `git config core.hooksPath scripts/git-hooks`.
 - Pre-commit checklist: backend `pytest -q` all green, frontend `npm run build` with zero errors, and affected sections in `README.md`, `docs/03–06`, and their English mirrors updated.

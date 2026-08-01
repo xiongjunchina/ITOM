@@ -6,7 +6,7 @@
 
 ## 1. 文档用途与状态口径
 
-本文是 `feature/aily-agent-mcp` 开发线的正式产品与架构基线，记录已经由用户确认的目标、边界、工具范围、数据设计、阶段和验收标准。后续实现不得重新使用飞书服务台方案，也不得把 Aily、MCP 或飞书平台变成第二套 ITOM 业务系统。
+本文最初形成于现已封存的 `feature/aily-agent-mcp` 开发线；当前 `feature/AI-agent-version` 继承其 Aily + MCP 能力并作为 Web Agent 后续唯一开发线。本文记录已经由用户确认的目标、边界、工具范围、数据设计、阶段和验收标准。后续实现不得重新使用飞书服务台方案，也不得把 Aily、MCP 或飞书平台变成第二套 ITOM 业务系统。
 
 本文同时记录目标契约与实际状态。当前分支已实现 P0 的协议/身份/消息底座、P1 的服务请求与 IT 需求入口，以及 P2 的受理/待确认打点、3 个闭环 MCP 工具、网页/MCP 共用确认语义、可靠用户消息和评价明细；P2 的真实对话闭环、机器人收件、普通用户同单文本闭环和验签卡片按钮闭环均已通过。P3 飞书审批按用户决定暂缓；IDC 已恢复并完成当前版本部署及公网协议探针，但可信 TLS、安全/性能/恢复和真实角色正式 UAT 仍待完成。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
 
@@ -20,7 +20,8 @@
 | 历史标签 | `v1.0.0-feishu-helpdesk` | 不可重写，是恢复冻结版的权威引用 |
 | 历史分支 | `release/feishu-helpdesk-v1` | 仅用于查看或维护历史版本 |
 | 稳定分支 | `main` | 只接受用户确认的 Pull Request |
-| 新版本开发分支 | `feature/aily-agent-mcp` | Aily + MCP 唯一长期开发线 |
+| 已封存开发分支 | `feature/aily-agent-mcp` | 保留 Aily + MCP 历史记录，不再接收提交 |
+| 当前开发分支 | `feature/AI-agent-version` | 继承 Aily + MCP 能力的 Web Agent 唯一开发线 |
 | 冻结工作区 | `/Users/xjun/Gitrepo/ITOM` | 不用于新版本开发 |
 | 新版本工作区 | `/Users/xjun/Gitrepo/ITOM-Aily-MCP` | 所有新版本工作均在此进行 |
 
@@ -300,7 +301,7 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 - 指定 ITOM 审批节点接入飞书审批并做双向幂等（按用户决定暂缓，不阻塞当前发布加固）；
 - 为 IDC 公网入口替换受信 TLS 证书，完成安全、性能、故障恢复和真实角色 UAT；
-- 从 `feature/aily-agent-mcp` 发起用户确认的 PR 合入 `main`。
+- 从 `feature/AI-agent-version` 发起用户确认的 PR 合入 `main`。
 
 ## 11. 完成交付标准
 

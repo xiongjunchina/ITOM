@@ -6,7 +6,7 @@
 
 ## 1. Purpose and status semantics
 
-This document is the approved product and architecture baseline for the `feature/aily-agent-mcp` development line. It defines the goals, boundaries, tools, target data model, phases, and acceptance criteria. The implementation must not reintroduce Feishu Helpdesk or turn Aily, MCP, or Feishu into a second ITOM business system.
+This baseline originated on the now-archived `feature/aily-agent-mcp` line. The current `feature/AI-agent-version` branch inherits its Aily + MCP capabilities and is the sole Web Agent development line. This document defines the approved goals, boundaries, tools, target data model, phases, and acceptance criteria. The implementation must not reintroduce Feishu Helpdesk or turn Aily, MCP, or Feishu into a second ITOM business system.
 
 This document records both target contracts and actual status. The branch implements P0 protocol/identity/messaging foundations, P1 service-request and requirement intake, and P2 acceptance/confirmation timestamps, three closure MCP tools, shared web/MCP confirmation semantics, reliable user messages, and rating detail. The real-Aily conversational loop, live bot receipt, normal-user same-ticket text loop, and signed-card-button loop have all passed. P3 Feishu Approval is deferred by user decision. IDC is available and the current version plus public protocol probes are deployed, while trusted TLS, security/performance/recovery, and formal real-role UAT remain.
 
@@ -20,7 +20,8 @@ Before starting work, a new chat must read `AGENTS.md`, this document, `docs/03-
 | Historical tag | `v1.0.0-feishu-helpdesk` | Immutable recovery reference |
 | Historical branch | `release/feishu-helpdesk-v1` | Historical inspection/maintenance only |
 | Stable branch | `main` | Accepts only user-approved Pull Requests |
-| New development branch | `feature/aily-agent-mcp` | Sole long-lived Aily + MCP development line |
+| Archived development branch | `feature/aily-agent-mcp` | Retains Aily + MCP history and receives no new commits |
+| Current development branch | `feature/AI-agent-version` | Sole Web Agent line inheriting the Aily + MCP capabilities |
 | Frozen worktree | `/Users/xjun/Gitrepo/ITOM` | Never used for the new version |
 | New-version worktree | `/Users/xjun/Gitrepo/ITOM-Aily-MCP` | All new-version work happens here |
 
@@ -300,7 +301,7 @@ Acceptance: a business user and IT staff complete request → dispatch → accep
 
 - connect selected ITOM approval steps to Feishu Approval with bidirectional idempotency (deferred by user decision and not blocking current release hardening);
 - install trusted TLS and complete IDC security, performance, recovery, and real-role UAT;
-- open a user-approved PR from `feature/aily-agent-mcp` to `main`.
+- open a user-approved PR from `feature/AI-agent-version` to `main`.
 
 ## 11. Definition of done
 

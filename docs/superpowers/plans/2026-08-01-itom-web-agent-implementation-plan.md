@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 开始任何代码修改前，工作区必须干净，当前分支必须是 `feature/aily-agent-mcp`，并与 `origin/feature/aily-agent-mcp` 同步；只通过用户批准的 PR 合入 `main`。
+- 开始任何代码修改前，工作区必须干净，当前分支必须是 `feature/AI-agent-version`，并与 `origin/feature/AI-agent-version` 同步；已封存的 `feature/aily-agent-mcp` 不再接收提交，只通过用户批准的 PR 合入 `main`。
 - IDC Kubernetes 是唯一运行、联调和验收环境；本地只运行临时 SQLite 自动化测试和前端生产构建，不启动 Docker/Compose ITOM 运行环境。
 - ITOM 领域服务和 API 是业务事实、权限和流程的唯一依据；模型、提示词、档案和前端隐藏均不授权。
 - 网页身份和 Aily 身份严格隔离；网页不自调用公网 `/mcp/`，Aily 工具范围不因网页助手而扩大。
@@ -83,23 +83,23 @@
 
 **Interfaces:**
 - Consumes: 已确认设计提交 `fe478a0` 和本实施计划提交。
-- Produces: 干净且与远端同步的 `feature/aily-agent-mcp`、通过质量门禁的基线、数据库结构变更前的批准备份/检查点证据。
+- Produces: 干净且与远端同步的 `feature/AI-agent-version`、通过质量门禁的基线、数据库结构变更前的批准备份/检查点证据。
 
 - [ ] **Step 1: 验证分支与工作区**
 
 ```bash
 git branch --show-current
 git status --short
-git rev-list --left-right --count HEAD...origin/feature/aily-agent-mcp
+git rev-list --left-right --count HEAD...origin/feature/AI-agent-version
 ```
 
-Expected: 分支为 `feature/aily-agent-mcp`，工作区无输出；若本地领先，只允许推送当前 feature 分支。
+Expected: 分支为 `feature/AI-agent-version`，工作区无输出；若本地领先，只允许推送当前 feature 分支。
 
 - [ ] **Step 2: 推送当前文档基线并等待质量门禁**
 
 ```bash
-git push origin feature/aily-agent-mcp
-gh run list --branch feature/aily-agent-mcp --workflow "ITOM Quality Gate" --limit 1
+git push origin feature/AI-agent-version
+gh run list --branch feature/AI-agent-version --workflow "ITOM Quality Gate" --limit 1
 ```
 
 Expected: 最新 run 的 backend、frontend、repository-contract 全部成功；失败时停止编码并先修复基线。
@@ -542,7 +542,7 @@ cd backend && python -m pytest -q
 cd ../frontend && npm run build
 cd .. && git diff --check
 git commit -m "docs(agent): complete WA0 delivery contract"
-git push origin feature/aily-agent-mcp
+git push origin feature/AI-agent-version
 ```
 
 - [ ] **Step 3: 等待 GitHub Actions 全绿，再构建部署不可变镜像**
@@ -872,8 +872,8 @@ Expected: 全部成功。
 
 ```bash
 git status --short
-git push origin feature/aily-agent-mcp
-gh pr create --base main --head feature/aily-agent-mcp \
+git push origin feature/AI-agent-version
+gh pr create --base main --head feature/AI-agent-version \
   --title "feat: add governed ITOM web assistant" \
   --body "Implements WA0-WA4 from the approved ITOM web-agent design baseline. Includes additive migrations, role-aware capability isolation, explicit-confirmation writes, full automated regression, IDC UAT, Aily MCP regression, and rollback evidence. Feishu Approval P3 remains deferred."
 ```

@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Before code changes, the worktree is clean, the branch is `feature/aily-agent-mcp`, and it is synchronized with `origin/feature/aily-agent-mcp`; only a user-approved PR may merge into `main`.
+- Before code changes, the worktree is clean, the branch is `feature/AI-agent-version`, and it is synchronized with `origin/feature/AI-agent-version`; the archived `feature/aily-agent-mcp` branch receives no new commits, and only a user-approved PR may merge into `main`.
 - IDC Kubernetes is the sole runtime, integration, and acceptance environment. Local execution is limited to temporary-SQLite automation and the frontend production build; do not start the Docker/Compose ITOM stack.
 - ITOM domain services and APIs remain the sole source of business state, permission, and workflow. A model, prompt, profile, or hidden UI element never grants authority.
 - Web and Aily identities remain isolated. Web does not call the public `/mcp/`, and web capabilities do not enlarge Aily's tool list.
@@ -86,7 +86,7 @@
 ```bash
 git branch --show-current
 git status --short
-git rev-list --left-right --count HEAD...origin/feature/aily-agent-mcp
+git rev-list --left-right --count HEAD...origin/feature/AI-agent-version
 ```
 
 Expected: feature branch and no local changes. If local is ahead, push only the feature branch.
@@ -94,8 +94,8 @@ Expected: feature branch and no local changes. If local is ahead, push only the 
 - [ ] **Step 2: Push the documentation baseline and wait for the gate**
 
 ```bash
-git push origin feature/aily-agent-mcp
-gh run list --branch feature/aily-agent-mcp --workflow "ITOM Quality Gate" --limit 1
+git push origin feature/AI-agent-version
+gh run list --branch feature/AI-agent-version --workflow "ITOM Quality Gate" --limit 1
 ```
 
 Expected: backend, frontend, and repository-contract all pass; otherwise stop before coding.

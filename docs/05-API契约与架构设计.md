@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，历史真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。2026-07-31 IDC 复核发现 `itom.snnc.cc:30443` 公网证书无法通过标准 CA 校验且当前卡片 POST 未到达入口日志，因此当前 IDC 的“确认关闭”仍待受信 TLS 和新工单卡片复验。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在现已封存的 `feature/aily-agent-mcp` 实现并由当前 `feature/AI-agent-version` 继承；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，历史真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。2026-07-31 IDC 复核发现 `itom.snnc.cc:30443` 公网证书无法通过标准 CA 校验且当前卡片 POST 未到达入口日志，因此当前 IDC 的“确认关闭”仍待受信 TLS 和新工单卡片复验。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 

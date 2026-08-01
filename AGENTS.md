@@ -14,11 +14,12 @@ Required checks before declaring work complete:
 
 The delivery definition of done is: **implementation + tests + affected documentation are mutually consistent**.
 
-## Aily Agent + MCP development line
+## Aily Agent + MCP and Web Agent development lines
 
-The `feature/aily-agent-mcp` branch is the dedicated development line for the
-Feishu Aily Agent + MCP Server version. Before designing or implementing work
-on this branch:
+The `feature/aily-agent-mcp` branch is archived and must not receive new
+commits. The `feature/AI-agent-version` branch is the dedicated development
+line for the current Feishu Aily Agent + MCP Server + ITOM Web Agent version.
+Before designing or implementing work on the current branch:
 
 1. Read `docs/10-Aily-MCP版本交接与决策上下文.md` completely and distinguish
    confirmed baseline facts from proposals and pending decisions.
@@ -34,7 +35,7 @@ on this branch:
 5. Keep secrets out of URLs, logs, prompts, tool results, commits, and test
    fixtures. Map Feishu identity to an ITOM account before authorizing any
    user-scoped or mutating tool.
-6. Commit and push development changes only to `feature/aily-agent-mcp` (or a
+6. Commit and push development changes only to `feature/AI-agent-version` (or a
    child feature branch). Merge into `main` through a user-approved Pull
    Request. Never rewrite the `v1.0.0-feishu-helpdesk` tag or use the frozen
    `/Users/xjun/Gitrepo/ITOM` worktree for new-version development.

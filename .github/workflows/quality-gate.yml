@@ -5,12 +5,12 @@ on:
     branches:
       - main
       - develop
-      - feature/aily-agent-mcp
+      - feature/AI-agent-version
   pull_request:
     branches:
       - main
       - develop
-      - feature/aily-agent-mcp
+      - feature/AI-agent-version
   workflow_dispatch:
 
 permissions:
