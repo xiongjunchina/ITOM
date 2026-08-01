@@ -6,6 +6,7 @@ from app.assistant.providers.base import (
     ModelStreamEvent,
     ProviderConfigurationError,
     ProviderError,
+    ProviderPurpose,
     ProviderProbe,
 )
 from app.assistant.providers.openai_compatible import OpenAICompatibleProvider
@@ -17,5 +18,6 @@ __all__ = [
     "OpenAICompatibleProvider",
     "ProviderConfigurationError",
     "ProviderError",
+    "ProviderPurpose",
     "ProviderProbe",
 ]

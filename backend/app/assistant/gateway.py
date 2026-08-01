@@ -14,10 +14,12 @@ from app.assistant.providers import (
     OpenAICompatibleProvider,
     ProviderConfigurationError,
     ProviderError,
+    ProviderPurpose,
 )
 from app.assistant.redaction import redact_for_log
 from app.assistant.types import RiskLevel
 from app.core.config import settings
+from app.db import SessionLocal
 from app.models import AiProviderCall, AiProviderConfig
 
 
@@ -39,16 +41,19 @@ class AssistantGateway:
         *,
         primary_provider_id: str | None = None,
         provider_factory: Callable[[AiProviderConfig], ModelProvider] | None = None,
+        audit_session_factory: Callable[[], Session] | None = None,
         probe_max_age_seconds: int = 900,
         now: Callable[[], datetime] | None = None,
     ):
         self.db = db
         self.primary_provider_id = primary_provider_id
         self.provider_factory = provider_factory or self._default_provider
+        self.audit_session_factory = audit_session_factory or SessionLocal
         self.probe_max_age = timedelta(seconds=probe_max_age_seconds)
         self.now = now or (lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
     async def stream(self, request: ChatRequest):
+        purpose = _request_purpose(request)
         risk = _request_risk(request)
         if risk is RiskLevel.L4:
             raise GatewayError("GATEWAY_RISK_FORBIDDEN", "the requested risk level is not available")
@@ -62,20 +67,35 @@ class AssistantGateway:
             started = perf_counter()
             provider = None
             emitted = False
+            terminal_event = None
             input_tokens = 0
             output_tokens = 0
             try:
                 provider = self.provider_factory(config)
                 async for event in provider.stream_chat(request):
+                    if event.kind == "done":
+                        if terminal_event is not None:
+                            raise ProviderError(
+                                "PROVIDER_STREAM_PROTOCOL_ERROR",
+                                "provider stream protocol validation failed",
+                            )
+                        terminal_event = event
+                        continue
                     if event.kind == "usage":
                         input_tokens = event.input_tokens
                         output_tokens = event.output_tokens
                     emitted = True
                     yield event
+                if terminal_event is None:
+                    raise ProviderError(
+                        "PROVIDER_STREAM_PROTOCOL_ERROR",
+                        "provider stream protocol validation failed",
+                    )
             except (asyncio.CancelledError, GeneratorExit):
                 self._audit(
                     config,
                     request,
+                    purpose,
                     started,
                     result_code="PROVIDER_STREAM_CANCELLED",
                     status="cancelled",
@@ -91,6 +111,7 @@ class AssistantGateway:
                 self._audit(
                     config,
                     request,
+                    purpose,
                     started,
                     result_code=exc.code,
                     status="failed",
@@ -105,6 +126,7 @@ class AssistantGateway:
                 self._audit(
                     config,
                     request,
+                    purpose,
                     started,
                     result_code="PROVIDER_CONFIG_INVALID",
                     status="failed",
@@ -115,6 +137,7 @@ class AssistantGateway:
                 self._audit(
                     config,
                     request,
+                    purpose,
                     started,
                     result_code="PROVIDER_INTERNAL_ERROR",
                     status="failed",
@@ -126,15 +149,22 @@ class AssistantGateway:
                     raise GatewayError("GATEWAY_STREAM_FAILED", "model stream failed after output began") from None
                 continue
             else:
-                self._audit(
+                audited = self._audit(
                     config,
                     request,
+                    purpose,
                     started,
                     result_code="OK" if position == 0 else "OK_FALLBACK",
                     status="completed",
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )
+                if not audited:
+                    raise GatewayError(
+                        "GATEWAY_AUDIT_FAILED",
+                        "provider call completed but its audit could not be persisted",
+                    )
+                yield terminal_event
                 return
             finally:
                 if provider is not None:
@@ -183,7 +213,11 @@ class AssistantGateway:
             return False
         if _request_risk(request) in {RiskLevel.L2, RiskLevel.L3}:
             capabilities = config.capability_probe if isinstance(config.capability_probe, dict) else {}
-            if capabilities.get("supports_tools") is not True or capabilities.get("supports_json_schema") is not True:
+            if (
+                capabilities.get("supports_streaming") is not True
+                or capabilities.get("supports_tools") is not True
+                or capabilities.get("supports_json_schema") is not True
+            ):
                 return False
         return True
 
@@ -191,6 +225,7 @@ class AssistantGateway:
         self,
         config: AiProviderConfig,
         request: ChatRequest,
+        purpose: ProviderPurpose,
         started: float,
         *,
         result_code: str,
@@ -198,24 +233,41 @@ class AssistantGateway:
         error: dict | None = None,
         input_tokens: int = 0,
         output_tokens: int = 0,
-    ) -> None:
-        self.db.add(
-            AiProviderCall(
-                provider_id=config.id,
-                conversation_id=request.conversation_id,
-                message_id=request.message_id,
-                profile_version_id=request.profile_version_id,
-                model=str(config.model),
-                purpose=request.purpose,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                duration_ms=max(0, int((perf_counter() - started) * 1000)),
-                result_code=result_code,
-                status=status,
-                error_redacted=redact_for_log(error) if error else None,
+    ) -> bool:
+        try:
+            audit_db = self.audit_session_factory()
+        except Exception:
+            return False
+        try:
+            audit_db.add(
+                AiProviderCall(
+                    provider_id=config.id,
+                    conversation_id=request.conversation_id,
+                    message_id=request.message_id,
+                    profile_version_id=request.profile_version_id,
+                    model=str(config.model),
+                    purpose=purpose.value,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    duration_ms=max(0, int((perf_counter() - started) * 1000)),
+                    result_code=result_code,
+                    status=status,
+                    error_redacted=redact_for_log(error) if error else None,
+                )
             )
-        )
-        self.db.commit()
+            audit_db.commit()
+            return True
+        except Exception:
+            try:
+                audit_db.rollback()
+            except Exception:
+                pass
+            return False
+        finally:
+            try:
+                audit_db.close()
+            except Exception:
+                pass
 
     @staticmethod
     def _default_provider(config: AiProviderConfig) -> ModelProvider:
@@ -238,3 +290,9 @@ def _request_risk(request: ChatRequest) -> RiskLevel:
         return RiskLevel.coerce(request.risk_level)
     except (TypeError, ValueError):
         raise GatewayError("GATEWAY_RISK_FORBIDDEN", "the requested risk level is not available") from None
+
+
+def _request_purpose(request: ChatRequest) -> ProviderPurpose:
+    if not isinstance(request.purpose, ProviderPurpose):
+        raise GatewayError("GATEWAY_PURPOSE_INVALID", "the provider request purpose is invalid")
+    return request.purpose

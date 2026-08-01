@@ -3,10 +3,13 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 import importlib
+import ipaddress
 import json
 import secrets
+import ssl
 from types import SimpleNamespace
 
+import httpcore
 import httpx
 import pytest
 
@@ -53,6 +56,9 @@ def _config(
         "https://models.example.test/v1#fragment",
         "https://models.example.test/v1/../admin",
         "https://models.example.test/v1%2f..%2fadmin",
+        "https://models.example.test/v1%252525252f..%252525252fadmin",
+        "https://models.example.test/v1/%252525252e%252525252e/admin",
+        "https://models.example.test/" + "%25" * 9 + "2fadmin",
     ],
 )
 def test_provider_rejects_unsafe_base_urls_before_any_request(base_url):
@@ -78,6 +84,21 @@ def test_provider_requires_explicit_exact_or_controlled_suffix_allowlist():
     assert str(suffix.endpoint_url) == "https://region.models.example.test/openai/v1/chat/completions"
 
 
+def test_provider_allows_only_mocktransport_client_injection():
+    """Accepting an injected production transport must bypass request-specific DNS pinning."""
+    client = httpx.AsyncClient(transport=httpx.AsyncHTTPTransport())
+    try:
+        with pytest.raises(ProviderConfigurationError):
+            OpenAICompatibleProvider(
+                _config(),
+                allowed_hosts="models.example.test",
+                client=client,
+                resolver=_public_dns,
+            )
+    finally:
+        _run(client.aclose())
+
+
 async def _public_dns(_host: str, _port: int):
     return ["93.184.216.34"]
 
@@ -90,14 +111,14 @@ def _utcnow_naive():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _probe_response():
+def _basic_probe_response(content: str = "ok"):
     return {
         "id": "probe-response",
         "object": "chat.completion",
         "choices": [
             {
                 "index": 0,
-                "message": {"role": "assistant", "content": '{"status":"ok"}'},
+                "message": {"role": "assistant", "content": content},
                 "finish_reason": "stop",
             }
         ],
@@ -105,20 +126,89 @@ def _probe_response():
     }
 
 
-def test_probe_uses_approved_endpoint_header_and_structured_capability_payload():
-    """Changing the request path/header/probe shape must break the provider boundary contract."""
+def _tool_probe_response(*, name: str = "wa0_capability_probe", arguments: str = '{"status":"ok"}'):
+    return {
+        "id": "tool-probe-response",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-probe",
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+    }
+
+
+def _schema_probe_response(content: str = '{"status":"schema-ok"}'):
+    return {
+        "id": "schema-probe-response",
+        "object": "chat.completion",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+def _probe_stream_response() -> str:
+    return _sse(
+        {"choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
+        {"choices": [{"index": 0, "delta": {"content": "stream-ok"}, "finish_reason": "stop"}]},
+        "[DONE]",
+    )
+
+
+def test_probe_runs_independent_exact_basic_stream_tool_and_json_schema_checks():
+    """Combining or merely advertising capabilities must not mark unsupported features as healthy."""
     assert getattr(provider_api, "ProviderProbe", None) is not None
     secret = f"unit-{secrets.token_urlsafe(18)}"
+    probe_kinds = []
 
     async def handler(request: httpx.Request):
         body = json.loads(request.content)
         assert request.url == httpx.URL("https://models.example.test/v1/chat/completions")
         assert request.url.query == b""
         assert request.headers["Authorization"] == f"Bearer {secret}"
+        if body.get("stream") is True:
+            probe_kinds.append("stream")
+            assert "tools" not in body
+            assert "response_format" not in body
+            return httpx.Response(
+                200,
+                text=_probe_stream_response(),
+                headers={"Content-Type": "text/event-stream"},
+            )
+        if "tool_choice" in body:
+            probe_kinds.append("tool")
+            offered_name = body["tools"][0]["function"]["name"]
+            assert offered_name == "wa0_capability_probe"
+            assert body["tool_choice"]["function"]["name"] == offered_name
+            return httpx.Response(200, json=_tool_probe_response())
+        if "response_format" in body:
+            probe_kinds.append("json_schema")
+            schema = body["response_format"]["json_schema"]
+            assert schema["strict"] is True
+            assert schema["schema"]["properties"]["status"]["const"] == "schema-ok"
+            return httpx.Response(200, json=_schema_probe_response())
+        probe_kinds.append("basic")
         assert body["stream"] is False
-        assert body["tools"][0]["function"]["name"] == "wa0_probe"
-        assert body["response_format"]["type"] == "json_schema"
-        return httpx.Response(200, json=_probe_response())
+        assert "tools" not in body
+        assert "response_format" not in body
+        return httpx.Response(200, json=_basic_probe_response())
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
     provider = OpenAICompatibleProvider(
@@ -133,8 +223,46 @@ def test_probe_uses_approved_endpoint_header_and_structured_capability_payload()
         _run(client.aclose())
 
     assert probe.success is True
+    assert probe.supports_streaming is True
     assert probe.supports_tools is True
     assert probe.supports_json_schema is True
+    assert probe_kinds == ["basic", "stream", "tool", "json_schema"]
+
+
+@pytest.mark.parametrize("ignored_feature", ["stream", "tool", "json_schema"])
+def test_probe_reports_false_when_provider_ignores_a_requested_feature(ignored_feature):
+    """A normal-looking response that ignores a forced feature must not produce a truthful capability flag."""
+    async def handler(request: httpx.Request):
+        body = json.loads(request.content)
+        if body.get("stream") is True:
+            if ignored_feature == "stream":
+                return httpx.Response(200, json=_basic_probe_response())
+            return httpx.Response(
+                200,
+                text=_probe_stream_response(),
+                headers={"Content-Type": "text/event-stream"},
+            )
+        if "tool_choice" in body:
+            response = _basic_probe_response() if ignored_feature == "tool" else _tool_probe_response()
+            return httpx.Response(200, json=response)
+        if "response_format" in body:
+            content = '{"status":"ignored"}' if ignored_feature == "json_schema" else '{"status":"schema-ok"}'
+            return httpx.Response(200, json=_schema_probe_response(content))
+        return httpx.Response(200, json=_basic_probe_response())
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        _config(), allowed_hosts="models.example.test", client=client, resolver=_public_dns
+    )
+    try:
+        probe = _run(provider.probe())
+    finally:
+        _run(client.aclose())
+
+    assert probe.success is True
+    assert probe.supports_streaming is (ignored_feature != "stream")
+    assert probe.supports_tools is (ignored_feature != "tool")
+    assert probe.supports_json_schema is (ignored_feature != "json_schema")
 
 
 @pytest.mark.parametrize(
@@ -160,7 +288,7 @@ def test_probe_rejects_non_public_and_metadata_dns_answers_before_transport(unsa
 
     async def handler(request: httpx.Request):
         requests.append(request)
-        return httpx.Response(200, json=_probe_response())
+        return httpx.Response(200, json=_basic_probe_response())
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     provider = OpenAICompatibleProvider(
@@ -178,7 +306,7 @@ def test_probe_rejects_non_public_and_metadata_dns_answers_before_transport(unsa
 
 def test_dns_is_revalidated_immediately_before_every_request_to_block_rebinding():
     """Caching a prior public answer must let a later private DNS answer reach transport."""
-    answers = iter([["93.184.216.34"], ["127.0.0.1"]])
+    answers = iter([["93.184.216.34"]] * 4 + [["127.0.0.1"]])
     request_count = 0
 
     async def resolver(_host: str, _port: int):
@@ -187,7 +315,17 @@ def test_dns_is_revalidated_immediately_before_every_request_to_block_rebinding(
     async def handler(_request: httpx.Request):
         nonlocal request_count
         request_count += 1
-        return httpx.Response(200, json=_probe_response())
+        if request_count == 2:
+            return httpx.Response(
+                200,
+                text=_probe_stream_response(),
+                headers={"Content-Type": "text/event-stream"},
+            )
+        if request_count == 3:
+            return httpx.Response(200, json=_tool_probe_response())
+        if request_count == 4:
+            return httpx.Response(200, json=_schema_probe_response())
+        return httpx.Response(200, json=_basic_probe_response())
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     provider = OpenAICompatibleProvider(
@@ -201,7 +339,107 @@ def test_dns_is_revalidated_immediately_before_every_request_to_block_rebinding(
         _run(client.aclose())
 
     assert getattr(caught.value, "code", None) == "PROVIDER_ADDRESS_FORBIDDEN"
-    assert request_count == 1
+    assert request_count == 4
+
+
+class _MemoryNetworkStream(httpcore.AsyncNetworkStream):
+    def __init__(self, response: bytes):
+        self._response = response
+        self.request_bytes = bytearray()
+        self.server_hostnames = []
+        self.ssl_contexts = []
+        self.closed = False
+
+    async def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
+        if not self._response:
+            return b""
+        chunk, self._response = self._response[:max_bytes], self._response[max_bytes:]
+        return chunk
+
+    async def write(self, buffer: bytes, timeout: float | None = None) -> None:
+        self.request_bytes.extend(buffer)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+    async def start_tls(
+        self,
+        ssl_context: ssl.SSLContext,
+        server_hostname: str | None = None,
+        timeout: float | None = None,
+    ):
+        self.ssl_contexts.append(ssl_context)
+        self.server_hostnames.append(server_hostname)
+        return self
+
+    def get_extra_info(self, info: str):
+        return None
+
+
+class _RebindingNetworkBackend(httpcore.AsyncNetworkBackend):
+    def __init__(self, resolver, stream: _MemoryNetworkStream):
+        self.resolver = resolver
+        self.stream = stream
+        self.connect_hosts = []
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options=None,
+    ):
+        try:
+            ipaddress.ip_address(host)
+            target = host
+        except ValueError:
+            target = (await self.resolver(host, port))[0]
+        self.connect_hosts.append(target)
+        return self.stream
+
+    async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options=None):
+        raise AssertionError("provider transport must never use Unix sockets")
+
+    async def sleep(self, seconds: float) -> None:
+        return None
+
+
+def test_default_transport_dials_only_same_request_validated_ip_and_preserves_host_and_tls_name():
+    """Passing the origin hostname to the socket backend must allow a second DNS answer to steer the connection."""
+    sse = _stream_response("pinned answer").encode()
+    raw_response = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Type: text/event-stream\r\n"
+        + f"Content-Length: {len(sse)}\r\n".encode()
+        + b"Connection: close\r\n\r\n"
+        + sse
+    )
+    stream = _MemoryNetworkStream(raw_response)
+    resolver_calls = 0
+
+    async def rebinding_resolver(_host: str, _port: int):
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return ["93.184.216.34"] if resolver_calls == 1 else ["127.0.0.1"]
+
+    backend = _RebindingNetworkBackend(rebinding_resolver, stream)
+    provider = OpenAICompatibleProvider(
+        _config(),
+        allowed_hosts="models.example.test",
+        resolver=rebinding_resolver,
+        network_backend=backend,
+    )
+
+    events = _run(_collect_stream(provider, _chat_request()))
+
+    assert [event.kind for event in events] == ["text_delta", "usage", "done"]
+    assert resolver_calls == 1
+    assert backend.connect_hosts == ["93.184.216.34"]
+    assert stream.server_hostnames == ["models.example.test"]
+    assert stream.ssl_contexts[0].check_hostname is True
+    assert stream.ssl_contexts[0].verify_mode == ssl.CERT_REQUIRED
+    assert b"host: models.example.test\r\n" in bytes(stream.request_bytes).lower()
 
 
 def test_probe_never_follows_redirects_even_when_injected_client_would():
@@ -314,6 +552,7 @@ def _sse(*documents: object) -> str:
 
 
 def _chat_request(**overrides):
+    purpose_type = getattr(provider_api, "ProviderPurpose", None)
     values = {
         "messages": ({"role": "user", "content": "Check ticket status"},),
         "tools": (
@@ -338,6 +577,7 @@ def _chat_request(**overrides):
             "additionalProperties": False,
         },
         "risk_level": "L2",
+        "purpose": purpose_type.CHAT if purpose_type is not None else "chat",
     }
     values.update(overrides)
     return provider_api.ChatRequest(**values)
@@ -417,6 +657,40 @@ def test_stream_chat_redacts_input_and_assembles_text_tool_usage_and_terminal_ev
     assert events[2].input_tokens == 23
     assert events[2].output_tokens == 8
     assert events[3].finish_reason == "tool_calls"
+
+
+def test_provider_rejects_raw_purpose_before_dns_or_transport():
+    """Calling the adapter directly with caller purpose text must not bypass the gateway boundary."""
+    resolver_calls = 0
+    transport_calls = 0
+
+    async def resolver(_host: str, _port: int):
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return ["93.184.216.34"]
+
+    async def handler(_request: httpx.Request):
+        nonlocal transport_calls
+        transport_calls += 1
+        return httpx.Response(
+            200,
+            text=_stream_response(),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        _config(), allowed_hosts="models.example.test", client=client, resolver=resolver
+    )
+    try:
+        with pytest.raises(Exception) as caught:
+            _run(_collect_stream(provider, _chat_request(purpose="chat")))
+    finally:
+        _run(client.aclose())
+
+    assert getattr(caught.value, "code", None) == "PROVIDER_REQUEST_INVALID"
+    assert resolver_calls == 0
+    assert transport_calls == 0
 
 
 @pytest.mark.parametrize(
@@ -509,6 +783,45 @@ def test_stream_chat_rejects_tool_name_that_was_not_offered_in_this_request():
     assert getattr(caught.value, "code", None) == "PROVIDER_STREAM_PROTOCOL_ERROR"
 
 
+class _NeverEndingAfterDoneStream(httpx.AsyncByteStream):
+    def __init__(self):
+        self.read_after_done = False
+        self.closed = False
+
+    async def __aiter__(self):
+        yield _stream_response("terminal answer").encode()
+        self.read_after_done = True
+        yield b": heartbeat that must never be consumed\n\n"
+
+    async def aclose(self):
+        self.closed = True
+
+
+def test_stream_chat_stops_reading_and_closes_response_immediately_after_done():
+    """Continuing to await socket EOF after DONE must hang on provider heartbeats."""
+    response_stream = _NeverEndingAfterDoneStream()
+
+    async def handler(_request: httpx.Request):
+        return httpx.Response(
+            200,
+            stream=response_stream,
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(
+        _config(), allowed_hosts="models.example.test", client=client, resolver=_public_dns
+    )
+    try:
+        events = _run(_collect_stream(provider, _chat_request()))
+    finally:
+        _run(client.aclose())
+
+    assert [event.kind for event in events] == ["text_delta", "usage", "done"]
+    assert response_stream.read_after_done is False
+    assert response_stream.closed is True
+
+
 def _gateway_module():
     return importlib.import_module("app.assistant.gateway")
 
@@ -526,6 +839,26 @@ def _stream_response(text: str = "fallback answer") -> str:
     )
 
 
+class _ScriptedProvider:
+    def __init__(self, events, *, error=None):
+        self.events = events
+        self.error = error
+
+    async def stream_chat(self, _request):
+        for event in self.events:
+            yield event
+        if self.error is not None:
+            raise self.error
+
+
+def _successful_gateway_events(text: str = "gateway answer"):
+    return [
+        provider_api.ModelStreamEvent(kind="text_delta", text=text),
+        provider_api.ModelStreamEvent(kind="usage", input_tokens=7, output_tokens=3),
+        provider_api.ModelStreamEvent(kind="done", finish_reason="stop"),
+    ]
+
+
 def _provider_row(
     code: str,
     *,
@@ -535,6 +868,7 @@ def _provider_row(
     last_probed_at: datetime | None = None,
     supports_tools: bool = True,
     supports_json_schema: bool = True,
+    supports_streaming: bool = True,
     is_primary: bool = False,
 ):
     return AiProviderConfig(
@@ -547,6 +881,7 @@ def _provider_row(
         max_output_tokens=512,
         temperature=0,
         capability_probe={
+            "supports_streaming": supports_streaming,
             "supports_tools": supports_tools,
             "supports_json_schema": supports_json_schema,
         },
@@ -604,17 +939,21 @@ def test_gateway_falls_back_only_after_primary_failure_and_audits_redacted_attem
         assert events[0].text == "fallback answer"
         calls = db.query(AiProviderCall).filter(
             AiProviderCall.provider_id.in_([primary.id, fallback.id])
-        ).order_by(AiProviderCall.created_at, AiProviderCall.id).all()
-        assert [(call.provider_id, call.result_code, call.status) for call in calls] == [
-            (primary.id, "PROVIDER_HTTP_5XX", "failed"),
-            (fallback.id, "OK_FALLBACK", "completed"),
-        ]
-        assert calls[1].input_tokens == 17
-        assert calls[1].output_tokens == 5
+        ).all()
+        calls_by_provider = {call.provider_id: call for call in calls}
+        assert {
+            provider_id: (call.result_code, call.status)
+            for provider_id, call in calls_by_provider.items()
+        } == {
+            primary.id: ("PROVIDER_HTTP_5XX", "failed"),
+            fallback.id: ("OK_FALLBACK", "completed"),
+        }
+        assert calls_by_provider[fallback.id].input_tokens == 17
+        assert calls_by_provider[fallback.id].output_tokens == 5
         rendered_audit = json.dumps([call.error_redacted for call in calls], ensure_ascii=False)
         assert secret not in rendered_audit
         assert prompt not in rendered_audit
-        assert set(calls[0].error_redacted) == {"code", "message"}
+        assert set(calls_by_provider[primary.id].error_redacted) == {"code", "message"}
         assert "messages" not in AiProviderCall.__table__.columns
 
     for http_client in clients:
@@ -623,21 +962,25 @@ def test_gateway_falls_back_only_after_primary_failure_and_audits_redacted_attem
 
 @pytest.mark.parametrize("risk_level", ["L2", "L3"])
 @pytest.mark.parametrize(
-    ("supports_tools", "supports_json_schema"),
-    [(False, True), (True, False), (False, False)],
+    ("supports_streaming", "supports_tools", "supports_json_schema"),
+    [(False, True, True), (True, False, True), (True, True, False), (False, False, False)],
 )
 def test_gateway_rejects_l2_l3_provider_without_both_required_capabilities(
-    client, risk_level, supports_tools, supports_json_schema
+    client, risk_level, supports_streaming, supports_tools, supports_json_schema
 ):
-    """Weakening either capability check must expose a high-risk request to an incompatible model."""
+    """Weakening any capability check must expose a high-risk request to an incompatible model."""
     gateway_api = _gateway_module()
     transport_calls = 0
-    suffix = f"{risk_level.lower()}-{int(supports_tools)}-{int(supports_json_schema)}"
+    suffix = (
+        f"{risk_level.lower()}-{int(supports_streaming)}-"
+        f"{int(supports_tools)}-{int(supports_json_schema)}"
+    )
 
     with SessionLocal() as db:
         provider_row = _provider_row(
             f"wa0-incompatible-{suffix}",
             host=f"{suffix}.models.example.test",
+            supports_streaming=supports_streaming,
             supports_tools=supports_tools,
             supports_json_schema=supports_json_schema,
             is_primary=True,
@@ -837,6 +1180,323 @@ def test_gateway_audits_client_cancelled_stream_without_attempting_fallback(clie
             (primary.id, "PROVIDER_STREAM_CANCELLED", "cancelled")
         ]
         assert fallback_calls == 0
+
+    for http_client in clients:
+        _run(http_client.aclose())
+
+
+class _FailingAuditSession:
+    def __init__(self, secret: str):
+        self.secret = secret
+        self.rollback_called = False
+        self.close_called = False
+
+    def add(self, _record):
+        raise RuntimeError(f"audit storage failed: {self.secret}")
+
+    def commit(self):
+        raise RuntimeError(f"audit commit failed: {self.secret}")
+
+    def rollback(self):
+        self.rollback_called = True
+
+    def close(self):
+        self.close_called = True
+
+
+@pytest.mark.parametrize(
+    "raw_purpose",
+    [
+        "chat",
+        "unknown-purpose",
+        "x" * 128,
+        "chat bearer secret-purpose-value",
+    ],
+)
+def test_gateway_rejects_non_enum_purpose_before_provider_or_audit(client, raw_purpose):
+    """Persisting caller-controlled purpose text must permit unbounded or secret-bearing audit data."""
+    gateway_api = _gateway_module()
+    provider_constructions = 0
+
+    with SessionLocal() as db:
+        provider_row = _provider_row(
+            f"wa0-purpose-{secrets.token_hex(6)}",
+            host="purpose.models.example.test",
+            is_primary=True,
+        )
+        db.add(provider_row)
+        db.commit()
+
+        def provider_factory(_config):
+            nonlocal provider_constructions
+            provider_constructions += 1
+            return _ScriptedProvider(_successful_gateway_events())
+
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=provider_row.id,
+            provider_factory=provider_factory,
+        )
+        with pytest.raises(Exception) as caught:
+            _run(_collect_gateway(gateway, _chat_request(purpose=raw_purpose)))
+
+        assert getattr(caught.value, "code", None) == "GATEWAY_PURPOSE_INVALID"
+        assert provider_constructions == 0
+        assert db.query(AiProviderCall).filter_by(provider_id=provider_row.id).count() == 0
+
+
+def test_gateway_audit_uses_independent_transaction_and_leaves_caller_pending_work_rollbackable(client):
+    """Committing an audit through the caller session must accidentally commit unrelated pending work."""
+    gateway_api = _gateway_module()
+    assert getattr(provider_api, "ProviderPurpose", None) is not None
+    pending_code = f"wa0-pending-{secrets.token_hex(6)}"
+
+    with SessionLocal() as db:
+        provider_row = _provider_row(
+            f"wa0-audit-owner-{secrets.token_hex(6)}",
+            host="audit-owner.models.example.test",
+            is_primary=True,
+        )
+        db.add(provider_row)
+        db.commit()
+        pending = _provider_row(pending_code, host="pending.models.example.test")
+        db.add(pending)
+
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=provider_row.id,
+            provider_factory=lambda _config: _ScriptedProvider(_successful_gateway_events()),
+        )
+        events = _run(_collect_gateway(gateway, _chat_request()))
+
+        assert [event.kind for event in events] == ["text_delta", "usage", "done"]
+        assert pending in db.new
+        with SessionLocal() as verifier:
+            assert verifier.query(AiProviderConfig).filter_by(code=pending_code).count() == 0
+            audit = verifier.query(AiProviderCall).filter_by(provider_id=provider_row.id).one()
+            assert (audit.result_code, audit.status, audit.purpose) == ("OK", "completed", "chat")
+        db.rollback()
+
+    with SessionLocal() as verifier:
+        assert verifier.query(AiProviderConfig).filter_by(code=pending_code).count() == 0
+
+
+def test_audit_failure_during_primary_failure_does_not_block_compatible_fallback(client):
+    """Letting failed audit persistence escape must suppress an otherwise safe fallback response."""
+    gateway_api = _gateway_module()
+    secret = f"audit-{secrets.token_urlsafe(18)}"
+    failing_session = _FailingAuditSession(secret)
+    audit_session_count = 0
+    fallback_calls = 0
+
+    with SessionLocal() as db:
+        primary = _provider_row(
+            f"wa0-audit-fail-primary-{secrets.token_hex(4)}",
+            host="audit-fail-primary.models.example.test",
+            is_primary=True,
+        )
+        fallback = _provider_row(
+            f"wa0-audit-fail-fallback-{secrets.token_hex(4)}",
+            host="audit-fail-fallback.models.example.test",
+        )
+        db.add_all([primary, fallback])
+        db.flush()
+        primary.fallback_provider_id = fallback.id
+        db.commit()
+
+        def provider_factory(config):
+            nonlocal fallback_calls
+            if config.id == primary.id:
+                return _ScriptedProvider(
+                    [],
+                    error=provider_api.ProviderError("PROVIDER_HTTP_5XX", "provider service failed"),
+                )
+            fallback_calls += 1
+            return _ScriptedProvider(_successful_gateway_events("fallback after audit failure"))
+
+        def audit_session_factory():
+            nonlocal audit_session_count
+            audit_session_count += 1
+            return failing_session if audit_session_count == 1 else SessionLocal()
+
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=primary.id,
+            provider_factory=provider_factory,
+            audit_session_factory=audit_session_factory,
+        )
+        events = _run(_collect_gateway(gateway, _chat_request()))
+
+        assert [event.kind for event in events] == ["text_delta", "usage", "done"]
+        assert events[0].text == "fallback after audit failure"
+        assert fallback_calls == 1
+        assert failing_session.rollback_called is True
+        assert failing_session.close_called is True
+        calls = db.query(AiProviderCall).filter(
+            AiProviderCall.provider_id.in_([primary.id, fallback.id])
+        ).all()
+        assert [(call.provider_id, call.result_code, call.status) for call in calls] == [
+            (fallback.id, "OK_FALLBACK", "completed")
+        ]
+
+
+def test_audit_failure_during_cancellation_never_masks_cancel_or_attempts_fallback(client):
+    """An audit exception during generator close must not escape cancellation or start a second provider."""
+    gateway_api = _gateway_module()
+    secret = f"cancel-audit-{secrets.token_urlsafe(18)}"
+    failing_session = _FailingAuditSession(secret)
+    fallback_calls = 0
+
+    with SessionLocal() as db:
+        primary = _provider_row(
+            f"wa0-cancel-audit-primary-{secrets.token_hex(4)}",
+            host="cancel-audit-primary.models.example.test",
+            is_primary=True,
+        )
+        fallback = _provider_row(
+            f"wa0-cancel-audit-fallback-{secrets.token_hex(4)}",
+            host="cancel-audit-fallback.models.example.test",
+        )
+        db.add_all([primary, fallback])
+        db.flush()
+        primary.fallback_provider_id = fallback.id
+        db.commit()
+
+        def provider_factory(config):
+            nonlocal fallback_calls
+            if config.id == fallback.id:
+                fallback_calls += 1
+            return _ScriptedProvider(_successful_gateway_events())
+
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=primary.id,
+            provider_factory=provider_factory,
+            audit_session_factory=lambda: failing_session,
+        )
+        first = _run(_read_one_gateway_event_and_close(gateway, _chat_request()))
+
+        assert first.kind == "text_delta"
+        assert fallback_calls == 0
+        assert failing_session.rollback_called is True
+        assert failing_session.close_called is True
+        assert db.query(AiProviderCall).filter(
+            AiProviderCall.provider_id.in_([primary.id, fallback.id])
+        ).count() == 0
+
+
+async def _collect_gateway_failure(gateway, request):
+    events = []
+    try:
+        async for event in gateway.stream(request):
+            events.append(event)
+    except Exception as exc:
+        return events, exc
+    raise AssertionError("gateway unexpectedly completed")
+
+
+def test_success_audit_failure_is_redacted_and_never_emits_terminal_success(client):
+    """Emitting done before durable audit must falsely claim an unaudited provider call succeeded."""
+    gateway_api = _gateway_module()
+    secret = f"success-audit-{secrets.token_urlsafe(18)}"
+    failing_session = _FailingAuditSession(secret)
+
+    with SessionLocal() as db:
+        provider_row = _provider_row(
+            f"wa0-success-audit-{secrets.token_hex(4)}",
+            host="success-audit.models.example.test",
+            is_primary=True,
+        )
+        db.add(provider_row)
+        db.commit()
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=provider_row.id,
+            provider_factory=lambda _config: _ScriptedProvider(_successful_gateway_events()),
+            audit_session_factory=lambda: failing_session,
+        )
+
+        events, error = _run(_collect_gateway_failure(gateway, _chat_request()))
+
+        assert [event.kind for event in events] == ["text_delta", "usage"]
+        assert getattr(error, "code", None) == "GATEWAY_AUDIT_FAILED"
+        assert secret not in str(error)
+        assert secret not in repr(error)
+        assert failing_session.rollback_called is True
+        assert failing_session.close_called is True
+
+
+def test_partial_primary_output_then_protocol_failure_never_falls_back_or_claims_success(client):
+    """Fallback or done after a visible partial delta must mix providers or falsely complete the answer."""
+    gateway_api = _gateway_module()
+    fallback_calls = 0
+    clients = []
+    broken_stream = (
+        _sse(
+            {"choices": [{"index": 0, "delta": {"content": "partial output"}, "finish_reason": None}]}
+        )
+        + "data: {not-json}\n\n"
+    )
+
+    with SessionLocal() as db:
+        primary = _provider_row(
+            f"wa0-partial-primary-{secrets.token_hex(4)}",
+            host="partial-primary.models.example.test",
+            is_primary=True,
+        )
+        fallback = _provider_row(
+            f"wa0-partial-fallback-{secrets.token_hex(4)}",
+            host="partial-fallback.models.example.test",
+        )
+        db.add_all([primary, fallback])
+        db.flush()
+        primary.fallback_provider_id = fallback.id
+        db.commit()
+
+        async def primary_handler(_request: httpx.Request):
+            return httpx.Response(
+                200,
+                text=broken_stream,
+                headers={"Content-Type": "text/event-stream"},
+            )
+
+        async def fallback_handler(_request: httpx.Request):
+            nonlocal fallback_calls
+            fallback_calls += 1
+            return httpx.Response(
+                200,
+                text=_stream_response(),
+                headers={"Content-Type": "text/event-stream"},
+            )
+
+        def provider_factory(config):
+            handler = primary_handler if config.id == primary.id else fallback_handler
+            http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            clients.append(http_client)
+            return OpenAICompatibleProvider(
+                config,
+                allowed_hosts="*.models.example.test",
+                client=http_client,
+                resolver=_public_dns,
+            )
+
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=primary.id,
+            provider_factory=provider_factory,
+        )
+        events, error = _run(_collect_gateway_failure(gateway, _chat_request()))
+
+        assert [event.kind for event in events] == ["text_delta"]
+        assert events[0].text == "partial output"
+        assert getattr(error, "code", None) == "GATEWAY_STREAM_FAILED"
+        assert fallback_calls == 0
+        calls = db.query(AiProviderCall).filter(
+            AiProviderCall.provider_id.in_([primary.id, fallback.id])
+        ).all()
+        assert [(call.provider_id, call.result_code, call.status) for call in calls] == [
+            (primary.id, "PROVIDER_STREAM_PROTOCOL_ERROR", "failed")
+        ]
 
     for http_client in clients:
         _run(http_client.aclose())

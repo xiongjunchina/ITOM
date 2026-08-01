@@ -529,11 +529,11 @@ Also: SLA policies are maintained on the ITSM-SLA board page; the notification o
 
 **Process-definition management** (process center): processes/steps are fully configurable — stable step code, step name, node type, default assignment (role / user group), CC parties, L1–L4 autonomy level, step SLA, trigger condition (the trigger condition activating a process for the same record type must be unique). Task creation stores process version, step code, and RACI (responsible/informed) snapshots; node/handler/CC/node-type/SLA changes on a used version are locked and evolve via **Save as a new version** (old records keep the old version; new records use the new version).
 
-### 10.1 ITOM Web Agent (design approved; implementation pending)
+### 10.1 ITOM Web Agent (design approved; WA0 Tasks 1–3 implemented)
 
 The approved design isolates the web-login entrance from Aily MCP identity while sharing lower-level domain capabilities. A normal business user still works only with own service requests; a BDO additionally registers and follows own IT requirements; IT staff receive module guidance, query, draft, and progressively enabled controlled actions based on effective role, feature permission, data scope, record state, and current process assignment. Administrators configure models, profiles, knowledge scope, and maximum action level, but configuration may only restrict and never grant business authority.
 
-Capabilities are L0 explanation/navigation, L1 authorized query, L2 draft/preview, L3 explicit-confirmation writes, and initially prohibited L4 administrative risk. Every executable capability is server-registered and invokes a domain service; no general SQL, HTTP, shell, or direct table write exists. The existing Record Creation Guide remains a deterministic fallback. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
+Capabilities are L0 explanation/navigation, L1 authorized query, L2 draft/preview, L3 explicit-confirmation writes, and initially prohibited L4 administrative risk. Every executable capability is server-registered and invokes a domain service; no general SQL, HTTP, shell, or direct table write exists. WA0 Task 3 permits an L2/L3 model only after independent authenticated-basic, streaming-terminal, forced-tool, and strict-JSON-Schema probes all pass. Provider requests are bound to the public IPs validated for that request; audits use independent transactions, and stream completion is withheld until the success audit is durable. The existing Record Creation Guide remains a deterministic fallback. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
 
 ---
 

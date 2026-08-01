@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Any, Protocol
 
 from app.assistant.types import RiskLevel
@@ -20,6 +21,12 @@ class ProviderError(Exception):
         self.message = message
         self.status_code = status_code
         super().__init__(message)
+
+
+class ProviderPurpose(str, Enum):
+    """Server-owned canonical reason codes allowed in provider-call audits."""
+
+    CHAT = "chat"
 
 
 @dataclass(frozen=True)
@@ -40,7 +47,7 @@ class ChatRequest:
     risk_level: RiskLevel | str = RiskLevel.L1
     max_output_tokens: int | None = None
     temperature: float | None = None
-    purpose: str = "chat"
+    purpose: ProviderPurpose = ProviderPurpose.CHAT
     conversation_id: str | None = None
     message_id: str | None = None
     profile_version_id: str | None = None
