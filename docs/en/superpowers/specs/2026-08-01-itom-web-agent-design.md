@@ -1,6 +1,6 @@
 # ITOM Web Agent Design Baseline
 
-> Status: **design approved; WA0 Tasks 1–6 implemented with Task 6 Fix Round 5 complete; Task 7+ pending**
+> Status: **design approved; WA0 Tasks 1–7 implemented with Task 6 Fix Round 5 complete; Task 8+ pending**
 > Approval date: 2026-08-01
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -132,6 +132,8 @@ GET            /api/admin/ai/action-audits
 ```
 
 Read APIs return only `has_secret`, never secret values. Bootstrap returns the current profile, available level, suggested questions, and retention policy without exposing the internal permission matrix or handler implementation.
+
+Task 7 implements message POST-SSE with the fixed event set `meta|delta|message|action|error|done`. A normal completion has exactly one `done`, no success event follows `error`, and every `data` field uses one-line JSON encoding. Prompt construction separates platform security instruction, immutable published profile, per-turn authorized capability schemas, and explicitly untrusted knowledge/business/page-context/user bodies. Every tool call resolves a fixed registry code and re-authorizes; registered input models reject illegal arguments and model-supplied handler/risk/role/result. Repeated calls, more than four rounds, or event/token/text/time budget exhaustion stop safely. L3 calls server `prepare_action()` only and emits a preview/token; streaming never confirms or executes. Provider outage, timeout, malformed/truncated protocol, and disconnect cancel remaining work and use a non-leaking deterministic native fallback. Only a redacted final body may become a completed message under captured retention, while zero-day retention stores bodyless idempotency metadata only.
 
 ## 10. Security and degradation
 

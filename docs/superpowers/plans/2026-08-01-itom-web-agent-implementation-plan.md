@@ -430,6 +430,8 @@ Commit: `feat(agent): enforce confirmed assistant actions`
 
 ### Task 7: WA0 编排器、工具循环和 POST-SSE
 
+> 状态（2026-08-02）：实现与本地自动化验证已完成，等待独立审查；未实施 Task 8，未部署或访问 IDC。
+
 **Files:**
 - Create: `backend/app/assistant/orchestrator.py`
 - Modify: `backend/app/routers/assistant.py`
@@ -439,7 +441,7 @@ Commit: `feat(agent): enforce confirmed assistant actions`
 - Produces: `AssistantOrchestrator.stream_turn()`；SSE 事件 `meta|delta|message|action|error|done`。
 - Consumes: gateway、当前档案、能力 schema、会话服务、动作服务。
 
-- [ ] **Step 1: 创建 FakeProvider 并写流式契约失败测试**
+- [x] **Step 1: 创建 FakeProvider 并写流式契约失败测试**
 
 ```python
 events = client.post(
@@ -453,7 +455,7 @@ assert event_types(events) == ["meta", "delta", "message", "done"]
 
 另测断流、非法工具 code、非法参数、超出 4 次工具循环、模型声称成功但服务端没有结果、Prompt 注入要求泄露系统指令。
 
-- [ ] **Step 2: 固定 SSE 事件契约**
+- [x] **Step 2: 固定 SSE 事件契约**
 
 ```text
 event: meta    data: {conversation_id,user_message_id,assistant_message_id}
@@ -464,15 +466,15 @@ event: error   data: {code,message,retryable,fallback_path?}
 event: done    data: {finish_reason}
 ```
 
-- [ ] **Step 3: 实现严格提示分层与工具循环**
+- [x] **Step 3: 实现严格提示分层与工具循环**
 
 系统指令、档案指令、已授权能力 schema、安全知识和用户输入分别构造；知识和业务正文用“不可信上下文”边界包裹。工具调用只按 code 查注册表并再次鉴权；L3 只返回 action 预览，绝不在流式生成过程中直接执行。
 
-- [ ] **Step 4: 实现断流与降级**
+- [x] **Step 4: 实现断流与降级**
 
 客户端断开即取消模型请求；已准备动作保持 `prepared` 直到过期但不会执行。无可用模型、超时或非法输出返回规则指引/原生路径，不把 provider 错误原文返回用户。
 
-- [ ] **Step 5: 测试并提交**
+- [x] **Step 5: 测试并提交**
 
 Run: `cd backend && python -m pytest tests/test_wa0_assistant_stream.py tests/test_wa0_prompt_boundary.py -q`
 Commit: `feat(agent): stream guarded assistant turns`

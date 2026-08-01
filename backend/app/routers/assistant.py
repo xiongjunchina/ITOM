@@ -1,13 +1,18 @@
 """Authenticated owner-only endpoints for web assistant conversations and actions."""
 
-from fastapi import APIRouter, Depends, Query
+import json
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.db import get_db
+from app.assistant.orchestrator import AssistantOrchestrator, SSE_EVENT_TYPES
+from app.db import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models import AuthUser
-from app.schemas.assistant import ConversationCreateIn
+from app.schemas.assistant import ConversationCreateIn, PageContextIn
 from app.schemas.common import ok
 from app.services import assistant_actions, assistant_conversations
 
@@ -19,6 +24,26 @@ class ConfirmActionIn(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     confirmation_token: str = Field(min_length=1, max_length=512)
+
+
+class ConversationMessageIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    content: str = Field(min_length=1, max_length=8000)
+    client_message_id: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    page_context: PageContextIn | None = None
+
+
+def _encode_sse(event: dict) -> str:
+    event_type = event.get("type")
+    if event_type not in SSE_EVENT_TYPES or not isinstance(event.get("data"), dict):
+        raise RuntimeError("invalid assistant SSE event")
+    payload = json.dumps(
+        jsonable_encoder(event["data"]),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"event: {event_type}\ndata: {payload}\n\n"
 
 
 @router.get("/bootstrap")
@@ -70,6 +95,51 @@ def archive_conversation(
     user: AuthUser = Depends(get_current_user),
 ):
     return ok(assistant_conversations.archive_own_conversation(db, user, conversation_id))
+
+
+@router.post("/conversations/{conversation_id}/messages")
+async def stream_conversation_message(
+    conversation_id: str,
+    body: ConversationMessageIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    actor_id = user.id
+
+    async def generate():
+        with SessionLocal() as stream_db:
+            actor = stream_db.get(AuthUser, actor_id)
+            if actor is None:
+                yield _encode_sse({
+                    "type": "error",
+                    "data": {
+                        "code": "AI_ASSISTANT_UNAVAILABLE",
+                        "message": "智能体暂不可用，请使用原生页面继续操作",
+                        "retryable": True,
+                        "fallback_path": "/",
+                    },
+                })
+                yield _encode_sse({"type": "done", "data": {"finish_reason": "error"}})
+                return
+            orchestrator = AssistantOrchestrator(
+                stream_db,
+                actor,
+                disconnect_check=request.is_disconnected,
+            )
+            async for event in orchestrator.stream_turn(
+                conversation_id=conversation_id,
+                content=body.content,
+                client_message_id=body.client_message_id,
+                page_context=body.page_context.model_dump(mode="json") if body.page_context else None,
+            ):
+                yield _encode_sse(event)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/actions/{action_id}/confirm")

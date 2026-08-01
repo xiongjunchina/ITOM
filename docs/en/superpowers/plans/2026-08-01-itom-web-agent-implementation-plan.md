@@ -251,16 +251,17 @@ class PageContextIn(BaseModel):
 
 ### Task 7: WA0 orchestrator, tool loop, and POST-SSE
 
+> Status (2026-08-02): local implementation and automated verification are complete, pending independent review; Task 8, deployment, and IDC access were not performed.
+
 **Files:** new `assistant/orchestrator.py`; modify router; tests `test_wa0_assistant_stream.py`, `test_wa0_prompt_boundary.py`.
 
 **Interfaces:** Produces `AssistantOrchestrator.stream_turn()` and SSE `meta|delta|message|action|error|done`.
 
-- [ ] Test exact SSE order with a FakeProvider; test disconnect, unknown tool, invalid parameters, more than four tool loops, injection, and false success prose.
-- [ ] Emit the fixed event contract documented in the Chinese plan.
-- [ ] Separate system/profile/capability/knowledge/user layers and mark knowledge/record text untrusted.
-- [ ] Resolve every tool code through the registry and re-authorize. L3 emits only a prepared action.
-- [ ] Cancel provider on disconnect and return a redacted fallback error without writes.
-- [ ] Run tests and commit `feat(agent): stream guarded assistant turns`.
+- [x] **Step 1: Create the FakeProvider and failing streaming-contract tests.** Test exact SSE order, disconnect, unknown tool, invalid parameters, more than four tool loops, injection, and false-success prose.
+- [x] **Step 2: Fix the SSE event contract.** Emit only the event contract documented in the Chinese plan.
+- [x] **Step 3: Implement strict prompt layers and the tool loop.** Separate system/profile/capability/knowledge/user layers, mark knowledge/record text untrusted, resolve every tool code through the registry, and re-authorize. L3 emits only a prepared action.
+- [x] **Step 4: Implement disconnect handling and degradation.** Cancel provider work on disconnect and return a redacted fallback error without writes.
+- [x] **Step 5: Test and commit.** Run the focused tests and use `feat(agent): stream guarded assistant turns`.
 
 ---
 

@@ -1,6 +1,6 @@
 # ITOM 网页智能体设计基线
 
-> 状态：**设计已确认；WA0 Task 1–6 已实现并完成 Task 6 Fix Round 5；Task 7+ 待实施**
+> 状态：**设计已确认；WA0 Task 1–7 已实现并完成 Task 6 Fix Round 5；Task 8+ 待实施**
 > 确认日期：2026-08-01
 > 中文为权威版本；英文镜像见 `docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`。
 
@@ -153,6 +153,8 @@ GET            /api/admin/ai/action-audits
 ```
 
 读取模型配置只返回 `has_secret`，绝不回显密钥。`bootstrap` 只返回当前档案、可用等级、建议问题和保留策略，不暴露内部权限矩阵或处理器信息。
+
+Task 7 已实现消息 POST-SSE：事件集合固定为 `meta|delta|message|action|error|done`，正常完成恰好一个 `done`，错误后不可再发送成功事件，所有 `data` 使用单行 JSON 编码。提示结构把平台安全指令、不可变已发布档案、当次授权能力 schema 与明确标为不可信的知识/业务/page context/用户正文分开。每次工具调用按固定 code 重查注册表并重新授权，注册输入模型拒绝非法参数以及模型自报的 handler/risk/role/result；重复调用、超过四轮、超出事件/Token/文本/时间预算均安全停止。L3 只调用服务端 `prepare_action()` 并返回预览/Token，流式阶段绝不确认或执行。提供商不可用、超时、非法/截断协议和断流取消后续工作并走无泄漏的确定性原生降级；只有脱敏最终正文可按捕获保留策略成为完成消息，保留 0 天只保存无正文幂等元数据。
 
 ## 12. 安全、确认与降级
 
