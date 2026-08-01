@@ -690,7 +690,7 @@ def test_disconnect_cancels_provider_and_does_not_complete_assistant_message(cli
 
 
 def test_turn_timeout_is_bounded_and_safe(client, admin_headers):
-    """Removing the turn deadline would let a provider occupy a worker indefinitely."""
+    """The absolute deadline may expire during start or after meta, but must fail safely."""
     profile_id, version_id = _install_runtime()
     _headers, user_id = _create_user(client, admin_headers, "wa0_stream_timeout")
     conversation_id = _conversation(user_id, profile_id, version_id)
@@ -711,8 +711,88 @@ def test_turn_timeout_is_bounded_and_safe(client, admin_headers):
             )]
 
     events = asyncio.run(consume())
+    event_types = [event["type"] for event in events]
+    assert event_types in (["error", "done"], ["meta", "error", "done"])
+    error_event = next(event for event in events if event["type"] == "error")
+    assert error_event["data"]["code"] == "AI_ASSISTANT_TIMEOUT"
+
+
+def test_completed_commit_with_slow_worker_return_keeps_success_terminal(client, admin_headers):
+    """A post-commit worker delay must not turn a durable completed row into a timeout response."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_post_commit_delay")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    fake = FakeProvider([_events(
+        ModelStreamEvent(kind="text_delta", text="advice"),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+    )])
+    committed = threading.Event()
+
+    class SlowReturnAfterCommitOrchestrator(AssistantOrchestrator):
+        def _complete_assistant_message(self, *args, **kwargs):
+            super()._complete_assistant_message(*args, **kwargs)
+            committed.set()
+            time.sleep(0.20)
+
+    async def consume():
+        return await _collect(SlowReturnAfterCommitOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            turn_timeout_seconds=0.20,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="authoritative completion",
+            client_message_id="post-commit-slow-return",
+            page_context=PAGE_CONTEXT,
+        ))
+
+    events = asyncio.run(consume())
+    assert committed.is_set()
+    assert [event["type"] for event in events] == ["meta", "delta", "message", "done"]
+    with SessionLocal() as db:
+        row = db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+        ).order_by(AiMessage.created_at.desc()).first()
+        assert row.status == "completed"
+
+
+def test_precommit_delay_past_deadline_rolls_back_and_returns_one_error_terminal(client, admin_headers):
+    """Crossing the deadline before authority commit begins must never persist completed."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_pre_commit_delay")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    fake = FakeProvider([_events(
+        ModelStreamEvent(kind="text_delta", text="advice"),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+    )])
+
+    class SlowBeforeCommitOrchestrator(AssistantOrchestrator):
+        def _before_final_commit(self, execution):
+            time.sleep(0.20)
+            super()._before_final_commit(execution)
+
+    async def consume():
+        return await _collect(SlowBeforeCommitOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            turn_timeout_seconds=0.20,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="must timeout before commit",
+            client_message_id="pre-commit-deadline",
+            page_context=PAGE_CONTEXT,
+        ))
+
+    events = asyncio.run(consume())
     assert [event["type"] for event in events] == ["meta", "error", "done"]
     assert events[1]["data"]["code"] == "AI_ASSISTANT_TIMEOUT"
+    with SessionLocal() as db:
+        assert db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+            AiMessage.status == "completed",
+        ).count() == 0
 
 
 def test_one_absolute_deadline_is_shared_by_sequential_db_stages():

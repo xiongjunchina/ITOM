@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import inspect
+import logging
 from time import monotonic, perf_counter
 
 from sqlalchemy.orm import Session
@@ -28,6 +29,9 @@ from app.assistant.types import RiskLevel
 from app.core.config import settings
 from app.db import SessionLocal
 from app.models import AiProviderCall, AiProviderConfig
+
+
+logger = logging.getLogger("aom.assistant.gateway")
 
 
 class GatewayError(Exception):
@@ -118,7 +122,7 @@ class AssistantGateway:
                         "provider stream protocol validation failed",
                     )
             except (asyncio.CancelledError, GeneratorExit):
-                await self._audit_async(
+                self._schedule_cancellation_audit(
                     config,
                     request,
                     purpose,
@@ -317,6 +321,37 @@ class AssistantGateway:
             ))
         except (ToolExecutorSaturated, BoundedExecutionTimeout):
             return False
+
+    def _schedule_cancellation_audit(self, *args, **kwargs) -> None:
+        """Submit bounded best-effort audit without delaying disconnect propagation."""
+        try:
+            reservation = self.db_executor.reserve()
+        except ToolExecutorSaturated:
+            logger.warning("assistant cancellation audit dropped reason=capacity")
+            return
+        try:
+            future = reservation.submit(lambda: self._audit(*args, **kwargs))
+        except Exception as exc:
+            reservation.release()
+            logger.warning(
+                "assistant cancellation audit submission failed exception_type=%s",
+                type(exc).__name__,
+            )
+            return
+
+        def consume_result(completed) -> None:
+            try:
+                persisted = bool(completed.result())
+            except Exception as exc:
+                logger.warning(
+                    "assistant cancellation audit failed exception_type=%s",
+                    type(exc).__name__,
+                )
+                return
+            if not persisted:
+                logger.warning("assistant cancellation audit failed reason=persistence")
+
+        future.add_done_callback(consume_result)
 
     @staticmethod
     def _default_provider(config: AiProviderConfig) -> ModelProvider:

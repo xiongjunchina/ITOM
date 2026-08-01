@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import re
+import threading
 import time
 import unicodedata
 from typing import Any
@@ -144,6 +145,29 @@ class _ToolResult:
     provider_message: Mapping[str, Any] | None = None
     client_event: Mapping[str, Any] | None = None
     preview_outcome: _TurnOutcome | None = None
+
+
+class _FinalizationAuthority:
+    """Atomic boundary between cancellable pre-commit work and authority commit."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._commit_started = threading.Event()
+
+    def begin_commit(self, execution: CapabilityExecutionContext) -> None:
+        with self._lock:
+            execution.raise_if_cancelled()
+            self._commit_started.set()
+
+    def cancel_before_commit(self, execution: CapabilityExecutionContext) -> bool:
+        with self._lock:
+            if self._commit_started.is_set():
+                return False
+            execution.cancel()
+            return True
+
+    def commit_started(self) -> bool:
+        return self._commit_started.is_set()
 
 
 def _json_text(value: object) -> str:
@@ -1103,13 +1127,68 @@ class AssistantOrchestrator:
         *,
         deadline_monotonic: float,
     ) -> None:
-        await self._await_db_worker(
-            self._complete_assistant_message,
-            state,
-            outcome,
-            pass_execution=True,
-            deadline_monotonic=deadline_monotonic,
-        )
+        execution = CapabilityExecutionContext(deadline_monotonic=deadline_monotonic)
+        authority = _FinalizationAuthority()
+        try:
+            reservation = self.db_executor.reserve()
+            concurrent_future = reservation.submit(
+                self._complete_assistant_message,
+                state,
+                outcome,
+                execution,
+                authority,
+            )
+        except ToolExecutorSaturated:
+            raise AppError("AI_ASSISTANT_UNAVAILABLE", "智能体数据库执行资源繁忙", 503) from None
+        wrapped = asyncio.wrap_future(concurrent_future)
+        disconnected_after_commit = False
+        try:
+            while True:
+                if wrapped.done():
+                    try:
+                        wrapped.result()
+                    except CapabilityExecutionCancelled:
+                        if time.monotonic() >= deadline_monotonic:
+                            raise TimeoutError("assistant turn deadline exhausted") from None
+                        raise asyncio.CancelledError() from None
+                    if disconnected_after_commit:
+                        raise asyncio.CancelledError()
+                    return
+
+                if authority.commit_started():
+                    done, _pending = await asyncio.wait(
+                        {wrapped},
+                        timeout=DEFAULT_DISCONNECT_POLL_SECONDS,
+                    )
+                    if wrapped in done:
+                        continue
+                    if self.disconnect_check is not None and await self.disconnect_check():
+                        disconnected_after_commit = True
+                    continue
+
+                remaining = deadline_monotonic - time.monotonic()
+                if remaining <= 0:
+                    if authority.cancel_before_commit(execution):
+                        raise TimeoutError("assistant turn deadline exhausted")
+                    continue
+                done, _pending = await asyncio.wait(
+                    {wrapped},
+                    timeout=min(DEFAULT_DISCONNECT_POLL_SECONDS, remaining),
+                )
+                if wrapped in done:
+                    continue
+                if self.disconnect_check is not None and await self.disconnect_check():
+                    if authority.cancel_before_commit(execution):
+                        raise asyncio.CancelledError()
+                    disconnected_after_commit = True
+        except asyncio.CancelledError:
+            if authority.cancel_before_commit(execution):
+                raise
+            try:
+                await asyncio.shield(wrapped)
+            except CapabilityExecutionCancelled:
+                pass
+            raise
 
     async def _finish_placeholder_safely(
         self,
@@ -1267,10 +1346,12 @@ class AssistantOrchestrator:
         state: _TurnState,
         outcome: _TurnOutcome,
         execution: CapabilityExecutionContext,
+        authority: _FinalizationAuthority,
     ) -> None:
         db = self.session_factory()
         try:
             execution.raise_if_cancelled()
+            self._set_statement_timeout(db, self._statement_timeout_for(execution))
             # Fixed finalization lock order: account -> conversation -> runtime
             # profile/version governance -> streaming placeholder.  The account
             # row is refreshed under lock so a stale identity-map value cannot
@@ -1326,7 +1407,7 @@ class AssistantOrchestrator:
                 }
                 row.redacted_text = None
             row.status = "completed"
-            execution.raise_if_cancelled()
+            authority.begin_commit(execution)
             db.commit()
         except Exception:
             db.rollback()

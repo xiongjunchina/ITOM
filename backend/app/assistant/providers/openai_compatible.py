@@ -22,6 +22,12 @@ from app.assistant.providers.base import (
     ProviderPurpose,
     ProviderProbe,
 )
+from app.assistant.execution import (
+    BoundedExecutionTimeout,
+    BoundedToolExecutor,
+    ToolExecutorSaturated,
+    await_bounded_call,
+)
 from app.assistant.redaction import redact_for_model
 from app.services.secrets_store import decrypt_secret
 
@@ -33,6 +39,12 @@ _CAPABILITY_NEGATIVE_CODES = {
 }
 _MAX_PATH_LENGTH = 2048
 _MAX_PATH_DECODE_ROUNDS = 8
+
+_DEFAULT_PROVIDER_DNS_EXECUTOR = BoundedToolExecutor(
+    max_workers=4,
+    max_queue_size=8,
+    thread_name_prefix="itom-provider-dns",
+)
 
 
 class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
@@ -100,6 +112,7 @@ class OpenAICompatibleProvider:
         allowed_hosts: str,
         client: httpx.AsyncClient | None = None,
         resolver=None,
+        dns_executor: BoundedToolExecutor | None = None,
         network_backend: httpcore.AsyncNetworkBackend | None = None,
         connect_timeout_seconds: float = 5,
         read_timeout_seconds: float = 60,
@@ -110,6 +123,7 @@ class OpenAICompatibleProvider:
             raise ProviderConfigurationError("only MockTransport client injection is permitted")
         self._client = client
         self._resolver = resolver or _resolve_host
+        self._dns_executor = dns_executor or _DEFAULT_PROVIDER_DNS_EXECUTOR
         self._network_backend = network_backend or httpcore.AnyIOBackend()
         self._connect_timeout_seconds = float(connect_timeout_seconds)
         self._read_timeout_seconds = float(read_timeout_seconds)
@@ -225,7 +239,12 @@ class OpenAICompatibleProvider:
         payload = self._chat_payload(request)
         allowed_tools = _allowed_tool_names(request.tools)
         timeout = self._timeout_for_deadline(request.deadline_monotonic)
-        async for event in self._stream(payload, allowed_tools, timeout=timeout):
+        async for event in self._stream(
+            payload,
+            allowed_tools,
+            timeout=timeout,
+            deadline_monotonic=request.deadline_monotonic,
+        ):
             yield event
 
     async def _stream(
@@ -234,8 +253,9 @@ class OpenAICompatibleProvider:
         allowed_tools: frozenset[str],
         *,
         timeout: httpx.Timeout | None = None,
+        deadline_monotonic: float | None = None,
     ):
-        addresses = await self._validated_addresses()
+        addresses = await self._validated_addresses(deadline_monotonic=deadline_monotonic)
         headers = self._headers(accept="text/event-stream")
         try:
             async with self._request_client(addresses) as client:
@@ -339,7 +359,11 @@ class OpenAICompatibleProvider:
         ) as client:
             yield client
 
-    async def _validated_addresses(self) -> tuple[str, ...]:
+    async def _validated_addresses(
+        self,
+        *,
+        deadline_monotonic: float | None = None,
+    ) -> tuple[str, ...]:
         host = self.endpoint_url.host
         port = self.endpoint_url.port or 443
         try:
@@ -347,8 +371,31 @@ class OpenAICompatibleProvider:
             addresses = [str(literal)]
         except ValueError:
             try:
-                resolved = self._resolver(host, port)
-                addresses = await resolved if inspect.isawaitable(resolved) else resolved
+                dns_deadline = min(
+                    deadline_monotonic or (time.monotonic() + self._connect_timeout_seconds),
+                    time.monotonic() + self._connect_timeout_seconds,
+                )
+                resolved = await await_bounded_call(
+                    self._dns_executor,
+                    self._resolver,
+                    host,
+                    port,
+                    deadline_monotonic=dns_deadline,
+                )
+                if inspect.isawaitable(resolved):
+                    remaining = dns_deadline - time.monotonic()
+                    if remaining <= 0:
+                        close = getattr(resolved, "close", None)
+                        if callable(close):
+                            close()
+                        raise TimeoutError
+                    addresses = await asyncio.wait_for(resolved, timeout=remaining)
+                else:
+                    addresses = resolved
+            except ToolExecutorSaturated:
+                raise ProviderError("PROVIDER_DNS_BUSY", "provider DNS capacity is unavailable") from None
+            except (BoundedExecutionTimeout, TimeoutError):
+                raise ProviderError("PROVIDER_TIMEOUT", "provider request timed out") from None
             except Exception:
                 raise ProviderError("PROVIDER_DNS_FAILED", "provider DNS resolution failed") from None
         if not addresses:
@@ -375,8 +422,8 @@ class OpenAICompatibleProvider:
         return tuple(validated)
 
 
-async def _resolve_host(host: str, port: int) -> list[str]:
-    records = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+def _resolve_host(host: str, port: int) -> list[str]:
+    records = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return sorted({record[4][0] for record in records})
 
 

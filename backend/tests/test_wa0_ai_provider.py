@@ -6,7 +6,10 @@ import importlib
 import ipaddress
 import json
 import secrets
+import socket
 import ssl
+import threading
+import time
 from types import SimpleNamespace
 
 import httpcore
@@ -15,6 +18,7 @@ import pytest
 
 import app.assistant.providers as provider_api
 from app.assistant.providers import OpenAICompatibleProvider, ProviderConfigurationError
+from app.assistant.execution import BoundedToolExecutor
 from app.db import SessionLocal
 from app.models import AiProviderCall, AiProviderConfig
 from app.services.secrets_store import encrypt_secret
@@ -82,6 +86,172 @@ def test_provider_requires_explicit_exact_or_controlled_suffix_allowlist():
 
     assert str(exact.endpoint_url) == "https://models.example.test/v1/chat/completions"
     assert str(suffix.endpoint_url) == "https://region.models.example.test/openai/v1/chat/completions"
+
+
+def test_default_dns_resolution_never_enters_asyncio_default_executor(monkeypatch):
+    """Using loop.getaddrinfo would silently enqueue DNS work on executor=None."""
+    provider_module = importlib.import_module("app.assistant.providers.openai_compatible")
+    records = [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800:220:1:248:1893:25c8:1946", 443, 0, 0)),
+    ]
+    monkeypatch.setattr(provider_module.socket, "getaddrinfo", lambda *_args, **_kwargs: records)
+    provider = OpenAICompatibleProvider(_config(), allowed_hosts="models.example.test")
+
+    async def resolve():
+        loop = asyncio.get_running_loop()
+        original = loop.run_in_executor
+        seen_executors = []
+
+        def guarded(executor, function, *args):
+            seen_executors.append(executor)
+            if executor is None:
+                raise AssertionError("DNS entered the default executor")
+            return original(executor, function, *args)
+
+        monkeypatch.setattr(loop, "run_in_executor", guarded)
+        addresses = await provider._validated_addresses(deadline_monotonic=time.monotonic() + 1)
+        return addresses, seen_executors
+
+    addresses, seen_executors = _run(resolve())
+    assert addresses == ("2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34")
+    assert None not in seen_executors
+
+
+def test_dns_resolution_works_while_default_executor_is_blocked_without_queue_growth(monkeypatch):
+    """A blocked default pool must not delay or accumulate provider DNS work."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    provider_module = importlib.import_module("app.assistant.providers.openai_compatible")
+    monkeypatch.setattr(
+        provider_module.socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443)),
+        ],
+    )
+    provider = OpenAICompatibleProvider(_config(), allowed_hosts="models.example.test")
+
+    async def resolve():
+        loop = asyncio.get_running_loop()
+        default_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="blocked-default")
+        loop.set_default_executor(default_executor)
+        release = threading.Event()
+        started = threading.Event()
+
+        def blocker():
+            started.set()
+            release.wait(timeout=1)
+
+        occupying = loop.run_in_executor(None, blocker)
+        assert started.wait(timeout=0.5)
+        queued_before = default_executor._work_queue.qsize()
+        try:
+            addresses = await asyncio.wait_for(
+                provider._validated_addresses(deadline_monotonic=time.monotonic() + 0.2),
+                timeout=0.25,
+            )
+            queued_after = default_executor._work_queue.qsize()
+            return addresses, queued_before, queued_after
+        finally:
+            release.set()
+            await occupying
+
+    addresses, queued_before, queued_after = _run(resolve())
+    assert addresses == ("93.184.216.34",)
+    assert queued_after == queued_before
+
+
+def test_dns_executor_saturation_rejects_before_resolver_runs():
+    """A saturated DNS pool must fail closed without invoking the resolver."""
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="dns-busy")
+    release = threading.Event()
+    started = threading.Event()
+    resolver_calls = 0
+
+    def blocker():
+        started.set()
+        release.wait(timeout=1)
+
+    def resolver(_host, _port):
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return ["93.184.216.34"]
+
+    occupying = executor.submit(blocker)
+    assert started.wait(timeout=0.5)
+    provider = OpenAICompatibleProvider(
+        _config(),
+        allowed_hosts="models.example.test",
+        resolver=resolver,
+        dns_executor=executor,
+    )
+    try:
+        with pytest.raises(Exception) as caught:
+            _run(provider._validated_addresses(deadline_monotonic=time.monotonic() + 0.2))
+        assert getattr(caught.value, "code", None) == "PROVIDER_DNS_BUSY"
+        assert resolver_calls == 0
+    finally:
+        release.set()
+        occupying.result(timeout=1)
+        executor.shutdown(wait=True)
+
+
+def test_dns_resolution_timeout_uses_request_remaining_budget():
+    """DNS waiting must stop at the request deadline instead of owning a fresh timeout."""
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="dns-timeout")
+    release = threading.Event()
+    closed = threading.Event()
+
+    def resolver(_host, _port):
+        try:
+            release.wait(timeout=1)
+            return ["93.184.216.34"]
+        finally:
+            closed.set()
+
+    provider = OpenAICompatibleProvider(
+        _config(),
+        allowed_hosts="models.example.test",
+        resolver=resolver,
+        dns_executor=executor,
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(Exception) as caught:
+            _run(provider._validated_addresses(deadline_monotonic=time.monotonic() + 0.04))
+        assert getattr(caught.value, "code", None) == "PROVIDER_TIMEOUT"
+        assert time.monotonic() - started < 0.15
+    finally:
+        release.set()
+        assert closed.wait(timeout=0.5)
+        executor.shutdown(wait=True)
+
+
+def test_dns_async_callable_resolver_remains_compatible():
+    """A callable object returning an awaitable was supported before DNS offload."""
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="dns-awaitable")
+
+    class AwaitableResolver:
+        def __call__(self, _host, _port):
+            async def resolve():
+                await asyncio.sleep(0)
+                return ["93.184.216.34"]
+
+            return resolve()
+
+    provider = OpenAICompatibleProvider(
+        _config(),
+        allowed_hosts="models.example.test",
+        resolver=AwaitableResolver(),
+        dns_executor=executor,
+    )
+    try:
+        assert _run(
+            provider._validated_addresses(deadline_monotonic=time.monotonic() + 0.2)
+        ) == ("93.184.216.34",)
+    finally:
+        executor.shutdown(wait=True)
 
 
 def test_provider_allows_only_mocktransport_client_injection():
@@ -1173,9 +1343,16 @@ def test_gateway_audits_client_cancelled_stream_without_attempting_fallback(clie
         first = _run(_read_one_gateway_event_and_close(gateway, _chat_request()))
 
         assert first.kind == "text_delta"
-        calls = db.query(AiProviderCall).filter(
-            AiProviderCall.provider_id.in_([primary.id, fallback.id])
-        ).all()
+        audit_deadline = time.monotonic() + 1.0
+        calls = []
+        while time.monotonic() < audit_deadline:
+            with SessionLocal() as audit_db:
+                calls = audit_db.query(AiProviderCall).filter(
+                    AiProviderCall.provider_id.in_([primary.id, fallback.id])
+                ).all()
+            if calls:
+                break
+            time.sleep(0.01)
         assert [(call.provider_id, call.result_code, call.status) for call in calls] == [
             (primary.id, "PROVIDER_STREAM_CANCELLED", "cancelled")
         ]
@@ -1183,6 +1360,154 @@ def test_gateway_audits_client_cancelled_stream_without_attempting_fallback(clie
 
     for http_client in clients:
         _run(http_client.aclose())
+
+
+def test_gateway_cancellation_does_not_wait_for_slow_audit_and_worker_closes_session(client):
+    """Awaiting cancellation audit would delay disconnect propagation by its 0.30s commit."""
+    gateway_api = _gateway_module()
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="cancel-audit")
+    audit_started = threading.Event()
+    audit_closed = threading.Event()
+
+    class SlowAuditSession:
+        def add(self, _record):
+            return None
+
+        def commit(self):
+            audit_started.set()
+            time.sleep(0.30)
+
+        def rollback(self):
+            return None
+
+        def close(self):
+            audit_closed.set()
+
+    with SessionLocal() as db:
+        primary = _provider_row(
+            f"wa0-cancel-slow-audit-{secrets.token_hex(4)}",
+            host="cancel-slow-audit.models.example.test",
+            is_primary=True,
+        )
+        db.add(primary)
+        db.commit()
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=primary.id,
+            provider_factory=lambda _config: _ScriptedProvider(_successful_gateway_events()),
+            audit_session_factory=SlowAuditSession,
+            db_executor=executor,
+        )
+        started = time.monotonic()
+        first = _run(_read_one_gateway_event_and_close(gateway, _chat_request()))
+        elapsed = time.monotonic() - started
+
+    try:
+        assert first.kind == "text_delta"
+        assert elapsed < 0.10
+        assert audit_started.wait(timeout=0.2)
+        assert audit_closed.wait(timeout=0.6)
+    finally:
+        executor.shutdown(wait=True)
+
+
+def test_gateway_cancellation_audit_saturation_drops_before_session_creation(client):
+    """Best-effort cancellation audit must not open a Session when bounded admission is full."""
+    gateway_api = _gateway_module()
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="cancel-audit-busy")
+    release = threading.Event()
+    started = threading.Event()
+    audit_sessions = 0
+
+    def blocker():
+        started.set()
+        release.wait(timeout=1)
+
+    def audit_session_factory():
+        nonlocal audit_sessions
+        audit_sessions += 1
+        return SessionLocal()
+
+    with SessionLocal() as db:
+        primary = _provider_row(
+            f"wa0-cancel-busy-audit-{secrets.token_hex(4)}",
+            host="cancel-busy-audit.models.example.test",
+            is_primary=True,
+        )
+        db.add(primary)
+        db.commit()
+        gateway = gateway_api.AssistantGateway(
+            db,
+            primary_provider_id=primary.id,
+            provider_factory=lambda _config: _ScriptedProvider(_successful_gateway_events()),
+            audit_session_factory=audit_session_factory,
+            db_executor=executor,
+        )
+
+        async def consume_after_selection():
+            stream = gateway.stream(_chat_request())
+            first = await anext(stream)
+            occupying = executor.submit(blocker)
+            assert started.wait(timeout=0.5)
+            try:
+                await stream.aclose()
+            finally:
+                release.set()
+                occupying.result(timeout=1)
+            return first
+
+        try:
+            first = _run(consume_after_selection())
+            assert first.kind == "text_delta"
+            assert audit_sessions == 0
+        finally:
+            release.set()
+            executor.shutdown(wait=True)
+
+
+def test_gateway_background_cancellation_audit_exception_is_consumed(client):
+    """A background audit failure must not create an unhandled asyncio task exception."""
+    gateway_api = _gateway_module()
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="cancel-audit-error")
+    audit_finished = threading.Event()
+    unhandled = []
+
+    class ExplodingGateway(gateway_api.AssistantGateway):
+        def _audit(self, *_args, **_kwargs):
+            try:
+                raise RuntimeError("sensitive cancellation audit failure")
+            finally:
+                audit_finished.set()
+
+    with SessionLocal() as db:
+        primary = _provider_row(
+            f"wa0-cancel-error-audit-{secrets.token_hex(4)}",
+            host="cancel-error-audit.models.example.test",
+            is_primary=True,
+        )
+        db.add(primary)
+        db.commit()
+        gateway = ExplodingGateway(
+            db,
+            primary_provider_id=primary.id,
+            provider_factory=lambda _config: _ScriptedProvider(_successful_gateway_events()),
+            db_executor=executor,
+        )
+
+        async def consume():
+            loop = asyncio.get_running_loop()
+            loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+            first = await _read_one_gateway_event_and_close(gateway, _chat_request())
+            while not audit_finished.is_set():
+                await asyncio.sleep(0.005)
+            await asyncio.sleep(0)
+            return first
+
+        try:
+            assert _run(consume()).kind == "text_delta"
+            assert unhandled == []
+        finally:
+            executor.shutdown(wait=True)
 
 
 class _FailingAuditSession:
