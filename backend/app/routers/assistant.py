@@ -1,6 +1,7 @@
-"""Authenticated owner-only endpoints for web assistant conversations."""
+"""Authenticated owner-only endpoints for web assistant conversations and actions."""
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -8,10 +9,16 @@ from app.deps import get_current_user
 from app.models import AuthUser
 from app.schemas.assistant import ConversationCreateIn
 from app.schemas.common import ok
-from app.services import assistant_conversations
+from app.services import assistant_actions, assistant_conversations
 
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
+
+
+class ConfirmActionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    confirmation_token: str = Field(min_length=1, max_length=512)
 
 
 @router.get("/bootstrap")
@@ -63,3 +70,22 @@ def archive_conversation(
     user: AuthUser = Depends(get_current_user),
 ):
     return ok(assistant_conversations.archive_own_conversation(db, user, conversation_id))
+
+
+@router.post("/actions/{action_id}/confirm")
+def confirm_action(
+    action_id: str,
+    body: ConfirmActionIn,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    return ok(assistant_actions.confirm_action(db, user, action_id, body.confirmation_token))
+
+
+@router.post("/actions/{action_id}/cancel")
+def cancel_action(
+    action_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    return ok(assistant_actions.cancel_action(db, user, action_id))

@@ -273,6 +273,10 @@ WA0 Task 4 已实现 `/api/admin/ai` 管理 API，全部端点逐一声明真实
 
 WA0 Task 5 已实现当前登录用户的 `GET /api/assistant/bootstrap`、`POST/GET /api/assistant/conversations`、`GET /api/assistant/conversations/{id}` 和 `POST /api/assistant/conversations/{id}/archive`。`bootstrap` 的固定白名单只有 `enabled`、档案 code/version、`max_risk`、`suggested_prompts`、`retention_days` 和 `fallback_available`；档案未发布/停用/删除、受众不一致或运行时完整性无法证明时返回 `enabled=false`，不泄露内部原因、能力矩阵、禁用能力、提供商配置、密钥或处理器。`fallback_available` 仅在认证用户的既有 `GET /api/it-document-guide` 可安全产生权限感知的 `documents[].can_create/target_path` 指南载荷时为真；它不承诺 WA1 能力。创建在同一事务中先取得与 Task 4 发布/撤回相同的 PostgreSQL 治理 advisory/provider 行锁，再按该顺序 `FOR UPDATE` 重载目标活动档案、运行时校验、插入会话并提交；SQLite 保持相同服务调用和重载顺序以支持确定性测试。创建请求只接受 `language` 和 extra-forbid 的 `page_context`：route 必须是规范化本地路径，page/entity/tab 是有限安全标识，`selected_ids` 只能是最多 20 个不重复 GLID；角色、权限、DOM/HTML、提示词、Cookie、头、外部/协议相对/穿越式路径和其他字段全部 422。创建、列表、详情和归档均以认证后的数据库 `auth_user_id` 过滤；非归属会话统一返回 `AI_CONVERSATION_NOT_FOUND` 404，不通过 total、详情或归档状态泄露其他用户。列表默认只返回 active 会话，`include_archived=true` 仅显示本人已归档会话，按 `created_at DESC, id DESC` 稳定分页，`page` 只允许 1–10,000（`page_size` 为 1–200）。普通消息保留期只能读取会话创建时捕获版本的完整 schema 标记快照，不能由活动档案或 `expires_at` 推断：捕获为 0 时永不写正文，后续正值再发布也不能改变；捕获为 1–90 时保留其不可变决定和创建时 `expires_at`，但当前档案停用、删除、未发布、受众不一致或运行时校验失败时不写新正文；所有写入前递归脱敏。归档绝不删除 `ai_action` 或安全/业务审计。SQLite 覆盖真实 Task 4 发布/撤回的确定性屏障和锁后重载契约；尚未在本轮执行 PostgreSQL 双会话行锁竞争，Task 9 IDC 验收必须执行创建/普通消息与真实发布/撤回竞争的两会话屏障（包括 0→正值及正值→0 保留结果）。Task 5 不包含消息 SSE、工具循环、L3 动作、业务处理器、UI、部署或 WA1 工作。
 
+WA0 Task 6 已实现 `prepare_action(db, actor, conversation_id, capability_code, payload, idempotency_key)`、`confirm_action(...)` 和 `cancel_action(...)`，并开放 `POST /api/assistant/actions/{id}/confirm`（请求体只含 `confirmation_token`）与 `POST /api/assistant/actions/{id}/cancel`。准备阶段按注册定义取得能力、风险、输入模型和固定 handler；Pydantic `extra=forbid` 等注册模型规则拒绝客户端附加 SLA、队列、角色、处理器或最终状态。规范化载荷先递归脱敏再做稳定 SHA-256，`AiAction` 幂等唯一范围为账号 + 能力 + key；同键同摘要返回首个状态且不重新签发 Token，同键异摘要返回 409。预览只调用 handler 的只读 `preview()`。
+
+确认/取消只按当前认证账号查询并 `FOR UPDATE` 锁定 `AiAction`，他人动作统一 404。确认校验 `prepared`、十分钟期限、Token SHA-256、归属会话和载荷摘要，再从数据库重载账号、角色/组权限、已发布档案限制和注册能力；固定 handler 的 `authorize_record()` 随后立即检查数据范围、记录状态、所有权和流程任务。handler 只能在调用方事务内执行，不能自行 commit/rollback。有效 `CapabilityResult(status="succeeded")`、领域变更、动作状态/实体和通用 `audit_log` 一次提交；提交前任何处理器或审计异常均回滚领域事务，再单独写脱敏 `failed` 状态，响应只说明“未执行”。错误 Token 保持 `prepared` 供合法本人重试；取消、过期、成功、失败均不可再次确认。原始 Token、原始敏感载荷、handler 异常和成功结果中的凭据赋值不进入数据库结果、日志、审计或错误正文。Task 6 不含消息 SSE/工具循环、具体业务 capability、UI、部署或 WA1。SQLite 自动化验证行锁调用顺序和事务原子性；真实 PostgreSQL 两会话同一动作竞争必须在 Task 9 IDC 执行。
+
 ### 4.2 ITSM
 
 ```text
@@ -468,7 +472,7 @@ IDC Kubernetes:
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
-| 网页智能体 WA0（Task 1–5 已实现；Task 6+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关、模型/档案管理 API 及本人网页会话生命周期；SSE/动作和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理 UI 待实施 | 网页智能体设计基线 |
+| 网页智能体 WA0（Task 1–6 已实现；Task 7+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关、模型/档案管理 API、本人网页会话生命周期及通用 L3 服务端预览/确认/幂等/重授权/原子审计；SSE/工具循环和具体领域能力待实施 | 全局助手、结构化卡片、AI 智能体管理 UI 待实施 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 
