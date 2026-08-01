@@ -46,6 +46,7 @@ def test_wa0_models_are_additive_disabled_by_default_and_idempotent(client):
         db.add_all([provider, profile])
         db.commit()
         assert provider.enabled is False
+        assert provider.config_revision == 1
         assert profile.enabled is False
         assert profile.retention_days == 30
 
@@ -199,6 +200,7 @@ def test_postgres_assistant_schema_repairs_partial_tables_using_additive_ddl(mon
 
     ddl = "\n".join(session.statements)
     assert "CREATE TABLE IF NOT EXISTS ai_provider_config" in ddl
+    assert "ALTER TABLE ai_provider_config ADD COLUMN config_revision INTEGER NOT NULL DEFAULT 1" in ddl
     assert "ALTER TABLE ai_provider_config ADD COLUMN fallback_provider_id VARCHAR(26)" in ddl
     assert "ALTER TABLE ai_agent_profile ADD COLUMN default_provider_id VARCHAR(26)" in ddl
     assert "ALTER TABLE ai_agent_profile ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 30" in ddl

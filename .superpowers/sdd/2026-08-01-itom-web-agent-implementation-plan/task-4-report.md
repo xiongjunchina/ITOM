@@ -226,3 +226,160 @@ The two warnings remain the pre-existing ldap3 imports of deprecated pyasn1 `tag
 - Draft edits no longer touch active profile fields. Publish validation completes before active state/version creation, and rollback applies only a copied immutable source snapshot.
 - Usage work is bounded by both time (1–90 days) and selected/grouped SQL columns.
 - No live external system was contacted. Delivery remains a local, unpushed Task 4 fix round.
+
+# Task 4 review fix round 2 — 2026-08-01
+
+## Review status and boundary
+
+- Review findings addressed at `FIX_BASE=677bfb521de710298b936a893eced4d9f3e221a8` on `feature/AI-agent-version`.
+- Scope remained Task 4. No branch switch, rebase, reset, merge, push, deployment, live provider/DNS/network request, IDC access, local application runtime, admin UI, conversation/action/orchestrator, domain capability, or WA1 work was performed.
+- One additive Task 1 schema extension was necessary and explicitly allowed by the review: `ai_provider_config.config_revision INTEGER NOT NULL DEFAULT 1`. The existing idempotent PostgreSQL repair path adds it without DML, destructive DDL, or rewriting existing rows. The existing `config_snapshot` column remains unchanged; legacy `{}` is recognized as incomplete rather than backfilled.
+
+## Root-cause verification
+
+1. `probe_provider()` acquired the synchronous PostgreSQL transaction advisory lock and provider row locks, then awaited `adapter.probe()` and `adapter.aclose()` before commit. A second same-event-loop request could synchronously wait for that lock and prevent the first coroutine from resuming, producing a deadlock. The same shape also let a result computed for an old configuration overwrite newer state.
+2. `_profile_config()` always began with current `ai_agent_profile` fields and overlaid any keys present in `config_snapshot`. A legacy published version with `{}` therefore appeared to contain the current active settings, so rollback returned 200 and copied newer configuration into a historical version copy.
+
+## Fix summary
+
+- Added monotonic `config_revision`, initialized to 1. Under the existing cross-pod governance advisory lock, provider type, URL, model, nonblank replacement secret, timeout, output limit, temperature, or fallback change increments the revision and invalidates/disables prior health. The revision contains no secret-derived hash or plaintext.
+- Split provider administration probing into three phases:
+  - Phase A: short locked transaction refreshes/locks all providers in deterministic ID order, validates the target, snapshots detached encrypted configuration plus revision, and commits.
+  - Phase B: exact Task 3 sequential async probe and adapter close run with `Session.in_transaction() == false`; no advisory or row lock spans network I/O.
+  - Phase C: short locked transaction refreshes current state and persists truthful redacted success/failure only when the provider still exists and its revision matches. Change/deletion rolls back and returns 409 `AI_PROVIDER_PROBE_STALE`; the old result never overwrites newer state.
+- Added `schema_version=1` to every newly bootstrapped/updated draft snapshot, published snapshot, and rollback-copy snapshot. New snapshots contain all four activity-controlled fields: `name`, `default_provider_id`, `retention_days`, and `enabled`; prompts, capabilities, knowledge scope, and risk remain in their existing immutable version columns.
+- Historical rollback now validates the explicit marker, required fields, and safe field types/ranges before publish validation or writes. `{}`, missing markers, and incomplete historical snapshots return 409 `AI_PROFILE_LEGACY_SNAPSHOT_UNAVAILABLE`. No historical value is synthesized from current active profile state. A complete snapshot still copies to a new monotonically increasing version and atomically applies its active settings.
+
+## Strict TDD RED/GREEN evidence
+
+### Probe transaction boundary, concurrent mutation, and stale result
+
+The first command used the unavailable `python` executable and exited 127 before collecting product evidence. The runner was corrected to the repository virtual environment; no production code changed for that environment-only failure. The initial provider fixture also lacked the controlled allowlist and failed at setup; the fixture was corrected before accepting RED.
+
+Observed product RED:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_ai_admin_api.py -q -k 'releases_database_transaction_before_awaiting_network or mutation_can_finish_during_probe'
+Output: 2 failed, 30 deselected in 0.70s
+- probe_db.in_transaction() was True while the fake provider awaited;
+- AiProviderConfig had no config_revision.
+Exit: 1
+```
+
+GREEN after the Phase A/B/C and revision implementation:
+
+```text
+Same focused command
+Output: 2 passed, 30 deselected in 0.61s
+Exit: 0
+```
+
+The final stale-result fixture changes only `fallback_provider_id` while the fake probe is suspended. The second mutation commits and increments the revision before the probe resumes; the probe returns `AI_PROVIDER_PROBE_STALE`, while the newer fallback, `unverified` status, empty capabilities, null probe timestamp, and disabled state remain intact.
+
+```text
+Final focused revalidation after changing the interleaving mutation to fallback-only:
+Output: 2 passed, 31 deselected in 0.69s
+Exit: 0
+```
+
+### Legacy snapshot fail-closed rollback
+
+Observed RED after inserting a pre-migration `{}` published version, running the repository migration path, preserving `{}`, and publishing complete V2 settings:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_ai_admin_api.py -q -k 'legacy_profile_snapshot_rollback'
+Output: 1 failed, 32 deselected in 0.69s
+- rollback of version 1 returned 200 and copied the current V2 active settings.
+Exit: 1
+```
+
+GREEN after explicit versioned snapshots and strict historical decoding:
+
+```text
+Same focused command
+Output: 1 passed, 32 deselected in 0.64s
+Exit: 0
+```
+
+The regression captures the active profile and every published-version column before rejected rollback and verifies byte-for-byte equality afterward. It then publishes complete V3, rolls complete V2 forward as V4, verifies V4 equals V2's marked snapshot, and verifies legacy V1 remains `{}`.
+
+## Final verification
+
+Task 4 API suite:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_ai_admin_api.py -q
+Output: 33 passed in 5.01s
+Exit: 0
+```
+
+Task 1 model/migration suite:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_assistant_models.py -q
+Output: 6 passed in 0.43s
+Exit: 0
+```
+
+All WA0 suites:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_*.py -q
+Output: 144 passed in 8.49s
+Exit: 0
+```
+
+Full backend regression:
+
+```text
+Command: .venv/bin/python -m pytest -q
+Output: 454 passed, 2 warnings in 99.21s (0:01:39)
+Exit: 0
+```
+
+Compile/import verification:
+
+```text
+Command: .venv/bin/python -m compileall -q app tests/test_wa0_ai_admin_api.py tests/test_wa0_assistant_models.py
+Command: .venv/bin/python -c "import app.main; from app.models import AiProviderConfig, AiAgentProfileVersion; from app.services import assistant_config, migrate; assert AiProviderConfig.config_revision is not None; assert assistant_config.PROFILE_CONFIG_SCHEMA_VERSION == 1; assert migrate.ASSISTANT_ENSURE_COLUMNS['ai_provider_config']"
+Output: no output
+Exit: 0
+```
+
+The two warnings remain the pre-existing `ldap3` imports of deprecated pyasn1 `tagMap` and `typeMap`; neither warning is in Task 4 code.
+
+## Fix-round changed files
+
+- `backend/app/models/assistant.py`
+- `backend/app/services/assistant_config.py`
+- `backend/app/services/migrate.py`
+- `backend/tests/test_wa0_ai_admin_api.py`
+- `backend/tests/test_wa0_assistant_models.py`
+- `README.md`
+- `docs/03-PRD.md`
+- `docs/04-数据模型设计.md`
+- `docs/05-API契约与架构设计.md`
+- `docs/10-Aily-MCP版本交接与决策上下文.md`
+- `docs/en/03-PRD.md`
+- `docs/en/04-data-model.md`
+- `docs/en/05-api-and-architecture.md`
+- `docs/en/10-aily-mcp-handoff-and-decision-context.md`
+- `docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`
+- `docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`
+- `.superpowers/sdd/2026-08-01-itom-web-agent-implementation-plan/task-4-report.md`
+
+## Documentation assessment and CN/EN parity
+
+- Updated README's Chinese and English capability summaries, Chinese-authoritative/English-mirror PRD, data model, API/architecture, Aily/MCP handoff context, and Web Agent design baseline for Phase A/B/C probing, `config_revision`, stale-result conflict, complete marked snapshots, and fail-closed legacy rollback.
+- Documented the one-time legacy limitation explicitly: migration preserves `{}` and incomplete rows; rollback rejects them without guessing or mutating current/history.
+- Reassessed `docs/06-用户身份与组织模型设计.md` and `docs/en/06-identity-and-org-model.md`: no change is required because account identity, role derivation, organization scope, and real server-side `admin_ai` authorization are unchanged.
+- Reassessed deployment and user-operation documentation: no change is required because this round adds no configuration variable, operator workflow, UI, runtime deployment, or end-user behavior.
+
+## Fix-round self-review verdict
+
+- No synchronous PostgreSQL advisory/row lock or SQLAlchemy transaction spans `await adapter.probe()` or awaited adapter close.
+- Concurrent probes of the same unchanged revision may both complete; each Phase C is serialized and truthful. Any intervening probe-relevant mutation increments the revision under the same governance lock, invalidates health, and makes older results stale.
+- Delete is detected explicitly in Phase C even without a revision increment. Non-probe changes such as display name or primary flag do not falsify the configuration identity; fallback and every outbound/probe input do.
+- Secrets remain encrypted write-only. No response/audit/error exposes ciphertext or plaintext, and no revision/hash derives from plaintext.
+- Legacy rollback validation occurs before any active/version write. Complete rollback still validates provider health/capability compatibility and writes the copy plus active settings atomically.
+- Migration remains additive and idempotent and performs no data backfill/reinterpretation. No live external system was contacted. Delivery remains local and unpushed by instruction.

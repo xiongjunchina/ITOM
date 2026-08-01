@@ -835,7 +835,8 @@ ASSISTANT_SCHEMA_STATEMENTS = (
     "provider_type VARCHAR(32) NOT NULL, api_base_url VARCHAR(300), api_key_encrypted TEXT, model VARCHAR(128), "
     "timeout_seconds INTEGER NOT NULL DEFAULT 30, max_output_tokens INTEGER NOT NULL DEFAULT 2048, temperature DOUBLE PRECISION, "
     "capability_probe JSONB NOT NULL DEFAULT '{}'::jsonb, probe_status VARCHAR(16) NOT NULL DEFAULT 'unverified', "
-    "last_probed_at TIMESTAMP, is_primary BOOLEAN NOT NULL DEFAULT false, fallback_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), "
+    "last_probed_at TIMESTAMP, config_revision INTEGER NOT NULL DEFAULT 1, "
+    "is_primary BOOLEAN NOT NULL DEFAULT false, fallback_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), "
     "enabled BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
     "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false, "
     "CONSTRAINT uq_ai_provider_config_code UNIQUE(code))",
@@ -900,6 +901,7 @@ ASSISTANT_ENSURE_COLUMNS = {
         ("capability_probe", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("probe_status", "VARCHAR(16) NOT NULL DEFAULT 'unverified'"),
         ("last_probed_at", "TIMESTAMP"),
+        ("config_revision", "INTEGER NOT NULL DEFAULT 1"),
         ("is_primary", "BOOLEAN NOT NULL DEFAULT false"),
         ("fallback_provider_id", "VARCHAR(26)"),
         ("enabled", "BOOLEAN NOT NULL DEFAULT false"),

@@ -38,6 +38,16 @@ PROFILE_NAMES = {
     "admin": "管理员助手",
 }
 PROFILE_CONFIG_FIELDS = {"name", "default_provider_id", "retention_days", "enabled"}
+PROFILE_CONFIG_SCHEMA_VERSION = 1
+PROVIDER_PROBE_INPUT_FIELDS = {
+    "provider_type",
+    "api_base_url",
+    "model",
+    "timeout_seconds",
+    "max_output_tokens",
+    "temperature",
+    "fallback_provider_id",
+}
 KNOWLEDGE_SCOPES = {
     "requester": frozenset({"public", "service_catalog", "own_records"}),
     "bdo": frozenset({"public", "service_catalog", "own_records", "own_requirements"}),
@@ -219,7 +229,7 @@ def update_provider(db: Session, provider_id: str, values: dict[str, Any], actor
 
     changed_probe_inputs = any(
         key in values and values[key] != getattr(row, key)
-        for key in ("provider_type", "api_base_url", "model")
+        for key in PROVIDER_PROBE_INPUT_FIELDS
     ) or (isinstance(secret, str) and bool(secret.strip()))
     if values.get("enabled") is True and (changed_probe_inputs or not _probe_is_usable(row)):
         raise AppError("AI_PROVIDER_PROBE_REQUIRED", "提供商通过安全探测后才能启用", 409)
@@ -231,6 +241,7 @@ def update_provider(db: Session, provider_id: str, values: dict[str, Any], actor
         row.api_key_encrypted = encrypt_secret(secret)
         changed_fields.append("api_key")
     if changed_probe_inputs:
+        row.config_revision += 1
         row.probe_status = "unverified"
         row.capability_probe = {}
         row.last_probed_at = None
@@ -279,23 +290,44 @@ def _provider_for_probe(row: AiProviderConfig):
     )
 
 
-async def probe_provider(db: Session, provider_id: str, actor: AuthUser) -> dict[str, Any]:
-    """Run Task 3's exact sequential probe and persist one truthful atomic result."""
-    _lock_provider_governance(db)
-    row = (
-        db.query(AiProviderConfig)
-        .filter(AiProviderConfig.id == provider_id, AiProviderConfig.is_deleted.is_(False))
-        .with_for_update()
-        .first()
+def _provider_probe_snapshot(row: AiProviderConfig) -> SimpleNamespace:
+    """Detach probe input from the ORM transaction without exposing its secret."""
+    return SimpleNamespace(
+        api_base_url=row.api_base_url,
+        api_key_encrypted=row.api_key_encrypted,
+        model=row.model,
+        timeout_seconds=row.timeout_seconds,
+        max_output_tokens=row.max_output_tokens,
+        temperature=row.temperature,
+        provider_type=row.provider_type,
+        fallback_provider_id=row.fallback_provider_id,
     )
-    if row is None:
-        raise AppError("AI_PROVIDER_NOT_FOUND", "模型提供商不存在", 404)
 
+
+async def probe_provider(db: Session, provider_id: str, actor: AuthUser) -> dict[str, Any]:
+    """Probe outside DB locks and persist only for the unchanged configuration."""
+    # Phase A: serialize and snapshot a validated configuration, then release
+    # all advisory/row/transaction locks before any network await.
+    _lock_provider_governance(db)
+    row = _provider_or_404(db, provider_id)
+    _validate_provider_config({
+        "provider_type": row.provider_type,
+        "api_base_url": row.api_base_url,
+        "model": row.model,
+        "max_output_tokens": row.max_output_tokens,
+        "temperature": row.temperature,
+    })
+    expected_revision = row.config_revision
+    snapshot = _provider_probe_snapshot(row)
+    db.commit()
+
+    # Phase B: Task 3's exact sequential provider probe with no live DB
+    # transaction or governance lock.
     adapter = None
     failure: tuple[str, str] | None = None
     checked_at = _utcnow()
     try:
-        adapter = _provider_for_probe(row)
+        adapter = _provider_for_probe(snapshot)
         probe = await adapter.probe()
         checked_at = probe.checked_at.astimezone(timezone.utc).replace(tzinfo=None) if probe.checked_at.tzinfo else probe.checked_at
         capabilities = {
@@ -349,6 +381,18 @@ async def probe_provider(db: Session, provider_id: str, actor: AuthUser) -> dict
     if failure is not None and "error_code" not in capabilities:
         capabilities["error_code"] = failure[0]
         capabilities["error_message"] = failure[1]
+
+    # Phase C: serialize again and discard stale results instead of allowing
+    # an old probe to overwrite a newer unverified/deleted configuration.
+    _lock_provider_governance(db)
+    row = db.get(AiProviderConfig, provider_id)
+    if row is None or row.is_deleted or row.config_revision != expected_revision:
+        db.rollback()
+        raise AppError(
+            "AI_PROVIDER_PROBE_STALE",
+            "模型提供商配置已变化或删除，本次探测结果已丢弃",
+            409,
+        )
     row.capability_probe = capabilities
     row.probe_status = "failed" if failure else "success"
     row.last_probed_at = checked_at
@@ -407,6 +451,7 @@ def _ensure_profiles(db: Session, actor: AuthUser) -> None:
             enabled_capabilities=[],
             knowledge_scope=[],
             config_snapshot={
+                "schema_version": PROFILE_CONFIG_SCHEMA_VERSION,
                 "name": profile.name,
                 "default_provider_id": profile.default_provider_id,
                 "retention_days": profile.retention_days,
@@ -476,6 +521,7 @@ def _latest_published(db: Session, profile_id: str) -> AiAgentProfileVersion | N
 
 
 def _profile_config(profile: AiAgentProfile, version: AiAgentProfileVersion) -> dict[str, Any]:
+    """Read a draft, upgrading an old incomplete draft from current active state."""
     config = {
         "name": profile.name,
         "default_provider_id": profile.default_provider_id,
@@ -485,6 +531,39 @@ def _profile_config(profile: AiAgentProfile, version: AiAgentProfileVersion) -> 
     snapshot = version.config_snapshot if isinstance(version.config_snapshot, dict) else {}
     config.update({key: snapshot[key] for key in PROFILE_CONFIG_FIELDS if key in snapshot})
     return config
+
+
+def _versioned_profile_snapshot(config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": PROFILE_CONFIG_SCHEMA_VERSION,
+        **{key: config[key] for key in PROFILE_CONFIG_FIELDS},
+    }
+
+
+def _published_profile_config(version: AiAgentProfileVersion) -> dict[str, Any]:
+    """Return only a provably complete historical active-settings snapshot."""
+    snapshot = version.config_snapshot
+    provider_id = snapshot.get("default_provider_id") if isinstance(snapshot, dict) else None
+    retention_days = snapshot.get("retention_days") if isinstance(snapshot, dict) else None
+    complete = (
+        isinstance(snapshot, dict)
+        and snapshot.get("schema_version") == PROFILE_CONFIG_SCHEMA_VERSION
+        and PROFILE_CONFIG_FIELDS.issubset(snapshot)
+        and isinstance(snapshot.get("name"), str)
+        and bool(snapshot["name"].strip())
+        and (provider_id is None or isinstance(provider_id, str))
+        and isinstance(retention_days, int)
+        and not isinstance(retention_days, bool)
+        and 0 <= retention_days <= 90
+        and isinstance(snapshot.get("enabled"), bool)
+    )
+    if not complete:
+        raise AppError(
+            "AI_PROFILE_LEGACY_SNAPSHOT_UNAVAILABLE",
+            "旧版智能体档案缺少可证明的完整历史配置，无法回滚",
+            409,
+        )
+    return {key: snapshot[key] for key in PROFILE_CONFIG_FIELDS}
 
 
 def _apply_profile_config(
@@ -604,7 +683,7 @@ def update_profile_draft(
     }
     for key in draft_fields.intersection(values):
         setattr(draft, key, values[key])
-    draft.config_snapshot = config
+    draft.config_snapshot = _versioned_profile_snapshot(config)
     draft.updated_at = _utcnow()
     audit(
         db,
@@ -622,6 +701,7 @@ def _validate_publishable(
     db: Session,
     profile: AiAgentProfile,
     version: AiAgentProfileVersion,
+    config: dict[str, Any] | None = None,
 ) -> None:
     if not (version.system_prompt_zh or "").strip() or not (version.system_prompt_en or "").strip():
         raise AppError("AI_PROFILE_PROMPT_REQUIRED", "发布前必须填写中英文系统指令")
@@ -631,7 +711,8 @@ def _validate_publishable(
         version.knowledge_scope or [],
         version.max_risk_level,
     )
-    config = _profile_config(profile, version)
+    if config is None:
+        config = _profile_config(profile, version)
     if not config["default_provider_id"]:
         raise AppError("AI_PROFILE_PROVIDER_REQUIRED", "发布前必须选择模型提供商")
     provider = _provider_or_404(db, config["default_provider_id"])
@@ -656,6 +737,7 @@ def profile_version_payload(row: AiAgentProfileVersion) -> dict[str, Any]:
         "enabled_capabilities": list(row.enabled_capabilities or []),
         "knowledge_scope": list(row.knowledge_scope or []),
         "max_risk_level": row.max_risk_level,
+        "config_schema_version": config.get("schema_version"),
         "name": config.get("name"),
         "default_provider_id": config.get("default_provider_id"),
         "retention_days": config.get("retention_days"),
@@ -675,10 +757,10 @@ def publish_profile(
     _lock_provider_governance(db)
     profile, draft = _profile_and_draft(db, code, lock=True)
     _assert_revision(draft.updated_at, expected_draft_updated_at)
-    _validate_publishable(db, profile, draft)
+    config = _profile_config(profile, draft)
+    _validate_publishable(db, profile, draft, config)
     latest = _latest_published(db, profile.id)
     now = _utcnow()
-    config = _profile_config(profile, draft)
     row = AiAgentProfileVersion(
         profile_id=profile.id,
         version=(latest.version if latest else 0) + 1,
@@ -687,7 +769,7 @@ def publish_profile(
         system_prompt_en=draft.system_prompt_en,
         enabled_capabilities=list(draft.enabled_capabilities or []),
         knowledge_scope=list(draft.knowledge_scope or []),
-        config_snapshot=dict(config),
+        config_snapshot=_versioned_profile_snapshot(config),
         max_risk_level=draft.max_risk_level,
         published_by=actor.id,
         published_at=now,
@@ -731,8 +813,8 @@ def rollback_profile(
     )
     if source is None:
         raise AppError("AI_PROFILE_VERSION_NOT_FOUND", "智能体档案历史版本不存在", 404)
-    _validate_publishable(db, profile, source)
-    config = _profile_config(profile, source)
+    config = _published_profile_config(source)
+    _validate_publishable(db, profile, source, config)
     row = AiAgentProfileVersion(
         profile_id=profile.id,
         version=latest.version + 1,
@@ -741,7 +823,7 @@ def rollback_profile(
         system_prompt_en=source.system_prompt_en,
         enabled_capabilities=list(source.enabled_capabilities or []),
         knowledge_scope=list(source.knowledge_scope or []),
-        config_snapshot=dict(config),
+        config_snapshot=_versioned_profile_snapshot(config),
         max_risk_level=source.max_risk_level,
         published_by=actor.id,
         published_at=_utcnow(),

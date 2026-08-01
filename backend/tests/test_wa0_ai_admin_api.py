@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from app.assistant.registry import CapabilityRegistry
 from app.assistant.types import AssistantChannel, CapabilityDefinition, CapabilityResult, RiskLevel
-from app.assistant.providers import OpenAICompatibleProvider
+from app.assistant.providers import OpenAICompatibleProvider, ProviderProbe
 from app.core.config import settings
 from app.core.errors import AppError
 from app.db import SessionLocal
@@ -26,6 +26,7 @@ from app.models import (
     AuditLog,
     AuthUser,
 )
+from app.services.migrate import run_migrations
 from app.services.secrets_store import decrypt_secret
 
 
@@ -567,6 +568,137 @@ def test_provider_probe_runs_task3_exact_sequence_and_atomically_persists_truthf
     assert enabled.json()["data"]["enabled"] is True
 
 
+def test_provider_probe_releases_database_transaction_before_awaiting_network(
+    client, admin_headers, monkeypatch
+):
+    """Moving the network await back inside Phase A/C must expose an open DB transaction."""
+    from app.services import assistant_config
+
+    monkeypatch.setattr(settings, "ai_provider_allowed_hosts", "models.example.test")
+    provider_id = client.post(
+        "/api/admin/ai/providers",
+        headers=admin_headers,
+        json={**VALID_PROVIDER, "code": "wa0-probe-no-db-lock", "is_primary": False},
+    ).json()["data"]["id"]
+    probe_db = SessionLocal()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class AwaitingProbe:
+        async def probe(self):
+            started.set()
+            await release.wait()
+            return ProviderProbe(
+                success=True,
+                supports_streaming=True,
+                supports_tools=True,
+                supports_json_schema=True,
+                checked_at=datetime.now(timezone.utc),
+                model="test-model",
+            )
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(assistant_config, "_provider_for_probe", lambda _row: AwaitingProbe())
+
+    async def exercise():
+        actor = probe_db.query(AuthUser).filter_by(username="admin").one()
+        probe_db.commit()
+        task = asyncio.create_task(assistant_config.probe_provider(probe_db, provider_id, actor))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        try:
+            assert probe_db.in_transaction() is False
+        finally:
+            release.set()
+            await asyncio.wait_for(task, timeout=1)
+
+    try:
+        _run(exercise())
+    finally:
+        probe_db.close()
+
+
+def test_provider_mutation_can_finish_during_probe_and_stale_result_is_discarded(
+    client, admin_headers, monkeypatch
+):
+    """A probe result for an older revision must not overwrite a newer unverified config."""
+    from app.services import assistant_config
+
+    monkeypatch.setattr(settings, "ai_provider_allowed_hosts", "models.example.test")
+    fallback_id = client.post(
+        "/api/admin/ai/providers",
+        headers=admin_headers,
+        json={**VALID_PROVIDER, "code": "wa0-probe-new-fallback", "is_primary": False},
+    ).json()["data"]["id"]
+    provider_id = client.post(
+        "/api/admin/ai/providers",
+        headers=admin_headers,
+        json={**VALID_PROVIDER, "code": "wa0-probe-stale-result", "is_primary": False},
+    ).json()["data"]["id"]
+    probe_db = SessionLocal()
+    writer_db = SessionLocal()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class AwaitingProbe:
+        async def probe(self):
+            started.set()
+            await release.wait()
+            return ProviderProbe(
+                success=True,
+                supports_streaming=True,
+                supports_tools=True,
+                supports_json_schema=True,
+                checked_at=datetime.now(timezone.utc),
+                model="test-model",
+            )
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(assistant_config, "_provider_for_probe", lambda _row: AwaitingProbe())
+
+    async def exercise():
+        probe_actor = probe_db.query(AuthUser).filter_by(username="admin").one()
+        writer_actor = writer_db.query(AuthUser).filter_by(username="admin").one()
+        probe_db.commit()
+        writer_db.commit()
+        task = asyncio.create_task(assistant_config.probe_provider(probe_db, provider_id, probe_actor))
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        before_revision = writer_db.get(AiProviderConfig, provider_id).config_revision
+        updated = assistant_config.update_provider(
+            writer_db,
+            provider_id,
+            {"fallback_provider_id": fallback_id},
+            writer_actor,
+        )
+        assert updated["fallback_provider_id"] == fallback_id
+        writer_db.expire_all()
+        assert writer_db.get(AiProviderConfig, provider_id).config_revision == before_revision + 1
+
+        release.set()
+        with pytest.raises(AppError) as exc_info:
+            await asyncio.wait_for(task, timeout=1)
+        assert exc_info.value.code == "AI_PROVIDER_PROBE_STALE"
+
+    try:
+        _run(exercise())
+    finally:
+        release.set()
+        probe_db.close()
+        writer_db.close()
+
+    with SessionLocal() as db:
+        current = db.get(AiProviderConfig, provider_id)
+        assert current.fallback_provider_id == fallback_id
+        assert current.probe_status == "unverified"
+        assert current.capability_probe == {}
+        assert current.last_probed_at is None
+        assert current.enabled is False
+
+
 def test_failed_provider_probe_cannot_leave_provider_healthy_or_leak_error_content(
     client, admin_headers, monkeypatch
 ):
@@ -1024,6 +1156,159 @@ def test_published_profile_isolated_from_draft_and_publish_rollback_apply_snapsh
         assert [row.version for row in versions] == [1, 2, 3]
         assert versions[2].config_snapshot == versions[0].config_snapshot
         assert versions[2].system_prompt_en == versions[0].system_prompt_en
+
+
+def test_legacy_profile_snapshot_rollback_fails_closed_and_complete_snapshot_rolls_back(
+    client, admin_headers, monkeypatch
+):
+    """Filling a legacy snapshot from current active state must corrupt historical rollback."""
+    from app.services import assistant_config
+
+    monkeypatch.setattr(assistant_config, "capability_registry", _test_registry(), raising=False)
+    provider_id = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-legacy-snapshot-provider")
+    client.get("/api/admin/ai/profiles/bdo/draft", headers=admin_headers)
+
+    with SessionLocal() as db:
+        actor = db.query(AuthUser).filter_by(username="admin").one()
+        profile = db.query(AiAgentProfile).filter_by(code="bdo").one()
+        assert db.query(AiAgentProfileVersion).filter_by(
+            profile_id=profile.id, status="published"
+        ).count() == 0
+        profile.name = "Legacy BDO Active"
+        profile.default_provider_id = provider_id
+        profile.retention_days = 7
+        profile.enabled = True
+        profile.max_risk_level = "L1"
+        profile.status = "published"
+        legacy = AiAgentProfileVersion(
+            profile_id=profile.id,
+            version=1,
+            status="published",
+            system_prompt_zh="旧版 BDO 助手",
+            system_prompt_en="Legacy BDO assistant",
+            enabled_capabilities=["knowledge.read"],
+            knowledge_scope=["public"],
+            config_snapshot={},
+            max_risk_level="L1",
+            published_by=actor.id,
+            published_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(legacy)
+        db.commit()
+        legacy_id = legacy.id
+
+        run_migrations(db)
+        db.expire_all()
+        assert db.get(AiAgentProfileVersion, legacy_id).config_snapshot == {}
+
+    draft = client.get("/api/admin/ai/profiles/bdo/draft", headers=admin_headers).json()["data"]
+    staged_v2_response = client.patch(
+        "/api/admin/ai/profiles/bdo/draft",
+        headers=admin_headers,
+        json={
+            "expected_updated_at": draft["draft_updated_at"],
+            "name": "BDO Complete V2",
+            "default_provider_id": provider_id,
+            "retention_days": 22,
+            "enabled": True,
+            "system_prompt_zh": "完整快照版本二",
+            "system_prompt_en": "Complete snapshot version two",
+            "enabled_capabilities": ["knowledge.read"],
+            "knowledge_scope": ["public", "own_requirements"],
+            "max_risk_level": "L1",
+        },
+    )
+    assert staged_v2_response.status_code == 200, staged_v2_response.text
+    staged_v2 = staged_v2_response.json()["data"]
+    published_v2 = client.post(
+        "/api/admin/ai/profiles/bdo/publish",
+        headers=admin_headers,
+        json={"expected_draft_updated_at": staged_v2["draft_updated_at"]},
+    )
+    assert published_v2.status_code == 200, published_v2.text
+    assert published_v2.json()["data"]["version"] == 2
+
+    def persisted_state():
+        with SessionLocal() as db:
+            profile = db.query(AiAgentProfile).filter_by(code="bdo").one()
+            profile_state = {column.key: getattr(profile, column.key) for column in profile.__table__.columns}
+            versions = (
+                db.query(AiAgentProfileVersion)
+                .filter_by(profile_id=profile.id, status="published")
+                .order_by(AiAgentProfileVersion.version)
+                .all()
+            )
+            version_state = [
+                {column.key: getattr(row, column.key) for column in row.__table__.columns}
+                for row in versions
+            ]
+            return profile_state, version_state
+
+    before_rejected_rollback = persisted_state()
+    rejected = client.post(
+        "/api/admin/ai/profiles/bdo/rollback",
+        headers=admin_headers,
+        json={"version": 1, "expected_latest_version": 2},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["error"]["code"] == "AI_PROFILE_LEGACY_SNAPSHOT_UNAVAILABLE"
+    assert persisted_state() == before_rejected_rollback
+
+    current = client.get("/api/admin/ai/profiles/bdo/draft", headers=admin_headers).json()["data"]
+    staged_v3_response = client.patch(
+        "/api/admin/ai/profiles/bdo/draft",
+        headers=admin_headers,
+        json={
+            "expected_updated_at": current["draft_updated_at"],
+            "name": "BDO Complete V3",
+            "default_provider_id": provider_id,
+            "retention_days": 33,
+            "enabled": False,
+            "system_prompt_zh": "完整快照版本三",
+            "system_prompt_en": "Complete snapshot version three",
+        },
+    )
+    assert staged_v3_response.status_code == 200, staged_v3_response.text
+    staged_v3 = staged_v3_response.json()["data"]
+    published_v3 = client.post(
+        "/api/admin/ai/profiles/bdo/publish",
+        headers=admin_headers,
+        json={"expected_draft_updated_at": staged_v3["draft_updated_at"]},
+    )
+    assert published_v3.status_code == 200, published_v3.text
+    assert published_v3.json()["data"]["version"] == 3
+
+    rolled_back = client.post(
+        "/api/admin/ai/profiles/bdo/rollback",
+        headers=admin_headers,
+        json={"version": 2, "expected_latest_version": 3},
+    )
+    assert rolled_back.status_code == 200, rolled_back.text
+    assert rolled_back.json()["data"]["version"] == 4
+
+    with SessionLocal() as db:
+        profile = db.query(AiAgentProfile).filter_by(code="bdo").one()
+        assert profile.name == "BDO Complete V2"
+        assert profile.default_provider_id == provider_id
+        assert profile.retention_days == 22
+        assert profile.enabled is True
+        versions = (
+            db.query(AiAgentProfileVersion)
+            .filter_by(profile_id=profile.id, status="published")
+            .order_by(AiAgentProfileVersion.version)
+            .all()
+        )
+        assert [row.version for row in versions] == [1, 2, 3, 4]
+        assert versions[0].config_snapshot == {}
+        assert versions[1].config_snapshot == {
+            "schema_version": 1,
+            "name": "BDO Complete V2",
+            "default_provider_id": provider_id,
+            "retention_days": 22,
+            "enabled": True,
+        }
+        assert versions[2].config_snapshot["schema_version"] == 1
+        assert versions[3].config_snapshot == versions[1].config_snapshot
 
 
 def test_health_usage_and_action_audits_are_aggregate_redacted_allowlists(

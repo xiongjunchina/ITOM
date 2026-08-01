@@ -27,6 +27,7 @@ class AiProviderConfig(GlidBase):
     capability_probe: Mapped[dict] = mapped_column(JsonCol, default=dict)
     probe_status: Mapped[str] = mapped_column(String(16), default="unverified", index=True)
     last_probed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    config_revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     fallback_provider_id: Mapped[str | None] = mapped_column(ForeignKey("ai_provider_config.id"), index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

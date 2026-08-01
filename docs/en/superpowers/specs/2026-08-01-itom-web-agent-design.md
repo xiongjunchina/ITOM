@@ -89,9 +89,9 @@ Every executable capability is code-registered with code/name, channel/audience,
 
 System Management gains an **AI Assistant** page separate from `aily_integration_config`. Administrators maintain provider type, API base, model, encrypted key, timeout, output limit, temperature, streaming/tool/structured-output support, primary/fallback relation, and enabled state. V1 prioritizes an OpenAI-compatible adapter; other protocols use separate adapters.
 
-Pre-publish probes verify connectivity, auth, streaming, JSON Schema, tool calling, timeout, and sensitive-data echo. A model without tool/structured-output support is limited to L0/L1.
+Pre-publish probes verify connectivity, auth, streaming, JSON Schema, tool calling, timeout, and sensitive-data echo. A model without tool/structured-output support is limited to L0/L1. Administration probing follows short locked configuration-revision snapshot → asynchronous network probe with no database transaction → short locked revision comparison and atomic persistence; a result after change or deletion is discarded.
 
-Four profiles are preseeded: business user, BDO, IT staff, and administrator. Each has bilingual instructions, maximum level, enabled registered capabilities, knowledge scope, and response style with draft/test/publish/version/rollback. Profiles restrict; they do not authorize.
+Four profiles are preseeded: business user, BDO, IT staff, and administrator. Each has bilingual instructions, maximum level, enabled registered capabilities, knowledge scope, and response style with draft/test/publish/version/rollback. Every new version stores a complete schema-marked active-configuration snapshot; an unprovable legacy version cannot be rolled back or filled from current active settings. Profiles restrict; they do not authorize.
 
 ## 8. Target data and privacy
 
