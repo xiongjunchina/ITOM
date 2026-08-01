@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # 飞书业务用户自动开户的初始口令；部署环境可通过 BUSINESS_INITIAL_PASSWORD 覆盖。
     business_initial_password: str = "IT020@sn.local"
     upload_dir: str = "uploads"
+    # OpenAI-compatible providers are denied unless their HTTPS host is listed here.
+    ai_provider_allowed_hosts: str = ""
+    ai_provider_connect_timeout_seconds: int = 5
+    ai_provider_read_timeout_seconds: int = 60
 
 
 settings = Settings()

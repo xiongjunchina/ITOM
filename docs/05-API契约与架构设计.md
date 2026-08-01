@@ -256,6 +256,8 @@ GET            /api/admin/ai/health|usage|action-audits
 
 WA0 Task 1–2 已实现持久化基础及服务器内的策略/脱敏内核：能力只能由代码中的固定注册表登记；注册拒绝重复代码、无确认的 L3、全部 L4、非 Pydantic 输入和缺失处理器。输入模型字段及别名按凭据和授权内部名称的分段语义校验，检查字段名、普通别名、`validation_alias`/`serialization_alias`、`AliasPath` 的每个字符串段和 `AliasChoices` 的全部替代路径；拒绝 `authorization/auth` 上下文、权限范围/矩阵、角色/角色 ID 与凭据变体；普通业务近邻字段不因偶然子串被拒绝。任意 `dict`/`Mapping`（含嵌套或列表项）及其可导出任意键的 `additionalProperties` schema 都在注册和导出前失败关闭，输入对象必须使用有限的显式 Pydantic 字段契约。返回模型的 schema 不含处理器、内部角色/权限矩阵或已禁用能力，并递归删除字段 schema 的 `default/example(s)` 元数据和值；`properties` 映射中合法名为 `default`、`example`、`examples` 的字段仍保留。每次发现均从数据库重新读取活动账号、有效角色、功能权限和已发布档案的能力代码/最高风险限制；档案只能按代码和风险收紧，不能创建处理器或授予权限。记录数据范围、状态、所有权和流程任务仍必须在未来的领域处理器执行时再次校验，发现能力本身不构成执行授权。入模、消息持久化和普通日志摘要均使用同一递归、确定性脱敏，mapping 键与文本赋值共用凭据名称分类：敏感键（不分大小写）、动态表单 `sensitive=true` 字段、Cookie/Authorization 头、Bearer、JWT 和密码/Token/Secret/API access/private key 等赋值均替换为 `[REDACTED]`。本任务未实现提供商调用、`/api/assistant` 路由、UI 或业务能力处理器。
 
+WA0 Task 3 已实现提供商中立的 `ModelProvider` 契约、OpenAI-compatible `/chat/completions` 适配器和 `AssistantGateway`。`AI_PROVIDER_ALLOWED_HOSTS` 必须配置逗号分隔的精确主机或显式 `*.受控后缀`；空白名单失败关闭。Base URL 只允许 HTTPS，禁止 URL 凭据、查询、片段和路径逃逸；每次请求前重新解析 DNS，并拒绝 loopback、private、link-local、multicast、unspecified、reserved 和 metadata 类地址。HTTP 客户端不读取环境代理、不跟随重定向，连接/读取超时分别由 `AI_PROVIDER_CONNECT_TIMEOUT_SECONDS`（默认 5）与 `AI_PROVIDER_READ_TIMEOUT_SECONDS`（默认 60）控制。流式响应只接受可验证的 SSE delta、完整 JSON 对象工具参数、usage、受支持的 `stop/tool_calls` 终止原因和最终 `[DONE]`；未知事件、非法 JSON、截断或缺失终止语义均失败关闭。网关只使用启用、最近探测成功、策略兼容的主/备提供商；L2/L3 同时要求工具与 JSON Schema 能力，主模型输出开始后失败不得切换备用。每次真实尝试只向 `ai_provider_call` 写提供商、模型、用途、Token、耗时、结果码、状态和脱敏错误，不保存 prompt、响应正文或密钥。Task 3 不增加管理 API、`/api/assistant` 路由、UI、会话/动作编排或业务处理器。
+
 ### 4.2 ITSM
 
 ```text
@@ -451,7 +453,7 @@ IDC Kubernetes:
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
-| 网页智能体 WA0（Task 1–2 已实现；Task 3+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略与递归脱敏；其余模型网关、会话路由和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理待实施 | 网页智能体设计基线 |
+| 网页智能体 WA0（Task 1–3 已实现；Task 4+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏及安全 OpenAI-compatible 模型网关；管理 API、会话路由和领域服务复用待实施 | 全局助手、结构化卡片、AI 智能体管理待实施 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 
