@@ -20,6 +20,7 @@ from app.assistant.registry import register_capability, registry
 from app.assistant.types import (
     AssistantChannel,
     CapabilityDefinition,
+    CapabilityExecutionContext,
     CapabilityResult,
     RiskLevel,
 )
@@ -321,9 +322,7 @@ def _post_stream(client, monkeypatch, headers, conversation_id: str, fake: FakeP
     monkeypatch.setattr(
         assistant_router,
         "AssistantOrchestrator",
-        lambda db=None, actor=None, **kwargs: real(
-            db,
-            actor,
+        lambda **kwargs: real(
             gateway=fake,
             **{**kwargs, **(orchestrator_kwargs or {})},
         ),
@@ -670,7 +669,11 @@ def test_disconnect_cancels_provider_and_does_not_complete_assistant_message(cli
     async def consume():
         with SessionLocal() as db:
             actor = db.get(AuthUser, user_id)
-            stream = AssistantOrchestrator(db, actor, gateway=fake, disconnect_check=disconnected).stream_turn(
+            stream = AssistantOrchestrator(
+                actor_id=actor.id,
+                gateway=fake,
+                disconnect_check=disconnected,
+            ).stream_turn(
                 conversation_id=conversation_id,
                 content="start",
                 client_message_id="disconnect-msg",
@@ -696,7 +699,11 @@ def test_turn_timeout_is_bounded_and_safe(client, admin_headers):
     async def consume():
         with SessionLocal() as db:
             actor = db.get(AuthUser, user_id)
-            return [event async for event in AssistantOrchestrator(db, actor, gateway=fake, turn_timeout_seconds=0.01).stream_turn(
+            return [event async for event in AssistantOrchestrator(
+                actor_id=actor.id,
+                gateway=fake,
+                turn_timeout_seconds=0.01,
+            ).stream_turn(
                 conversation_id=conversation_id,
                 content="timeout",
                 client_message_id="timeout-msg",
@@ -706,6 +713,155 @@ def test_turn_timeout_is_bounded_and_safe(client, admin_headers):
     events = asyncio.run(consume())
     assert [event["type"] for event in events] == ["meta", "error", "done"]
     assert events[1]["data"]["code"] == "AI_ASSISTANT_TIMEOUT"
+
+
+def test_one_absolute_deadline_is_shared_by_sequential_db_stages():
+    """Two sequential DB stages must not each receive a fresh full-turn budget."""
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=1)
+    orchestrator = AssistantOrchestrator(
+        actor_id="deadline-test-actor",
+        db_executor=executor,
+        turn_timeout_seconds=0.2,
+    )
+
+    def slow_stage():
+        time.sleep(0.12)
+        return "ok"
+
+    async def consume():
+        hard_deadline = time.monotonic() + 0.2
+        assert await orchestrator._await_db_worker(
+            slow_stage,
+            deadline_monotonic=hard_deadline,
+        ) == "ok"
+        with pytest.raises(TimeoutError):
+            await orchestrator._await_db_worker(
+                slow_stage,
+                deadline_monotonic=hard_deadline,
+            )
+
+    try:
+        asyncio.run(consume())
+    finally:
+        executor.shutdown(wait=True)
+
+
+def test_cumulative_fallback_run_and_finalization_cannot_reset_turn_deadline(client, admin_headers):
+    """Fallback, provider work, and finalization share one hard monotonic deadline."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_cumulative_deadline")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    fake = FakeProvider([_events(
+        ModelStreamEvent(kind="text_delta", text="advice"),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+    )])
+
+    class CumulativeDelayOrchestrator(AssistantOrchestrator):
+        def _native_fallback_path(self):
+            time.sleep(0.08)
+            return super()._native_fallback_path()
+
+        async def _run_turn(self, *args, **kwargs):
+            await asyncio.sleep(0.08)
+            return await super()._run_turn(*args, **kwargs)
+
+        def _complete_assistant_message(self, *args, **kwargs):
+            time.sleep(0.08)
+            return super()._complete_assistant_message(*args, **kwargs)
+
+    async def consume():
+        return await _collect(CumulativeDelayOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            turn_timeout_seconds=0.2,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="bounded cumulative turn",
+            client_message_id="cumulative-deadline",
+            page_context=PAGE_CONTEXT,
+        ))
+
+    events = asyncio.run(consume())
+    assert [event["type"] for event in events] == ["meta", "error", "done"]
+    assert events[1]["data"]["code"] == "AI_ASSISTANT_TIMEOUT"
+    with SessionLocal() as db:
+        assert db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+            AiMessage.status == "completed",
+        ).count() == 0
+
+
+def test_turn_timeout_reserves_bounded_cleanup_budget(client, admin_headers):
+    """Failure cleanup starts before the hard deadline and leaves no completed answer."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_cleanup_reserve")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    fake = FakeProvider([_events(
+        ("sleep", 0.3),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+    )])
+    cleanup_started: list[float] = []
+    started = time.monotonic()
+
+    class CleanupReserveOrchestrator(AssistantOrchestrator):
+        def _finish_placeholder(self, *args, **kwargs):
+            cleanup_started.append(time.monotonic())
+            time.sleep(0.03)
+            return super()._finish_placeholder(*args, **kwargs)
+
+    async def consume():
+        return await _collect(CleanupReserveOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            turn_timeout_seconds=0.2,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="reserve cleanup",
+            client_message_id="cleanup-reserve",
+            page_context=PAGE_CONTEXT,
+        ))
+
+    events = asyncio.run(consume())
+    assert cleanup_started
+    assert cleanup_started[0] - started < 0.19
+    assert [event["type"] for event in events] == ["meta", "error", "done"]
+    assert events[1]["data"]["code"] == "AI_ASSISTANT_TIMEOUT"
+    with SessionLocal() as db:
+        statuses = [row.status for row in db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+        )]
+    assert "completed" not in statuses
+    assert "failed" in statuses
+
+
+def test_gateway_rejects_expired_turn_deadline_before_opening_provider_session():
+    """Provider discovery must consume the caller's remaining turn budget."""
+    sessions = 0
+
+    def counted_session_factory():
+        nonlocal sessions
+        sessions += 1
+        return SessionLocal()
+
+    gateway = AssistantGateway(None, session_factory=counted_session_factory)
+    request = ChatRequest(
+        messages=({"role": "user", "content": "x"},),
+        deadline_monotonic=time.monotonic() - 0.01,
+    )
+    with pytest.raises(GatewayError) as error:
+        asyncio.run(_collect(gateway.stream(request)))
+    assert error.value.code == "GATEWAY_TIMEOUT"
+    assert sessions == 0
+
+
+def test_statement_timeout_is_capped_by_remaining_turn_budget():
+    """A DB statement timeout may not outlive the current tool/turn deadline."""
+    orchestrator = AssistantOrchestrator(actor_id="statement-timeout-actor")
+    execution = CapabilityExecutionContext(deadline_monotonic=time.monotonic() + 0.05)
+    effective = orchestrator._statement_timeout_for(execution)
+    assert 1 <= effective < 50
 
 
 def test_l1_handler_receives_readonly_port_and_immutable_actor(client, admin_headers, monkeypatch):
@@ -947,7 +1103,11 @@ def test_slow_sync_tool_runs_off_event_loop_and_hits_tool_deadline(client, admin
 
         with SessionLocal() as db:
             actor = db.get(AuthUser, user_id)
-            stream = AssistantOrchestrator(db, actor, gateway=fake, tool_timeout_seconds=0.04).stream_turn(
+            stream = AssistantOrchestrator(
+                actor_id=actor.id,
+                gateway=fake,
+                tool_timeout_seconds=0.04,
+            ).stream_turn(
                 conversation_id=conversation_id,
                 content="slow",
                 client_message_id="slow-tool-msg",
@@ -981,19 +1141,16 @@ def test_cooperative_sync_tool_receives_cancellation_context(client, admin_heade
     )])
 
     async def consume():
-        with SessionLocal() as db:
-            actor = db.get(AuthUser, user_id)
-            return await _collect(AssistantOrchestrator(
-                db,
-                actor,
-                gateway=fake,
-                tool_timeout_seconds=0.04,
-            ).stream_turn(
-                conversation_id=conversation_id,
-                content="slow",
-                client_message_id="cooperative-slow-message",
-                page_context=PAGE_CONTEXT,
-            ))
+        return await _collect(AssistantOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            tool_timeout_seconds=0.04,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="slow",
+            client_message_id="cooperative-slow-message",
+            page_context=PAGE_CONTEXT,
+        ))
 
     events = asyncio.run(consume())
 
@@ -1023,20 +1180,17 @@ def test_non_cooperative_tool_session_closes_when_background_worker_finishes(cli
     )])
 
     async def consume():
-        with SessionLocal() as db:
-            actor = db.get(AuthUser, user_id)
-            return await _collect(AssistantOrchestrator(
-                db,
-                actor,
-                gateway=fake,
-                tool_timeout_seconds=0.04,
-                session_factory=tracking_factory,
-            ).stream_turn(
-                conversation_id=conversation_id,
-                content="slow",
-                client_message_id="background-session-close-message",
-                page_context=PAGE_CONTEXT,
-            ))
+        return await _collect(AssistantOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            tool_timeout_seconds=0.04,
+            session_factory=tracking_factory,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="slow",
+            client_message_id="background-session-close-message",
+            page_context=PAGE_CONTEXT,
+        ))
 
     events = asyncio.run(consume())
 
@@ -1115,6 +1269,94 @@ def test_gateway_provider_selection_and_audit_database_work_are_off_event_loop()
     assert session_threads
     assert all(thread_id != loop_thread for thread_id in session_threads)
     assert max(heartbeat_delays) < 0.04
+
+
+def test_gateway_db_pool_saturation_fails_closed_before_session_creation(monkeypatch):
+    """Provider discovery must not use the default executor or open a Session after bounded rejection."""
+    _install_runtime()
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="test-gateway-db")
+    release = threading.Event()
+    started = threading.Event()
+    sessions_created = 0
+
+    def blocker():
+        started.set()
+        release.wait(timeout=2)
+
+    def session_factory():
+        nonlocal sessions_created
+        sessions_created += 1
+        return SessionLocal()
+
+    occupying = executor.submit(blocker)
+    assert started.wait(timeout=0.5)
+    monkeypatch.setattr(
+        asyncio,
+        "to_thread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("default executor used")),
+    )
+    gateway = AssistantGateway(
+        None,
+        session_factory=session_factory,
+        audit_session_factory=session_factory,
+        db_executor=executor,
+    )
+    try:
+        with pytest.raises(GatewayError) as caught:
+            asyncio.run(_collect(gateway.stream(ChatRequest(messages=({"role": "user", "content": "x"},)))))
+        assert caught.value.code == "GATEWAY_DB_BUSY"
+        assert sessions_created == 0
+    finally:
+        release.set()
+        occupying.result(timeout=1)
+        executor.shutdown(wait=True)
+
+
+def test_gateway_success_audit_saturation_fails_closed_without_session_or_terminal_done(monkeypatch):
+    """A successful provider response is not terminal until bounded audit persistence succeeds."""
+    _install_runtime()
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="test-audit-db")
+    release = threading.Event()
+    started = threading.Event()
+    occupying = []
+    audit_sessions = 0
+
+    def blocker():
+        started.set()
+        release.wait(timeout=2)
+
+    class Provider:
+        async def stream_chat(self, _request):
+            occupying.append(executor.submit(blocker))
+            assert started.wait(timeout=0.5)
+            yield ModelStreamEvent(kind="done", finish_reason="stop")
+
+    def audit_session_factory():
+        nonlocal audit_sessions
+        audit_sessions += 1
+        return SessionLocal()
+
+    monkeypatch.setattr(
+        asyncio,
+        "to_thread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("default executor used")),
+    )
+    gateway = AssistantGateway(
+        None,
+        provider_factory=lambda _config: Provider(),
+        audit_session_factory=audit_session_factory,
+        db_executor=executor,
+    )
+    try:
+        with pytest.raises(GatewayError) as caught:
+            asyncio.run(_collect(gateway.stream(ChatRequest(messages=({"role": "user", "content": "x"},)))))
+        assert caught.value.code == "GATEWAY_AUDIT_FAILED"
+        assert audit_sessions == 0
+    finally:
+        release.set()
+        for future in occupying:
+            future.result(timeout=1)
+        executor.shutdown(wait=True)
 
 
 @pytest.mark.parametrize("roles,expected", [
@@ -1328,23 +1570,20 @@ def test_disconnect_during_sync_tool_stops_waiting_and_never_completes_message(c
         return checks >= 2
 
     async def consume():
-        with SessionLocal() as db:
-            actor = db.get(AuthUser, user_id)
-            stream = AssistantOrchestrator(
-                db,
-                actor,
-                gateway=fake,
-                disconnect_check=disconnected,
-                tool_timeout_seconds=1,
-            ).stream_turn(
-                conversation_id=conversation_id,
-                content="slow",
-                client_message_id="slow-disconnect-message",
-                page_context=PAGE_CONTEXT,
-            )
-            with pytest.raises(asyncio.CancelledError):
-                await _collect(stream)
-            return asyncio.get_running_loop().time() - started_waiting
+        stream = AssistantOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            disconnect_check=disconnected,
+            tool_timeout_seconds=1,
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="slow",
+            client_message_id="slow-disconnect-message",
+            page_context=PAGE_CONTEXT,
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await _collect(stream)
+        return asyncio.get_running_loop().time() - started_waiting
 
     started_waiting = 0.0
     async def timed_consume():
@@ -1613,54 +1852,131 @@ def test_all_orchestration_database_boundaries_run_off_event_loop(
     assert events[-1]["type"] == "done"
 
 
-def test_message_route_offloads_dependency_rollback_before_sse_response():
-    """Ending the authenticated request transaction must not block the SSE loop."""
-    rollback_threads: list[int] = []
-
-    class BlockingRequestSession:
-        def rollback(self):
-            rollback_threads.append(threading.get_ident())
-            time.sleep(0.06)
-
+def test_message_route_accepts_only_scalar_actor_id_and_holds_no_request_session():
+    """The StreamingResponse lifecycle must not retain a request Session or AuthUser ORM."""
     class RequestProbe:
         @staticmethod
         async def is_disconnected():
             return False
 
-    class ActorProbe:
-        id = "wa0-route-offload-actor"
-
     async def exercise():
-        loop_thread = threading.get_ident()
-        heartbeat_delays: list[float] = []
-
-        async def heartbeat():
-            loop = asyncio.get_running_loop()
-            for _ in range(20):
-                started = loop.time()
-                await asyncio.sleep(0.005)
-                heartbeat_delays.append(loop.time() - started)
-
-        response, _ = await asyncio.gather(
-            assistant_router.stream_conversation_message(
-                "wa0-route-offload-conversation",
-                assistant_router.ConversationMessageIn(
-                    content="help",
-                    client_message_id="route-offload-001",
-                ),
-                RequestProbe(),
-                BlockingRequestSession(),
-                ActorProbe(),
+        return await assistant_router.stream_conversation_message(
+            "wa0-route-offload-conversation",
+            assistant_router.ConversationMessageIn(
+                content="help",
+                client_message_id="route-offload-001",
             ),
-            heartbeat(),
+            RequestProbe(),
+            "wa0-route-offload-actor",
         )
-        return loop_thread, heartbeat_delays, response
 
-    loop_thread, heartbeat_delays, response = asyncio.run(exercise())
+    response = asyncio.run(exercise())
 
-    assert rollback_threads and all(thread_id != loop_thread for thread_id in rollback_threads)
-    assert heartbeat_delays and max(heartbeat_delays) < 0.04
     assert response.media_type == "text/event-stream"
+
+
+def test_orchestrator_rejects_request_session_and_auth_user_orm_constructor_inputs():
+    """Reintroducing the compatibility constructor would retain caller-owned DB state across streaming."""
+    with SessionLocal() as db:
+        actor = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        with pytest.raises(TypeError):
+            AssistantOrchestrator(db, actor)
+
+
+def test_stream_scalar_auth_owns_and_closes_worker_session_without_default_executor(
+    client,
+    admin_headers,
+    monkeypatch,
+):
+    """Authentication for SSE must return only actor_id from a worker-owned closed Session."""
+    from app.assistant.auth import resolve_assistant_stream_actor_id
+
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="test-auth-db")
+    created = 0
+    rolled_back = 0
+    closed = 0
+    threads: list[int] = []
+
+    class TrackedSession:
+        def __init__(self):
+            self.inner = SessionLocal()
+
+        def get(self, *args, **kwargs):
+            return self.inner.get(*args, **kwargs)
+
+        def rollback(self):
+            nonlocal rolled_back
+            rolled_back += 1
+            self.inner.rollback()
+
+        def close(self):
+            nonlocal closed
+            closed += 1
+            self.inner.close()
+
+    def session_factory():
+        nonlocal created
+        created += 1
+        threads.append(threading.get_ident())
+        return TrackedSession()
+
+    monkeypatch.setattr(
+        asyncio,
+        "to_thread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("default executor used")),
+    )
+    token = admin_headers["Authorization"]
+    try:
+        actor_id = asyncio.run(resolve_assistant_stream_actor_id(
+            token,
+            session_factory=session_factory,
+            db_executor=executor,
+            timeout_seconds=1,
+        ))
+    finally:
+        executor.shutdown(wait=True)
+
+    with SessionLocal() as db:
+        expected = db.query(AuthUser.id).filter(AuthUser.username == "admin").scalar()
+    assert actor_id == expected
+    assert (created, rolled_back, closed) == (1, 1, 1)
+    assert threads and all(thread_id != threading.get_ident() for thread_id in threads)
+
+
+def test_stream_scalar_auth_pool_saturation_fails_before_session_creation(admin_headers):
+    """A saturated auth DB pool must return a controlled pre-acceptance failure without a Session."""
+    from app.assistant.auth import resolve_assistant_stream_actor_id
+
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=0, thread_name_prefix="test-auth-busy")
+    release = threading.Event()
+    started = threading.Event()
+    sessions_created = 0
+
+    def blocker():
+        started.set()
+        release.wait(timeout=2)
+
+    def session_factory():
+        nonlocal sessions_created
+        sessions_created += 1
+        return SessionLocal()
+
+    occupying = executor.submit(blocker)
+    assert started.wait(timeout=0.5)
+    try:
+        with pytest.raises(AppError) as caught:
+            asyncio.run(resolve_assistant_stream_actor_id(
+                admin_headers["Authorization"],
+                session_factory=session_factory,
+                db_executor=executor,
+                timeout_seconds=1,
+            ))
+        assert caught.value.code == "AI_ASSISTANT_AUTH_BUSY"
+        assert sessions_created == 0
+    finally:
+        release.set()
+        occupying.result(timeout=1)
+        executor.shutdown(wait=True)
 
 
 async def _collect(stream):

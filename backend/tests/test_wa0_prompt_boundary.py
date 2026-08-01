@@ -1,6 +1,7 @@
 """WA0 prompt-authority separation contracts."""
 
 import json
+import sys
 import unicodedata
 
 import pytest
@@ -95,3 +96,44 @@ def test_leak_compact_category_samples_remove_every_non_content_class():
 
     assert normalized.compact == "安全42"
     assert _normalize_leak_text("").compact == ""
+
+
+def test_raw_non_content_codepoints_cannot_compatibility_decompose_into_compact_content():
+    """Filtering only after NFKC would wash Mn/Sc/So characters into authority letters."""
+    violations = []
+    for codepoint in range(sys.maxunicode + 1):
+        character = chr(codepoint)
+        if unicodedata.category(character)[0] in {"L", "N"}:
+            continue
+        compact = _normalize_leak_text(character).compact
+        if compact:
+            violations.append(
+                (hex(codepoint), unicodedata.category(character), unicodedata.name(character, ""), compact)
+            )
+            if len(violations) >= 20:
+                break
+
+    assert violations == []
+
+
+@pytest.mark.parametrize(
+    "character",
+    ["\u0345", "\u20a8", "\u24b6", "\u2103"],
+)
+def test_raw_mark_currency_and_other_symbols_are_removed_before_compatibility_normalization(character):
+    """Original Mn/Sc/So must not become Greek, Latin, or currency-name letters after NFKC."""
+    assert unicodedata.category(character)[0] in {"M", "S"}
+    assert _normalize_leak_text(f"安{character}全").compact == "安全"
+
+
+@pytest.mark.parametrize("character", ["\u115f", "\u1160", "\u3164", "\uffa0"])
+def test_hangul_fillers_are_removed_even_though_unicode_classifies_them_as_letters(character):
+    """Visual filler letters must not split compact fingerprints as invisible content."""
+    assert unicodedata.category(character).startswith("L")
+    assert "FILLER" in unicodedata.name(character)
+    assert _normalize_leak_text(f"安{character}全").compact == "安全"
+
+
+def test_legitimate_fullwidth_letters_and_digits_still_normalize_as_content():
+    """Filtering original classes must preserve legitimate fullwidth Lu/Nd input."""
+    assert _normalize_leak_text("Ａ１中").compact == "a1中"

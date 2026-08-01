@@ -1,5 +1,6 @@
 """WA0 bounded worker admission and cooperative cancellation contracts."""
 
+import asyncio
 import threading
 import time
 
@@ -125,3 +126,51 @@ def test_non_cooperative_background_worker_still_runs_finally_and_closes_session
     future.result(timeout=1)
     assert closed.is_set()
     executor.shutdown(wait=True)
+
+
+def test_fifty_bounded_db_calls_never_spill_into_the_default_unbounded_executor(monkeypatch):
+    """A blocked DB pool may admit only its worker+queue capacity, never all 50 calls."""
+    from app.assistant.execution import await_bounded_call
+
+    executor = BoundedToolExecutor(max_workers=1, max_queue_size=1, thread_name_prefix="test-db")
+    release = threading.Event()
+    started = threading.Event()
+
+    def blocker():
+        started.set()
+        release.wait(timeout=2)
+
+    occupying = executor.submit(blocker)
+    assert started.wait(timeout=0.5)
+    monkeypatch.setattr(
+        asyncio,
+        "to_thread",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("default executor used")),
+    )
+
+    async def exercise():
+        deadline = time.monotonic() + 1
+
+        async def invoke(index):
+            try:
+                return await await_bounded_call(
+                    executor,
+                    lambda: index,
+                    deadline_monotonic=deadline,
+                )
+            except ToolExecutorSaturated:
+                return "saturated"
+
+        tasks = [asyncio.create_task(invoke(index)) for index in range(50)]
+        await asyncio.sleep(0.03)
+        release.set()
+        return await asyncio.gather(*tasks)
+
+    try:
+        results = asyncio.run(exercise())
+        assert results.count("saturated") == 49
+        assert len([value for value in results if value != "saturated"]) == 1
+    finally:
+        release.set()
+        occupying.result(timeout=1)
+        executor.shutdown(wait=True)

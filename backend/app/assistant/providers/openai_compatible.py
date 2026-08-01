@@ -8,6 +8,7 @@ import ipaddress
 import json
 import socket
 import ssl
+import time
 from urllib.parse import unquote, urlsplit
 
 import httpcore
@@ -110,11 +111,13 @@ class OpenAICompatibleProvider:
         self._client = client
         self._resolver = resolver or _resolve_host
         self._network_backend = network_backend or httpcore.AnyIOBackend()
+        self._connect_timeout_seconds = float(connect_timeout_seconds)
+        self._read_timeout_seconds = float(read_timeout_seconds)
         self._timeout = httpx.Timeout(
-            connect=float(connect_timeout_seconds),
-            read=float(read_timeout_seconds),
-            write=float(read_timeout_seconds),
-            pool=float(connect_timeout_seconds),
+            connect=self._connect_timeout_seconds,
+            read=self._read_timeout_seconds,
+            write=self._read_timeout_seconds,
+            pool=self._connect_timeout_seconds,
         )
 
     async def probe(self) -> ProviderProbe:
@@ -221,10 +224,17 @@ class OpenAICompatibleProvider:
             raise ProviderError("PROVIDER_REQUEST_INVALID", "provider request purpose is invalid")
         payload = self._chat_payload(request)
         allowed_tools = _allowed_tool_names(request.tools)
-        async for event in self._stream(payload, allowed_tools):
+        timeout = self._timeout_for_deadline(request.deadline_monotonic)
+        async for event in self._stream(payload, allowed_tools, timeout=timeout):
             yield event
 
-    async def _stream(self, payload: dict, allowed_tools: frozenset[str]):
+    async def _stream(
+        self,
+        payload: dict,
+        allowed_tools: frozenset[str],
+        *,
+        timeout: httpx.Timeout | None = None,
+    ):
         addresses = await self._validated_addresses()
         headers = self._headers(accept="text/event-stream")
         try:
@@ -234,7 +244,7 @@ class OpenAICompatibleProvider:
                     self.endpoint_url,
                     json=payload,
                     headers=headers,
-                    timeout=self._timeout,
+                    timeout=timeout or self._timeout,
                     follow_redirects=False,
                 ) as response:
                     _raise_for_status(response)
@@ -248,6 +258,19 @@ class OpenAICompatibleProvider:
             raise ProviderError("PROVIDER_TIMEOUT", "provider request timed out") from None
         except httpx.RequestError:
             raise ProviderError("PROVIDER_CONNECT_FAILED", "provider connection failed") from None
+
+    def _timeout_for_deadline(self, deadline_monotonic: float | None) -> httpx.Timeout:
+        if deadline_monotonic is None:
+            return self._timeout
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining <= 0:
+            raise ProviderError("PROVIDER_TIMEOUT", "provider request timed out")
+        return httpx.Timeout(
+            connect=min(self._connect_timeout_seconds, remaining),
+            read=min(self._read_timeout_seconds, remaining),
+            write=min(self._read_timeout_seconds, remaining),
+            pool=min(self._connect_timeout_seconds, remaining),
+        )
 
     def _chat_payload(self, request: ChatRequest) -> dict:
         payload = {

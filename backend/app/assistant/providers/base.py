@@ -51,6 +51,7 @@ class ChatRequest:
     conversation_id: str | None = None
     message_id: str | None = None
     profile_version_id: str | None = None
+    deadline_monotonic: float | None = None
 
 
 @dataclass(frozen=True)

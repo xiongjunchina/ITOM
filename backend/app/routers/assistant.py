@@ -1,6 +1,5 @@
 """Authenticated owner-only endpoints for web assistant conversations and actions."""
 
-import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -9,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.assistant.auth import get_assistant_stream_actor_id
 from app.assistant.orchestrator import AssistantOrchestrator, SSE_EVENT_TYPES
 from app.db import get_db
 from app.deps import get_current_user
@@ -103,15 +103,8 @@ async def stream_conversation_message(
     conversation_id: str,
     body: ConversationMessageIn,
     request: Request,
-    db: Session = Depends(get_db),
-    user: AuthUser = Depends(get_current_user),
+    actor_id: str = Depends(get_assistant_stream_actor_id),
 ):
-    actor_id = user.id
-    # Authentication has already produced a scalar identity.  End the request
-    # dependency transaction before returning a long-lived StreamingResponse;
-    # the orchestrator opens only dedicated short sessions thereafter.
-    await asyncio.to_thread(db.rollback)
-
     async def generate():
         orchestrator = AssistantOrchestrator(
             actor_id=actor_id,

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable
 from concurrent.futures import Future, ThreadPoolExecutor
 import threading
+import time
 from typing import Any, Callable
+
+from app.core.config import settings
 
 
 class ToolExecutorSaturated(RuntimeError):
     """Raised before submission when every worker and queue slot is occupied."""
+
+
+class BoundedExecutionTimeout(TimeoutError):
+    """Raised when a bounded worker call exhausts its caller-owned deadline."""
 
 
 class BoundedExecutorReservation:
@@ -85,3 +94,53 @@ class BoundedToolExecutor:
 
     def shutdown(self, *, wait: bool = True) -> None:
         self._executor.shutdown(wait=wait, cancel_futures=False)
+
+
+async def await_bounded_call(
+    executor: BoundedToolExecutor,
+    function: Callable[..., Any],
+    *args: Any,
+    deadline_monotonic: float,
+    disconnect_check: Callable[[], Awaitable[bool]] | None = None,
+    cancel: Callable[[], None] | None = None,
+    poll_seconds: float = 0.025,
+) -> Any:
+    """Await one admitted synchronous call without using asyncio's default pool."""
+    if deadline_monotonic <= time.monotonic():
+        if cancel is not None:
+            cancel()
+        raise BoundedExecutionTimeout("assistant bounded call deadline exhausted")
+    reservation = executor.reserve()
+    try:
+        concurrent_future = reservation.submit(function, *args)
+    except BaseException:
+        reservation.release()
+        raise
+    task = asyncio.wrap_future(concurrent_future)
+    try:
+        while True:
+            remaining = deadline_monotonic - time.monotonic()
+            if remaining <= 0:
+                if cancel is not None:
+                    cancel()
+                raise BoundedExecutionTimeout("assistant bounded call deadline exhausted")
+            done, _pending = await asyncio.wait(
+                {task}, timeout=min(max(0.001, poll_seconds), remaining),
+            )
+            if task in done:
+                return task.result()
+            if disconnect_check is not None and await disconnect_check():
+                if cancel is not None:
+                    cancel()
+                raise asyncio.CancelledError()
+    except BaseException:
+        if cancel is not None:
+            cancel()
+        raise
+
+
+DEFAULT_ASSISTANT_DB_EXECUTOR = BoundedToolExecutor(
+    max_workers=settings.ai_assistant_tool_executor_workers,
+    max_queue_size=settings.ai_assistant_tool_executor_queue_size,
+    thread_name_prefix="itom-assistant-db",
+)

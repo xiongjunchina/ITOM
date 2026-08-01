@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import inspect
-from time import perf_counter
+from time import monotonic, perf_counter
 
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,13 @@ from app.assistant.providers import (
     ProviderConfigurationError,
     ProviderError,
     ProviderPurpose,
+)
+from app.assistant.execution import (
+    BoundedExecutionTimeout,
+    BoundedToolExecutor,
+    DEFAULT_ASSISTANT_DB_EXECUTOR,
+    ToolExecutorSaturated,
+    await_bounded_call,
 )
 from app.assistant.redaction import redact_for_log
 from app.assistant.types import RiskLevel
@@ -43,14 +50,19 @@ class AssistantGateway:
         provider_factory: Callable[[AiProviderConfig], ModelProvider] | None = None,
         session_factory: Callable[[], Session] | None = None,
         audit_session_factory: Callable[[], Session] | None = None,
+        db_executor: BoundedToolExecutor | None = None,
         probe_max_age_seconds: int = 900,
         now: Callable[[], datetime] | None = None,
     ):
-        self.db = db
+        # The positional Session is accepted for API compatibility only.  It
+        # is never retained or used by streaming work; every DB boundary owns
+        # a fresh worker-local Session.
+        self.db = None
         self.primary_provider_id = primary_provider_id
         self.provider_factory = provider_factory or self._default_provider
         self.session_factory = session_factory or SessionLocal
         self.audit_session_factory = audit_session_factory or SessionLocal
+        self.db_executor = db_executor or DEFAULT_ASSISTANT_DB_EXECUTOR
         self.probe_max_age = timedelta(seconds=probe_max_age_seconds)
         self.now = now or (lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
@@ -59,10 +71,22 @@ class AssistantGateway:
         risk = _request_risk(request)
         if risk is RiskLevel.L4:
             raise GatewayError("GATEWAY_RISK_FORBIDDEN", "the requested risk level is not available")
-        providers = await asyncio.to_thread(self._provider_chain)
+        db_deadline = getattr(request, "deadline_monotonic", None) or (monotonic() + 65.0)
+        try:
+            providers = await await_bounded_call(
+                self.db_executor,
+                self._provider_chain,
+                deadline_monotonic=db_deadline,
+            )
+        except ToolExecutorSaturated:
+            raise GatewayError("GATEWAY_DB_BUSY", "provider database capacity is unavailable") from None
+        except BoundedExecutionTimeout:
+            raise GatewayError("GATEWAY_TIMEOUT", "provider database deadline exhausted") from None
         attempted = False
 
         for position, config in enumerate(providers):
+            if monotonic() >= db_deadline:
+                raise GatewayError("GATEWAY_TIMEOUT", "provider turn deadline exhausted")
             if not self._compatible(config, request):
                 continue
             attempted = True
@@ -181,10 +205,7 @@ class AssistantGateway:
         raise GatewayError("GATEWAY_NO_COMPATIBLE_PROVIDER", "no compatible model provider is available")
 
     def _provider_chain(self) -> list[AiProviderConfig]:
-        owns_session = self.db is None
-        db = self.session_factory() if owns_session else self.db
-        if db is None:
-            return []
+        db = self.session_factory()
         try:
             if self.primary_provider_id:
                 primary = db.get(AiProviderConfig, self.primary_provider_id)
@@ -200,16 +221,14 @@ class AssistantGateway:
                 fallback = db.get(AiProviderConfig, primary.fallback_provider_id)
                 if fallback is not None:
                     providers.append(fallback)
-            if owns_session:
-                for config in providers:
-                    db.expunge(config)
+            for config in providers:
+                db.expunge(config)
             return providers
         finally:
-            if owns_session:
-                try:
-                    db.rollback()
-                finally:
-                    db.close()
+            try:
+                db.rollback()
+            finally:
+                db.close()
 
     def _compatible(self, config: AiProviderConfig, request: ChatRequest) -> bool:
         if (
@@ -286,7 +305,18 @@ class AssistantGateway:
                 pass
 
     async def _audit_async(self, *args, **kwargs) -> bool:
-        return await asyncio.to_thread(self._audit, *args, **kwargs)
+        request = args[1] if len(args) > 1 and isinstance(args[1], ChatRequest) else None
+        deadline = kwargs.pop("deadline_monotonic", None) or (
+            request.deadline_monotonic if request is not None else None
+        ) or (monotonic() + 65.0)
+        try:
+            return bool(await await_bounded_call(
+                self.db_executor,
+                lambda: self._audit(*args, **kwargs),
+                deadline_monotonic=deadline,
+            ))
+        except (ToolExecutorSaturated, BoundedExecutionTimeout):
+            return False
 
     @staticmethod
     def _default_provider(config: AiProviderConfig) -> ModelProvider:

@@ -85,6 +85,8 @@ Fix Round 5 封闭了 SQLAlchemy 不进入 visitor AST 的原始查询修饰入�
 
 Task 7 Fix Round 3 在不扩大业务能力的前提下关闭四项运行时缺口：泄漏紧凑指纹在 NFKC/casefold 后只保留 Unicode `L*`/`N*`，因此 `M*`/`C*`/`Z*`/`P*`/`S*` 插入均不能切断匹配；工具调用先预留有界容量，再进行能力发现/重授权，满载不创建 Session、不查权限、不运行 handler；开始/幂等、能力发现、原生降级、Gateway 选择/审计、最终化和失败清理的同步数据库边界全部移出 async SSE 事件循环；最终化在 provider 返回后及锁齐账号/会话/档案/占位后、写 `completed`/commit 前合作式检查断流并在已观察取消时 rollback。该护栏不宣称强杀线程或消除真实 socket/锁调度的全部微小竞态，Task 9 仍须提供真实 PostgreSQL/ASGI 证据。
 
+Task 7 Fix Round 4 修正前三项剩余审查结论且不进入 Task 8：泄漏紧凑路径改为先按原始 code point 只接纳 `L*`/`N*` 并排除命名/显式 Hangul `FILLER`，再 NFKC/casefold 和二次 `L*`/`N*` 过滤，防止原始 Mn/Sc/So 等兼容分解后“洗成”字母；视觉同形异码不在 WA0 完美检测承诺内。所有 assistant 同步 DB offload 统一使用有界执行器，消息流鉴权只返回账号 ID 标量并在 `StreamingResponse` 前关闭 worker Session，Gateway 选择/审计也不使用默认 executor。`stream_turn()` 入口只生成一个 monotonic hard deadline，fallback/start/provider/Gateway/DB/tool/finalization 共用剩余预算，并预留最多 250ms（25%）做失败占位清理；工具、provider、statement timeout 取自身上限与剩余预算的较小值，成功提交后仅允许极小 SSE 编码开销。真实 PostgreSQL 锁等待、双 Session 幂等和真实 ASGI 断流仍按 Task 9 留证。
+
 ## 4. 已确认的架构
 
 采用**方案 A：MCP Server 内嵌现有 FastAPI 后端**。
