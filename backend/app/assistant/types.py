@@ -1,12 +1,17 @@
 """Typed, server-owned contracts for registered assistant capabilities."""
+from datetime import date, datetime, time
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import Enum
 import re
 from collections.abc import Mapping as MappingABC
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Protocol, get_args, get_origin
+from uuid import UUID
+from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -202,161 +207,376 @@ class ActionActorContext:
         preferences = getattr(actor, "preferences", None)
         if not isinstance(preferences, Mapping):
             preferences = {}
+        frozen_preferences = _freeze_value(dict(preferences))
         return cls(
             id=str(actor.id),
             username=getattr(actor, "username", None),
             person_id=getattr(actor, "person_id", None),
             is_active=bool(getattr(actor, "is_active", False)),
-            preferences=MappingProxyType(dict(preferences)),
+            preferences=frozen_preferences,
         )
 
 
-class _ReadOnlyRecordProxy:
-    __slots__ = ("_record",)
+_ACTION_PORT_MAX_ROWS = 25
+_ACTION_PORT_MAX_OFFSET = 1000
+_SAFE_SCALARS = (str, int, float, bool, type(None), bytes, date, datetime, time, Decimal, UUID)
+_READ_ONLY_BLOCKED_NAMES = frozenset({
+    "add",
+    "add_all",
+    "begin",
+    "bind",
+    "bulk_insert_mappings",
+    "bulk_save_objects",
+    "bulk_update_mappings",
+    "commit",
+    "connection",
+    "delete",
+    "flush",
+    "get_bind",
+    "get_transaction",
+    "merge",
+    "query",
+    "rollback",
+    "scalar",
+    "scalars",
+})
+_UOW_BLOCKED_NAMES = frozenset({
+    "begin",
+    "begin_nested",
+    "bind",
+    "commit",
+    "connection",
+    "execute",
+    "flush",
+    "get_bind",
+    "get_transaction",
+    "query",
+    "rollback",
+    "scalar",
+    "scalars",
+})
 
-    def __init__(self, record: Any) -> None:
-        object.__setattr__(self, "_record", record)
+
+@dataclass(frozen=True)
+class _FrozenRecordState:
+    values: Mapping[str, Any]
+    violation: Callable[[], AppError]
+
+
+_FROZEN_RECORD_STATE: WeakKeyDictionary[Any, _FrozenRecordState] = WeakKeyDictionary()
+
+
+class FrozenActionRecord:
+    __slots__ = ("model_name", "__weakref__")
+
+    def __init__(self, *, model_name: str) -> None:
+        object.__setattr__(self, "model_name", model_name)
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._record, name)
+        state = _FROZEN_RECORD_STATE.get(self)
+        if state is not None and name in state.values:
+            return state.values[name]
+        raise AttributeError(name)
 
     def __setattr__(self, _name: str, _value: Any) -> None:
-        raise _preview_violation()
+        state = _FROZEN_RECORD_STATE.get(self)
+        raise state.violation() if state is not None else _preview_violation()
+
+    def __dir__(self) -> list[str]:
+        state = _FROZEN_RECORD_STATE.get(self)
+        public = {name for name in object.__dir__(self) if not name.startswith("_")}
+        return sorted(public.union(state.values.keys() if state is not None else ()))
+
+    def as_dict(self) -> dict[str, Any]:
+        state = _FROZEN_RECORD_STATE.get(self)
+        return dict(state.values) if state is not None else {}
 
     def __repr__(self) -> str:
-        return f"<ReadOnlyRecordProxy {type(self._record).__name__}>"
+        state = _FROZEN_RECORD_STATE.get(self)
+        fields = ", ".join(sorted(state.values)) if state is not None else ""
+        return f"<FrozenActionRecord {self.model_name} fields=[{fields}]>"
 
 
-class _SelectOnlyMixin:
-    __slots__ = ("_db",)
+@dataclass(frozen=True, slots=True, weakref_slot=True, eq=False)
+class LockedActionRecord:
+    snapshot: FrozenActionRecord
+
+    def __repr__(self) -> str:
+        return f"<LockedActionRecord {self.snapshot.model_name}>"
+
+
+@dataclass(frozen=True)
+class _PortState:
+    db: Session
+    violation: Callable[[], AppError]
+
+
+@dataclass(frozen=True)
+class _LockedRecordState:
+    db: Session
+    entity: Any
+    selected_fields: frozenset[str]
+    primary_key_fields: frozenset[str]
+
+
+_PORT_STATE: WeakKeyDictionary[Any, _PortState] = WeakKeyDictionary()
+_LOCKED_STATE: WeakKeyDictionary[Any, _LockedRecordState] = WeakKeyDictionary()
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, _SAFE_SCALARS):
+        return value
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze_value(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(child) for child in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_value(child) for child in value))
+    if callable(value) or hasattr(value, "_sa_instance_state"):
+        raise ValueError("unsafe action record value")
+    raise ValueError("non-scalar action record value")
+
+
+def _clause_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    literal = getattr(value, "value", None)
+    if isinstance(literal, int):
+        return literal
+    return None
+
+
+def _projection_metadata(statement: Any, *, violation: Callable[[], AppError]) -> tuple[str, tuple[tuple[str, str], ...], Any | None]:
+    if not bool(getattr(statement, "is_select", False)):
+        raise violation()
+    if getattr(statement, "_with_options", ()):
+        raise violation()
+    if getattr(statement, "_for_update_arg", None) is not None:
+        raise violation()
+    descriptions = tuple(getattr(statement, "column_descriptions", ()) or ())
+    if not descriptions:
+        raise violation()
+    entity_candidates = {desc.get("entity") for desc in descriptions if desc.get("entity") is not None}
+    entity = next(iter(entity_candidates)) if len(entity_candidates) == 1 else None
+    fields: list[tuple[str, str]] = []
+    for desc in descriptions:
+        expr = desc.get("expr")
+        desc_entity = desc.get("entity")
+        if expr is desc_entity or isinstance(expr, type):
+            raise violation()
+        annotations = getattr(expr, "_annotations", {})
+        proxy_owner = annotations.get("proxy_owner")
+        proxy_key = annotations.get("proxy_key")
+        if proxy_owner is not None and proxy_key:
+            mapped_property = getattr(getattr(proxy_owner, "attrs", None), "get", lambda _key: None)(proxy_key)
+            if mapped_property is not None and hasattr(mapped_property, "direction"):
+                raise violation()
+        field_name = str(desc.get("name") or "")
+        source_key = getattr(getattr(expr, "element", None), "key", None) or getattr(expr, "key", None) or field_name
+        if not field_name or not source_key:
+            raise violation()
+        fields.append((field_name, str(source_key)))
+    model_name = entity.__name__ if entity is not None else "Projection"
+    return model_name, tuple(fields), entity
+
+
+def _bounded_select(statement: Any, *, violation: Callable[[], AppError], max_rows: int = _ACTION_PORT_MAX_ROWS) -> Any:
+    offset = _clause_int(getattr(statement, "_offset_clause", None)) or 0
+    if offset > _ACTION_PORT_MAX_OFFSET:
+        raise violation()
+    limit = _clause_int(getattr(statement, "_limit_clause", None))
+    if limit is None or limit > max_rows + 1:
+        return statement.limit(max_rows + 1)
+    return statement
+
+
+def _record_from_mapping(
+    model_name: str,
+    mapping: Mapping[str, Any],
+    *,
+    violation: Callable[[], AppError],
+) -> FrozenActionRecord:
+    frozen = {str(key): _freeze_value(value) for key, value in mapping.items()}
+    record = FrozenActionRecord(model_name=model_name)
+    _FROZEN_RECORD_STATE[record] = _FrozenRecordState(
+        values=MappingProxyType(frozen),
+        violation=violation,
+    )
+    return record
+
+
+def _state_for(port: Any) -> _PortState:
+    state = _PORT_STATE.get(port)
+    if state is None:
+        raise RuntimeError("action port state missing")
+    return state
+
+
+def _blocked_readonly_method(*_args, **_kwargs) -> None:
+    raise _preview_violation()
+
+
+class ReadOnlyActionData:
+    __slots__ = ("__weakref__",)
+
+    add = _blocked_readonly_method
+    add_all = _blocked_readonly_method
+    begin = _blocked_readonly_method
+    bulk_insert_mappings = _blocked_readonly_method
+    bulk_save_objects = _blocked_readonly_method
+    bulk_update_mappings = _blocked_readonly_method
+    commit = _blocked_readonly_method
+    connection = _blocked_readonly_method
+    delete = _blocked_readonly_method
+    flush = _blocked_readonly_method
+    get_bind = _blocked_readonly_method
+    get_transaction = _blocked_readonly_method
+    merge = _blocked_readonly_method
+    query = _blocked_readonly_method
+    rollback = _blocked_readonly_method
+    scalar = _blocked_readonly_method
+    scalars = _blocked_readonly_method
 
     def __init__(self, db: Session) -> None:
-        self._db = db
+        _PORT_STATE[self] = _PortState(db=db, violation=_preview_violation)
 
-    def _select_statement(self, statement: Any, *, violation: Callable[[], AppError]) -> Any:
-        if not bool(getattr(statement, "is_select", False)):
-            raise violation()
-        return statement
-
-    def _fetch_first(self, statement: Any, *, with_for_update: bool = False) -> Any:
-        statement = self._select_statement(statement, violation=self._violation)
-        query = self._query_from_entity_select(statement, with_for_update=with_for_update)
-        if query is not None:
-            return self._materialize_first(query.first())
-        if with_for_update and callable(getattr(statement, "with_for_update", None)):
-            statement = statement.with_for_update()
-        return self._materialize_first(self._db.execute(statement).scalars().first())
-
-    def _fetch_all(self, statement: Any, *, with_for_update: bool = False) -> list[Any]:
-        statement = self._select_statement(statement, violation=self._violation)
-        query = self._query_from_entity_select(statement, with_for_update=with_for_update)
-        if query is not None:
-            return [self._materialize_first(row) for row in query.all()]
-        if with_for_update and callable(getattr(statement, "with_for_update", None)):
-            statement = statement.with_for_update()
-        return [self._materialize_first(row) for row in self._db.execute(statement).scalars().all()]
-
-    def _materialize_first(self, value: Any) -> Any:
-        return value
-
-    def _query_from_entity_select(self, statement: Any, *, with_for_update: bool):
-        descriptions = getattr(statement, "column_descriptions", None) or ()
-        entity = descriptions[0].get("entity") if len(descriptions) == 1 else None
-        if entity is None:
-            return None
-        query = self._db.query(entity)
-        where_criteria = tuple(getattr(statement, "_where_criteria", ()) or ())
-        if where_criteria:
-            query = query.filter(*where_criteria)
-        order_by = tuple(getattr(statement, "_order_by_clauses", ()) or ())
-        if order_by:
-            query = query.order_by(*order_by)
-        limit_clause = getattr(statement, "_limit_clause", None)
-        if limit_clause is not None:
-            query = query.limit(limit_clause)
+    def fetch_first(self, statement: Any, *, with_for_update: bool = False) -> FrozenActionRecord | None:
         if with_for_update:
-            query = query.with_for_update()
-        return query
+            raise _preview_violation()
+        rows = self.fetch_all(statement)
+        return rows[0] if rows else None
 
-    def __repr__(self) -> str:
-        return f"<{type(self).__name__}>"
+    def fetch_all(self, statement: Any, *, with_for_update: bool = False) -> tuple[FrozenActionRecord, ...]:
+        if with_for_update:
+            raise _preview_violation()
+        state = _state_for(self)
+        model_name, _fields, _entity = _projection_metadata(statement, violation=state.violation)
+        bounded = _bounded_select(statement, violation=state.violation)
+        rows = state.db.execute(bounded).mappings().all()
+        if len(rows) > _ACTION_PORT_MAX_ROWS:
+            raise state.violation()
+        return tuple(_record_from_mapping(model_name, row, violation=state.violation) for row in rows)
 
+    def execute(self, statement: Any, *, with_for_update: bool = False) -> tuple[FrozenActionRecord, ...]:
+        return self.fetch_all(statement, with_for_update=with_for_update)
 
-class ReadOnlyActionData(_SelectOnlyMixin):
-    _BLOCKED_NAMES = frozenset({
-        "add",
-        "add_all",
-        "begin",
-        "bind",
-        "bulk_insert_mappings",
-        "bulk_save_objects",
-        "bulk_update_mappings",
-        "commit",
-        "connection",
-        "delete",
-        "flush",
-        "get_bind",
-        "get_transaction",
-        "merge",
-        "query",
-        "rollback",
-        "scalar",
-        "scalars",
-    })
+    def __dir__(self) -> list[str]:
+        return ["execute", "fetch_all", "fetch_first"]
 
-    def _violation(self) -> AppError:
-        return _preview_violation()
-
-    def _materialize_first(self, value: Any) -> Any:
-        if hasattr(value, "_sa_instance_state"):
-            return _ReadOnlyRecordProxy(value)
-        return value
-
-    def fetch_first(self, statement: Any, *, with_for_update: bool = False) -> Any:
-        return self._fetch_first(statement, with_for_update=with_for_update)
-
-    def fetch_all(self, statement: Any, *, with_for_update: bool = False) -> list[Any]:
-        return self._fetch_all(statement, with_for_update=with_for_update)
-
-    def execute(self, statement: Any, *, with_for_update: bool = False) -> tuple[Any, ...]:
-        return tuple(self._fetch_all(statement, with_for_update=with_for_update))
+    def __getattribute__(self, name: str) -> Any:
+        if name in _READ_ONLY_BLOCKED_NAMES:
+            raise _preview_violation()
+        return object.__getattribute__(self, name)
 
     def __getattr__(self, name: str) -> Any:
-        if name in self._BLOCKED_NAMES:
+        if name in _READ_ONLY_BLOCKED_NAMES:
             raise _preview_violation()
         raise AttributeError(name)
 
+    def __repr__(self) -> str:
+        return "<ReadOnlyActionData>"
 
-class ActionUnitOfWork(_SelectOnlyMixin):
-    _BLOCKED_NAMES = frozenset({
-        "begin",
-        "begin_nested",
-        "bind",
-        "commit",
-        "connection",
-        "execute",
-        "flush",
-        "get_bind",
-        "get_transaction",
-        "query",
-        "rollback",
-        "scalar",
-        "scalars",
-    })
 
-    def _violation(self) -> AppError:
-        return _transaction_violation()
+def _blocked_uow_method(*_args, **_kwargs) -> None:
+    raise _transaction_violation()
 
-    def fetch_first(self, statement: Any, *, with_for_update: bool = False) -> Any:
-        return self._fetch_first(statement, with_for_update=with_for_update)
 
-    def fetch_all(self, statement: Any, *, with_for_update: bool = False) -> list[Any]:
-        return self._fetch_all(statement, with_for_update=with_for_update)
+class ActionUnitOfWork:
+    __slots__ = ("__weakref__",)
+
+    begin = _blocked_uow_method
+    begin_nested = _blocked_uow_method
+    commit = _blocked_uow_method
+    connection = _blocked_uow_method
+    flush = _blocked_uow_method
+    get_bind = _blocked_uow_method
+    get_transaction = _blocked_uow_method
+    query = _blocked_uow_method
+    rollback = _blocked_uow_method
+    scalar = _blocked_uow_method
+    scalars = _blocked_uow_method
+
+    def __init__(self, db: Session) -> None:
+        _PORT_STATE[self] = _PortState(db=db, violation=_transaction_violation)
+
+    def lock_one(self, statement: Any) -> LockedActionRecord | None:
+        state = _state_for(self)
+        model_name, fields, entity = _projection_metadata(statement, violation=state.violation)
+        if entity is None:
+            raise state.violation()
+        if any(field_name != source_key for field_name, source_key in fields):
+            raise state.violation()
+        bounded = _bounded_select(statement, violation=state.violation, max_rows=1)
+        offset = _clause_int(getattr(bounded, "_offset_clause", None))
+        limit = _clause_int(getattr(bounded, "_limit_clause", None))
+        query = state.db.query(entity)
+        where_criteria = tuple(getattr(bounded, "_where_criteria", ()) or ())
+        if where_criteria:
+            query = query.filter(*where_criteria)
+        order_by = tuple(getattr(bounded, "_order_by_clauses", ()) or ())
+        if order_by:
+            query = query.order_by(*order_by)
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        row = query.with_for_update().populate_existing().first()
+        if row is None:
+            return None
+        snapshot = _record_from_mapping(
+            model_name,
+            {field_name: getattr(row, source_key) for field_name, source_key in fields},
+            violation=state.violation,
+        )
+        mapper = sa_inspect(entity)
+        primary_key_fields = frozenset(column.key for column in mapper.primary_key)
+        handle = LockedActionRecord(snapshot=snapshot)
+        _LOCKED_STATE[handle] = _LockedRecordState(
+            db=state.db,
+            entity=row,
+            selected_fields=frozenset(field_name for field_name, _source_key in fields),
+            primary_key_fields=primary_key_fields,
+        )
+        return handle
+
+    def update_locked(self, handle: LockedActionRecord, values: Mapping[str, Any]) -> FrozenActionRecord:
+        state = _state_for(self)
+        locked_state = _LOCKED_STATE.get(handle)
+        if locked_state is None or locked_state.db is not state.db:
+            raise state.violation()
+        updates = dict(values)
+        if not updates:
+            return handle.snapshot
+        for key, value in updates.items():
+            if key not in locked_state.selected_fields or key in locked_state.primary_key_fields:
+                raise state.violation()
+            _freeze_value(value)
+            setattr(locked_state.entity, key, value)
+        merged = handle.snapshot.as_dict()
+        merged.update(updates)
+        return _record_from_mapping(
+            handle.snapshot.model_name,
+            merged,
+            violation=state.violation,
+        )
+
+    def __dir__(self) -> list[str]:
+        return ["lock_one", "update_locked"]
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in _UOW_BLOCKED_NAMES:
+            raise _transaction_violation()
+        return object.__getattribute__(self, name)
 
     def __getattr__(self, name: str) -> Any:
-        if name in self._BLOCKED_NAMES:
+        if name in _UOW_BLOCKED_NAMES:
             raise _transaction_violation()
         raise AttributeError(name)
+
+    def __repr__(self) -> str:
+        return "<ActionUnitOfWork>"
 
 
 class ConfirmedCapabilityHandler(Protocol):

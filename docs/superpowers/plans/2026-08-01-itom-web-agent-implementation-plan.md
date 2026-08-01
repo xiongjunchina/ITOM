@@ -412,7 +412,7 @@ def prepare_action(...) -> PreparedAction:
 
 - [ ] **Step 3: 实现行锁、重授权和事务结果**
 
-确认时 `SELECT ... FOR UPDATE` 先锁动作，再锁定并刷新所属 active 会话，之后才进入 Task 4 governance/provider/profile 锁序；`authorize_record()` 和 mutation 仅接收 `ActionUnitOfWork`，预览授权/预览仅接收独立 Session actor 上下文和 `ReadOnlyActionData`。成功业务写入、`AiAction.succeeded`、结果实体和通用审计在同一事务提交。失败先回滚业务事务，再单独写脱敏失败状态；任何失败响应不得使用“已创建/已关闭”。
+确认时 `SELECT ... FOR UPDATE` 先锁动作，再锁定并刷新所属 active 会话，之后才进入 Task 4 governance/provider/profile 锁序；`authorize_record()` 和 mutation 仅接收 `ActionUnitOfWork.lock_one()/update_locked()`、`FrozenActionRecord` 快照和不暴露真实 ORM 身份的 `LockedActionRecord`，预览授权/预览仅接收独立 Session actor 上下文和无 Session-like 属性的 `ReadOnlyActionData`。预览门面只接受显式、有界的 SQLAlchemy `Select` 标量投影，并统一拒绝实体/关系结果、eager 结果、所有行锁、text/DML、过大 offset 与超限读取。成功业务写入、`AiAction.succeeded`、结果实体和通用审计在同一事务提交。失败先回滚业务事务，再单独写脱敏失败状态；任何失败响应不得使用“已创建/已关闭”。
 
 Fix Round 2 还要求：准备在预览结束后、动作插入/幂等赢家处理前先 `FOR UPDATE + populate_existing` 锁定并重检所属 active 会话；`archive_own_conversation()` 在提交前同样锁定并刷新所属会话行。
 

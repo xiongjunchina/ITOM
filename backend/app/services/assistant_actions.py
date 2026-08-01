@@ -215,6 +215,91 @@ def _action_payload(row: AiAction, *, include_token: str | None = None) -> dict:
     return body
 
 
+def _action_candidate(
+    db: Session,
+    actor: AuthUser,
+    capability_code: str,
+    idempotency_key: str,
+) -> AiAction | None:
+    return (
+        db.query(AiAction)
+        .filter(
+            AiAction.auth_user_id == actor.id,
+            AiAction.capability_code == capability_code,
+            AiAction.idempotency_key == idempotency_key,
+            AiAction.is_deleted.is_(False),
+        )
+        .first()
+    )
+
+
+def _revalidate_existing_action_conversation(
+    row: AiAction,
+    conversation: AiConversation,
+    expected_binding: tuple[str | None, str | None, str | None],
+) -> None:
+    if row.conversation_id != conversation.id:
+        raise AppError(
+            "AI_ACTION_IDEMPOTENCY_CONFLICT",
+            "同一幂等键不能用于不同动作内容",
+            409,
+        )
+    if (
+        conversation.archived_at is not None
+        or (
+            conversation.auth_user_id,
+            conversation.profile_id,
+            conversation.profile_version_id,
+        ) != expected_binding
+    ):
+        raise AppError("AI_CONVERSATION_NOT_FOUND", "智能体会话不存在", 404)
+
+
+def _lock_existing_action_first(
+    db: Session,
+    actor: AuthUser,
+    *,
+    conversation_id: str,
+    capability_code: str,
+    idempotency_key: str,
+    payload_digest: str,
+    expected_binding: tuple[str | None, str | None, str | None],
+) -> AiAction:
+    row = (
+        db.query(AiAction)
+        .filter(
+            AiAction.auth_user_id == actor.id,
+            AiAction.capability_code == capability_code,
+            AiAction.idempotency_key == idempotency_key,
+            AiAction.is_deleted.is_(False),
+        )
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if row is None:
+        raise AppError(
+            "AI_ACTION_IDEMPOTENCY_RECOVERY_FAILED",
+            "动作准备状态已变化，请安全重试",
+            409,
+        )
+    conversation = _owned_conversation(
+        db,
+        actor,
+        conversation_id,
+        require_active=True,
+        lock=True,
+    )
+    _revalidate_existing_action_conversation(row, conversation, expected_binding)
+    if row.payload_digest != payload_digest:
+        raise AppError(
+            "AI_ACTION_IDEMPOTENCY_CONFLICT",
+            "同一幂等键不能用于不同动作内容",
+            409,
+        )
+    return row
+
+
 def prepare_action(
     db: Session,
     actor: AuthUser,
@@ -242,6 +327,19 @@ def prepare_action(
         payload_digest = _digest(normalized)
         preview_result = _run_rollback_only_preview(definition.handler, actor, parsed)
         preview, preview_message = _safe_result(preview_result)
+        if _action_candidate(db, actor, definition.code, key) is not None:
+            existing = _lock_existing_action_first(
+                db,
+                actor,
+                conversation_id=conversation_id,
+                capability_code=definition.code,
+                idempotency_key=key,
+                payload_digest=payload_digest,
+                expected_binding=expected_conversation_binding,
+            )
+            payload_body = _action_payload(existing)
+            db.rollback()
+            return payload_body
         locked_conversation = _owned_conversation(
             db,
             actor,
@@ -259,26 +357,20 @@ def prepare_action(
             != expected_conversation_binding
         ):
             raise AppError("AI_CONVERSATION_NOT_FOUND", "智能体会话不存在", 404)
-        existing = (
-            db.query(AiAction)
-            .filter(
-                AiAction.auth_user_id == actor.id,
-                AiAction.capability_code == definition.code,
-                AiAction.idempotency_key == key,
-                AiAction.is_deleted.is_(False),
-            )
-            .with_for_update()
-            .first()
-        )
-        if existing is not None:
-            if existing.payload_digest != payload_digest:
-                raise AppError(
-                    "AI_ACTION_IDEMPOTENCY_CONFLICT",
-                    "同一幂等键不能用于不同动作内容",
-                    409,
-                )
+        if _action_candidate(db, actor, definition.code, key) is not None:
             db.rollback()
-            return _action_payload(existing)
+            existing = _lock_existing_action_first(
+                db,
+                actor,
+                conversation_id=conversation_id,
+                capability_code=definition.code,
+                idempotency_key=key,
+                payload_digest=payload_digest,
+                expected_binding=expected_conversation_binding,
+            )
+            payload_body = _action_payload(existing)
+            db.rollback()
+            return payload_body
         raw_token = secrets.token_urlsafe(32)
         row = AiAction(
             conversation_id=locked_conversation.id,
@@ -301,32 +393,18 @@ def prepare_action(
             if not _is_named_idempotency_conflict(exc):
                 raise
             db.rollback()
-            winner = (
-                db.query(AiAction)
-                .filter(
-                    AiAction.auth_user_id == actor.id,
-                    AiAction.capability_code == definition.code,
-                    AiAction.idempotency_key == key,
-                    AiAction.is_deleted.is_(False),
-                )
-                .with_for_update()
-                .populate_existing()
-                .first()
+            winner = _lock_existing_action_first(
+                db,
+                actor,
+                conversation_id=conversation_id,
+                capability_code=definition.code,
+                idempotency_key=key,
+                payload_digest=payload_digest,
+                expected_binding=expected_conversation_binding,
             )
-            if winner is None:
-                raise AppError(
-                    "AI_ACTION_IDEMPOTENCY_RECOVERY_FAILED",
-                    "动作准备状态已变化，请安全重试",
-                    409,
-                ) from None
-            if winner.payload_digest != payload_digest:
-                raise AppError(
-                    "AI_ACTION_IDEMPOTENCY_CONFLICT",
-                    "同一幂等键不能用于不同动作内容",
-                    409,
-                )
+            payload_body = _action_payload(winner)
             db.rollback()
-            return _action_payload(winner)
+            return payload_body
         audit(
             db,
             "ai_action",
