@@ -86,6 +86,17 @@ def _lock_provider_governance(db: Session) -> list[AiProviderConfig]:
     )
 
 
+def lock_profile_runtime_governance(db: Session) -> None:
+    """Acquire the Task 4 publication lock before a runtime consumer locks a profile.
+
+    PostgreSQL uses the same transaction-scoped advisory lock as publication,
+    followed by ``FOR UPDATE`` provider rows.  SQLite safely treats the row
+    lock as a no-op while retaining the identical service call order for its
+    deterministic contract tests.
+    """
+    _lock_provider_governance(db)
+
+
 def _safe_capability_probe(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -757,8 +768,8 @@ def _validate_publishable(
         raise AppError("AI_PROFILE_PROMPT_REQUIRED", "发布前必须填写中英文系统指令")
     definitions = _validate_profile_limits(
         profile,
-        version.enabled_capabilities or [],
-        version.knowledge_scope or [],
+        version.enabled_capabilities,
+        version.knowledge_scope,
         version.max_risk_level,
     )
     if config is None:

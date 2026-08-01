@@ -16,12 +16,23 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _active_profile(db: Session, actor: AuthUser) -> tuple[AiAgentProfile, AiAgentProfileVersion, dict]:
+def _active_profile(
+    db: Session,
+    actor: AuthUser,
+    *,
+    lock_runtime_profile: bool = False,
+) -> tuple[AiAgentProfile, AiAgentProfileVersion, dict]:
     """Resolve one current, published web profile from database-backed identity."""
+    if lock_runtime_profile:
+        # Match Task 4 publication/withdrawal lock order: the shared provider
+        # governance lock is acquired before the exact profile row.  All
+        # runtime reads below therefore occur after publication cannot overtake
+        # this transaction on PostgreSQL.
+        assistant_config.lock_profile_runtime_governance(db)
     context = capability_context_for_user(db, actor.id, AssistantChannel.WEB, RiskLevel.L3)
     if context is None:
         raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号没有可用的智能体档案", 403)
-    profiles = (
+    profiles_query = (
         db.query(AiAgentProfile)
         .filter(
             AiAgentProfile.audience == context.audience,
@@ -29,8 +40,10 @@ def _active_profile(db: Session, actor: AuthUser) -> tuple[AiAgentProfile, AiAge
             AiAgentProfile.status == "published",
             AiAgentProfile.is_deleted.is_(False),
         )
-        .all()
     )
+    if lock_runtime_profile:
+        profiles_query = profiles_query.with_for_update().populate_existing()
+    profiles = profiles_query.all()
     if len(profiles) != 1:
         raise AppError("AI_ASSISTANT_UNAVAILABLE", "当前账号没有可用的智能体档案", 403)
     profile = profiles[0]
@@ -103,20 +116,24 @@ def create_conversation(
     language: str,
     page_context: dict,
 ) -> dict:
-    profile, version, config = _active_profile(db, actor)
-    now = _utcnow()
-    row = AiConversation(
-        auth_user_id=actor.id,
-        profile_id=profile.id,
-        profile_version_id=version.id,
-        language=language,
-        page_context=page_context,
-        expires_at=now + timedelta(days=config["retention_days"]) if config["retention_days"] else None,
-    )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
-    return conversation_payload(row)
+    try:
+        profile, version, config = _active_profile(db, actor, lock_runtime_profile=True)
+        now = _utcnow()
+        row = AiConversation(
+            auth_user_id=actor.id,
+            profile_id=profile.id,
+            profile_version_id=version.id,
+            language=language,
+            page_context=page_context,
+            expires_at=now + timedelta(days=config["retention_days"]) if config["retention_days"] else None,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return conversation_payload(row)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def persist_ordinary_message(

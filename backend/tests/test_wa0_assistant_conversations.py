@@ -3,10 +3,19 @@
 from datetime import datetime, timedelta, timezone
 import json
 
+from app.core.errors import AppError
 from app.db import SessionLocal
-from app.models import AiAction, AiAgentProfile, AiAgentProfileVersion, AiConversation, AiMessage, AiProviderConfig
+from app.models import (
+    AiAction,
+    AiAgentProfile,
+    AiAgentProfileVersion,
+    AiConversation,
+    AiMessage,
+    AiProviderConfig,
+    AuthUser,
+)
 from app.routers.admin_ai import ProfileDraftUpdateIn
-from app.services import assistant_conversations, it_document_guide
+from app.services import assistant_config, assistant_conversations, it_document_guide
 import pytest
 from pydantic import ValidationError
 
@@ -118,6 +127,52 @@ def _disable_other_requester_profiles(db, active_profile_id: str | None = None) 
         if profile.id != active_profile_id:
             profile.enabled = False
     db.commit()
+
+
+def _publish_requester_through_task4(db, actor: AuthUser, *, retention_days: int = 30) -> str:
+    """Publish the requester profile through the real Task 4 draft/publish services."""
+    provider = _usable_provider(db)
+    draft = assistant_config.get_profile_draft(db, "requester", actor)
+    updated = assistant_config.update_profile_draft(
+        db,
+        "requester",
+        {
+            "name": "Task 4 requester",
+            "default_provider_id": provider.id,
+            "retention_days": retention_days,
+            "enabled": True,
+            "system_prompt_zh": "你是 ITOM 助手。",
+            "system_prompt_en": "You are an ITOM assistant.",
+            "enabled_capabilities": [],
+            "knowledge_scope": ["public"],
+            "max_risk_level": "L1",
+        },
+        draft["draft_updated_at"],
+        actor,
+    )
+    assistant_config.publish_profile(db, "requester", updated["draft_updated_at"], actor)
+    return db.query(AiAgentProfile).filter(AiAgentProfile.code == "requester").one().id
+
+
+def _withdraw_requester_through_task4(db, actor: AuthUser) -> None:
+    profile = db.query(AiAgentProfile).filter(AiAgentProfile.code == "requester").one()
+    draft = db.query(AiAgentProfileVersion).filter(
+        AiAgentProfileVersion.profile_id == profile.id,
+        AiAgentProfileVersion.version == 0,
+        AiAgentProfileVersion.status == "draft",
+    ).one()
+    updated = assistant_config.update_profile_draft(
+        db, "requester", {"enabled": False}, draft.updated_at, actor,
+    )
+    assistant_config.publish_profile(db, "requester", updated["draft_updated_at"], actor)
+
+
+def _republish_requester_through_task4(db, actor: AuthUser, *, retention_days: int) -> None:
+    draft = assistant_config.get_profile_draft(db, "requester", actor)
+    updated = assistant_config.update_profile_draft(
+        db, "requester", {"retention_days": retention_days}, draft["draft_updated_at"], actor,
+    )
+    assistant_config.publish_profile(db, "requester", updated["draft_updated_at"], actor)
 
 
 def test_create_rejects_client_authority_fields_before_any_conversation_is_created(client, admin_headers):
@@ -298,6 +353,47 @@ def test_bootstrap_and_create_fail_closed_for_malformed_published_runtime_profil
     assert create.json()["error"]["code"] == "AI_ASSISTANT_UNAVAILABLE"
 
 
+@pytest.mark.parametrize(
+    ("field", "malformed_value"),
+    [
+        ("enabled_capabilities", None),
+        ("knowledge_scope", None),
+        ("enabled_capabilities", {"knowledge.search": True}),
+        ("knowledge_scope", {"public": True}),
+    ],
+)
+def test_runtime_published_profile_rejects_raw_missing_or_malformed_collections(client, field, malformed_value):
+    """The shared runtime validator must see raw persisted shapes, not coerced empty lists."""
+    profile_id, version_id = _publish_requester_profile(retention_days=30)
+    with SessionLocal() as db:
+        profile = db.get(AiAgentProfile, profile_id)
+        version = db.get(AiAgentProfileVersion, version_id)
+        setattr(version, field, malformed_value)
+        db.commit()
+        assert assistant_config.runtime_published_profile(db, profile, audience="requester") is None
+
+
+@pytest.mark.parametrize("field", ["enabled_capabilities", "knowledge_scope"])
+def test_bootstrap_and_create_fail_closed_when_a_required_runtime_collection_is_missing(
+    client, admin_headers, field
+):
+    """Each required published collection is independently fail-closed for browser entry points."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    profile_id, version_id = _publish_requester_profile(retention_days=30)
+    with SessionLocal() as db:
+        setattr(db.get(AiAgentProfileVersion, version_id), field, None)
+        db.commit()
+    headers = _create_user(client, admin_headers, f"wa0_missing_{field}")
+
+    bootstrap = client.get("/api/assistant/bootstrap", headers=headers)
+    assert bootstrap.status_code == 200, bootstrap.text
+    assert bootstrap.json()["data"]["enabled"] is False
+    create = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
+    assert create.status_code == 403, create.text
+    assert create.json()["error"]["code"] == "AI_ASSISTANT_UNAVAILABLE"
+
+
 def test_bootstrap_fallback_uses_the_authenticated_permission_aware_document_guide(client, admin_headers, monkeypatch):
     """A literal fallback flag would falsely advertise a deterministic guide when its safe authenticated payload is unavailable."""
     with SessionLocal() as db:
@@ -393,20 +489,22 @@ def test_retention_zero_never_persists_ordinary_message_bodies_on_success_or_fai
         assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
 
 
-def test_zero_retention_remains_nonpersistent_when_a_positive_republish_interleaves_before_message_write(
+def test_zero_retention_remains_nonpersistent_after_a_real_task4_positive_republish(
     client, admin_headers
 ):
-    """Reading current retention at write time would turn a zero-retention conversation into a transcript."""
+    """The Task 4 publish path cannot turn a captured zero-retention conversation into a transcript."""
     with SessionLocal() as db:
         _disable_other_requester_profiles(db)
-    profile_id, _version_id = _publish_requester_profile(retention_days=0)
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        _publish_requester_through_task4(db, admin, retention_days=0)
     headers = _create_user(client, admin_headers, "wa0_retention_zero_republish")
     created = client.post("/api/assistant/conversations", headers=headers, json={"page_context": PAGE_CONTEXT})
     assert created.status_code == 200, created.text
 
     with SessionLocal() as db:
         conversation = db.get(AiConversation, created.json()["data"]["id"])
-        _publish_next_version(db, db.get(AiAgentProfile, profile_id), retention_days=30)
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        _republish_requester_through_task4(db, admin, retention_days=30)
         assert assistant_conversations.persist_ordinary_message(
             db,
             conversation,
@@ -416,6 +514,121 @@ def test_zero_retention_remains_nonpersistent_when_a_positive_republish_interlea
         ) is None
         db.commit()
         assert db.query(AiMessage).filter(AiMessage.conversation_id == conversation.id).count() == 0
+
+
+def test_create_takes_the_task4_governance_lock_before_loading_runtime_state(client, admin_headers, monkeypatch):
+    """Loading before the shared lock would allow Task 4 publication to overtake a stale create."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+    _publish_requester_profile(retention_days=30)
+    _create_user(client, admin_headers, "wa0_create_lock_order")
+    events: list[str] = []
+    original_runtime = assistant_config.runtime_published_profile
+    original_lock = getattr(assistant_config, "lock_profile_runtime_governance", None)
+
+    def observed_lock(db):
+        events.append("governance_lock")
+        if original_lock is not None:
+            return original_lock(db)
+        return None
+
+    def observed_runtime(db, profile, *, audience=None):
+        events.append("runtime_reload")
+        return original_runtime(db, profile, audience=audience)
+
+    monkeypatch.setattr(assistant_config, "lock_profile_runtime_governance", observed_lock, raising=False)
+    monkeypatch.setattr(assistant_config, "runtime_published_profile", observed_runtime)
+    with SessionLocal() as db:
+        actor = db.query(AuthUser).filter(AuthUser.username == "wa0_create_lock_order").one()
+        created = assistant_conversations.create_conversation(
+            db, actor, language="zh-CN", page_context=PAGE_CONTEXT,
+        )
+
+    assert created["id"]
+    assert events[:2] == ["governance_lock", "runtime_reload"]
+
+
+def test_create_captures_real_task4_republish_that_wins_before_its_governance_lock(
+    client, admin_headers, monkeypatch
+):
+    """The creation barrier must reload the version published immediately before it takes the shared lock."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        _publish_requester_through_task4(db, admin, retention_days=0)
+    _create_user(client, admin_headers, "wa0_create_republish")
+    original_lock = getattr(assistant_config, "lock_profile_runtime_governance", None)
+    events: list[str] = []
+
+    def republish_barrier_then_lock(creation_db):
+        events.append("create_waiting_for_governance_lock")
+        if len(events) == 1:
+            with SessionLocal() as publication_db:
+                admin = publication_db.query(AuthUser).filter(AuthUser.username == "admin").one()
+                _republish_requester_through_task4(publication_db, admin, retention_days=30)
+            events.append("task4_republish_committed")
+        if original_lock is not None:
+            return original_lock(creation_db)
+        return None
+
+    monkeypatch.setattr(
+        assistant_config,
+        "lock_profile_runtime_governance",
+        republish_barrier_then_lock,
+        raising=False,
+    )
+    with SessionLocal() as db:
+        actor = db.query(AuthUser).filter(AuthUser.username == "wa0_create_republish").one()
+        created = assistant_conversations.create_conversation(
+            db, actor, language="zh-CN", page_context=PAGE_CONTEXT,
+        )
+        conversation = db.get(AiConversation, created["id"])
+        captured = db.get(AiAgentProfileVersion, conversation.profile_version_id)
+
+    assert captured.config_snapshot["retention_days"] == 30
+    assert created["expires_at"] is not None
+    assert events == ["create_waiting_for_governance_lock", "task4_republish_committed"]
+
+
+def test_create_fails_closed_when_real_task4_withdrawal_wins_before_its_governance_lock(
+    client, admin_headers, monkeypatch
+):
+    """A deterministic withdrawal barrier proves the create reload observes the post-withdrawal state."""
+    with SessionLocal() as db:
+        _disable_other_requester_profiles(db)
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        _publish_requester_through_task4(db, admin)
+    _create_user(client, admin_headers, "wa0_create_withdrawal")
+    original_lock = getattr(assistant_config, "lock_profile_runtime_governance", None)
+    events: list[str] = []
+
+    def withdrawal_barrier_then_lock(creation_db):
+        events.append("create_waiting_for_governance_lock")
+        if len(events) == 1:
+            with SessionLocal() as publication_db:
+                admin = publication_db.query(AuthUser).filter(AuthUser.username == "admin").one()
+                _withdraw_requester_through_task4(publication_db, admin)
+            events.append("task4_withdrawal_committed")
+        if original_lock is not None:
+            return original_lock(creation_db)
+        return None
+
+    monkeypatch.setattr(
+        assistant_config,
+        "lock_profile_runtime_governance",
+        withdrawal_barrier_then_lock,
+        raising=False,
+    )
+    with SessionLocal() as db:
+        actor = db.query(AuthUser).filter(AuthUser.username == "wa0_create_withdrawal").one()
+        with pytest.raises(AppError) as raised:
+            assistant_conversations.create_conversation(
+                db, actor, language="zh-CN", page_context=PAGE_CONTEXT,
+            )
+        assert getattr(raised.value, "code", None) == "AI_ASSISTANT_UNAVAILABLE"
+        assert db.query(AiConversation).filter(AiConversation.auth_user_id == actor.id).count() == 0
+
+    assert events == ["create_waiting_for_governance_lock", "task4_withdrawal_committed"]
 
 
 def test_positive_retention_remains_persistent_when_current_profile_is_republished_to_zero(client, admin_headers):

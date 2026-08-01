@@ -145,3 +145,63 @@ The two full-suite warnings are the existing third-party `ldap3` deprecations fo
 - Runtime validation reuses the Task 4 publish rules for prompts, capability/risk/scope, provider health and compatibility, then checks complete snapshot and active-row/latest-version agreement. Bootstrap conceals all failure causes.
 - `fallback_available` evaluates the real existing authenticated guide service and rejects malformed or exceptional payloads; it returns no guide content through bootstrap.
 - The change adds no schema/migration, route that exposes transcripts, provider call, SSE, tool loop, L3 action, domain write, UI, scheduler, deployment, or WA1 behavior.
+
+## Fix round 2 — serialize profile runtime state
+
+### Scope, root cause, and resolution
+
+- Reviewed clean base: `e6a24115d6fe0ce7b7d576947b5562f2ea9e4973` on `feature/AI-agent-version`.
+- Scope stayed within Task 5: the shared published-runtime validator, conversation creation transaction, Task 5 tests, this report, and the affected Chinese/English API and handoff mirrors. No Task 6+ implementation, branch operation, push, deployment, IDC/network access, provider call, local ITOM runtime, migration, SSE/tool loop, action/business handler, UI, or scheduler work occurred.
+- Root cause 1: `_validate_publishable()` coerced persisted `enabled_capabilities` and `knowledge_scope` with `or []`; a `NULL` runtime field could pass as a valid empty list.
+- Root cause 2: conversation creation resolved profile runtime state before it shared Task 4 publication/withdrawal serialization, so a publication state change could commit before the conversation insert.
+- Resolution: runtime validation now receives the raw persisted fields and rejects missing or malformed values. Creation now begins one transaction with the Task 4 governance advisory/provider-row locking discipline, then locks and refreshes the exact active profile row, re-resolves database identity/runtime state, inserts, and commits; any failure rolls the transaction back. PostgreSQL provides the cross-pod advisory and `FOR UPDATE` serialization, while SQLite preserves the same call/reload order for deterministic service tests.
+
+### Strict RED/GREEN evidence
+
+1. **RED:** after adding raw-runtime, entry-point, real Task 4 publication, lock-order, and withdrawal-barrier tests, the focused selection reported `5 failed, 4 passed, 39 deselected` (exit 1). The five expected failures were raw `enabled_capabilities=None`, raw `knowledge_scope=None`, bootstrap for `knowledge_scope=None`, missing governance-lock-before-runtime order, and creation succeeding after the deterministic real Task 4 withdrawal committed. An earlier direct-service attempt lacked the module database fixture and produced four `no such table` setup failures; that test setup was corrected before recording product RED evidence.
+2. **GREEN:** replacing the two coercions with raw values and introducing the shared Task 4 governance-lock entry point made the same focused selection report `9 passed, 39 deselected` (exit 0). The raw-shape matrix also covers malformed mapping aliases for both fields; separate bootstrap/create cases cover each required collection being `None`.
+3. **Real publication/withdrawal coverage:** the zero-retention regression now publishes and republishes through `get_profile_draft()` → `update_profile_draft()` → `publish_profile()`, not a direct version fixture. The deterministic withdrawal barrier invokes the real Task 4 draft update and `publish_profile()` in a separate session before creation takes the shared lock; creation reloads the withdrawn state, returns `AI_ASSISTANT_UNAVAILABLE`, and leaves no conversation row. A lock-order contract asserts governance lock before runtime reload.
+4. **Symmetric real-republish RED/GREEN:** a creation barrier starts with a real Task 4 zero-retention publication, commits a real Task 4 republish to 30 days immediately before governance-lock acquisition, then asserts that creation captured the newer version and positive expiry. Temporarily disabling the creation lock flag produced `1 failed, 48 deselected` because it captured 0; restoring the lock produced `1 passed, 48 deselected`.
+
+### Final verification
+
+```text
+Focused Task 5:
+Command: .venv/bin/python -m pytest -q tests/test_wa0_assistant_conversations.py
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 49 passed in 11.04s
+Exit: 0
+
+Affected Task 4 profile-governance regression:
+Command: .venv/bin/python -m pytest -q tests/test_wa0_ai_admin_api.py
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 33 passed in 5.46s
+Exit: 0
+
+All WA0:
+Command: .venv/bin/python -m pytest -q tests/test_wa0_*.py
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 193 passed in 20.02s
+Exit: 0
+
+Full backend:
+Command: .venv/bin/python -m pytest -q
+Directory: /Users/xjun/Gitrepo/ITOM-Aily-MCP/backend
+Result: 503 passed, 2 warnings in 112.06s
+Exit: 0
+```
+
+The two full-suite warnings are existing third-party `ldap3` deprecations for `pyasn1` `tagMap` and `typeMap`; this fix adds none.
+
+### Documentation and Task 9 acceptance boundary
+
+- Updated the Chinese API/architecture authority and its English mirror, plus the Chinese/English Aily/MCP handoff mirrors. They now specify raw-list fail-closed runtime validation, creation lock/reload order, deterministic SQLite evidence, and the remaining PostgreSQL boundary.
+- Assessed README, `docs/03-PRD.md`, `docs/04-数据模型设计.md`, `docs/06-用户身份与组织模型设计.md`, and their English mirrors: no capability/milestone, persisted-field, endpoint beyond the API contract, or identity/organization contract changed in this round, so no edit was required.
+- PostgreSQL two-session row-lock contention was **not run** locally or in IDC. The existing Task 9 brief already requires the IDC acceptance harness: a two-session barrier proving conversation creation/ordinary-message persistence contends with real profile publish/withdrawal on the same profile lock, including 0→positive and positive→0 retention outcomes. This remains a required Task 9 acceptance step, not a claim for this round.
+
+### Fix-round self-review
+
+- `None`, mappings, and any other non-list persisted collection cannot become an empty permitted list at runtime; bootstrap and create fail closed without explaining governance state.
+- Creation does not read a candidate runtime profile until it has joined the same governance lock order as Task 4, then locks the exact profile row and validates the freshly loaded state before insertion. If withdrawal wins first, no conversation is written.
+- The transaction rollback releases locks on unavailable/malformed runtime state and preserves the existing owner, retention, redaction, archive, pagination, and bootstrap non-leakage boundaries.
+- This round did not alter historical retention resolution, ordinary-message semantics, route shapes, schemas, migrations, provider transport, authorization policy, or any later-task surface.
