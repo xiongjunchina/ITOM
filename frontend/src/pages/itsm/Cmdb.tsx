@@ -71,6 +71,9 @@ interface CiFormValues {
 
 /** CI 写操作角色 */
 const CI_WRITERS = ['it_ops', 'is_mgr', 'cio', 'admin'] as const;
+const APPLICATION_CATEGORIES = new Set(['应用', 'app', 'application']);
+
+const isApplicationCi = (category?: string) => !!category && APPLICATION_CATEGORIES.has(category);
 
 export default function Cmdb() {
   const user = useAuthStore((s) => s.user);
@@ -198,7 +201,8 @@ export default function Cmdb() {
       name: values.name,
       category: values.category,
       owner: values.owner,
-      product_manager_id: values.product_manager_id ?? null,
+      // 切换为非应用后不清空既有值：保留历史数据，只在非应用 UI 中隐藏。
+      product_manager_id: values.product_manager_id ?? editing?.product_manager_id ?? null,
       status: values.status,
       environment: values.environment ?? null,
       business_owner: values.business_owner ?? null,
@@ -317,8 +321,13 @@ export default function Cmdb() {
       width: 90,
       render: (v: string) => <Tag color={CI_STATUS_COLORS[v] ?? 'default'}>{et.ciStatus(v)}</Tag>,
     },
-    { title: t('itsm.f.owner'), dataIndex: 'owner_name', width: 100, render: (v) => v || '-' },
-    { title: t('itsm.cmdb.productManager'), dataIndex: 'product_manager_name', width: 110, render: (v) => v || '-' },
+    { title: t('itsm.cmdb.technicalOwner'), dataIndex: 'owner_name', width: 110, render: (v) => v || '-' },
+    {
+      title: t('itsm.cmdb.productManager'),
+      dataIndex: 'product_manager_name',
+      width: 120,
+      render: (v, row) => (isApplicationCi(row.category) ? v || '-' : '-'),
+    },
     { title: t('itsm.f.vendor'), dataIndex: 'vendor_name', width: 140, ellipsis: true, render: (v) => v || '-' },
     {
       title: t('common.actions'),
@@ -533,32 +542,38 @@ export default function Cmdb() {
               options={categories.map((c) => ({ value: c.code, label: c.name }))}
             />
           </Form.Item>
-          <Form.Item name="owner" label={t('itsm.f.owner')} rules={[{ required: true, message: t('itsm.rule.owner') }]}>
+          <Form.Item name="owner" label={t('itsm.cmdb.technicalOwner')} rules={[{ required: true, message: t('itsm.cmdb.technicalOwnerRequired') }]}>
             <Select
               showSearch
               optionFilterProp="label"
-              placeholder={t('itsm.ownerPlaceholder')}
+              placeholder={t('itsm.cmdb.technicalOwnerPlaceholder')}
               options={members.map((m) => ({
                 value: m.id,
                 label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
               }))}
             />
           </Form.Item>
-          <Form.Item
-            name="product_manager_id"
-            label={t('itsm.cmdb.productManager')}
-            extra={t('itsm.cmdb.productManagerHint')}
-          >
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder={t('itsm.cmdb.productManagerPlaceholder')}
-              options={members.map((m) => ({
-                value: m.id,
-                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-              }))}
-            />
+          <Form.Item noStyle shouldUpdate={(previous, current) => previous.category !== current.category}>
+            {({ getFieldValue }) =>
+              isApplicationCi(getFieldValue('category')) ? (
+                <Form.Item
+                  name="product_manager_id"
+                  label={t('itsm.cmdb.productManager')}
+                  extra={t('itsm.cmdb.productManagerHint')}
+                  rules={[{ required: true, message: t('itsm.cmdb.productManagerRequired') }]}
+                >
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder={t('itsm.cmdb.productManagerPlaceholder')}
+                    options={members.map((m) => ({
+                      value: m.id,
+                      label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+                    }))}
+                  />
+                </Form.Item>
+              ) : null
+            }
           </Form.Item>
           <Form.Item name="status" label={t('common.status')} rules={[{ required: true }]}>
             <Select options={CI_STATUS_OPTIONS.map((s) => ({ value: s, label: et.ciStatus(s) }))} />
@@ -639,7 +654,12 @@ export default function Cmdb() {
                 <Tag color={CI_STATUS_COLORS[impact.ci.status] ?? 'default'}>{et.ciStatus(impact.ci.status)}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('itsm.f.env')}>{impact.ci.environment ? et.ciEnv(impact.ci.environment) : '-'}</Descriptions.Item>
-              <Descriptions.Item label={t('itsm.f.owner')}>{impact.ci.owner_name ?? '-'}</Descriptions.Item>
+              <Descriptions.Item label={t('itsm.cmdb.technicalOwner')}>{impact.ci.owner_name ?? '-'}</Descriptions.Item>
+              {isApplicationCi(impact.ci.category) && (
+                <Descriptions.Item label={t('itsm.cmdb.productManager')}>
+                  {impact.ci.product_manager_name ?? '-'}
+                </Descriptions.Item>
+              )}
               {Object.entries(impact.ci.attrs ?? {}).map(([k, v]) => (
                 <Descriptions.Item key={k} label={k}>
                   {String(v ?? '-')}

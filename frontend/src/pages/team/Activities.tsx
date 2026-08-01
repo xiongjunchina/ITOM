@@ -7,6 +7,7 @@ import {
   Drawer,
   Form,
   Input,
+  Popconfirm,
   Select,
   Space,
   Tag,
@@ -16,7 +17,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -55,6 +56,7 @@ export default function Activities() {
   const [tablePageSize, setTablePageSize] = useState(20);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [editing, setEditing] = useState<TrainingRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<TrainingFormValues>();
   const [members, setMembers] = useState<Member[]>([]);
@@ -75,9 +77,7 @@ export default function Activities() {
     void load();
   }, [load]);
 
-  const openCreate = () => {
-    form.resetFields();
-    setDrawerOpen(true);
+  const ensureMembers = () => {
     if (members.length === 0) {
       api
         .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
@@ -86,11 +86,38 @@ export default function Activities() {
     }
   };
 
+  const openCreate = () => {
+    setEditing(null);
+    form.resetFields();
+    setDrawerOpen(true);
+    ensureMembers();
+  };
+
+  const openEdit = (row: TrainingRow) => {
+    setEditing(row);
+    form.setFieldsValue({
+      activity_type: row.activity_type,
+      topic: row.topic,
+      activity_date: dayjs(row.activity_date),
+      host_id: row.host_id ?? undefined,
+      participant_ids: row.participant_ids ?? [],
+      output_link: row.output_link ?? undefined,
+      remarks: row.remarks ?? undefined,
+    });
+    setDrawerOpen(true);
+    ensureMembers();
+  };
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    setEditing(null);
+  };
+
   const handleSave = async () => {
     const values = await form.validateFields();
     setSaving(true);
     try {
-      await api.post('/trainings', {
+      const payload = {
         activity_type: values.activity_type,
         topic: values.topic,
         activity_date: values.activity_date.format('YYYY-MM-DD'),
@@ -98,14 +125,30 @@ export default function Activities() {
         participant_ids: values.participant_ids ?? [],
         output_link: values.output_link || null,
         remarks: values.remarks || null,
-      });
-      message.success(t('team.activities.registered'));
-      setDrawerOpen(false);
+      };
+      if (editing) {
+        await api.patch(`/trainings/${editing.id}`, payload);
+        message.success(t('team.activities.updated'));
+      } else {
+        await api.post('/trainings', payload);
+        message.success(t('team.activities.registered'));
+      }
+      closeDrawer();
       void load();
     } catch {
       // 已统一提示
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDelete = async (row: TrainingRow) => {
+    try {
+      await api.delete(`/trainings/${row.id}`);
+      message.success(t('team.activities.deleted'));
+      void load();
+    } catch {
+      // 已统一提示
     }
   };
 
@@ -178,6 +221,27 @@ export default function Activities() {
         ),
     },
     { title: t('common.remark'), dataIndex: 'remarks', ellipsis: true, render: (v) => v || '-' },
+    {
+      title: t('common.actions'),
+      key: 'actions',
+      width: 130,
+      fixed: 'right',
+      render: (_, row) =>
+        row.can_manage ? (
+          <Space size={4}>
+            <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
+              {t('common.edit')}
+            </Button>
+            <Popconfirm title={t('team.activities.deleteConfirm')} onConfirm={() => void handleDelete(row)}>
+              <Button type="link" danger size="small" icon={<DeleteOutlined />}>
+                {t('common.delete')}
+              </Button>
+            </Popconfirm>
+          </Space>
+        ) : (
+          '-'
+        ),
+    },
   ];
 
   return (
@@ -209,7 +273,7 @@ export default function Activities() {
         dataSource={items}
         standardToolbar={{ exportFileName: '培训提升记录', searchPlaceholder: '搜索主题、类型、主持人或参与人' }}
         sticky
-        scroll={{ x: 1200 }}
+        scroll={{ x: 1320 }}
         pagination={{
           current: tablePage,
           pageSize: tablePageSize,
@@ -224,14 +288,14 @@ export default function Activities() {
       />
 
       <Drawer
-        title={t('team.activities.register')}
+        title={editing ? t('team.activities.edit') : t('team.activities.register')}
         width={480}
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeDrawer}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
+            <Button onClick={closeDrawer}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
               {t('common.save')}
             </Button>

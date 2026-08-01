@@ -194,7 +194,7 @@ DELETE /api/task-management/work-tasks/{id}
 
 Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
 
-`GET /api/task-management/reference/cis` returns only non-deleted, non-retired CMDB configuration items and readable product-manager information for the Bug form's “Affected system” field. It does not create a second system dictionary or grant CMDB write access. Administrators maintain `product_manager_id` from IT team members in the CMDB create/edit form. A Bug registration without it returns `PRODUCT_MANAGER_REQUIRED`; after it is added, registration can be retried and snapshots that person.
+`GET /api/task-management/reference/cis` returns only non-deleted, non-retired CMDB configuration items and readable product-manager information for the Bug form's “Affected system” field. It does not create a second system dictionary or grant CMDB write access. CMDB `owner` is the required technical owner for every CI; only an Application's `product_manager_id` is its Bug-confirmation and verification product manager. They may be the same person but are not duplicate fields. The backend rejects creating or editing an Application without a product manager. A legacy Application missing the value returns `PRODUCT_MANAGER_REQUIRED` on Bug registration; configure it and retry, then the registration snapshots that person.
 
 Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
 
@@ -294,7 +294,7 @@ The stable display order for process definitions is ITSM (Service Request) → I
 ```text
 GET /api/team/overview                   # load / points Top / training count / hiring progress aggregation
 GET/POST/PATCH /api/positions | /api/hiring-needs; Excel template/export/import endpoints are also available at `/api/positions/{template,export,import}` and `/api/hiring-needs/{template,export,import}`.
-GET/POST /api/trainings                  # training activities
+GET/POST/PATCH/DELETE /api/trainings     # training activities; PATCH/DELETE only admin/CIO/registrar
 GET/PUT /api/team-charter
 GET/POST /api/ideas | POST /api/ideas/{id}/like | /adopt | /to-requirement
 GET /api/points/leaderboard?period= | GET /api/points/mine | GET /api/points/entries?person=
@@ -322,6 +322,8 @@ GET /api/my/performance?period=YYYY-Qn
 GET/POST/PATCH/DELETE /api/team/learning-growth?period=YYYY-Qn&scope=mine|team
 GET/PUT /api/admin/performance/contribution-rules # legacy compatibility endpoint; canonical team config is /api/point-rules/team-config
 ```
+
+`GET /api/trainings` includes `participant_ids` and `can_manage` for the current account. Creation writes `created_by`; migration backfills it from the earliest `development_activity.create` audit record. `PATCH` and `DELETE` are record-scoped rather than generic activity-edit operations: only administrator, CIO, or registrar may act, with server-side rechecks. A host/participant change soft-deletes the activity's current-period `training_host` / `training_attend` entries and re-awards from current rules; deletion retracts those entries. Point-affecting edits and deletion in historical, published, or locked periods return `TRAINING_POINTS_LOCKED`; non-point metadata remains editable and audited.
 
 The `points` value from `/api/points/leaderboard` aggregates `contribution_bucket=team_contribution` entries for the period. In the current assessment period, automatic activity events resolve against the current effective `point_rule`, and a disabled rule displays zero; other entries retain their original algebraic value. `/api/points/mine`, the Team Overview leaderboard, and the Dashboard people-points ranking use the same current-period semantics, and the response may include a `breakdown` grouped by `source_type`. Original `point_entry.points`, historical periods, and published/locked performance are never rewritten. `role_result` rows remain in the ledger for role scoring and audit but are excluded from Activity Points reads. This is distinct from the role/target/weight-normalized result shown by Performance.
 

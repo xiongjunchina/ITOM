@@ -16,7 +16,7 @@ def test_bug_reference_comes_from_cmdb_and_dashboard_exposes_tasks(client, admin
         owner_id = owner.id
     ci = client.post(
         "/api/cis",
-        json={"name": "M83 供应链系统", "category": "app", "status": "运行中", "owner": owner_id},
+        json={"name": "M83 供应链系统", "category": "app", "status": "运行中", "owner": owner_id, "product_manager_id": owner_id},
         headers=admin_headers,
     ).json()["data"]
     references = client.get("/api/task-management/reference/cis", headers=admin_headers)

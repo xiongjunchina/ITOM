@@ -197,14 +197,14 @@ problem_id + ticket_id, UNIQUE composite. Supports "multiple tickets with the sa
 | name | VARCHAR(128) | Required |
 | category | VARCHAR(32) | Required, 9 categories (dictionary) |
 | status | VARCHAR(16) | Required, default "Running" |
-| owner | FK→org_member | Required |
+| owner | FK→org_member | Required; technical owner for operation and maintenance |
 | environment | VARCHAR(16) | Production / Test / Development |
 | business_owner | VARCHAR(64) | |
 | vendor_id | FK→vendor | |
 | description / launch_date / remarks | | |
 | attrs | JSONB | Category-specific attributes (attribute names defined by master_data per category) |
 
-`product_manager_id` FK is optional and identifies the product manager of an application system; the CMDB create/edit page maintains it from IT team members. Bug registration snapshots this person; later CI product-manager changes do not rewrite historical Bugs.
+`product_manager_id` FK identifies the **Application** product manager who confirms and verifies Bugs. It is distinct from the required all-category `owner` (technical owner), though both may be the same person. It is required when an Application is created or edited; a legacy non-Application value is retained for audit but hidden from the UI. Bug registration snapshots this person; later CI product-manager changes do not rewrite historical Bugs.
 
 ### 2.7 ci_relationship
 
@@ -334,7 +334,7 @@ position_id FK, level (senior/mid/junior), count, qualification, status (To Recr
 
 ### 6.3 development_activity — training activity
 
-code [C], activity_type (internal cross-training / external technical exchange / new-technology research), topic, date, presenter FK, organizer FK, participants JSONB (array of org_member ids), output_link, created_by [C]. Registration triggers a point event.
+activity_type (internal cross-training / external technical exchange / new-technology research), topic, activity_date, host_id FK (presenter/organizer), participant_ids JSONB (array of org_member ids), output_link, remarks, created_by FK→auth_user. Registration triggers host/participant training-point events; `created_by` is recorded from the current account and existing rows are idempotently backfilled from the earliest creation audit. Activity deletion and point recalculation use soft deletion, preserving sources, audit, and historical ledger rows.
 
 ### 6.4 team_charter — team culture
 

@@ -317,7 +317,7 @@ class PerformanceScore(GlidBase):
 
 
 class DevelopmentActivity(GlidBase):
-    """培训发展活动（PRD §9.4）：登记即触发培训积分。"""
+    """培训发展活动（PRD §9.4）：登记即触发培训积分并保留登记人。"""
 
     __tablename__ = "development_activity"
 
@@ -328,6 +328,7 @@ class DevelopmentActivity(GlidBase):
     participant_ids: Mapped[list | None] = mapped_column(JsonCol, default=list)
     output_link: Mapped[str | None] = mapped_column(String(500), comment="产出链接（课件/纪要/报告）")
     remarks: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[str | None] = mapped_column(String(26), comment="登记人 auth_user.id；存量记录由审计日志回填")
 
 
 class TeamCharter(GlidBase):

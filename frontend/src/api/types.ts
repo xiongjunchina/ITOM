@@ -1913,9 +1913,12 @@ export interface TrainingRow {
   activity_date: string;
   host_id?: string | null;
   host_name: string | null;
+  participant_ids: string[];
   participant_names: string[];
   output_link: string | null;
   remarks: string | null;
+  /** 当前用户是否为管理员、CIO 或该活动登记人。 */
+  can_manage: boolean;
 }
 
 /** 团队文化（单例） */

@@ -143,6 +143,9 @@ ENSURE_COLUMNS = {
         ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),
         ("contribution_dimension", "VARCHAR(48)"),
     ],
+    "development_activity": [
+        ("created_by", "VARCHAR(26)"),
+    ],
     "performance_role_assignment": [
         ("evaluator_weights", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
     ],
@@ -268,6 +271,28 @@ def ensure_record_relation_schema(db: Session):
         "CREATE INDEX IF NOT EXISTS ix_record_relation_target_active "
         "ON record_relation (target_entity_type, target_entity_id, relation_type) WHERE is_deleted=false"
     ))
+    db.commit()
+
+
+def backfill_development_activity_creator(db: Session):
+    """M85：从最早的创建审计回填培训活动登记人。
+
+    只补空值，不改写已有数据；找不到历史创建审计的记录保持为空，后续仅
+    管理员与 CIO 可维护，避免把操作权限错误地授予任意成员。
+    """
+    result = db.execute(text(
+        "UPDATE development_activity activity "
+        "SET created_by = source.actor "
+        "FROM ("
+        "  SELECT DISTINCT ON (entity_id) entity_id, actor "
+        "  FROM audit_log "
+        "  WHERE entity_type = 'development_activity' AND action = 'create' AND actor IS NOT NULL "
+        "  ORDER BY entity_id, created_at ASC"
+        ") source "
+        "WHERE activity.id = source.entity_id AND activity.created_by IS NULL"
+    ))
+    if result.rowcount:
+        logger.info("M85：从审计日志回填培训活动登记人 %d 行", result.rowcount)
     db.commit()
 
 
@@ -811,6 +836,7 @@ def migrate_m35_org(db: Session):
     ensure_columns(db)
     ensure_aily_indexes(db)
     ensure_record_relation_schema(db)
+    backfill_development_activity_creator(db)
     backfill_process_step_codes(db)
     separate_role_result_point_entries(db)
     backfill_password_set_m362(db)

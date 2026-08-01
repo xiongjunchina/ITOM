@@ -96,7 +96,7 @@ const ZH_SECTIONS: ManualSection[] = [
     steps: [
       '服务请求：选择已上架且本人可申请的服务项，填写其已发布动态表单；提交后系统保存快照、启动绑定流程并自动派单，登记人最终验收并关闭。',
       '服务目录：维护搜索词、典型/排除场景、服务对象、流程和默认优先级；在“表单/派单”中用可视化设计器发布表单版本，并配置固定人员、用户组、轮询或人工队列派单。',
-      'CMDB/SLA：维护配置项、关联服务和时限策略。',
+      'CMDB/SLA：维护配置项、关联服务和时限策略；每个配置项均配置技术负责人，应用配置项额外配置负责 Bug 确认与验证的产品经理，两者可为同一人。',
       '事件/变更/问题：打开详情，按流程图或右上角允许的按钮推进并填写说明。',
       '供应商/合同/知识库：维护基础资料、到期信息和可复用知识。',
     ],
@@ -139,7 +139,7 @@ const ZH_SECTIONS: ManualSection[] = [
       '人效评分：先选择考核周期，再查看总览、计分规则、分级评审、外部原数据和最终结果。',
       '评分明细：点击员工进入详情，维护角色权重、评审人权重、各维度分数、理由和证据。',
       '岗位编制：在岗位定义/招聘需求标签页直接编辑或进入详情编辑，也可导出、下载模板、批量导入。',
-      '学习成长：在培训提升登记活动，在学习任务填写本周期目标并保存进度。',
+      '学习成长：在培训提升登记活动，在学习任务填写本周期目标并保存进度。管理员、CIO 或登记人可编辑/删除培训；改主讲或参与人仅在当前未发布、未锁定周期重算积分。',
       '活动积分/团队文化：维护积分事项、愿景、年度目标和行为准则。',
     ],
     role: 'IT PMO 由 CIO 直接评价，但可作为项目经理虚拟团队负责人对 IT 项目经理初评。',
@@ -203,7 +203,7 @@ const EN_SECTIONS: ManualSection[] = [
   {
     id: 'itsm', title: 'ITSM', summary: 'Manage requests, catalog, CMDB, SLA, incidents, changes, problems, vendors, contracts, and knowledge.',
     logic: ['Requests move through assignment, processing, acceptance, and closure.', 'Catalogs contain service items with published/unpublished status.', 'A service item audience is either all employees or a structured custom scope selected from departments and active employees; references are validated before save and enforced by both the requester portal and ticket-creation API.', 'Each item binds a versioned dynamic form, process, and dispatch rule; web and Aily MCP share one schema and backend validator, while historical tickets retain their creation snapshot.', 'SLA targets feed service dashboards and performance.', 'Incidents restore service; changes manage approval/implementation/rollback; problems manage root cause and permanent fixes.'],
-    steps: ['Choose a published eligible item and complete its published dynamic form; ITOM stores a snapshot, starts the bound process, and dispatches the request.', 'Maintain search terms, typical/excluded scenarios, audience, process, and default priority; use Form / Dispatch to publish form versions and configure fixed-person, group, round-robin, or manual-queue dispatch.', 'Maintain CMDB and SLA data.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
+    steps: ['Choose a published eligible item and complete its published dynamic form; ITOM stores a snapshot, starts the bound process, and dispatches the request.', 'Maintain search terms, typical/excluded scenarios, audience, process, and default priority; use Form / Dispatch to publish form versions and configure fixed-person, group, round-robin, or manual-queue dispatch.', 'Maintain CMDB and SLA data. Each CI has a technical owner; an Application additionally has the product manager who confirms and verifies its Bugs.', 'Process incident/change/problem records through their workflow.', 'Maintain vendors, contracts, and knowledge articles.'],
     role: 'Business users normally see requests and knowledge; ITSM maintenance is permission-controlled.',
   },
   {
@@ -219,7 +219,7 @@ const EN_SECTIONS: ManualSection[] = [
   {
     id: 'team', title: 'Team management', summary: 'Team overview, performance, headcount, learning, points, and culture.',
     logic: ['Performance scoring defaults to 80% role contribution plus 20% team contribution.', 'Multi-evaluator scores are aggregated by configured evaluator weights.', 'External raw data accepts only external_business_satisfaction for a business domain.', 'Learning tasks record goals, progress, evidence, and notes; progress converts to team points.'],
-    steps: ['Select an assessment period in Performance.', 'Open employee detail to maintain role/evaluator weights, scores, reasons, and evidence.', 'Maintain positions and hiring needs inline or in detail; export/import when needed.', 'Record training and learning tasks.', 'Maintain activity points and team charter.'],
+    steps: ['Select an assessment period in Performance.', 'Open employee detail to maintain role/evaluator weights, scores, reasons, and evidence.', 'Maintain positions and hiring needs inline or in detail; export/import when needed.', 'Record training and learning tasks. Administrators, CIO, or the registrar may edit/delete training; changing host or participants re-awards points only in the current unpublished, unlocked period.', 'Maintain activity points and team charter.'],
     role: 'IT PMO is directly reviewed by CIO and can initially review IT project managers.',
   },
   {

@@ -1,7 +1,7 @@
 import pytest
 
 from app.db import SessionLocal
-from app.models import ProcessInstance, ProcessTask
+from app.models import Ci, ProcessInstance, ProcessTask
 
 
 @pytest.fixture(scope="module")
@@ -62,15 +62,20 @@ def _register_bug(client, actors, title="供应链接口异常"):
     return response.json()["data"]
 
 
-def test_cmdb_can_add_product_manager_before_bug_registration(client, actors):
-    """应用系统可先创建、后在 CMDB 补配产品经理，Bug 登记读取补配后的快照。"""
-    ci = client.post(
+def test_cmdb_requires_product_manager_for_new_app_and_legacy_ci_can_be_repaired(client, actors):
+    """新应用 CI 强制配置产品经理；历史空值仍能在 CMDB 补配后进入 Bug 流程。"""
+    missing_on_create = client.post(
         "/api/cis",
         json={"name": "M84 后补产品经理系统", "category": "app", "owner": actors["dev_id"]},
         headers=actors["admin"],
     )
-    assert ci.status_code == 200, ci.text
-    ci_id = ci.json()["data"]["id"]
+    assert missing_on_create.status_code == 422
+    assert missing_on_create.json()["error"]["code"] == "PRODUCT_MANAGER_REQUIRED"
+    with SessionLocal() as db:
+        ci = Ci(ci_code="CI-M84-LEGACY", name="M84 历史应用系统", category="app", owner=actors["dev_id"])
+        db.add(ci)
+        db.commit()
+        ci_id = ci.id
 
     missing_pm = client.post(
         "/api/task-management/bugs",

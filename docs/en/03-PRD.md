@@ -248,8 +248,9 @@ Two-tier structure: **Catalog** (category, Gold/Silver/Bronze tiering) → **Ser
 
 Single CI table, 9 categories: Application / Server / Cloud Resource / Network / Security / Collaboration / Endpoint / Infrastructure / Consulting Service.
 
-- 4 required on creation: name, category, status (default Running), owner.
-- Optional: environment, business owner, product manager (selected from IT team members and expected for application systems), vendor (referencing the vendor table), description, launch date, and remarks. The CMDB list and create/edit drawer expose the product manager; Bug registration reads it and stores a snapshot.
+- 4 required on creation: name, category, status (default Running), and **technical owner**. The technical owner applies to every category and owns technical operation and maintenance.
+- Only an **Application** CI has one additional required field: **product manager** (selected from IT team members), who confirms and verifies Bugs for that system. The same person may hold both roles, but the roles are not interchangeable. Product manager is shown only in Application lists, forms, and details; historical values on non-Application CIs are retained for audit but not shown. The backend rejects creating or editing an Application without a product manager; Bug registration reads and snapshots it, and a historical missing value must be configured before retrying.
+- Optional: environment, business owner, vendor (referencing the vendor table), description, launch date, and remarks.
 - **Category-specific attributes**: each category predefines a few extension attributes (e.g. Application: tech stack / deployment mode; Server: IP / spec), stored in JSONB, shown collapsed, all optional.
 - CI relationships: three relation types "runs on / depends on / connects to," used for impact analysis (upstream/downstream shown when viewing a CI).
 - Tickets can link to a CI; the CI detail page looks up its linked ticket history.
@@ -495,7 +496,8 @@ The current “Performance → Scoring Rules” UI is the matrix-role profile de
 ### 9.4 Training & Development
 
 - Activity registration, 5 items: type ✔ (internal cross-training / external technical exchange / new-technology research), topic ✔, date ✔, presenter/organizer, participants (multi-select) + optional output link. Participants are grouped in collapsible department directories; each person is a checkbox so multiple IT team members can be selected at once.
-- Completing registration automatically awards points to the presenter and participants.
+- Completing registration automatically awards points to the presenter and participants and records the registrar. Administrators, CIO, or the registrar may edit or delete; the backend rechecks record scope rather than relying on UI buttons. Existing rows are backfilled from create-audit records where possible; rows that cannot be attributed are manageable only by administrator/CIO.
+- In the current unpublished and unlocked period, changing the presenter or participants soft-deletes the old training-point entries and re-awards from current rules; deletion likewise retracts the activity's points. Historical, published, and locked periods reject point-affecting edits and deletions, while metadata that does not change point recipients remains editable and audited.
 
 ### 9.5 Team Culture
 
