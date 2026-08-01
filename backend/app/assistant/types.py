@@ -787,7 +787,7 @@ class ConfirmedCapabilityHandler(Protocol):
     def __call__(self, db: ActionUnitOfWork, actor: ActionActorContext, data: BaseModel) -> CapabilityResult: ...
 
 
-CapabilityHandler = Callable[[ActionUnitOfWork, ActionActorContext, BaseModel], CapabilityResult] | ConfirmedCapabilityHandler
+CapabilityHandler = Callable[[ReadOnlyActionData, ActionActorContext, BaseModel], CapabilityResult] | ConfirmedCapabilityHandler
 
 
 @dataclass(frozen=True)

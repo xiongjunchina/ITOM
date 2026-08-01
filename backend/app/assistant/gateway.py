@@ -37,10 +37,11 @@ class AssistantGateway:
 
     def __init__(
         self,
-        db: Session,
+        db: Session | None,
         *,
         primary_provider_id: str | None = None,
         provider_factory: Callable[[AiProviderConfig], ModelProvider] | None = None,
+        session_factory: Callable[[], Session] | None = None,
         audit_session_factory: Callable[[], Session] | None = None,
         probe_max_age_seconds: int = 900,
         now: Callable[[], datetime] | None = None,
@@ -48,6 +49,7 @@ class AssistantGateway:
         self.db = db
         self.primary_provider_id = primary_provider_id
         self.provider_factory = provider_factory or self._default_provider
+        self.session_factory = session_factory or SessionLocal
         self.audit_session_factory = audit_session_factory or SessionLocal
         self.probe_max_age = timedelta(seconds=probe_max_age_seconds)
         self.now = now or (lambda: datetime.now(timezone.utc).replace(tzinfo=None))
@@ -179,21 +181,35 @@ class AssistantGateway:
         raise GatewayError("GATEWAY_NO_COMPATIBLE_PROVIDER", "no compatible model provider is available")
 
     def _provider_chain(self) -> list[AiProviderConfig]:
-        if self.primary_provider_id:
-            primary = self.db.get(AiProviderConfig, self.primary_provider_id)
-        else:
-            primary = self.db.query(AiProviderConfig).filter(
-                AiProviderConfig.is_primary.is_(True),
-                AiProviderConfig.is_deleted.is_(False),
-            ).order_by(AiProviderConfig.created_at, AiProviderConfig.id).first()
-        if primary is None:
+        owns_session = self.db is None
+        db = self.session_factory() if owns_session else self.db
+        if db is None:
             return []
-        providers = [primary]
-        if primary.fallback_provider_id and primary.fallback_provider_id != primary.id:
-            fallback = self.db.get(AiProviderConfig, primary.fallback_provider_id)
-            if fallback is not None:
-                providers.append(fallback)
-        return providers
+        try:
+            if self.primary_provider_id:
+                primary = db.get(AiProviderConfig, self.primary_provider_id)
+            else:
+                primary = db.query(AiProviderConfig).filter(
+                    AiProviderConfig.is_primary.is_(True),
+                    AiProviderConfig.is_deleted.is_(False),
+                ).order_by(AiProviderConfig.created_at, AiProviderConfig.id).first()
+            if primary is None:
+                return []
+            providers = [primary]
+            if primary.fallback_provider_id and primary.fallback_provider_id != primary.id:
+                fallback = db.get(AiProviderConfig, primary.fallback_provider_id)
+                if fallback is not None:
+                    providers.append(fallback)
+            if owns_session:
+                for config in providers:
+                    db.expunge(config)
+            return providers
+        finally:
+            if owns_session:
+                try:
+                    db.rollback()
+                finally:
+                    db.close()
 
     def _compatible(self, config: AiProviderConfig, request: ChatRequest) -> bool:
         if (

@@ -154,7 +154,7 @@ GET            /api/admin/ai/action-audits
 
 读取模型配置只返回 `has_secret`，绝不回显密钥。`bootstrap` 只返回当前档案、可用等级、建议问题和保留策略，不暴露内部权限矩阵或处理器信息。
 
-Task 7 已实现消息 POST-SSE：事件集合固定为 `meta|delta|message|action|error|done`，正常完成恰好一个 `done`，错误后不可再发送成功事件，所有 `data` 使用单行 JSON 编码。提示结构把平台安全指令、不可变已发布档案、当次授权能力 schema 与明确标为不可信的知识/业务/page context/用户正文分开。每次工具调用按固定 code 重查注册表并重新授权，注册输入模型拒绝非法参数以及模型自报的 handler/risk/role/result；重复调用、超过四轮、超出事件/Token/文本/时间预算均安全停止。L3 只调用服务端 `prepare_action()` 并返回预览/Token，流式阶段绝不确认或执行。提供商不可用、超时、非法/截断协议和断流取消后续工作并走无泄漏的确定性原生降级；只有脱敏最终正文可按捕获保留策略成为完成消息，保留 0 天只保存无正文幂等元数据。
+Task 7 已实现消息 POST-SSE：事件集合固定为 `meta|delta|message|action|error|done`，正常完成恰好一个 `done`，错误后不可再发送成功事件，所有 `data` 使用单行 JSON 编码，响应禁止缓存并按 Authorization 区分。路由只传不可变账号 ID；turn 只保存标量快照，开始、能力发现、每次工具、L3 prepare 和最终消息分别使用短 Session，Gateway 在 provider 网络等待前释放选择事务。提示结构把平台安全指令、不可变已发布档案、当次授权能力 schema 与明确标为不可信的知识/业务/page context/用户正文分开，并通过逐行、逐句和稳定片段指纹阻断部分泄漏。每次工具调用按固定 code 重查注册表并重新授权，注册输入模型拒绝非法参数以及模型自报的 handler/risk/role/result；重复调用、超过四轮、超出事件/Token/文本/工具/时间预算均安全停止。L1/L2 只取得 `ReadOnlyActionData` 和不可变 actor，PostgreSQL 在任何读取前设置事务只读及 statement timeout，Session/ORM/Core DML/raw SQL 逃逸失败关闭。L3 只调用服务端 `prepare_action()`，并由服务端生成 `server_preview/prepared_not_executed` 结果；普通模型 prose 只能成为 `advisory/not_executed`，不能作为 ITOM 成功或状态结果。提供商不可用、超时、非法/截断协议和断流立即停止等待及发事件并走权限感知的确定性原生降级；不承诺强杀任意同步 Python worker，L1/L2 依赖只读数据库边界与超时，L3 最多保留 prepared 至过期且绝不执行。幂等摘要是服务端密钥对规范化原始请求的 HMAC；最终完成在新短事务中重新验证活动账号、本人 active 会话、精确当前档案/版本和 streaming 占位，只有脱敏最终正文可按捕获保留策略成为完成消息，保留 0 天只保存无正文幂等元数据。endpoint 接受后的 owner/idempotency/runtime 错误统一为 HTTP 200 SSE `error→done`；真实 PostgreSQL 双 Session 和真实 ASGI 断流证据留待 Task 9。
 
 ## 12. 安全、确认与降级
 

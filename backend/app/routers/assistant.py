@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.assistant.orchestrator import AssistantOrchestrator, SSE_EVENT_TYPES
-from app.db import SessionLocal, get_db
+from app.db import get_db
 from app.deps import get_current_user
 from app.models import AuthUser
 from app.schemas.assistant import ConversationCreateIn, PageContextIn
@@ -106,39 +106,32 @@ async def stream_conversation_message(
     user: AuthUser = Depends(get_current_user),
 ):
     actor_id = user.id
+    # Authentication has already produced a scalar identity.  End the request
+    # dependency transaction before returning a long-lived StreamingResponse;
+    # the orchestrator opens only dedicated short sessions thereafter.
+    db.rollback()
 
     async def generate():
-        with SessionLocal() as stream_db:
-            actor = stream_db.get(AuthUser, actor_id)
-            if actor is None:
-                yield _encode_sse({
-                    "type": "error",
-                    "data": {
-                        "code": "AI_ASSISTANT_UNAVAILABLE",
-                        "message": "智能体暂不可用，请使用原生页面继续操作",
-                        "retryable": True,
-                        "fallback_path": "/",
-                    },
-                })
-                yield _encode_sse({"type": "done", "data": {"finish_reason": "error"}})
-                return
-            orchestrator = AssistantOrchestrator(
-                stream_db,
-                actor,
-                disconnect_check=request.is_disconnected,
-            )
-            async for event in orchestrator.stream_turn(
-                conversation_id=conversation_id,
-                content=body.content,
-                client_message_id=body.client_message_id,
-                page_context=body.page_context.model_dump(mode="json") if body.page_context else None,
-            ):
-                yield _encode_sse(event)
+        orchestrator = AssistantOrchestrator(
+            actor_id=actor_id,
+            disconnect_check=request.is_disconnected,
+        )
+        async for event in orchestrator.stream_turn(
+            conversation_id=conversation_id,
+            content=body.content,
+            client_message_id=body.client_message_id,
+            page_context=body.page_context.model_dump(mode="json") if body.page_context else None,
+        ):
+            yield _encode_sse(event)
 
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-store, private",
+            "Vary": "Authorization",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

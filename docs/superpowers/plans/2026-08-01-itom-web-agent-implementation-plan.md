@@ -430,7 +430,7 @@ Commit: `feat(agent): enforce confirmed assistant actions`
 
 ### Task 7: WA0 编排器、工具循环和 POST-SSE
 
-> 状态（2026-08-02）：实现与本地自动化验证已完成，等待独立审查；未实施 Task 8，未部署或访问 IDC。
+> 状态（2026-08-02）：基础提交 `4f893d3` 已完成但未推送；独立审查 Fix Round 1 已在本地完成代码、专项与文档收紧，等待复审。未实施 Task 8，未 push、部署或访问 IDC。真实 PostgreSQL 双 Session 与真实 ASGI 断流证据仍留待 Task 9。
 
 **Files:**
 - Create: `backend/app/assistant/orchestrator.py`
@@ -468,11 +468,11 @@ event: done    data: {finish_reason}
 
 - [x] **Step 3: 实现严格提示分层与工具循环**
 
-系统指令、档案指令、已授权能力 schema、安全知识和用户输入分别构造；知识和业务正文用“不可信上下文”边界包裹。工具调用只按 code 查注册表并再次鉴权；L3 只返回 action 预览，绝不在流式生成过程中直接执行。
+系统指令、档案指令、已授权能力 schema、安全知识和用户输入分别构造；知识和业务正文用“不可信上下文”边界包裹，并以稳定行/句/片段指纹阻断部分泄漏。工具调用只按 code 查注册表并再次鉴权；L1/L2 只取得只读门面和不可变 actor，L3 只返回服务端 `prepared_not_executed` action 预览，绝不在流式生成过程中直接执行。普通模型 prose 只可作为 `advisory/not_executed`。
 
 - [x] **Step 4: 实现断流与降级**
 
-客户端断开即取消模型请求；已准备动作保持 `prepared` 直到过期但不会执行。无可用模型、超时或非法输出返回规则指引/原生路径，不把 provider 错误原文返回用户。
+客户端断开即取消模型请求并立即停止等待/发事件；同步 Python worker 不保证可强杀，L1/L2 仅在只读事务、statement timeout 与独立工具 deadline 边界内运行，L3 最多完成为 `prepared` 并保留到过期但不会执行。无可用模型、超时或非法输出返回按当前账号真实权限计算的规则指引/原生路径，不把 provider 错误原文返回用户。
 
 - [x] **Step 5: 测试并提交**
 

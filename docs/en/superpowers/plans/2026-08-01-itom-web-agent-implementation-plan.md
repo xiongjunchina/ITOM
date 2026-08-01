@@ -251,7 +251,7 @@ class PageContextIn(BaseModel):
 
 ### Task 7: WA0 orchestrator, tool loop, and POST-SSE
 
-> Status (2026-08-02): local implementation and automated verification are complete, pending independent review; Task 8, deployment, and IDC access were not performed.
+> Status (2026-08-02): base commit `4f893d3` is complete but unpushed. Independent-review Fix Round 1 has locally completed its code, focused tests, and documentation hardening and is pending re-review. Task 8, push, deployment, and IDC access were not performed. Real PostgreSQL two-Session and real ASGI disconnect evidence remains Task 9.
 
 **Files:** new `assistant/orchestrator.py`; modify router; tests `test_wa0_assistant_stream.py`, `test_wa0_prompt_boundary.py`.
 
@@ -259,8 +259,8 @@ class PageContextIn(BaseModel):
 
 - [x] **Step 1: Create the FakeProvider and failing streaming-contract tests.** Test exact SSE order, disconnect, unknown tool, invalid parameters, more than four tool loops, injection, and false-success prose.
 - [x] **Step 2: Fix the SSE event contract.** Emit only the event contract documented in the Chinese plan.
-- [x] **Step 3: Implement strict prompt layers and the tool loop.** Separate system/profile/capability/knowledge/user layers, mark knowledge/record text untrusted, resolve every tool code through the registry, and re-authorize. L3 emits only a prepared action.
-- [x] **Step 4: Implement disconnect handling and degradation.** Cancel provider work on disconnect and return a redacted fallback error without writes.
+- [x] **Step 3: Implement strict prompt layers and the tool loop.** Separate system/profile/capability/knowledge/user layers, mark knowledge/record text untrusted, and block stable line/sentence/fragment leakage. Resolve every tool code through the registry and re-authorize. L1/L2 receives only a read-only facade and immutable actor; L3 emits only a server `prepared_not_executed` preview, while ordinary model prose is `advisory/not_executed`.
+- [x] **Step 4: Implement disconnect handling and degradation.** Cancel provider work and immediately stop waiting/event emission on disconnect. Do not claim a synchronous Python worker can be force-killed: L1/L2 remains inside read-only transaction, statement-timeout, and independent tool-deadline boundaries; L3 may at most finish as `prepared` until expiry and never executes. Return a redacted permission-aware fallback without business writes.
 - [x] **Step 5: Test and commit.** Run the focused tests and use `feat(agent): stream guarded assistant turns`.
 
 ---

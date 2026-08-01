@@ -1039,10 +1039,13 @@ def test_preview_uses_an_independent_session_and_postgresql_read_only_sql(
     statements: list[str] = []
     fake_postgres_session = SimpleNamespace(
         get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
-        execute=lambda statement: statements.append(str(statement)),
+        execute=lambda statement, *_args, **_kwargs: statements.append(str(statement)),
     )
     assistant_actions._set_preview_transaction_read_only(fake_postgres_session)
-    assert statements == ["SET TRANSACTION READ ONLY"]
+    assert statements == [
+        "SET TRANSACTION READ ONLY",
+        "SELECT set_config('statement_timeout', :timeout_ms, true)",
+    ]
 
 
 def test_preview_uses_read_only_action_data_and_actor_mutation_never_touches_the_caller_session(

@@ -25,6 +25,7 @@ from app.assistant.types import (
     RiskLevel,
 )
 from app.core.errors import AppError
+from app.core.config import settings
 from app.db import SessionLocal
 from app.models import AiAction, AiConversation, AuthUser
 from app.services import assistant_conversations
@@ -113,6 +114,10 @@ def _set_preview_transaction_read_only(db: Session) -> None:
     """Apply PostgreSQL's transaction-level read-only boundary before preview access."""
     if db.get_bind().dialect.name == "postgresql":
         db.execute(text("SET TRANSACTION READ ONLY"))
+        db.execute(
+            text("SELECT set_config('statement_timeout', :timeout_ms, true)"),
+            {"timeout_ms": str(max(1, int(settings.ai_assistant_tool_statement_timeout_ms)))},
+        )
 
 
 @contextmanager
