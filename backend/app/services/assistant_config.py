@@ -9,6 +9,7 @@ import inspect
 from types import SimpleNamespace
 from typing import Any
 
+from sqlalchemy import and_, case, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,7 @@ from app.services.secrets_store import encrypt_secret
 
 
 PROBE_MAX_AGE = timedelta(minutes=15)
+AI_PROVIDER_GOVERNANCE_LOCK_KEY = 0x49544F4D41495052
 PROFILE_AUDIENCES = {
     "requester": "requester",
     "bdo": "bdo",
@@ -35,6 +37,7 @@ PROFILE_NAMES = {
     "it_staff": "IT 员工助手",
     "admin": "管理员助手",
 }
+PROFILE_CONFIG_FIELDS = {"name", "default_provider_id", "retention_days", "enabled"}
 KNOWLEDGE_SCOPES = {
     "requester": frozenset({"public", "service_catalog", "own_records"}),
     "bdo": frozenset({"public", "service_catalog", "own_records", "own_requirements"}),
@@ -55,6 +58,22 @@ def _provider_or_404(db: Session, provider_id: str) -> AiProviderConfig:
     if row is None or row.is_deleted:
         raise AppError("AI_PROVIDER_NOT_FOUND", "模型提供商不存在", 404)
     return row
+
+
+def _lock_provider_governance(db: Session) -> list[AiProviderConfig]:
+    """Serialize provider governance across pods, then refresh/lock rows by ID."""
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": AI_PROVIDER_GOVERNANCE_LOCK_KEY},
+        )
+    return (
+        db.query(AiProviderConfig)
+        .order_by(AiProviderConfig.id)
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
 
 
 def _safe_capability_probe(value: object) -> dict[str, Any]:
@@ -152,6 +171,7 @@ def _probe_is_usable(row: AiProviderConfig) -> bool:
 
 
 def create_provider(db: Session, values: dict[str, Any], actor: AuthUser) -> dict[str, Any]:
+    _lock_provider_governance(db)
     if values.get("enabled"):
         raise AppError("AI_PROVIDER_PROBE_REQUIRED", "提供商通过安全探测后才能启用", 409)
     _validate_provider_config(values)
@@ -183,6 +203,7 @@ def create_provider(db: Session, values: dict[str, Any], actor: AuthUser) -> dic
 
 
 def update_provider(db: Session, provider_id: str, values: dict[str, Any], actor: AuthUser) -> dict[str, Any]:
+    _lock_provider_governance(db)
     row = _provider_or_404(db, provider_id)
     secret = values.pop("api_key", None)
     candidate = {
@@ -229,6 +250,7 @@ def update_provider(db: Session, provider_id: str, values: dict[str, Any], actor
 
 
 def delete_provider(db: Session, provider_id: str, actor: AuthUser) -> dict[str, str]:
+    _lock_provider_governance(db)
     row = _provider_or_404(db, provider_id)
     profile_reference = db.query(AiAgentProfile.id).filter(
         AiAgentProfile.default_provider_id == row.id,
@@ -259,6 +281,7 @@ def _provider_for_probe(row: AiProviderConfig):
 
 async def probe_provider(db: Session, provider_id: str, actor: AuthUser) -> dict[str, Any]:
     """Run Task 3's exact sequential probe and persist one truthful atomic result."""
+    _lock_provider_governance(db)
     row = (
         db.query(AiProviderConfig)
         .filter(AiProviderConfig.id == provider_id, AiProviderConfig.is_deleted.is_(False))
@@ -383,6 +406,12 @@ def _ensure_profiles(db: Session, actor: AuthUser) -> None:
             status="draft",
             enabled_capabilities=[],
             knowledge_scope=[],
+            config_snapshot={
+                "name": profile.name,
+                "default_provider_id": profile.default_provider_id,
+                "retention_days": profile.retention_days,
+                "enabled": profile.enabled,
+            },
             max_risk_level="L1",
             updated_at=now,
         )
@@ -446,17 +475,41 @@ def _latest_published(db: Session, profile_id: str) -> AiAgentProfileVersion | N
     )
 
 
+def _profile_config(profile: AiAgentProfile, version: AiAgentProfileVersion) -> dict[str, Any]:
+    config = {
+        "name": profile.name,
+        "default_provider_id": profile.default_provider_id,
+        "retention_days": profile.retention_days,
+        "enabled": profile.enabled,
+    }
+    snapshot = version.config_snapshot if isinstance(version.config_snapshot, dict) else {}
+    config.update({key: snapshot[key] for key in PROFILE_CONFIG_FIELDS if key in snapshot})
+    return config
+
+
+def _apply_profile_config(
+    profile: AiAgentProfile,
+    config: dict[str, Any],
+    max_risk_level: str,
+) -> None:
+    for key in PROFILE_CONFIG_FIELDS:
+        setattr(profile, key, config[key])
+    profile.max_risk_level = max_risk_level
+    profile.status = "published"
+
+
 def profile_draft_payload(db: Session, profile: AiAgentProfile, draft: AiAgentProfileVersion) -> dict[str, Any]:
     latest = _latest_published(db, profile.id)
+    config = _profile_config(profile, draft)
     return {
         "id": profile.id,
         "code": profile.code,
-        "name": profile.name,
+        "name": config["name"],
         "audience": profile.audience,
-        "default_provider_id": profile.default_provider_id,
-        "retention_days": profile.retention_days,
+        "default_provider_id": config["default_provider_id"],
+        "retention_days": config["retention_days"],
         "status": profile.status,
-        "enabled": profile.enabled,
+        "enabled": config["enabled"],
         "system_prompt_zh": draft.system_prompt_zh,
         "system_prompt_en": draft.system_prompt_en,
         "enabled_capabilities": list(draft.enabled_capabilities or []),
@@ -535,7 +588,10 @@ def update_profile_draft(
     profile, draft = _profile_and_draft(db, code, lock=True)
     _assert_revision(draft.updated_at, expected_updated_at)
 
-    provider_id = values.get("default_provider_id", profile.default_provider_id)
+    config = _profile_config(profile, draft)
+    for key in PROFILE_CONFIG_FIELDS.intersection(values):
+        config[key] = values[key]
+    provider_id = config["default_provider_id"]
     if provider_id is not None:
         _provider_or_404(db, provider_id)
     enabled_capabilities = values.get("enabled_capabilities", list(draft.enabled_capabilities or []))
@@ -543,15 +599,12 @@ def update_profile_draft(
     max_risk_level = values.get("max_risk_level", draft.max_risk_level)
     _validate_profile_limits(profile, enabled_capabilities, knowledge_scope, max_risk_level)
 
-    profile_fields = {"name", "default_provider_id", "retention_days", "enabled"}
     draft_fields = {
         "system_prompt_zh", "system_prompt_en", "enabled_capabilities", "knowledge_scope", "max_risk_level"
     }
-    for key in profile_fields.intersection(values):
-        setattr(profile, key, values[key])
     for key in draft_fields.intersection(values):
         setattr(draft, key, values[key])
-    profile.max_risk_level = max_risk_level
+    draft.config_snapshot = config
     draft.updated_at = _utcnow()
     audit(
         db,
@@ -578,9 +631,10 @@ def _validate_publishable(
         version.knowledge_scope or [],
         version.max_risk_level,
     )
-    if not profile.default_provider_id:
+    config = _profile_config(profile, version)
+    if not config["default_provider_id"]:
         raise AppError("AI_PROFILE_PROVIDER_REQUIRED", "发布前必须选择模型提供商")
-    provider = _provider_or_404(db, profile.default_provider_id)
+    provider = _provider_or_404(db, config["default_provider_id"])
     if not provider.enabled or not _probe_is_usable(provider):
         raise AppError("AI_PROFILE_PROVIDER_UNHEALTHY", "模型提供商未通过有效安全探测", 409)
     highest_risk = max((definition.risk.rank for definition in definitions), default=1)
@@ -592,6 +646,7 @@ def _validate_publishable(
 
 
 def profile_version_payload(row: AiAgentProfileVersion) -> dict[str, Any]:
+    config = row.config_snapshot if isinstance(row.config_snapshot, dict) else {}
     return {
         "id": row.id,
         "version": row.version,
@@ -601,6 +656,10 @@ def profile_version_payload(row: AiAgentProfileVersion) -> dict[str, Any]:
         "enabled_capabilities": list(row.enabled_capabilities or []),
         "knowledge_scope": list(row.knowledge_scope or []),
         "max_risk_level": row.max_risk_level,
+        "name": config.get("name"),
+        "default_provider_id": config.get("default_provider_id"),
+        "retention_days": config.get("retention_days"),
+        "enabled": config.get("enabled"),
         "published_at": row.published_at,
     }
 
@@ -613,11 +672,13 @@ def publish_profile(
 ) -> dict[str, Any]:
     _require_profile_code(code)
     _ensure_profiles(db, actor)
+    _lock_provider_governance(db)
     profile, draft = _profile_and_draft(db, code, lock=True)
     _assert_revision(draft.updated_at, expected_draft_updated_at)
     _validate_publishable(db, profile, draft)
     latest = _latest_published(db, profile.id)
     now = _utcnow()
+    config = _profile_config(profile, draft)
     row = AiAgentProfileVersion(
         profile_id=profile.id,
         version=(latest.version if latest else 0) + 1,
@@ -626,6 +687,7 @@ def publish_profile(
         system_prompt_en=draft.system_prompt_en,
         enabled_capabilities=list(draft.enabled_capabilities or []),
         knowledge_scope=list(draft.knowledge_scope or []),
+        config_snapshot=dict(config),
         max_risk_level=draft.max_risk_level,
         published_by=actor.id,
         published_at=now,
@@ -633,8 +695,7 @@ def publish_profile(
     try:
         db.add(row)
         db.flush()
-        profile.status = "published"
-        profile.max_risk_level = draft.max_risk_level
+        _apply_profile_config(profile, config, draft.max_risk_level)
         draft.updated_at = now
         audit(db, "ai_agent_profile", profile.id, "publish", actor, {"code": code, "version": row.version})
         db.commit()
@@ -653,6 +714,7 @@ def rollback_profile(
 ) -> dict[str, Any]:
     _require_profile_code(code)
     _ensure_profiles(db, actor)
+    _lock_provider_governance(db)
     profile, _draft = _profile_and_draft(db, code, lock=True)
     latest = _latest_published(db, profile.id)
     if latest is None or latest.version != expected_latest_version:
@@ -670,6 +732,7 @@ def rollback_profile(
     if source is None:
         raise AppError("AI_PROFILE_VERSION_NOT_FOUND", "智能体档案历史版本不存在", 404)
     _validate_publishable(db, profile, source)
+    config = _profile_config(profile, source)
     row = AiAgentProfileVersion(
         profile_id=profile.id,
         version=latest.version + 1,
@@ -678,6 +741,7 @@ def rollback_profile(
         system_prompt_en=source.system_prompt_en,
         enabled_capabilities=list(source.enabled_capabilities or []),
         knowledge_scope=list(source.knowledge_scope or []),
+        config_snapshot=dict(config),
         max_risk_level=source.max_risk_level,
         published_by=actor.id,
         published_at=_utcnow(),
@@ -685,8 +749,7 @@ def rollback_profile(
     try:
         db.add(row)
         db.flush()
-        profile.status = "published"
-        profile.max_risk_level = source.max_risk_level
+        _apply_profile_config(profile, config, source.max_risk_level)
         audit(
             db,
             "ai_agent_profile",
@@ -724,35 +787,80 @@ def health_summary(db: Session) -> dict[str, Any]:
     }
 
 
-def usage_summary(db: Session) -> dict[str, Any]:
-    calls = db.query(AiProviderCall).filter(AiProviderCall.is_deleted.is_(False)).all()
-    provider_codes = {
-        row.id: row.code
-        for row in db.query(AiProviderConfig).filter(AiProviderConfig.is_deleted.is_(False)).all()
-    }
-    by_provider: dict[str, dict[str, Any]] = {}
-    by_result: dict[str, int] = {}
-    for call in calls:
-        code = provider_codes.get(call.provider_id, "deleted")
-        bucket = by_provider.setdefault(
-            code,
-            {"provider_code": code, "calls": 0, "input_tokens": 0, "output_tokens": 0},
+def usage_summary(db: Session, *, days: int = 30) -> dict[str, Any]:
+    window_started_at = _utcnow() - timedelta(days=days)
+    within_window = (
+        AiProviderCall.is_deleted.is_(False),
+        AiProviderCall.created_at >= window_started_at,
+    )
+    totals = (
+        db.query(
+            func.count(AiProviderCall.id),
+            func.coalesce(
+                func.sum(case((AiProviderCall.status == "completed", 1), else_=0)),
+                0,
+            ),
+            func.coalesce(func.sum(AiProviderCall.input_tokens), 0),
+            func.coalesce(func.sum(AiProviderCall.output_tokens), 0),
+            func.coalesce(func.avg(AiProviderCall.duration_ms), 0),
         )
-        bucket["calls"] += 1
-        bucket["input_tokens"] += int(call.input_tokens or 0)
-        bucket["output_tokens"] += int(call.output_tokens or 0)
-        result_code = str(call.result_code or "UNKNOWN")
-        by_result[result_code] = by_result.get(result_code, 0) + 1
-    total = len(calls)
+        .filter(*within_window)
+        .one()
+    )
+    total = int(totals[0] or 0)
+
+    provider_code = func.coalesce(AiProviderConfig.code, "deleted")
+    provider_rows = (
+        db.query(
+            provider_code.label("provider_code"),
+            func.count(AiProviderCall.id).label("calls"),
+            func.coalesce(func.sum(AiProviderCall.input_tokens), 0).label("input_tokens"),
+            func.coalesce(func.sum(AiProviderCall.output_tokens), 0).label("output_tokens"),
+        )
+        .outerjoin(
+            AiProviderConfig,
+            and_(
+                AiProviderConfig.id == AiProviderCall.provider_id,
+                AiProviderConfig.is_deleted.is_(False),
+            ),
+        )
+        .filter(*within_window)
+        .group_by(provider_code)
+        .order_by(provider_code)
+        .all()
+    )
+    result_rows = (
+        db.query(
+            AiProviderCall.result_code,
+            func.count(AiProviderCall.id).label("count"),
+        )
+        .filter(*within_window)
+        .group_by(AiProviderCall.result_code)
+        .order_by(AiProviderCall.result_code)
+        .all()
+    )
     return {
+        "window_days": days,
+        "window_started_at": window_started_at,
         "total_calls": total,
-        "completed_calls": sum(call.status == "completed" for call in calls),
-        "failed_calls": sum(call.status != "completed" for call in calls),
-        "input_tokens": sum(int(call.input_tokens or 0) for call in calls),
-        "output_tokens": sum(int(call.output_tokens or 0) for call in calls),
-        "average_duration_ms": round(sum(int(call.duration_ms or 0) for call in calls) / total, 2) if total else 0,
-        "by_provider": [by_provider[key] for key in sorted(by_provider)],
-        "by_result_code": [{"result_code": key, "count": by_result[key]} for key in sorted(by_result)],
+        "completed_calls": int(totals[1] or 0),
+        "failed_calls": total - int(totals[1] or 0),
+        "input_tokens": int(totals[2] or 0),
+        "output_tokens": int(totals[3] or 0),
+        "average_duration_ms": round(float(totals[4] or 0), 2),
+        "by_provider": [
+            {
+                "provider_code": str(row.provider_code),
+                "calls": int(row.calls),
+                "input_tokens": int(row.input_tokens or 0),
+                "output_tokens": int(row.output_tokens or 0),
+            }
+            for row in provider_rows
+        ],
+        "by_result_code": [
+            {"result_code": str(row.result_code or "UNKNOWN"), "count": int(row.count)}
+            for row in result_rows
+        ],
     }
 
 

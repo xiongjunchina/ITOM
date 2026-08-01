@@ -56,6 +56,7 @@ def test_wa0_models_are_additive_disabled_by_default_and_idempotent(client):
         )
         db.add_all([version, conversation])
         db.flush()
+        assert version.config_snapshot == {}
         message = AiMessage(conversation_id=conversation.id, role="user", content={"text": "help"})
         db.add(message)
         db.flush()
@@ -201,6 +202,10 @@ def test_postgres_assistant_schema_repairs_partial_tables_using_additive_ddl(mon
     assert "ALTER TABLE ai_provider_config ADD COLUMN fallback_provider_id VARCHAR(26)" in ddl
     assert "ALTER TABLE ai_agent_profile ADD COLUMN default_provider_id VARCHAR(26)" in ddl
     assert "ALTER TABLE ai_agent_profile ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 30" in ddl
+    assert (
+        "ALTER TABLE ai_agent_profile_version ADD COLUMN config_snapshot "
+        "JSONB NOT NULL DEFAULT '{}'::jsonb"
+    ) in ddl
     assert "ALTER TABLE ai_conversation ADD COLUMN profile_version_id VARCHAR(26)" in ddl
     assert "ALTER TABLE ai_conversation ADD COLUMN expires_at TIMESTAMP" in ddl
     assert "ALTER TABLE ai_action ADD COLUMN message_id VARCHAR(26)" in ddl

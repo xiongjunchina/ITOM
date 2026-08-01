@@ -250,7 +250,7 @@ PATCH/DELETE   /api/admin/ai/providers/{id}
 POST           /api/admin/ai/providers/{id}/test
 GET/PATCH      /api/admin/ai/profiles/{code}/draft
 POST           /api/admin/ai/profiles/{code}/publish|rollback
-GET            /api/admin/ai/health|usage|action-audits
+GET            /api/admin/ai/health|usage?days=1..90|action-audits
 ```
 
 模型只收到当前用户可用的代码注册能力。L3 动作先生成绑定用户、会话、能力、规范化参数摘要和有效期的单次确认凭证，确认时再次校验账号、权限、数据范围、记录状态和流程任务；成功结果只能来自领域服务。读取模型配置只返回 `has_secret`。详细架构、安全和降级见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
@@ -263,11 +263,11 @@ WA0 Task 3 已实现提供商中立的 `ModelProvider` 契约、OpenAI-compatibl
 
 `ChatRequest.purpose` 只接受服务端 `ProviderPurpose` 枚举并以最长 32 字符的规范代码存储；原始字符串、未知、超长或可能携密的用途在构造提供商、出站和审计前拒绝。每次真实尝试只向 `ai_provider_call` 写提供商、模型、规范用途、Token、耗时、结果码、状态和脱敏错误，不保存 prompt、响应正文或密钥。审计使用独立 `SessionLocal` 事务，绝不提交/回滚调用方会话；失败尝试的审计写入失败被隔离且不阻断安全回退，取消时审计失败不掩盖取消，成功尝试仅在审计提交后发送 `done`，审计失败返回脱敏 `GATEWAY_AUDIT_FAILED` 而不宣称完成。Task 3 不增加管理 API、`/api/assistant` 路由、UI、会话/动作编排或业务处理器。
 
-WA0 Task 4 已实现 `/api/admin/ai` 管理 API，全部端点逐一声明真实服务端 `require_perm("admin_ai", ...)`，浏览器自报角色不参与授权。提供商创建、查询、更新、软删除与探测复用 Task 3 的 HTTPS、主机白名单、DNS 地址分类及请求级固定 IP 传输；未探测或探测已过期的提供商不能启用，URL、模型或非空新密钥变化会使旧探测失效并自动停用。`api_key` 只在写请求中接收，非空值逐字节加密，省略或全空白更新保留旧密文；任何响应只返回 `has_secret`，不返回明文或密文。`POST /providers/{id}/test` 原样复用 Task 3 的“认证基础 → 流式终止 → 强制工具 → strict JSON Schema”顺序；成功或失败均在同一管理事务中写 `probe_status`、布尔能力、`last_probed_at` 和脱敏审计，失败会撤销启用状态，不能保留虚假健康标记。
+WA0 Task 4 已实现 `/api/admin/ai` 管理 API，全部端点逐一声明真实服务端 `require_perm("admin_ai", ...)`，浏览器自报角色不参与授权。提供商创建、查询、更新、软删除与探测复用 Task 3 的 HTTPS、主机白名单、DNS 地址分类及请求级固定 IP 传输；未探测或探测已过期的提供商不能启用，URL、模型或非空新密钥变化会使旧探测失效并自动停用。`api_key` 只在写请求中接收，非空值逐字节加密，省略或全空白更新保留旧密文；任何响应只返回 `has_secret`，不返回明文或密文。`POST /providers/{id}/test` 原样复用 Task 3 的“认证基础 → 流式终止 → 强制工具 → strict JSON Schema”顺序；成功或失败均在同一管理事务中写 `probe_status`、布尔能力、`last_probed_at` 和脱敏审计，失败会撤销启用状态，不能保留虚假健康标记。创建、更新、删除、探测结果，以及发布/回滚活动档案对提供商的引用，均先取得专用于 AI provider governance 的 PostgreSQL transaction-scoped advisory lock，再按 provider ID 排序执行 `FOR UPDATE` 并刷新当前事务视图；URL/模型/密钥失效、启用门禁、主备环路、唯一主模型和删除引用全部在锁内重新校验，跨 Pod 不依赖进程内锁。
 
-档案 code 固定为 `requester`、`bdo`、`it_staff`、`admin`，受众分别固定为 `requester`、`bdo`、`it`、`admin`。草稿更新携带 `expected_updated_at` 乐观锁；数据库只能选择进程内注册表已有的能力 code，且能力受众、风险、知识范围均不得超出服务端受众白名单。发布必须携带 `expected_draft_updated_at`，并同时通过中英文系统指令、非 L4 风险、注册能力、知识范围、启用且近期健康的默认提供商和 L2/L3 工具/JSON Schema 兼容性校验。每次发布新增不可变、单调递增的 `ai_agent_profile_version`；回滚请求携带来源版本与 `expected_latest_version`，把历史快照复制为新的发布版本，从不修改或删除历史。过期草稿或并发版本返回 409，失败发布不改变已发布状态或生成半成品版本。
+档案 code 固定为 `requester`、`bdo`、`it_staff`、`admin`，受众分别固定为 `requester`、`bdo`、`it`、`admin`。草稿更新携带 `expected_updated_at` 乐观锁；数据库只能选择进程内注册表已有的能力 code，且能力受众、风险、知识范围均不得超出服务端受众白名单。`name/default_provider_id/enabled/retention_days` 与提示词、能力、知识范围、风险全部保存在 version=0 草稿及其 `config_snapshot`，PATCH 不修改 `ai_agent_profile` 当前活动字段。发布必须携带 `expected_draft_updated_at`，并同时通过中英文系统指令、非 L4 风险、注册能力、知识范围、启用且近期健康的默认提供商和 L2/L3 工具/JSON Schema 兼容性校验；只有验证成功后才在同一事务中应用活动档案字段并新增不可变、单调递增的 `ai_agent_profile_version`。回滚请求携带来源版本与 `expected_latest_version`，把包含活动配置的历史快照复制为新的发布版本并原子应用，从不修改或删除历史。过期草稿或并发版本返回 409；失败发布不改变当前活动档案、既有发布版本或生成半成品版本。
 
-`GET /health` 只返回提供商/档案计数，`GET /usage` 只返回调用、Token、耗时及按提供商/结果码聚合，`GET /action-audits` 只返回动作 code、风险、状态、结果实体与时间。三者均不返回 Prompt、消息正文、完整会话、密钥、确认 token/hash、规范化载荷、结果载荷或提供商错误正文。Task 4 未实现管理 UI、`/api/assistant` 会话/动作编排、领域能力处理器、部署或 WA1。
+`GET /health` 只返回提供商/档案计数；`GET /usage?days=N` 由数据库聚合调用、Token、耗时及按提供商/结果码分组，`days` 默认 30 且只允许 1–90，不加载调用整行或消息/错误字段；`GET /action-audits` 只返回动作 code、风险、状态、结果实体与时间。三者均不返回 Prompt、消息正文、完整会话、密钥、确认 token/hash、规范化载荷、结果载荷或提供商错误正文。Task 4 未实现管理 UI、`/api/assistant` 会话/动作编排、领域能力处理器、部署或 WA1。
 
 ### 4.2 ITSM
 

@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import asyncio
 import httpx
@@ -13,6 +14,7 @@ from app.assistant.registry import CapabilityRegistry
 from app.assistant.types import AssistantChannel, CapabilityDefinition, CapabilityResult, RiskLevel
 from app.assistant.providers import OpenAICompatibleProvider
 from app.core.config import settings
+from app.core.errors import AppError
 from app.db import SessionLocal
 from app.models import (
     AiAction,
@@ -343,6 +345,163 @@ def test_provider_fallback_requires_existing_acyclic_chain(client, admin_headers
     assert cycle.status_code == 400, cycle.text
     assert cycle.json()["error"]["code"] == "AI_PROVIDER_FALLBACK_INVALID"
 
+    assert client.patch(
+        f"/api/admin/ai/providers/{first_id}", headers=admin_headers, json={"is_primary": True}
+    ).status_code == 200
+    promoted = client.patch(
+        f"/api/admin/ai/providers/{second_id}", headers=admin_headers, json={"is_primary": True}
+    )
+    assert promoted.status_code == 200, promoted.text
+    with SessionLocal() as db:
+        primary_ids = [
+            row.id
+            for row in db.query(AiProviderConfig).filter_by(is_primary=True, is_deleted=False).all()
+        ]
+        assert primary_ids == [second_id]
+
+
+class _ProviderLockQueryCapture:
+    def __init__(self, events: list[str]):
+        self.events = events
+
+    def order_by(self, *_columns):
+        self.events.append("order_by_id")
+        return self
+
+    def with_for_update(self):
+        self.events.append("for_update")
+        return self
+
+    def populate_existing(self):
+        self.events.append("populate_existing")
+        return self
+
+    def all(self):
+        self.events.append("read_rows")
+        return []
+
+
+class _ProviderLockSessionCapture:
+    def __init__(self):
+        self.events: list[str] = []
+
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+    def execute(self, statement, parameters):
+        assert parameters == {"lock_key": 0x49544F4D41495052}
+        self.events.append(str(statement))
+
+    def query(self, model):
+        assert model is AiProviderConfig
+        self.events.append("provider_query")
+        return _ProviderLockQueryCapture(self.events)
+
+
+def test_provider_governance_lock_precedes_deterministic_postgres_row_locks():
+    """Dropping/reordering the cross-pod advisory and provider row locks must break serialization."""
+    from app.services import assistant_config
+
+    session = _ProviderLockSessionCapture()
+
+    assistant_config._lock_provider_governance(session)
+
+    assert session.events == [
+        "SELECT pg_advisory_xact_lock(:lock_key)",
+        "provider_query",
+        "order_by_id",
+        "for_update",
+        "populate_existing",
+        "read_rows",
+    ]
+
+
+def test_every_provider_or_active_reference_mutation_enters_shared_lock_before_read_or_write(
+    client, admin_headers, monkeypatch
+):
+    """Any create/update/delete/probe path skipping the shared lock can race another pod."""
+    from app.services import assistant_config
+
+    monkeypatch.setattr(settings, "ai_provider_allowed_hosts", "models.example.test")
+    existing_id = client.post(
+        "/api/admin/ai/providers",
+        headers=admin_headers,
+        json={**VALID_PROVIDER, "code": "wa0-lock-existing", "name": "Lock Existing", "is_primary": False},
+    ).json()["data"]["id"]
+    profile_draft = client.get(
+        "/api/admin/ai/profiles/requester/draft", headers=admin_headers
+    ).json()["data"]
+
+    def stop_at_lock(_db):
+        raise AppError("AI_PROVIDER_LOCK_SENTINEL", "lock boundary reached", 409)
+
+    monkeypatch.setattr(assistant_config, "_lock_provider_governance", stop_at_lock, raising=False)
+    requests = (
+        ("POST", "/api/admin/ai/providers", {**VALID_PROVIDER, "code": "wa0-lock-create", "is_primary": False}),
+        ("PATCH", f"/api/admin/ai/providers/{existing_id}", {"name": "must not update"}),
+        ("DELETE", f"/api/admin/ai/providers/{existing_id}", None),
+        ("POST", f"/api/admin/ai/providers/{existing_id}/test", None),
+        (
+            "POST",
+            "/api/admin/ai/profiles/requester/publish",
+            {"expected_draft_updated_at": profile_draft["draft_updated_at"]},
+        ),
+        (
+            "POST",
+            "/api/admin/ai/profiles/requester/rollback",
+            {"version": 1, "expected_latest_version": 1},
+        ),
+    )
+
+    for method, path, body in requests:
+        response = client.request(method, path, headers=admin_headers, json=body)
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["code"] == "AI_PROVIDER_LOCK_SENTINEL"
+
+    with SessionLocal() as db:
+        row = db.get(AiProviderConfig, existing_id)
+        assert row.name == "Lock Existing"
+        assert row.is_deleted is False
+        assert db.query(AiProviderConfig).filter_by(code="wa0-lock-create").count() == 0
+
+
+def test_stale_enable_cannot_win_after_another_transaction_invalidates_provider_probe(
+    client, admin_headers, monkeypatch
+):
+    """A cached healthy row must be refreshed under lock before enabling a changed provider."""
+    from app.services import assistant_config
+
+    provider_id = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-stale-enable")
+    stale_db = SessionLocal()
+    writer_db = SessionLocal()
+    try:
+        stale_actor = stale_db.query(AuthUser).filter_by(username="admin").one()
+        stale_row = stale_db.get(AiProviderConfig, provider_id)
+        assert stale_row.enabled is True
+        assert stale_row.probe_status == "success"
+
+        changed = writer_db.get(AiProviderConfig, provider_id)
+        changed.model = "changed-after-stale-read"
+        changed.enabled = False
+        changed.probe_status = "unverified"
+        changed.capability_probe = {}
+        changed.last_probed_at = None
+        writer_db.commit()
+
+        with pytest.raises(AppError) as exc_info:
+            assistant_config.update_provider(stale_db, provider_id, {"enabled": True}, stale_actor)
+        assert exc_info.value.code == "AI_PROVIDER_PROBE_REQUIRED"
+        stale_db.rollback()
+    finally:
+        stale_db.close()
+        writer_db.close()
+
+    with SessionLocal() as db:
+        current = db.get(AiProviderConfig, provider_id)
+        assert current.model == "changed-after-stale-read"
+        assert current.probe_status == "unverified"
+        assert current.enabled is False
+
 
 def test_provider_probe_runs_task3_exact_sequence_and_atomically_persists_truthful_status(
     client, admin_headers, monkeypatch
@@ -654,8 +813,217 @@ def test_failed_publish_is_atomic_when_provider_is_unhealthy(client, admin_heade
     with SessionLocal() as db:
         profile = db.query(AiAgentProfile).filter_by(code="bdo").one()
         assert profile.status == "draft"
-        assert profile.enabled is True
+        assert profile.enabled is False
+        assert profile.default_provider_id is None
         assert db.query(AiAgentProfileVersion).filter_by(profile_id=profile.id, status="published").count() == 0
+
+
+def test_published_profile_isolated_from_draft_and_publish_rollback_apply_snapshots_atomically(
+    client, admin_headers, monkeypatch
+):
+    """Drafts must not contaminate active settings; publish/rollback apply immutable snapshots."""
+    from app.services import assistant_config
+
+    monkeypatch.setattr(assistant_config, "capability_registry", _test_registry(), raising=False)
+    monkeypatch.setattr(settings, "ai_provider_allowed_hosts", "models.example.test")
+    provider_v1 = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-profile-active-v1")
+    provider_v2_response = client.post(
+        "/api/admin/ai/providers",
+        headers=admin_headers,
+        json={
+            **VALID_PROVIDER,
+            "code": "wa0-profile-active-v2",
+            "name": "Profile Active V2",
+            "is_primary": False,
+        },
+    )
+    assert provider_v2_response.status_code == 200, provider_v2_response.text
+    provider_v2 = provider_v2_response.json()["data"]["id"]
+
+    initial = client.get("/api/admin/ai/profiles/requester/draft", headers=admin_headers).json()["data"]
+    draft_v1_response = client.patch(
+        "/api/admin/ai/profiles/requester/draft",
+        headers=admin_headers,
+        json={
+            "expected_updated_at": initial["draft_updated_at"],
+            "name": "Requester Active V1",
+            "default_provider_id": provider_v1,
+            "retention_days": 10,
+            "enabled": True,
+            "system_prompt_zh": "请求者活动版本一",
+            "system_prompt_en": "Requester active version one",
+            "enabled_capabilities": ["knowledge.read"],
+            "knowledge_scope": ["public", "own_records"],
+            "max_risk_level": "L1",
+        },
+    )
+    assert draft_v1_response.status_code == 200, draft_v1_response.text
+    draft_v1 = draft_v1_response.json()["data"]
+    published_v1_response = client.post(
+        "/api/admin/ai/profiles/requester/publish",
+        headers=admin_headers,
+        json={"expected_draft_updated_at": draft_v1["draft_updated_at"]},
+    )
+    assert published_v1_response.status_code == 200, published_v1_response.text
+    assert published_v1_response.json()["data"]["version"] == 1
+
+    active_v1 = {
+        "name": "Requester Active V1",
+        "default_provider_id": provider_v1,
+        "retention_days": 10,
+        "enabled": True,
+        "max_risk_level": "L1",
+        "status": "published",
+    }
+    with SessionLocal() as db:
+        profile = db.query(AiAgentProfile).filter_by(code="requester").one()
+        assert {key: getattr(profile, key) for key in active_v1} == active_v1
+        active_v1_updated_at = profile.updated_at
+        version_v1 = db.query(AiAgentProfileVersion).filter_by(profile_id=profile.id, version=1).one()
+        immutable_v1 = {
+            "id": version_v1.id,
+            "version": version_v1.version,
+            "status": version_v1.status,
+            "config_snapshot": dict(version_v1.config_snapshot),
+            "system_prompt_zh": version_v1.system_prompt_zh,
+            "system_prompt_en": version_v1.system_prompt_en,
+            "enabled_capabilities": list(version_v1.enabled_capabilities),
+            "knowledge_scope": list(version_v1.knowledge_scope),
+            "max_risk_level": version_v1.max_risk_level,
+            "published_by": version_v1.published_by,
+            "published_at": version_v1.published_at,
+            "created_at": version_v1.created_at,
+            "updated_at": version_v1.updated_at,
+            "is_deleted": version_v1.is_deleted,
+            "is_example": version_v1.is_example,
+        }
+
+    current = client.get("/api/admin/ai/profiles/requester/draft", headers=admin_headers).json()["data"]
+    draft_v2_response = client.patch(
+        "/api/admin/ai/profiles/requester/draft",
+        headers=admin_headers,
+        json={
+            "expected_updated_at": current["draft_updated_at"],
+            "name": "Requester Staged V2",
+            "default_provider_id": provider_v2,
+            "retention_days": 20,
+            "enabled": False,
+            "system_prompt_zh": "请求者待发布版本二",
+            "system_prompt_en": "Requester staged version two",
+        },
+    )
+    assert draft_v2_response.status_code == 200, draft_v2_response.text
+    draft_v2 = draft_v2_response.json()["data"]
+    assert {
+        "name": draft_v2["name"],
+        "default_provider_id": draft_v2["default_provider_id"],
+        "retention_days": draft_v2["retention_days"],
+        "enabled": draft_v2["enabled"],
+    } == {
+        "name": "Requester Staged V2",
+        "default_provider_id": provider_v2,
+        "retention_days": 20,
+        "enabled": False,
+    }
+
+    with SessionLocal() as db:
+        profile = db.query(AiAgentProfile).filter_by(code="requester").one()
+        assert {key: getattr(profile, key) for key in active_v1} == active_v1
+        assert profile.updated_at == active_v1_updated_at
+        version_v1 = db.query(AiAgentProfileVersion).filter_by(profile_id=profile.id, version=1).one()
+        assert {
+            "id": version_v1.id,
+            "version": version_v1.version,
+            "status": version_v1.status,
+            "config_snapshot": dict(version_v1.config_snapshot),
+            "system_prompt_zh": version_v1.system_prompt_zh,
+            "system_prompt_en": version_v1.system_prompt_en,
+            "enabled_capabilities": list(version_v1.enabled_capabilities),
+            "knowledge_scope": list(version_v1.knowledge_scope),
+            "max_risk_level": version_v1.max_risk_level,
+            "published_by": version_v1.published_by,
+            "published_at": version_v1.published_at,
+            "created_at": version_v1.created_at,
+            "updated_at": version_v1.updated_at,
+            "is_deleted": version_v1.is_deleted,
+            "is_example": version_v1.is_example,
+        } == immutable_v1
+
+    rejected = client.post(
+        "/api/admin/ai/profiles/requester/publish",
+        headers=admin_headers,
+        json={"expected_draft_updated_at": draft_v2["draft_updated_at"]},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()["error"]["code"] == "AI_PROFILE_PROVIDER_UNHEALTHY"
+    with SessionLocal() as db:
+        profile = db.query(AiAgentProfile).filter_by(code="requester").one()
+        assert {key: getattr(profile, key) for key in active_v1} == active_v1
+        assert profile.updated_at == active_v1_updated_at
+        version_v1 = db.query(AiAgentProfileVersion).filter_by(profile_id=profile.id, version=1).one()
+        assert {
+            "id": version_v1.id,
+            "version": version_v1.version,
+            "status": version_v1.status,
+            "config_snapshot": dict(version_v1.config_snapshot),
+            "system_prompt_zh": version_v1.system_prompt_zh,
+            "system_prompt_en": version_v1.system_prompt_en,
+            "enabled_capabilities": list(version_v1.enabled_capabilities),
+            "knowledge_scope": list(version_v1.knowledge_scope),
+            "max_risk_level": version_v1.max_risk_level,
+            "published_by": version_v1.published_by,
+            "published_at": version_v1.published_at,
+            "created_at": version_v1.created_at,
+            "updated_at": version_v1.updated_at,
+            "is_deleted": version_v1.is_deleted,
+            "is_example": version_v1.is_example,
+        } == immutable_v1
+
+        healthy_v2 = db.get(AiProviderConfig, provider_v2)
+        healthy_v2.probe_status = "success"
+        healthy_v2.last_probed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        healthy_v2.capability_probe = {
+            "authentication": True,
+            "supports_streaming": True,
+            "supports_tools": True,
+            "supports_json_schema": True,
+        }
+        healthy_v2.enabled = True
+        db.commit()
+
+    published_v2_response = client.post(
+        "/api/admin/ai/profiles/requester/publish",
+        headers=admin_headers,
+        json={"expected_draft_updated_at": draft_v2["draft_updated_at"]},
+    )
+    assert published_v2_response.status_code == 200, published_v2_response.text
+    assert published_v2_response.json()["data"]["version"] == 2
+    with SessionLocal() as db:
+        profile = db.query(AiAgentProfile).filter_by(code="requester").one()
+        assert profile.name == "Requester Staged V2"
+        assert profile.default_provider_id == provider_v2
+        assert profile.retention_days == 20
+        assert profile.enabled is False
+
+    rollback_response = client.post(
+        "/api/admin/ai/profiles/requester/rollback",
+        headers=admin_headers,
+        json={"version": 1, "expected_latest_version": 2},
+    )
+    assert rollback_response.status_code == 200, rollback_response.text
+    assert rollback_response.json()["data"]["version"] == 3
+    with SessionLocal() as db:
+        profile = db.query(AiAgentProfile).filter_by(code="requester").one()
+        assert {key: getattr(profile, key) for key in active_v1} == active_v1
+        versions = (
+            db.query(AiAgentProfileVersion)
+            .filter_by(profile_id=profile.id, status="published")
+            .order_by(AiAgentProfileVersion.version)
+            .all()
+        )
+        assert [row.version for row in versions] == [1, 2, 3]
+        assert versions[2].config_snapshot == versions[0].config_snapshot
+        assert versions[2].system_prompt_en == versions[0].system_prompt_en
 
 
 def test_health_usage_and_action_audits_are_aggregate_redacted_allowlists(
@@ -720,6 +1088,8 @@ def test_health_usage_and_action_audits_are_aggregate_redacted_allowlists(
     assert usage_response.status_code == 200, usage_response.text
     usage = usage_response.json()["data"]
     assert set(usage) == {
+        "window_days",
+        "window_started_at",
         "total_calls",
         "completed_calls",
         "failed_calls",
@@ -768,10 +1138,108 @@ def test_health_usage_and_action_audits_are_aggregate_redacted_allowlists(
         assert forbidden_key not in combined
 
 
+def test_usage_uses_bounded_sql_aggregates_and_excludes_rows_outside_window(
+    client, admin_headers, monkeypatch
+):
+    """Removing the SQL/window boundary must count old calls or select sensitive call rows."""
+    from sqlalchemy import event
+
+    from app.db import engine
+
+    provider_id = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-window-provider")
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    with SessionLocal() as db:
+        db.query(AiProviderCall).delete(synchronize_session=False)
+        db.add_all(
+            [
+                AiProviderCall(
+                    provider_id=provider_id,
+                    model="window-model",
+                    purpose="chat",
+                    input_tokens=5,
+                    output_tokens=3,
+                    duration_ms=20,
+                    result_code="OK",
+                    status="completed",
+                    created_at=now - timedelta(days=2),
+                ),
+                AiProviderCall(
+                    provider_id=provider_id,
+                    model="window-model",
+                    purpose="chat",
+                    input_tokens=7,
+                    output_tokens=4,
+                    duration_ms=40,
+                    result_code="PROVIDER_TIMEOUT",
+                    status="failed",
+                    error_redacted={"must_not_be_selected": "sensitive"},
+                    created_at=now - timedelta(days=3),
+                ),
+                AiProviderCall(
+                    provider_id=provider_id,
+                    model="window-model-old",
+                    purpose="chat",
+                    input_tokens=1000,
+                    output_tokens=1000,
+                    duration_ms=9999,
+                    result_code="OLD_FAILURE",
+                    status="failed",
+                    error_redacted={"old_sensitive": "must-not-load"},
+                    created_at=now - timedelta(days=31),
+                ),
+            ]
+        )
+        db.commit()
+
+    captured_sql: list[str] = []
+
+    def capture_sql(_connection, _cursor, statement, _parameters, _context, _executemany):
+        if "ai_provider_call" in statement.lower():
+            captured_sql.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", capture_sql)
+    try:
+        response = client.get("/api/admin/ai/usage?days=30", headers=admin_headers)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_sql)
+
+    assert response.status_code == 200, response.text
+    usage = response.json()["data"]
+    assert usage["window_days"] == 30
+    assert usage["window_started_at"] is not None
+    assert usage["total_calls"] == 2
+    assert usage["completed_calls"] == 1
+    assert usage["failed_calls"] == 1
+    assert usage["input_tokens"] == 12
+    assert usage["output_tokens"] == 7
+    assert usage["average_duration_ms"] == 30
+    assert usage["by_result_code"] == [
+        {"result_code": "OK", "count": 1},
+        {"result_code": "PROVIDER_TIMEOUT", "count": 1},
+    ]
+    assert usage["by_provider"] == [
+        {"provider_code": "wa0-window-provider", "calls": 2, "input_tokens": 12, "output_tokens": 7}
+    ]
+    assert captured_sql
+    for statement in captured_sql:
+        assert "error_redacted" not in statement
+        assert "conversation_id" not in statement
+        assert "message_id" not in statement
+        assert "profile_version_id" not in statement
+        assert "ai_provider_call.model" not in statement
+
+    for invalid_days in (0, 91):
+        invalid = client.get(f"/api/admin/ai/usage?days={invalid_days}", headers=admin_headers)
+        assert invalid.status_code == 422, invalid.text
+
+
 def test_provider_delete_is_soft_audited_and_rejects_live_profile_reference(
     client, admin_headers, monkeypatch
 ):
     """Deleting an in-use provider or omitting its redacted audit must break configuration integrity."""
+    from app.services import assistant_config
+
+    monkeypatch.setattr(assistant_config, "capability_registry", _test_registry(), raising=False)
     monkeypatch.setattr(settings, "ai_provider_allowed_hosts", "models.example.test")
     deletable_payload = {**VALID_PROVIDER, "code": "wa0-delete-provider", "name": "Delete", "is_primary": False}
     deletable_id = client.post("/api/admin/ai/providers", headers=admin_headers, json=deletable_payload).json()["data"]["id"]
@@ -787,9 +1255,24 @@ def test_provider_delete_is_soft_audited_and_rejects_live_profile_reference(
     saved = client.patch(
         "/api/admin/ai/profiles/admin/draft",
         headers=admin_headers,
-        json={"expected_updated_at": draft["draft_updated_at"], "default_provider_id": referenced_id},
+        json={
+            "expected_updated_at": draft["draft_updated_at"],
+            "default_provider_id": referenced_id,
+            "system_prompt_zh": "管理员活动档案",
+            "system_prompt_en": "Administrator active profile",
+            "enabled_capabilities": ["knowledge.read"],
+            "knowledge_scope": ["public"],
+            "max_risk_level": "L1",
+            "enabled": True,
+        },
     )
     assert saved.status_code == 200, saved.text
+    published = client.post(
+        "/api/admin/ai/profiles/admin/publish",
+        headers=admin_headers,
+        json={"expected_draft_updated_at": saved.json()["data"]["draft_updated_at"]},
+    )
+    assert published.status_code == 200, published.text
     blocked = client.delete(f"/api/admin/ai/providers/{referenced_id}", headers=admin_headers)
     assert blocked.status_code == 409
     assert blocked.json()["error"]["code"] == "AI_PROVIDER_IN_USE"

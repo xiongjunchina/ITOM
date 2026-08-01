@@ -93,3 +93,136 @@ The two full-suite warnings are existing third-party `ldap3` imports of deprecat
 ## Final review verdict
 
 Task 4 is internally complete within the requested WA0 scope: implementation, focused tests, full backend regression, and affected Chinese/English documentation are aligned. Delivery remains local by instruction; no push, deployment, live provider, or IDC acceptance was attempted.
+
+# Task 4 review fix round 1 — 2026-08-01
+
+## Review status and boundary
+
+- Review result addressed: `Needs fixes` at `FIX_BASE=c4584c8ef1cb23e4bf70341e65b023cb800d75f9`.
+- Scope remained Task 4. No admin UI, conversation/action/orchestrator, domain capability, WA1, deployment, live provider, live DNS, IDC, branch switch, rebase, reset, merge, or push was added or performed.
+- The review exposed one strictly necessary Task 1 schema repair: `ai_agent_profile_version` had no place to persist staged `name/default_provider_id/enabled/retention_days`. Fix round 1 adds one additive `config_snapshot JSONB NOT NULL DEFAULT '{}'` column through the existing idempotent PostgreSQL migration path; no table, destructive DDL, or data rewrite was added.
+- Suggested local commit subject: `fix(agent): serialize provider and profile governance`.
+
+## Root-cause verification
+
+1. Provider create/update/delete/probe used ordinary session reads and `FOR UPDATE` only on the probe row. Update could validate a cached healthy row, race a model/base/secret invalidation in another pod, and later write `enabled=true` against the new unverified configuration. Cross-row fallback, delete/reference, and primary checks had the same unlocked check-then-write shape.
+2. Draft PATCH wrote publication-controlled fields directly to `ai_agent_profile`, while prompts/capabilities lived in version 0. A rejected publish therefore left the active row partially changed even though no immutable version was created.
+3. Provider deletion and profile publication did not share a transaction lock, so active-reference creation could race delete despite each operation being locally transactional.
+4. `/usage` loaded all `AiProviderCall` ORM rows and aggregated in Python without a reporting window.
+
+## Fix summary
+
+- Added one stable transaction-scoped PostgreSQL advisory-lock key dedicated to AI provider governance. Provider create/update/delete/probe-result persistence and profile publish/rollback acquire it before validation or state reads, then refresh and `FOR UPDATE` every provider row in deterministic ID order. SQLite keeps the same refresh/order path for deterministic tests, while multi-pod production serialization is PostgreSQL-owned.
+- Kept URL/model/secret invalidation, recent-probe enablement, fallback-chain validation, primary promotion, delete/reference checks, probe result, and mutation audit inside the locked transaction. Profile publish/rollback use the same lock before creating/changing an active provider reference.
+- Added `AiAgentProfileVersion.config_snapshot` for `name`, `default_provider_id`, `retention_days`, and `enabled`. Draft PATCH updates only version 0 plus its prompts/capabilities/knowledge/risk. Successful publish validates first, then atomically applies the snapshot to `ai_agent_profile` and creates an immutable version. Rejected publish leaves the active row and every published-version field unchanged. Rollback copies and reapplies the historical active-settings snapshot into a new version.
+- Replaced Python full-row usage aggregation with three SQL aggregate/group queries bounded by `days`, default 30 and validated to 1–90. The response includes `window_days` and `window_started_at`; selected SQL fields exclude provider-call error, conversation, message, profile-version, and model columns.
+
+## Strict TDD RED/GREEN evidence
+
+### Provider serialization and stale enablement
+
+```text
+Command: .venv/bin/python -m pytest <three provider lock/stale tests> -q
+RED: 3 failed
+- no _lock_provider_governance boundary existed;
+- create bypassed the sentinel lock and returned 200;
+- a cached healthy row enabled successfully after another transaction changed the model and invalidated the probe.
+
+GREEN: 3 passed in 0.64s
+```
+
+The SQL-boundary test captures `SELECT pg_advisory_xact_lock(:lock_key)` before the provider query, ID ordering, `FOR UPDATE`, `populate_existing`, and row read. The deterministic stale-session test now returns `AI_PROVIDER_PROBE_REQUIRED` and leaves the changed row `unverified` and disabled.
+
+### Draft isolation, publish, rollback, and schema repair
+
+```text
+Command: .venv/bin/python -m pytest <profile isolation + two model/migration tests> -q
+RED: 3 failed
+- published versions had no config_snapshot;
+- the ORM model had no config_snapshot;
+- additive PostgreSQL DDL did not repair the missing column.
+
+GREEN: 3 passed in 1.00s
+```
+
+The API test publishes V1, edits an unhealthy V2 draft, verifies the active row and every V1 persisted field remain byte-for-byte unchanged through draft edit and rejected publish, then verifies successful V2 publication and V1 rollback-copy application as V3.
+
+The active-reference lock test was mutation-checked by temporarily removing the publish/rollback lock calls:
+
+```text
+RED: 1 failed; publish reached AI_PROFILE_PROMPT_REQUIRED (400) instead of the lock sentinel (409)
+GREEN after restoring both lock calls: 1 passed in 0.62s
+```
+
+### Bounded SQL usage aggregation
+
+```text
+Command: .venv/bin/python -m pytest <aggregate allowlist + usage window tests> -q
+RED: 2 failed; window fields were absent and days was ignored.
+First GREEN attempt: 1 passed, 1 failed because a prior test's isolated-database call remained in the module fixture.
+Test-fixture correction: explicitly clear AiProviderCall rows before the hand-derived three-row window fixture.
+GREEN: 2 passed in 0.69s
+```
+
+The final fixture proves that two recent rows produce exact totals/grouping while a 31-day-old row is excluded. SQL capture proves no sensitive/full-row columns are selected, and `days=0` or `days=91` returns 422.
+
+## Final verification
+
+Task 4 API suite:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_ai_admin_api.py -q
+Output: 30 passed in 4.97s
+Exit: 0
+```
+
+All WA0 suites:
+
+```text
+Command: .venv/bin/python -m pytest tests/test_wa0_*.py -q
+Output: 141 passed in 8.34s
+Exit: 0
+```
+
+Full backend regression:
+
+```text
+Command: .venv/bin/python -m pytest -q
+Output: 451 passed, 2 warnings in 99.11s (0:01:39)
+Exit: 0
+```
+
+The two warnings remain the pre-existing ldap3 imports of deprecated pyasn1 `tagMap` and `typeMap`.
+
+## Fix-round changed files
+
+- `backend/app/services/assistant_config.py`
+- `backend/app/routers/admin_ai.py`
+- `backend/app/models/assistant.py`
+- `backend/app/services/migrate.py`
+- `backend/tests/test_wa0_ai_admin_api.py`
+- `backend/tests/test_wa0_assistant_models.py`
+- `README.md`
+- `docs/03-PRD.md`
+- `docs/04-数据模型设计.md`
+- `docs/05-API契约与架构设计.md`
+- `docs/10-Aily-MCP版本交接与决策上下文.md`
+- `docs/en/03-PRD.md`
+- `docs/en/04-data-model.md`
+- `docs/en/05-api-and-architecture.md`
+- `docs/en/10-aily-mcp-handoff-and-decision-context.md`
+- `.superpowers/sdd/2026-08-01-itom-web-agent-implementation-plan/task-4-report.md`
+
+## Documentation assessment and parity
+
+- Updated README, PRD, API/architecture, data model, and handoff context in authoritative Chinese and matching English mirrors for advisory locking, staged active settings, atomic publish/rollback, the additive snapshot column, and bounded SQL usage semantics.
+- This section supersedes the original report's statement that `docs/04` needed no change: review fix round 1 identified and repaired the missing version-snapshot persistence contract.
+- Reassessed `docs/06-用户身份与组织模型设计.md` and its English mirror: no change is required because server-side `admin_ai` authorization, user identity, role derivation, and organization boundaries are unchanged.
+
+## Fix-round self-review verdict
+
+- All provider graph writes and active-reference publication paths share one PostgreSQL transaction advisory lock and deterministic row-lock order; no in-process mutex is used for production safety.
+- Either serialized order of enable-vs-invalidate, fallback-cycle creation, primary promotion, or delete-vs-publish ends in a valid state: later operations refresh and revalidate after acquiring the same lock.
+- Draft edits no longer touch active profile fields. Publish validation completes before active state/version creation, and rollback applies only a copied immutable source snapshot.
+- Usage work is bounded by both time (1–90 days) and selected/grouped SQL columns.
+- No live external system was contacted. Delivery remains a local, unpushed Task 4 fix round.

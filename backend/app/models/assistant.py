@@ -59,6 +59,7 @@ class AiAgentProfileVersion(GlidBase):
     system_prompt_en: Mapped[str | None] = mapped_column(Text)
     enabled_capabilities: Mapped[list] = mapped_column(JsonCol, default=list)
     knowledge_scope: Mapped[list] = mapped_column(JsonCol, default=list)
+    config_snapshot: Mapped[dict] = mapped_column(JsonCol, default=dict)
     max_risk_level: Mapped[str] = mapped_column(String(2), default="L1")
     published_by: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"), index=True)
     published_at: Mapped[datetime | None] = mapped_column(DateTime)

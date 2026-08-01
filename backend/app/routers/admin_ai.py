@@ -176,8 +176,12 @@ def health(db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("ad
 
 
 @router.get("/usage")
-def usage(db: Session = Depends(get_db), _: AuthUser = Depends(require_perm("admin_ai", "view"))):
-    return ok(assistant_config.usage_summary(db))
+def usage(
+    days: int = Query(default=30, ge=1, le=90),
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(require_perm("admin_ai", "view")),
+):
+    return ok(assistant_config.usage_summary(db, days=days))
 
 
 @router.get("/action-audits")

@@ -851,6 +851,7 @@ ASSISTANT_SCHEMA_STATEMENTS = (
     "id VARCHAR(26) PRIMARY KEY, profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), version INTEGER NOT NULL, "
     "status VARCHAR(16) NOT NULL DEFAULT 'draft', system_prompt_zh TEXT, system_prompt_en TEXT, "
     "enabled_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb, knowledge_scope JSONB NOT NULL DEFAULT '[]'::jsonb, "
+    "config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb, "
     "max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', published_by VARCHAR(26) REFERENCES auth_user(id), published_at TIMESTAMP, "
     "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
     "is_example BOOLEAN NOT NULL DEFAULT false, CONSTRAINT uq_ai_agent_profile_version_profile_version UNIQUE(profile_id, version))",
@@ -921,6 +922,7 @@ ASSISTANT_ENSURE_COLUMNS = {
         ("system_prompt_en", "TEXT"),
         ("enabled_capabilities", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
         ("knowledge_scope", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("config_snapshot", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
         ("max_risk_level", "VARCHAR(2) NOT NULL DEFAULT 'L1'"),
         ("published_by", "VARCHAR(26)"),
         ("published_at", "TIMESTAMP"),
