@@ -89,6 +89,8 @@ Task 7 Fix Round 4 修正前三项剩余审查结论且不进入 Task 8：泄漏
 
 Task 7 Fix Round 5 关闭最后三项独立审查缺口且仍不进入 Task 8：生产 Provider DNS 改为专用有界 DNS/IO executor 内同步 `socket.getaddrinfo`，容量准入与等待共享请求 absolute deadline，禁止 `loop.getaddrinfo`、`asyncio.to_thread` 和默认 executor；SSRF、DNS rebinding 与 TLS 原主机绑定保持不变。断流取消审计经既有有界 DB executor 非阻塞 reserve 后后台 best effort 执行，取消立即传播，满载不创建 Session，异常只产生脱敏本地告警；正常成功/可处理错误仍等待审计持久化。单一 absolute deadline 严格覆盖所有 pre-commit 工作；最终锁齐且 deadline 前最后检查通过后进入权威 commit，调用方会等待 commit 与 Session 收尾以保持 durable `completed` 和客户端终态一致，因此该收尾可能小幅越过 deadline，不再把整个返回路径描述为绝对硬上限。真实 PostgreSQL commit/断流临界竞态、真实 ASGI socket 和双 Session 幂等继续留 Task 9。
 
+Task 7A 在不扩大 WA0 或进入 Task 8 的前提下修复最终化权威：线程安全 durable-success 只在 `db.commit()` 成功返回后设置；之后的 Session close 异常只记录脱敏异常类型，不重查数据库猜测事务结果，也不能把 durable `completed` 改报 `error → done`。commit 已开始后观察到断流时取消语义优先且不再发送后续 SSE 终态，即使清理同时失败；commit 自身失败不设置 durable-success，继续 rollback、失败占位清理和安全错误路径。真实 PostgreSQL commit/断流临界竞态与真实 ASGI socket 证据仍由 Task 9 留存。
+
 ## 4. 已确认的架构
 
 采用**方案 A：MCP Server 内嵌现有 FastAPI 后端**。

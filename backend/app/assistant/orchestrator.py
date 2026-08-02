@@ -153,6 +153,8 @@ class _FinalizationAuthority:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._commit_started = threading.Event()
+        self._durable_success = threading.Event()
+        self._cleanup_error_type: str | None = None
 
     def begin_commit(self, execution: CapabilityExecutionContext) -> None:
         with self._lock:
@@ -168,6 +170,24 @@ class _FinalizationAuthority:
 
     def commit_started(self) -> bool:
         return self._commit_started.is_set()
+
+    def mark_durable_success(self) -> None:
+        with self._lock:
+            self._durable_success.set()
+
+    def durable_success(self) -> bool:
+        return self._durable_success.is_set()
+
+    def record_cleanup_error(self, error: Exception) -> bool:
+        with self._lock:
+            if not self._durable_success.is_set():
+                return False
+            self._cleanup_error_type = type(error).__name__
+            return True
+
+    def cleanup_error_type(self) -> str | None:
+        with self._lock:
+            return self._cleanup_error_type
 
 
 def _json_text(value: object) -> str:
@@ -1151,6 +1171,12 @@ class AssistantOrchestrator:
                         if time.monotonic() >= deadline_monotonic:
                             raise TimeoutError("assistant turn deadline exhausted") from None
                         raise asyncio.CancelledError() from None
+                    cleanup_error_type = authority.cleanup_error_type()
+                    if cleanup_error_type is not None:
+                        logger.warning(
+                            "assistant finalization cleanup failed after durable commit exception_type=%s",
+                            cleanup_error_type,
+                        )
                     if disconnected_after_commit:
                         raise asyncio.CancelledError()
                     return
@@ -1409,11 +1435,16 @@ class AssistantOrchestrator:
             row.status = "completed"
             authority.begin_commit(execution)
             db.commit()
+            authority.mark_durable_success()
         except Exception:
             db.rollback()
             raise
         finally:
-            db.close()
+            try:
+                db.close()
+            except Exception as exc:
+                if not authority.record_cleanup_error(exc):
+                    raise
 
     def _before_final_commit(self, execution: CapabilityExecutionContext) -> None:
         """Cooperative guard after final locks and immediately before mutation/commit."""

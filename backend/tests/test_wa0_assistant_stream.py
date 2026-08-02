@@ -176,6 +176,42 @@ def _events(*items):
     return list(items)
 
 
+def _one_shot_finalization_session_factory(
+    armed: threading.Event,
+    *,
+    fail_commit: bool = False,
+    fail_close: bool = False,
+    cleanup_entered: threading.Event | None = None,
+    release_cleanup: threading.Event | None = None,
+):
+    """Inject one failure only into the first Session opened after ``armed``."""
+
+    class FinalizationFailureSession(OrmSession):
+        def commit(self):
+            if fail_commit:
+                raise RuntimeError("injected finalization commit failure")
+            return super().commit()
+
+        def close(self):
+            if cleanup_entered is not None:
+                cleanup_entered.set()
+            if release_cleanup is not None and not release_cleanup.wait(timeout=2):
+                raise AssertionError("finalization cleanup was not released")
+            super().close()
+            if fail_close:
+                raise RuntimeError("injected finalization close failure")
+
+    failure_factory = sessionmaker(class_=FinalizationFailureSession, **SessionLocal.kw)
+
+    def session_factory():
+        if armed.is_set():
+            armed.clear()
+            return failure_factory()
+        return SessionLocal()
+
+    return session_factory
+
+
 def _create_user(client, admin_headers, username: str, roles=None) -> tuple[dict, str]:
     person = client.post("/api/members", json={"name": username}, headers=admin_headers).json()["data"]
     created = client.post(
@@ -755,6 +791,135 @@ def test_completed_commit_with_slow_worker_return_keeps_success_terminal(client,
             AiMessage.role == "assistant",
         ).order_by(AiMessage.created_at.desc()).first()
         assert row.status == "completed"
+
+
+def test_durable_commit_with_close_failure_keeps_success_terminal(client, admin_headers):
+    """Session cleanup failure cannot revoke an already durable completed answer."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_durable_close_failure")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    arm_finalization = threading.Event()
+    fake = FakeProvider([_events(
+        ModelStreamEvent(kind="text_delta", text="advice"),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+        ("callback", arm_finalization.set),
+    )])
+
+    async def consume():
+        return await _collect(AssistantOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            session_factory=_one_shot_finalization_session_factory(
+                arm_finalization,
+                fail_close=True,
+            ),
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="durable completion survives cleanup",
+            client_message_id="durable-close-failure",
+            page_context=PAGE_CONTEXT,
+        ))
+
+    events = asyncio.run(consume())
+    assert [event["type"] for event in events] == ["meta", "delta", "message", "done"]
+    with SessionLocal() as db:
+        row = db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+        ).order_by(AiMessage.created_at.desc()).first()
+        assert row.status == "completed"
+
+
+def test_post_commit_disconnect_with_close_failure_cancels_without_terminal_event(client, admin_headers):
+    """Observed cancellation wins after durable commit even when Session cleanup fails."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_disconnect_close_failure")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    arm_finalization = threading.Event()
+    cleanup_entered = threading.Event()
+    release_cleanup = threading.Event()
+    fake = FakeProvider([_events(
+        ModelStreamEvent(kind="text_delta", text="advice"),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+        ("callback", arm_finalization.set),
+    )])
+
+    async def disconnected():
+        if cleanup_entered.is_set():
+            release_cleanup.set()
+            return True
+        return False
+
+    emitted = []
+
+    async def consume():
+        stream = AssistantOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            disconnect_check=disconnected,
+            session_factory=_one_shot_finalization_session_factory(
+                arm_finalization,
+                fail_close=True,
+                cleanup_entered=cleanup_entered,
+                release_cleanup=release_cleanup,
+            ),
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="disconnect after durable completion",
+            client_message_id="disconnect-durable-close-failure",
+            page_context=PAGE_CONTEXT,
+        )
+        with pytest.raises(asyncio.CancelledError):
+            async for event in stream:
+                emitted.append(event)
+
+    asyncio.run(consume())
+    assert cleanup_entered.is_set()
+    assert [event["type"] for event in emitted] == ["meta"]
+    with SessionLocal() as db:
+        row = db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+        ).order_by(AiMessage.created_at.desc()).first()
+        assert row.status == "completed"
+
+
+def test_finalization_commit_failure_stays_error_without_completed_message(client, admin_headers):
+    """A failed commit is not durable success and keeps failed-placeholder cleanup."""
+    profile_id, version_id = _install_runtime()
+    _headers, user_id = _create_user(client, admin_headers, "wa0_stream_commit_failure")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    arm_finalization = threading.Event()
+    fake = FakeProvider([_events(
+        ModelStreamEvent(kind="text_delta", text="advice"),
+        ModelStreamEvent(kind="done", finish_reason="stop"),
+        ("callback", arm_finalization.set),
+    )])
+
+    async def consume():
+        return await _collect(AssistantOrchestrator(
+            actor_id=user_id,
+            gateway=fake,
+            session_factory=_one_shot_finalization_session_factory(
+                arm_finalization,
+                fail_commit=True,
+            ),
+        ).stream_turn(
+            conversation_id=conversation_id,
+            content="commit must fail safely",
+            client_message_id="finalization-commit-failure",
+            page_context=PAGE_CONTEXT,
+        ))
+
+    events = asyncio.run(consume())
+    assert [event["type"] for event in events] == ["meta", "error", "done"]
+    assert events[1]["data"]["code"] == "AI_ASSISTANT_UNAVAILABLE"
+    with SessionLocal() as db:
+        rows = db.query(AiMessage).filter(
+            AiMessage.conversation_id == conversation_id,
+            AiMessage.role == "assistant",
+        ).all()
+        assert [row.status for row in rows] == ["failed"]
 
 
 def test_precommit_delay_past_deadline_rolls_back_and_returns_one_error_terminal(client, admin_headers):
