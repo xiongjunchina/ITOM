@@ -25,6 +25,14 @@ interface Props {
   onClose: () => void;
 }
 
+interface AssistantConversationTimelineProps {
+  items: AssistantTimelineItem[];
+  sending: boolean;
+  onStart: () => void;
+  onActionChange: (action: AssistantActionView) => void;
+  onNavigate: (path: string) => void;
+}
+
 const MAX_VISIBLE_RESPONSE_CHARS = 512 * 1024;
 
 type AssistantMessagePresentation = Pick<AssistantMessageItem, 'text' | 'authority' | 'authorityNotice'>;
@@ -90,6 +98,37 @@ export function safeAssistantStreamErrorDetail(
   return localizedFallback;
 }
 
+/** Remove only output created by the failed turn, then keep one safe no-action notice. */
+export function discardFailedAssistantTurn(
+  current: AssistantTimelineItem[],
+  turnItemIds: ReadonlySet<string>,
+  safeNotice: AssistantMessageItem,
+): AssistantTimelineItem[] {
+  return [
+    ...current.filter((item) => !turnItemIds.has(item.id) && item.id !== safeNotice.id),
+    safeNotice,
+  ];
+}
+
+/** Keep action interaction tied directly to the current send state. */
+export function AssistantConversationTimeline({
+  items,
+  sending,
+  onStart,
+  onActionChange,
+  onNavigate,
+}: AssistantConversationTimelineProps) {
+  return (
+    <AssistantMessageList
+      items={items}
+      actionInteractionDisabled={sending}
+      onStart={onStart}
+      onActionChange={onActionChange}
+      onNavigate={onNavigate}
+    />
+  );
+}
+
 function clientMessageId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
@@ -153,19 +192,6 @@ export default function AssistantDrawer({ open, onClose }: Props) {
     )));
   }, []);
 
-  const appendBrokenStream = useCallback((detail?: string) => {
-    setItems((current) => [
-      ...current.map((item) => item.kind === 'message' && item.streaming ? { ...item, streaming: false } : item),
-      {
-        kind: 'message',
-        id: `stream-error-${Date.now()}`,
-        role: 'system',
-        text: [detail, t('assistant.stream.noAction')].filter(Boolean).join(' '),
-        error: true,
-      },
-    ]);
-  }, [t]);
-
   const send = async () => {
     const content = draft.trim();
     if (!content || sending || !bootstrap?.enabled) return;
@@ -174,6 +200,18 @@ export default function AssistantDrawer({ open, onClose }: Props) {
     });
     const id = clientMessageId();
     const streamId = `stream-${id}`;
+    const failureNoticeId = `stream-error-${id}`;
+    const turnItemIds = new Set<string>();
+    const appendBrokenStream = (detail?: string) => {
+      const safeNotice: AssistantMessageItem = {
+        kind: 'message',
+        id: failureNoticeId,
+        role: 'system',
+        text: [detail, t('assistant.stream.noAction')].filter(Boolean).join(' '),
+        error: true,
+      };
+      setItems((current) => discardFailedAssistantTurn(current, turnItemIds, safeNotice));
+    };
     setDraft('');
     setFallbackPath(null);
     setSending(true);
@@ -202,6 +240,7 @@ export default function AssistantDrawer({ open, onClose }: Props) {
           if (visibleText.length > MAX_VISIBLE_RESPONSE_CHARS) {
             throw new AssistantStreamError('AI_ASSISTANT_STREAM_TEXT_TOO_LARGE', 'Assistant response exceeded its display limit');
           }
+          turnItemIds.add(streamId);
           setItems((current) => {
             const existing = current.some((item) => item.kind === 'message' && item.id === streamId);
             if (!existing) return [...current, { kind: 'message', id: streamId, role: 'assistant', text: visibleText, streaming: true }];
@@ -213,11 +252,14 @@ export default function AssistantDrawer({ open, onClose }: Props) {
         if (event.type === 'message') {
           const serverMessage = event.data.message;
           const presentation = presentAssistantServerMessage(serverMessage);
+          const serverMessageItemId = `message-${id}-${serverMessage!.id}`;
+          turnItemIds.add(streamId);
+          turnItemIds.add(serverMessageItemId);
           setItems((current) => [
             ...current.filter((item) => !(item.kind === 'message' && item.id === streamId)),
             {
               kind: 'message',
-              id: serverMessage!.id,
+              id: serverMessageItemId,
               role: 'assistant',
               ...presentation,
             },
@@ -248,7 +290,9 @@ export default function AssistantDrawer({ open, onClose }: Props) {
             status: confirmationToken ? 'prepared' : 'conflict',
             confirmation_expires_at: expires,
           };
-          setItems((current) => [...current, { kind: 'action', id: `action-${action.action_id}`, action }]);
+          const actionItemId = `action-${id}-${action.action_id}`;
+          turnItemIds.add(actionItemId);
+          setItems((current) => [...current, { kind: 'action', id: actionItemId, action }]);
         }
         if (event.type === 'error') {
           const safeFallback = safeAssistantNavigationPath(event.data.fallback_path);
@@ -256,7 +300,7 @@ export default function AssistantDrawer({ open, onClose }: Props) {
           appendBrokenStream(safeAssistantStreamErrorDetail(event.data, t('assistant.stream.error')));
         }
         if (event.type === 'done') {
-          setItems((current) => current.map((item) => item.kind === 'message' && item.streaming
+          setItems((current) => current.map((item) => turnItemIds.has(item.id) && item.kind === 'message' && item.streaming
             ? { ...item, streaming: false }
             : item));
         }
@@ -323,15 +367,15 @@ export default function AssistantDrawer({ open, onClose }: Props) {
       );
     }
     return (
-      <AssistantMessageList
+      <AssistantConversationTimeline
         items={items}
-        actionInteractionDisabled={sending}
+        sending={sending}
         onStart={() => inputRef.current?.focus()}
         onActionChange={updateAction}
         onNavigate={go}
       />
     );
-  }, [appendBrokenStream, bootstrap, bootstrapError, bootstrapLoading, go, items, showSkeleton, t, updateAction]);
+  }, [bootstrap, bootstrapError, bootstrapLoading, go, items, sending, showSkeleton, t, updateAction]);
 
   const composerDisabled = bootstrapLoading || bootstrapError || !bootstrap?.enabled;
 

@@ -120,6 +120,78 @@ function expectStreamError(code) {
   return (error) => error instanceof api.AssistantStreamError && error.code === code;
 }
 
+function preparedActionItem(id, token) {
+  return {
+    kind: 'action',
+    id,
+    action: {
+      action_id: id.replace(/^action-/, ''),
+      risk: 'L3',
+      preview: { title: id },
+      confirmation_token: token,
+      confirmation_expires_at: null,
+      status: 'prepared',
+    },
+  };
+}
+
+test('failed-turn cleanup removes only explicitly tracked provisional output and its token', () => {
+  assert.equal(
+    typeof drawer.discardFailedAssistantTurn,
+    'function',
+    'AssistantDrawer does not yet expose explicit failed-turn cleanup',
+  );
+  const priorMessage = { kind: 'message', id: 'assistant-prior', role: 'assistant', text: 'Prior complete answer.' };
+  const priorAction = preparedActionItem('action-prior', 'prior-token');
+  const currentUser = { kind: 'message', id: 'user-current', role: 'user', text: 'Current question.' };
+  const currentDelta = { kind: 'message', id: 'stream-current', role: 'assistant', text: 'The operation succeeded.', streaming: true };
+  const currentMessage = { kind: 'message', id: 'assistant-current', role: 'assistant', text: 'The operation succeeded.' };
+  const currentAction = preparedActionItem('action-current', 'current-turn-raw-token');
+  const safeNotice = { kind: 'message', id: 'stream-error-current', role: 'system', text: 'This turn stopped safely. No action is proven.', error: true };
+
+  const cleaned = drawer.discardFailedAssistantTurn(
+    [priorMessage, priorAction, currentUser, currentDelta, currentMessage, currentAction],
+    new Set(['stream-current', 'assistant-current', 'action-current']),
+    safeNotice,
+  );
+
+  assert.deepEqual(cleaned, [priorMessage, priorAction, currentUser, safeNotice]);
+  assert.equal(JSON.stringify(cleaned).includes('current-turn-raw-token'), false);
+});
+
+test('repeated failed-turn cleanup keeps exactly one safe notice', () => {
+  assert.equal(typeof drawer.discardFailedAssistantTurn, 'function');
+  const prior = { kind: 'message', id: 'assistant-prior', role: 'assistant', text: 'Prior complete answer.' };
+  const currentUser = { kind: 'message', id: 'user-current', role: 'user', text: 'Current question.' };
+  const safeNotice = { kind: 'message', id: 'stream-error-current', role: 'system', text: 'This turn stopped safely. No action is proven.', error: true };
+  const first = drawer.discardFailedAssistantTurn(
+    [prior, currentUser, { kind: 'message', id: 'stream-current', role: 'assistant', text: 'partial', streaming: true }],
+    new Set(['stream-current']),
+    safeNotice,
+  );
+  const second = drawer.discardFailedAssistantTurn(first, new Set(['stream-current']), safeNotice);
+
+  assert.deepEqual(second, [prior, currentUser, safeNotice]);
+  assert.equal(second.filter((item) => item.id === safeNotice.id).length, 1);
+});
+
+test('conversation timeline maps each current sending state to action interaction state', () => {
+  assert.equal(
+    typeof drawer.AssistantConversationTimeline,
+    'function',
+    'AssistantDrawer does not yet expose the production timeline boundary',
+  );
+  const props = {
+    items: [preparedActionItem('action-current', 'current-token')],
+    onStart() {},
+    onActionChange() {},
+    onNavigate() {},
+  };
+
+  assert.equal(drawer.AssistantConversationTimeline({ ...props, sending: true }).props.actionInteractionDisabled, true);
+  assert.equal(drawer.AssistantConversationTimeline({ ...props, sending: false }).props.actionInteractionDisabled, false);
+});
+
 test('advisory presentation keeps the real answer and the no-action authority notice visible', () => {
   assert.equal(
     typeof drawer.presentAssistantServerMessage,
