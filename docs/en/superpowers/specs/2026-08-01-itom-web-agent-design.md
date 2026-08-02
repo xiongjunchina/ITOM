@@ -1,6 +1,6 @@
 # ITOM Web Agent Design Baseline
 
-> Status: **design approved; WA0 Tasks 1–7 implemented with Task 6 Fix Round 5 complete; Task 8+ pending**
+> Status: **design approved; WA0 Tasks 1–8 and the Task 8 review fixes are implemented on `feature/AI-agent-version`, but are not deployed or IDC-accepted; Task 9 is the first runtime deployment and acceptance task**
 > Approval date: 2026-08-01
 > The Chinese document is authoritative; this is its English mirror.
 
@@ -153,6 +153,8 @@ SQLite automation proves only service-call order, rollback outcomes, injected ra
 ## 11. Delivery phases and acceptance
 
 The web-agent program uses `WA` identifiers so it cannot be confused with Aily P0–P3.
+
+Current implementation milestone: Task 8 means only that the frontend consumption layer, administrator governance UI, and automated review corrections are complete on the development branch. It is not runtime acceptance. Task 9 is the first task that builds immutable images, deploys to IDC, and captures PostgreSQL, ASGI, real-role, and L3-action runtime evidence.
 
 | Phase | Scope | Acceptance |
 | --- | --- | --- |

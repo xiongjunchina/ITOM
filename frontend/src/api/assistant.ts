@@ -21,6 +21,7 @@ import { useAuthStore } from '../stores/auth';
 const SSE_EVENT_TYPES = new Set<AssistantSseEvent['type']>([
   'meta', 'delta', 'message', 'action', 'error', 'done',
 ]);
+const ASSISTANT_ACTION_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
 /** A single final message may be large; both limits remain finite and fail closed. */
 export const ASSISTANT_SSE_MAX_FRAME_CHARS = 1024 * 1024;
@@ -113,12 +114,16 @@ export function createAssistantStreamSequenceValidator() {
   let eventCount = 0;
   let sawMeta = false;
   let sawDelta = false;
-  let sawAction = false;
   let sawMessage = false;
   let sawError = false;
+  let actionId: string | null = null;
+  let messageAuthority: 'advisory' | 'server_preview' | null = null;
 
   const invalidTerminal = () => {
     throw new AssistantStreamError('AI_ASSISTANT_STREAM_TERMINAL', 'Assistant stream terminal sequence is invalid');
+  };
+  const invalidPayload = () => {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Assistant stream payload is invalid');
   };
 
   return {
@@ -137,13 +142,33 @@ export function createAssistantStreamSequenceValidator() {
         if (!sawMeta || sawMessage || sawError) invalidTerminal();
         sawDelta = true;
       } else if (event.type === 'action') {
-        if (!sawMeta || sawMessage || sawError) invalidTerminal();
-        sawAction = true;
+        if (
+          !sawMeta
+          || sawDelta
+          || sawMessage
+          || sawError
+          || actionId !== null
+          || event.data.risk !== 'L3'
+          || !ASSISTANT_ACTION_ID.test(event.data.action_id)
+        ) invalidTerminal();
+        actionId = event.data.action_id;
       } else if (event.type === 'message') {
         if (!sawMeta || sawMessage || sawError) invalidTerminal();
+        const content = event.data.message?.content;
+        const advisoryPair = content?.authority === 'advisory'
+          && content.operation_status === 'not_executed';
+        const previewPair = content?.authority === 'server_preview'
+          && content.operation_status === 'prepared_not_executed'
+          && typeof content.action_id === 'string'
+          && content.action_id.length > 0;
+        if (!advisoryPair && !previewPair) invalidPayload();
+        if (previewPair && Object.prototype.hasOwnProperty.call(content, 'advisory_text')) invalidPayload();
+        if (actionId === null && !advisoryPair) invalidTerminal();
+        if (actionId !== null && (!previewPair || content?.action_id !== actionId)) invalidTerminal();
+        messageAuthority = advisoryPair ? 'advisory' : 'server_preview';
         sawMessage = true;
       } else if (event.type === 'error') {
-        if (sawError || sawMessage || sawDelta || sawAction) invalidTerminal();
+        if (eventCount !== 0 || sawMeta || sawError || sawMessage || sawDelta || actionId !== null) invalidTerminal();
         sawError = true;
       } else {
         const terminalKeys = Object.keys(event.data);
@@ -151,11 +176,24 @@ export function createAssistantStreamSequenceValidator() {
         const reason = event.data.finish_reason;
         if (typeof reason !== 'string') invalidTerminal();
         if (reason === 'error') {
-          if (!sawError || sawMessage || sawDelta || sawAction) invalidTerminal();
+          if (!sawError || sawMeta || sawMessage || sawDelta || actionId !== null) invalidTerminal();
         } else if (reason === 'stop') {
-          if (sawError || !sawMeta || !sawMessage) invalidTerminal();
+          if (
+            sawError
+            || !sawMeta
+            || !sawMessage
+            || (actionId === null && messageAuthority !== 'advisory')
+            || (actionId !== null && messageAuthority !== 'server_preview')
+          ) invalidTerminal();
         } else if (reason === 'replay') {
-          if (sawError || !sawMeta || !sawMessage || sawDelta || sawAction) invalidTerminal();
+          if (
+            sawError
+            || !sawMeta
+            || !sawMessage
+            || sawDelta
+            || actionId !== null
+            || messageAuthority !== 'advisory'
+          ) invalidTerminal();
         } else {
           invalidTerminal();
         }

@@ -474,6 +474,11 @@ export const zh: Dict = {
   'admin.ai.audit.entity': '结果对象',
   'admin.ai.audit.consumedAt': '处理时间',
   'admin.ai.audit.status': '动作状态',
+  'admin.ai.audit.status.prepared': '待确认',
+  'admin.ai.audit.status.succeeded': '已成功',
+  'admin.ai.audit.status.cancelled': '已取消',
+  'admin.ai.audit.status.expired': '已过期',
+  'admin.ai.audit.status.failed': '失败',
   'admin.ai.audit.capabilityPlaceholder': '按能力代码精确筛选',
   'admin.ai.audit.empty': '没有符合条件的动作审计记录',
 };
@@ -939,6 +944,11 @@ export const en: Dict = {
   'admin.ai.audit.entity': 'Result entity',
   'admin.ai.audit.consumedAt': 'Consumed at',
   'admin.ai.audit.status': 'Action status',
+  'admin.ai.audit.status.prepared': 'Prepared',
+  'admin.ai.audit.status.succeeded': 'Succeeded',
+  'admin.ai.audit.status.cancelled': 'Cancelled',
+  'admin.ai.audit.status.expired': 'Expired',
+  'admin.ai.audit.status.failed': 'Failed',
   'admin.ai.audit.capabilityPlaceholder': 'Filter by exact capability code',
   'admin.ai.audit.empty': 'No action audit matches these filters',
 };

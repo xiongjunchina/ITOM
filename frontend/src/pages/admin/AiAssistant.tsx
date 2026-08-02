@@ -51,6 +51,37 @@ const PROFILE_CODES: AiProfileDraft['code'][] = ['requester', 'bdo', 'it_staff',
 const TAB_KEYS = ['providers', 'profiles', 'health', 'usage', 'audits'] as const;
 type TabKey = typeof TAB_KEYS[number];
 
+export function createLatestRequestGuard() {
+  let currentGeneration = 0;
+  return {
+    begin(): number {
+      currentGeneration += 1;
+      return currentGeneration;
+    },
+    runIfCurrent(generation: number, update: () => void): boolean {
+      if (generation !== currentGeneration) return false;
+      update();
+      return true;
+    },
+    invalidate(): void {
+      currentGeneration += 1;
+    },
+  };
+}
+
+const ACTION_AUDIT_STATUS_KEYS = {
+  prepared: 'admin.ai.audit.status.prepared',
+  succeeded: 'admin.ai.audit.status.succeeded',
+  cancelled: 'admin.ai.audit.status.cancelled',
+  expired: 'admin.ai.audit.status.expired',
+  failed: 'admin.ai.audit.status.failed',
+} as const;
+
+export function actionAuditStatusTranslationKey(value: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(ACTION_AUDIT_STATUS_KEYS, value)) return undefined;
+  return ACTION_AUDIT_STATUS_KEYS[value as keyof typeof ACTION_AUDIT_STATUS_KEYS];
+}
+
 function DelayedSkeleton({ loading, children }: { loading: boolean; children: React.ReactNode }) {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
@@ -505,20 +536,43 @@ function HealthPanel() {
 
 function UsagePanel() {
   const t = useT();
+  const requestGuard = useRef(createLatestRequestGuard());
   const [days, setDays] = useState(30);
   const [data, setData] = useState<AiUsageSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const load = useCallback(async () => {
+    const generation = requestGuard.current.begin();
     setLoading(true);
     setLoadError(false);
-    try { setData(await adminAiApi.usage(days)); } catch { setData(null); setLoadError(true); } finally { setLoading(false); }
+    setData(null);
+    try {
+      const result = await adminAiApi.usage(days);
+      requestGuard.current.runIfCurrent(generation, () => setData(result));
+    } catch {
+      requestGuard.current.runIfCurrent(generation, () => {
+        setData(null);
+        setLoadError(true);
+      });
+    } finally {
+      requestGuard.current.runIfCurrent(generation, () => setLoading(false));
+    }
   }, [days]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => requestGuard.current.invalidate();
+  }, [load]);
+  const changeDays = (value: number) => {
+    requestGuard.current.invalidate();
+    setData(null);
+    setLoadError(false);
+    setLoading(true);
+    setDays(value);
+  };
   return <>
     <div className="ai-admin-toolbar">
       <Typography.Text type="secondary">{t('admin.ai.usage.description')}</Typography.Text>
-      <Space><Select value={days} onChange={setDays} options={[7, 30, 90].map((value) => ({ value, label: t('admin.ai.usage.days', { n: value }) }))} /><Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button></Space>
+      <Space><Select value={days} onChange={changeDays} options={[7, 30, 90].map((value) => ({ value, label: t('admin.ai.usage.days', { n: value }) }))} /><Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button></Space>
     </div>
     <DelayedSkeleton loading={loading}>{loadError ? (
       <Alert showIcon type="error" message={t('admin.ai.loadError')} action={<Button onClick={() => void load()}>{t('common.refresh')}</Button>} />
@@ -549,6 +603,7 @@ function UsagePanel() {
 
 function AuditsPanel() {
   const t = useT();
+  const requestGuard = useRef(createLatestRequestGuard());
   const [rows, setRows] = useState<AiActionAuditRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -558,25 +613,49 @@ function AuditsPanel() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const load = useCallback(async () => {
+    const generation = requestGuard.current.begin();
     setLoading(true);
     setLoadError(false);
+    setRows([]);
+    setTotal(0);
     try {
       const result = await adminAiApi.actionAudits({ page, page_size: pageSize, status, capability_code: capability || undefined });
-      setRows(result.items);
-      setTotal(result.total);
+      requestGuard.current.runIfCurrent(generation, () => {
+        setRows(result.items);
+        setTotal(result.total);
+      });
     } catch {
-      setRows([]);
-      setTotal(0);
-      setLoadError(true);
-    } finally { setLoading(false); }
+      requestGuard.current.runIfCurrent(generation, () => {
+        setRows([]);
+        setTotal(0);
+        setLoadError(true);
+      });
+    } finally {
+      requestGuard.current.runIfCurrent(generation, () => setLoading(false));
+    }
   }, [capability, page, pageSize, status]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => requestGuard.current.invalidate();
+  }, [load]);
+
+  const resetVisibleResults = () => {
+    requestGuard.current.invalidate();
+    setRows([]);
+    setTotal(0);
+    setLoadError(false);
+    setLoading(true);
+  };
+  const auditStatusLabel = (value: string) => {
+    const key = actionAuditStatusTranslationKey(value);
+    return key ? t(key) : value;
+  };
 
   const columns: ColumnsType<AiActionAuditRow> = [
     { title: t('admin.ai.audit.time'), dataIndex: 'created_at', width: 170, render: (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm:ss') },
     { title: t('admin.ai.audit.capability'), dataIndex: 'capability_code', ellipsis: true },
     { title: t('admin.ai.audit.risk'), dataIndex: 'risk_level', width: 80 },
-    { title: t('common.status'), dataIndex: 'status', width: 110, render: (value: string) => <Tag>{value}</Tag> },
+    { title: t('common.status'), dataIndex: 'status', width: 110, render: (value: string) => <Tag>{auditStatusLabel(value)}</Tag> },
     { title: t('admin.ai.audit.resultCode'), dataIndex: 'result_code', ellipsis: true },
     { title: t('admin.ai.audit.entity'), render: (_, row) => [row.result_entity_type, row.result_entity_id].filter(Boolean).join(' / ') || '-' },
     { title: t('admin.ai.audit.consumedAt'), dataIndex: 'consumed_at', width: 170, render: (value: string | null) => value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '-' },
@@ -584,8 +663,8 @@ function AuditsPanel() {
   return <>
     <div className="ai-admin-toolbar">
       <Space wrap>
-        <Select allowClear placeholder={t('admin.ai.audit.status')} style={{ width: 160 }} value={status} onChange={(value) => { setStatus(value); setPage(1); }} options={['prepared', 'succeeded', 'cancelled', 'expired', 'failed'].map((value) => ({ value, label: value }))} />
-        <Input.Search allowClear placeholder={t('admin.ai.audit.capabilityPlaceholder')} style={{ width: 280 }} onSearch={(value) => { setCapability(value.trim()); setPage(1); }} />
+        <Select allowClear placeholder={t('admin.ai.audit.status')} style={{ width: 160 }} value={status} onChange={(value) => { resetVisibleResults(); setStatus(value); setPage(1); }} options={Object.keys(ACTION_AUDIT_STATUS_KEYS).map((value) => ({ value, label: auditStatusLabel(value) }))} />
+        <Input.Search allowClear placeholder={t('admin.ai.audit.capabilityPlaceholder')} style={{ width: 280 }} onSearch={(value) => { resetVisibleResults(); setCapability(value.trim()); setPage(1); }} />
       </Space>
       <Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button>
     </div>
@@ -598,7 +677,7 @@ function AuditsPanel() {
         dataSource={rows}
         locale={{ emptyText: <Empty description={t('admin.ai.audit.empty')} /> }}
         scroll={{ x: 1000 }}
-        pagination={{ current: page, pageSize, total, showSizeChanger: true, showTotal: (value) => t('admin.total', { n: value }), onChange: (next, size) => { setPage(next); setPageSize(size); } }}
+        pagination={{ current: page, pageSize, total, showSizeChanger: true, showTotal: (value) => t('admin.total', { n: value }), onChange: (next, size) => { resetVisibleResults(); setPage(next); setPageSize(size); } }}
       />}
     </DelayedSkeleton>
   </>;

@@ -7,7 +7,9 @@ let api;
 let authStore;
 let dict;
 let drawer;
+let adminPage;
 let assistantLocale;
+let adminLocale;
 let server;
 
 before(async () => {
@@ -21,7 +23,9 @@ before(async () => {
   ({ useAuthStore: authStore } = await server.ssrLoadModule('/src/stores/auth.ts'));
   ({ DICT: dict } = await server.ssrLoadModule('/src/i18n/dict.ts'));
   assistantLocale = await server.ssrLoadModule('/src/i18n/locales/assistant.ts');
+  adminLocale = await server.ssrLoadModule('/src/i18n/locales/admin.ts');
   drawer = await server.ssrLoadModule('/src/components/assistant/AssistantDrawer.tsx');
+  adminPage = await server.ssrLoadModule('/src/pages/admin/AiAssistant.tsx');
   authStore.setState({ token: 'focused-test-token' });
 });
 
@@ -61,6 +65,7 @@ function messageEvent({
 
 function serverPreviewMessageEvent({
   text = 'A server preview was prepared. Nothing has been executed.',
+  actionId = '01ARZ3NDEKTSV4RRFFQ69G5FAV',
   authority = 'server_preview',
   operationStatus = 'prepared_not_executed',
   role = 'assistant',
@@ -75,8 +80,24 @@ function serverPreviewMessageEvent({
     status,
   });
   delete event.data.message.content.advisory_text;
-  event.data.message.content.action_id = '01ASSISTANTACTION000000000000';
+  event.data.message.content.action_id = actionId;
   return event;
+}
+
+function actionEvent({
+  actionId = '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+  risk = 'L3',
+} = {}) {
+  return {
+    type: 'action',
+    data: {
+      action_id: actionId,
+      risk,
+      preview: { title: 'Server-owned preview' },
+      confirmation_token: 'one-time-confirmation-token',
+      expires_at: '2026-08-02T12:00:00Z',
+    },
+  };
 }
 
 async function runStream(events) {
@@ -323,13 +344,15 @@ test('valid normal stream with meta, message and stop terminal passes', async ()
   assert.deepEqual(await runStream(events), events);
 });
 
-test('valid post-meta error terminal also passes without being treated as success', async () => {
-  const events = [
-    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
-    { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE', message: 'raw detail' } },
-    { type: 'done', data: { finish_reason: 'error' } },
-  ];
-  assert.deepEqual(await runStream(events), events);
+test('error turn rejects meta before error', async () => {
+  await assert.rejects(
+    runStream([
+      { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+      { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE', message: 'raw detail' } },
+      { type: 'done', data: { finish_reason: 'error' } },
+    ]),
+    expectStreamError('AI_ASSISTANT_STREAM_TERMINAL'),
+  );
 });
 
 test('valid replay stream requires and accepts the persisted message', async () => {
@@ -347,6 +370,124 @@ test('valid error terminal passes without being treated as success', async () =>
     { type: 'done', data: { finish_reason: 'error' } },
   ];
   assert.deepEqual(await runStream(events), events);
+});
+
+test('valid L3 preview binds one action to the matching server preview', async () => {
+  const events = [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent(),
+    { type: 'delta', data: { text: 'A preview is ready.' } },
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ];
+  assert.deepEqual(await runPresentedStream(events), events);
+});
+
+for (const [name, events] of [
+  ['action followed by advisory terminal', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent(),
+    messageEvent(),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['action and preview with different action ids', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent({ actionId: '01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
+    serverPreviewMessageEvent({ actionId: '01BX5ZZKBKACTAV9WEVGEMMVS0' }),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['two actions before one preview', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent({ actionId: '01ARZ3NDEKTSV4RRFFQ69G5FAV' }),
+    actionEvent({ actionId: '01BX5ZZKBKACTAV9WEVGEMMVS0' }),
+    serverPreviewMessageEvent({ actionId: '01BX5ZZKBKACTAV9WEVGEMMVS0' }),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['preview without an action', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['action after advisory delta', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    { type: 'delta', data: { text: 'Advice first.' } },
+    actionEvent(),
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['action with non-L3 risk', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent({ risk: 'L2' }),
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['action with invalid action id', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent({ actionId: 'not-a-valid-id' }),
+    serverPreviewMessageEvent({ actionId: 'not-a-valid-id' }),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+]) {
+  test(`${name} fails the complete turn grammar closed`, async () => {
+    await assert.rejects(
+      runStream(events),
+      expectStreamError('AI_ASSISTANT_STREAM_TERMINAL'),
+    );
+  });
+}
+
+test('latest-request guard rejects stale success, error and finally writes', () => {
+  assert.equal(
+    typeof adminPage.createLatestRequestGuard,
+    'function',
+    'AI admin panels do not yet expose a shared request-generation guard',
+  );
+  const guard = adminPage.createLatestRequestGuard();
+  const older = guard.begin();
+  const latest = guard.begin();
+  const state = { data: 'latest-pending', error: false, loading: true };
+
+  assert.equal(guard.runIfCurrent(older, () => { state.data = 'stale-success'; }), false);
+  assert.equal(guard.runIfCurrent(older, () => { state.error = true; }), false);
+  assert.equal(guard.runIfCurrent(older, () => { state.loading = false; }), false);
+  assert.deepEqual(state, { data: 'latest-pending', error: false, loading: true });
+
+  assert.equal(guard.runIfCurrent(latest, () => { state.data = 'latest-success'; }), true);
+  assert.equal(guard.runIfCurrent(latest, () => { state.loading = false; }), true);
+  assert.deepEqual(state, { data: 'latest-success', error: false, loading: false });
+});
+
+test('latest-request guard invalidation blocks writes after unmount', () => {
+  assert.equal(typeof adminPage.createLatestRequestGuard, 'function');
+  const guard = adminPage.createLatestRequestGuard();
+  const request = guard.begin();
+  let writes = 0;
+  guard.invalidate();
+
+  assert.equal(guard.runIfCurrent(request, () => { writes += 1; }), false);
+  assert.equal(writes, 0);
+});
+
+test('known action-audit statuses map to explicit bilingual translation keys', () => {
+  assert.equal(
+    typeof adminPage.actionAuditStatusTranslationKey,
+    'function',
+    'Action audit statuses do not yet use explicit translation keys',
+  );
+  const expected = {
+    prepared: 'admin.ai.audit.status.prepared',
+    succeeded: 'admin.ai.audit.status.succeeded',
+    cancelled: 'admin.ai.audit.status.cancelled',
+    expired: 'admin.ai.audit.status.expired',
+    failed: 'admin.ai.audit.status.failed',
+  };
+  for (const [status, key] of Object.entries(expected)) {
+    assert.equal(adminPage.actionAuditStatusTranslationKey(status), key);
+    assert.equal(typeof adminLocale.zh[key], 'string');
+    assert.equal(typeof adminLocale.en[key], 'string');
+  }
+  assert.equal(adminPage.actionAuditStatusTranslationKey('future_server_status'), undefined);
+  assert.equal(adminPage.actionAuditStatusTranslationKey('__proto__'), undefined);
 });
 
 test('lone done terminal is rejected as premature', async () => {
