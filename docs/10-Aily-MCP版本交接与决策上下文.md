@@ -97,6 +97,8 @@ Task 8 已完成 WA0 前端消费层：业务门户与内部工作台顶栏共�
 
 Task 8C 修复 WA0 确认传输/状态边界而不新增业务 capability、迁移、部署或 Aily/MCP 变更。`AiAction.expires_at` 仍为 naive UTC 存储，但公开 `confirmation_expires_at` 和 action SSE `expires_at` 统一输出带 `Z` 的 RFC 3339 UTC；浏览器拒绝无时区日期。live/replay `server_preview.action_id` 都按相同 ULID 语法失败关闭。确认在既有属主、凭证、期限、会话/档案/能力重授权完成后，先提交内部非可确认、非可取消且不可重试的 `executing` 声明；只有成功声明后才调用 handler。已知 handler/审计失败仍可写 `failed`，而声明后的 handler 或终态持久化不确定时保留非确认态并返回安全 outcome-unknown，绝不恢复 `prepared`、再发 Token 或未经成功事务就报告业务成功。成功领域变更、`succeeded` 结果和审计仍同事务；Task 9 的真实 PostgreSQL/ASGI/IDC 证据仍待完成。
 
+Task 8C Round 1 闭合三项审查结论：含有效原始 Token 的 live action SSE 必须以非空、可解析、显式 `Z` 期限绑定确认，缺失/`null`/无偏移/畸形期限在创建卡片前失败关闭；Token 缺失的 action 仍仅为不可确认信息。SQLite 在 handler savepoint 前建立 claim 后外层写事务，因此 success terminal commit 失败时领域写、成功结果和审计回滚，数据库保留不可重试 `executing`；claim commit 失败则 handler 不启动且原 `prepared` Token 可供诚实重试。浏览器收到 `AI_ACTION_OUTCOME_UNKNOWN` 时只显示“结果待核实”、清除 Token 并停用确认/取消，绝不显示“尚未执行”或成功断言。Task 9 真实 PostgreSQL/ASGI/IDC 证据仍待完成。
+
 ## 4. 已确认的架构
 
 采用**方案 A：MCP Server 内嵌现有 FastAPI 后端**。

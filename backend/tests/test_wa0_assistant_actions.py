@@ -2268,6 +2268,97 @@ def test_confirm_failure_state_persistence_error_is_bounded_and_not_silently_swa
     assert HANDLER.execute_calls == execute_calls_before + 1
 
 
+def test_execution_claim_commit_failure_runs_no_handler_and_preserves_the_honest_retry(
+    client, admin_headers, action_capability_and_profile, monkeypatch
+):
+    """A failed durable claim cannot consume a token or enter the handler."""
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_claim_commit_failure")
+    actor_id, conversation_id, ticket_code = _context(
+        "wa0_claim_commit_failure", profile_id, version_id
+    )
+    prepared = _prepare(
+        "wa0_claim_commit_failure", conversation_id, ticket_code, "claim-commit-failure-key"
+    )
+    execute_calls_before = HANDLER.execute_calls
+
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        original_commit = db.commit
+
+        def fail_execution_claim_commit():
+            row = db.get(AiAction, prepared["action_id"])
+            if row is not None and row.status == "executing":
+                raise RuntimeError("injected execution-claim persistence failure")
+            return original_commit()
+
+        monkeypatch.setattr(db, "commit", fail_execution_claim_commit)
+        with pytest.raises(AppError) as raised:
+            assistant_actions.confirm_action(
+                db, actor, prepared["action_id"], prepared["confirmation_token"]
+            )
+        _assert_code(raised, "AI_ACTION_EXECUTION_CLAIM_FAILED")
+
+    assert HANDLER.execute_calls == execute_calls_before
+    with SessionLocal() as db:
+        action = db.get(AiAction, prepared["action_id"])
+        assert action.status == "prepared"
+        assert action.consumed_at is None
+        actor = db.get(AuthUser, actor_id)
+        succeeded = assistant_actions.confirm_action(
+            db, actor, prepared["action_id"], prepared["confirmation_token"]
+        )
+        assert succeeded["status"] == "succeeded"
+    assert HANDLER.execute_calls == execute_calls_before + 1
+
+
+def test_success_terminal_commit_failure_stays_executing_and_never_retries_the_handler(
+    client, admin_headers, action_capability_and_profile, monkeypatch
+):
+    """An uncertain success commit remains non-retryable and never claims a result."""
+    profile_id, version_id = action_capability_and_profile
+    _create_user(client, admin_headers, "wa0_success_commit_failure")
+    actor_id, conversation_id, ticket_code = _context(
+        "wa0_success_commit_failure", profile_id, version_id
+    )
+    prepared = _prepare(
+        "wa0_success_commit_failure", conversation_id, ticket_code, "success-commit-failure-key"
+    )
+    execute_calls_before = HANDLER.execute_calls
+
+    with SessionLocal() as db:
+        actor = db.get(AuthUser, actor_id)
+        original_commit = db.commit
+
+        def fail_success_terminal_commit():
+            row = db.get(AiAction, prepared["action_id"])
+            if row is not None and row.status == "succeeded":
+                raise RuntimeError("injected success-terminal persistence failure")
+            return original_commit()
+
+        monkeypatch.setattr(db, "commit", fail_success_terminal_commit)
+        with pytest.raises(AppError) as raised:
+            assistant_actions.confirm_action(
+                db, actor, prepared["action_id"], prepared["confirmation_token"]
+            )
+        _assert_code(raised, "AI_ACTION_OUTCOME_UNKNOWN")
+
+    assert HANDLER.execute_calls == execute_calls_before + 1
+    with SessionLocal() as db:
+        action = db.get(AiAction, prepared["action_id"])
+        assert action.status == "executing"
+        assert action.result_code == "AI_ACTION_EXECUTING"
+        assert action.result_summary["error"]["code"] == "AI_ACTION_OUTCOME_UNKNOWN"
+        assert db.query(Ticket).filter(Ticket.ticket_code == ticket_code).one().remarks is None
+        actor = db.get(AuthUser, actor_id)
+        with pytest.raises(AppError) as retry:
+            assistant_actions.confirm_action(
+                db, actor, prepared["action_id"], prepared["confirmation_token"]
+            )
+        _assert_code(retry, "AI_ACTION_NOT_PREPARED")
+    assert HANDLER.execute_calls == execute_calls_before + 1
+
+
 def test_preview_result_status_must_be_exactly_prepared(
     client, admin_headers, action_capability_and_profile
 ):

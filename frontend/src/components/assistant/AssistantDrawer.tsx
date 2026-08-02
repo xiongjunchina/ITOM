@@ -8,6 +8,7 @@ import {
   assistantApi,
   isAssistantActionId,
   isAssistantConfirmationToken,
+  parseAssistantActionExpiry,
   streamAssistantMessage,
 } from '../../api/assistant';
 import type { AssistantBootstrap, AssistantServerMessage, AssistantSseEvent } from '../../api/types';
@@ -47,20 +48,7 @@ function isNonEmptyText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-const ASSISTANT_UTC_EXPIRY = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-
-/** Accept only the explicit UTC wire format used for server-issued action expiry. */
-export function parseAssistantActionExpiry(value: unknown): number | null {
-  if (value === null) return null;
-  if (typeof value !== 'string' || !ASSISTANT_UTC_EXPIRY.test(value)) {
-    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
-  }
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) {
-    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
-  }
-  return parsed;
-}
+export { parseAssistantActionExpiry } from '../../api/assistant';
 
 /** Accept only the two completed, server-owned authority envelopes. */
 export function presentAssistantServerMessage(message: AssistantServerMessage | undefined): AssistantMessagePresentation {
@@ -294,10 +282,13 @@ export default function AssistantDrawer({ open, onClose }: Props) {
             throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action');
           }
           const expires = payload.confirmation_expires_at ?? payload.expires_at ?? null;
-          parseAssistantActionExpiry(expires);
+          const expiresAt = parseAssistantActionExpiry(expires);
           const confirmationToken = isAssistantConfirmationToken(payload.confirmation_token)
             ? payload.confirmation_token
             : undefined;
+          if (confirmationToken && expiresAt === null) {
+            throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Missing action expiry');
+          }
           const action: AssistantActionView = {
             ...payload,
             confirmation_token: confirmationToken,

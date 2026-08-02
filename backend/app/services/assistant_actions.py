@@ -580,6 +580,20 @@ def _commit_execution_claim(db: Session, row: AiAction) -> None:
         ) from None
 
 
+def _begin_post_claim_execution_transaction(db: Session, row: AiAction) -> None:
+    """Force SQLite's outer write transaction before its nested handler savepoint.
+
+    PostgreSQL has already opened the transaction that owns the action lock. SQLite
+    defers ``BEGIN`` until its first write, so releasing a nested savepoint could
+    otherwise persist a success before the outer terminal commit is known.
+    """
+    if db.get_bind().dialect.name == "sqlite":
+        db.execute(
+            text("UPDATE ai_action SET status = status WHERE id = :action_id"),
+            {"action_id": row.id},
+        )
+
+
 def _commit_locked_failure(db: Session, row: AiAction, code: str) -> None:
     """Persist failure on the already locked row without releasing the outer lock."""
     row.status = "failed"
@@ -648,6 +662,7 @@ def confirm_action(
         )
         _commit_execution_claim(db, row)
         execution_claimed = True
+        _begin_post_claim_execution_transaction(db, row)
         row = _locked_owned_action(db, actor, action_id)
         if row.status != "executing":
             raise AppError("AI_ACTION_OUTCOME_UNKNOWN", "操作结果暂时无法确认，请勿重试", 503)

@@ -40,6 +40,21 @@ export function isAssistantConfirmationToken(value: unknown): value is string {
     && value !== '[REDACTED]';
 }
 
+const ASSISTANT_UTC_EXPIRY = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+/** Parse only the explicit UTC expiry form emitted by the assistant action API. */
+export function parseAssistantActionExpiry(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !ASSISTANT_UTC_EXPIRY.test(value)) {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
+  }
+  return parsed;
+}
+
 export class AssistantStreamError extends Error {
   constructor(public readonly code: string, message: string) {
     super(message);
@@ -155,6 +170,9 @@ export function createAssistantStreamSequenceValidator() {
           || event.data.risk !== 'L3'
           || !isAssistantActionId(event.data.action_id)
         ) invalidTerminal();
+        const confirmationToken = isAssistantConfirmationToken(event.data.confirmation_token);
+        const expiresAt = event.data.confirmation_expires_at ?? event.data.expires_at ?? null;
+        if (confirmationToken && parseAssistantActionExpiry(expiresAt) === null) invalidPayload();
         actionId = event.data.action_id;
       } else if (event.type === 'message') {
         if (!sawMeta || sawMessage || sawError) invalidTerminal();

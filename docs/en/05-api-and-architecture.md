@@ -299,6 +299,8 @@ Independent Task 8B makes the SSE consumer state machine and L3 credential proje
 
 Task 8C fixes the WA0 action wire contract and execution claim. `confirmation_expires_at` and action-SSE `expires_at` are RFC 3339 UTC strings with `Z`; the client accepts only that form and rejects offset-free or malformed expiry. `server_preview.action_id` uses the same ULID grammar in live action and replay completed-message paths, so invalid replay does not render. The confirm API completes owner, token, expiry, and runtime proof, then commits a durable `executing` claim before the handler. Only a successful claim may run the handler. The success transaction still atomically writes domain mutation, `succeeded`, and audit; a known failure can persist `failed`, while any uncertain post-claim handler/final persistence result responds `AI_ACTION_OUTCOME_UNKNOWN` and keeps the action non-confirmable rather than exposing success or a new confirmation/cancellation path. This task adds no route, migration, Aily/MCP change, or IDC acceptance conclusion.
 
+Round 1 tightens a live action SSE: when it carries a valid raw `confirmation_token`, a usable `confirmation_expires_at`/`expires_at` must be present, non-`null`, parseable RFC 3339 UTC with `Z`; otherwise the stream validator fails closed with `AI_ASSISTANT_STREAM_PAYLOAD` before delivering the action to presentation. A tokenless action may remain informational but cannot become `prepared` through missing expiry. From confirm response to card, `AI_ACTION_OUTCOME_UNKNOWN` maps to `executing` and carries no displayed success conclusion.
+
 ### 4.2 ITSM
 
 ```text

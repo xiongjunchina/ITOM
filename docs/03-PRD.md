@@ -542,6 +542,8 @@ WA0 Task 8 完成网页前端闭环：业务门户和内部工作台共用顶栏
 
 Task 8C 不增加业务能力、迁移或部署验收。公开 action 载荷中的 `confirmation_expires_at` 和首次 action SSE 的 `expires_at` 必须是显式 `Z` 的 RFC 3339 UTC，浏览器拒绝无偏移值，故 UTC 存储语义不再被本地时区误读。实时流和 completed replay 的 `server_preview.action_id` 均须通过同一 26 位 ULID 校验，非法值在展示前失败关闭。确认经过属主、Token、期限和运行时校验后，先提交内部、不可确认/不可取消的 `executing` 声明，handler 才可开始；声明提交失败不执行 handler。后续已知 handler/审计失败可提交 `failed`，但 handler 或终态持久化不确定时保持不可重试状态并只返回安全的结果待核实，不得恢复 `prepared`、重发 Token 或把未成功提交的领域结果说成成功。Task 9 IDC UAT 尚未完成。
 
+Task 8C Round 1 进一步规定：有效原始确认 Token 与非空、可解析、显式 `Z` 的期限是实时 action SSE 不可分割的契约；缺失、`null`、无偏移或畸形期限在 `prepared` 卡片创建前失败关闭。无 Token 的信息 action 不会因缺少期限变成可确认状态。`AI_ACTION_OUTCOME_UNKNOWN` 在卡片中只能映射为不可重试的 `executing/结果待核实`，清除 Token、禁用双按钮且不得宣称“尚未执行任何业务变更”；唯一成功文案仍仅对应服务端 `succeeded`。
+
 ---
 
 ## 11. 非功能需求

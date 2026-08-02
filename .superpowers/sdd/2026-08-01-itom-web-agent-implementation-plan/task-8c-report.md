@@ -73,3 +73,73 @@ IDC UAT scope.
 
 Task 9's real PostgreSQL/ASGI/IDC evidence remains pending by design and was
 not attempted for this task.
+
+## Review-fix round 1 — fail-closed expiry and outcome UX (2026-08-02)
+
+### Scope and guardrails
+
+- Began from clean, synchronized `feature/AI-agent-version` at
+  `60e2516490ccf6426c2b2168c5dde94ba51517bd`; `HEAD`, upstream, and origin
+  matched before edits.
+- Changed only the Task 8C action service, action SSE/renderer/card boundary,
+  focused tests, bilingual delivery documentation, and this report.
+- No push, deployment, Docker/Compose, IDC access, Aily/MCP behavior, or
+  `main` work was performed.
+
+### RED evidence and root cause
+
+1. `node --test scripts/assistant-review-fix.test.mjs` initially failed six
+   new production-boundary regressions: five valid-raw-token action SSE cases
+   (missing, `null`, offset-free, malformed, and unparseable expiry) reached
+   the stream consumer, and outcome-unknown had no card mapping. The stream
+   validator checked action ID/risk but not the token-to-expiry contract; the
+   card fell through to generic `failed`/preview presentation.
+2. `backend/.venv/bin/python -m pytest backend/tests/test_wa0_assistant_actions.py -q -k 'execution_claim_commit_failure or success_terminal_commit_failure'`
+   initially reported one failure: a forced success terminal `db.commit()`
+   error left the row `succeeded`, not `executing`. The durable claim was
+   correct, but SQLite could release the nested handler savepoint without a
+   real outer write transaction, making the success write durable before the
+   terminal commit outcome was known. The claim-commit test already proved the
+   expected no-handler/prepared-retry behavior.
+
+### GREEN evidence
+
+- The stream validator now requires a non-null, parseable explicit RFC 3339
+  UTC `Z` expiry whenever a live action carries a valid raw confirmation token;
+  the drawer repeats the same guard before creating `prepared`.
+- After the durable claim, SQLite starts an explicit outer write transaction
+  before the nested handler savepoint. A failed success terminal commit rolls
+  back domain mutation, success result, and audit while retaining `executing`;
+  a claim failure still runs no handler and preserves the original `prepared`
+  token for an honest retry.
+- `AI_ACTION_OUTCOME_UNKNOWN` now clears the token, maps the card to
+  non-retryable `executing`, disables confirmation/cancellation, and uses a
+  result-pending notice. The no-business-change preview assertion is never
+  rendered for that state; success text remains exclusive to `succeeded`.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `backend/.venv/bin/python -m pytest backend/tests/test_wa0_assistant_actions.py -q -k 'execution_claim_commit_failure or success_terminal_commit_failure or failure_state_persistence_error'` | `3 passed, 75 deselected` |
+| `node --test scripts/assistant-review-fix.test.mjs` | `60 passed, 0 failed` |
+| `npm run build` | Passed: `tsc --noEmit` and Vite production build |
+| `backend/.venv/bin/python -m pytest -q` | `723 passed, 2 warnings in 186.62s` |
+| `git diff --check` | Run before commit; no whitespace errors |
+
+The two backend warnings are pre-existing third-party `ldap3`/`pyasn1`
+deprecation warnings (`tagMap` and `typeMap`). Vite completed with its existing
+chunk-size advisory only.
+
+### Documentation delivery and commit
+
+README, Chinese authoritative `docs/03`–`06` and `docs/10`, and all matching
+English mirrors now describe the live token/expiry boundary, SQLite outer
+transaction guarantee, and outcome-unknown card semantics. The conventional
+commit for this round is `fix(web-agent): fail closed action expiry and outcome UX`.
+
+### Remaining concern
+
+Task 9 real PostgreSQL/ASGI/IDC evidence remains pending by design and was not
+attempted. This round adds deterministic SQLite failure-injection coverage; it
+does not claim a replacement for Task 9's real PostgreSQL/IDC acceptance.

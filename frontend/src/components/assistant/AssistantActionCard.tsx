@@ -30,6 +30,29 @@ function displayValue(value: unknown): string {
   }
 }
 
+export function actionAfterConfirmationFailure(
+  action: AssistantActionView,
+  error: unknown,
+): AssistantActionView {
+  const code = assistantErrorCode(error);
+  let status: AssistantActionStatus = 'failed';
+  if (code === 'AI_ACTION_OUTCOME_UNKNOWN') status = 'executing';
+  else if (code === 'AI_ACTION_EXPIRED') status = 'expired';
+  else if (
+    assistantErrorStatus(error) === 409
+    || code?.includes('CONFLICT')
+    || code === 'AI_ACTION_NOT_PREPARED'
+    || code === 'AI_ASSISTANT_RUNTIME_CHANGED'
+  ) status = 'conflict';
+  return { ...action, confirmation_token: undefined, status };
+}
+
+export function actionNoticeTranslationKey(status: AssistantActionStatus): string {
+  if (status === 'succeeded') return 'assistant.action.authoritativeResult';
+  if (status === 'executing') return 'assistant.action.executingNotice';
+  return 'assistant.action.previewNotice';
+}
+
 export default function AssistantActionCard({ action, interactionDisabled = false, onChange, onNavigate }: Props) {
   const t = useT();
   const busy = useRef(false);
@@ -60,13 +83,6 @@ export default function AssistantActionCard({ action, interactionDisabled = fals
     return <Tag color={colors[action.status]}>{t(`assistant.action.status.${action.status}`)}</Tag>;
   }, [action.status, t]);
 
-  const failState = (error: unknown): AssistantActionStatus => {
-    const code = assistantErrorCode(error);
-    if (code === 'AI_ACTION_EXPIRED') return 'expired';
-    if (assistantErrorStatus(error) === 409 || code?.includes('CONFLICT') || code === 'AI_ACTION_NOT_PREPARED' || code === 'AI_ASSISTANT_RUNTIME_CHANGED') return 'conflict';
-    return 'failed';
-  };
-
   const confirm = async () => {
     if (busy.current || disabled) return;
     if (!action.confirmation_token || (Number.isFinite(expiresAt) && expiresAt <= Date.now())) {
@@ -85,7 +101,7 @@ export default function AssistantActionCard({ action, interactionDisabled = fals
         status: result.status === 'succeeded' ? 'succeeded' : 'failed',
       });
     } catch (error) {
-      onChange({ ...action, confirmation_token: undefined, status: failState(error) });
+      onChange(actionAfterConfirmationFailure(action, error));
     } finally {
       busy.current = false;
     }
@@ -109,7 +125,7 @@ export default function AssistantActionCard({ action, interactionDisabled = fals
         status: result.status === 'cancelled' ? 'cancelled' : 'failed',
       });
     } catch (error) {
-      onChange({ ...action, confirmation_token: undefined, status: failState(error) });
+      onChange(actionAfterConfirmationFailure(action, error));
     } finally {
       busy.current = false;
     }
@@ -132,7 +148,7 @@ export default function AssistantActionCard({ action, interactionDisabled = fals
       <Alert
         showIcon
         type={action.status === 'succeeded' ? 'success' : action.status === 'prepared' ? 'warning' : 'info'}
-        message={t(action.status === 'succeeded' ? 'assistant.action.authoritativeResult' : 'assistant.action.previewNotice')}
+        message={t(actionNoticeTranslationKey(action.status))}
       />
       {rows.length > 0 && <Descriptions className="assistant-action__preview" size="small" column={1} items={rows} />}
       {action.status === 'conflict' && <Typography.Text type="danger">{t('assistant.action.conflictNotice')}</Typography.Text>}

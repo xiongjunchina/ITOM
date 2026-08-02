@@ -7,6 +7,7 @@ let api;
 let authStore;
 let dict;
 let drawer;
+let actionCard;
 let adminPage;
 let assistantLocale;
 let adminLocale;
@@ -25,6 +26,7 @@ before(async () => {
   assistantLocale = await server.ssrLoadModule('/src/i18n/locales/assistant.ts');
   adminLocale = await server.ssrLoadModule('/src/i18n/locales/admin.ts');
   drawer = await server.ssrLoadModule('/src/components/assistant/AssistantDrawer.tsx');
+  actionCard = await server.ssrLoadModule('/src/components/assistant/AssistantActionCard.tsx');
   adminPage = await server.ssrLoadModule('/src/pages/admin/AiAssistant.tsx');
   authStore.setState({ token: 'focused-test-token' });
 });
@@ -84,19 +86,27 @@ function serverPreviewMessageEvent({
   return event;
 }
 
-function actionEvent({
-  actionId = '01ARZ3NDEKTSV4RRFFQ69G5FAV',
-  risk = 'L3',
-} = {}) {
+function actionEvent(options = {}) {
+  const {
+    actionId = '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    risk = 'L3',
+    confirmationToken,
+    expiresAt = '2026-08-02T12:00:00Z',
+    omitExpiresAt = false,
+  } = options;
+  const hasConfirmationToken = Object.hasOwn(options, 'confirmationToken');
+  const data = {
+    action_id: actionId,
+    risk,
+    preview: { title: 'Server-owned preview' },
+  };
+  if (hasConfirmationToken ? confirmationToken !== undefined : true) {
+    data.confirmation_token = hasConfirmationToken ? confirmationToken : 'one-time-confirmation-token';
+  }
+  if (!omitExpiresAt) data.expires_at = expiresAt;
   return {
     type: 'action',
-    data: {
-      action_id: actionId,
-      risk,
-      preview: { title: 'Server-owned preview' },
-      confirmation_token: 'one-time-confirmation-token',
-      expires_at: '2026-08-02T12:00:00Z',
-    },
+    data,
   };
 }
 
@@ -254,6 +264,63 @@ test('the production action-expiry boundary rejects naive UTC and preserves a te
     expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
   );
   assert.equal(drawer.parseAssistantActionExpiry(canonicalUtc) - serverNow, 10 * 60 * 1000);
+});
+
+for (const [name, action] of [
+  ['missing expiry', actionEvent({ omitExpiresAt: true })],
+  ['null expiry', actionEvent({ expiresAt: null })],
+  ['offset-free expiry', actionEvent({ expiresAt: '2030-01-01T00:10:00' })],
+  ['malformed expiry', actionEvent({ expiresAt: 'not-a-date' })],
+  ['unparseable expiry', actionEvent({ expiresAt: '2030-13-01T00:10:00Z' })],
+]) {
+  test(`raw confirmation token with ${name} fails before a prepared action can render`, async () => {
+    await assert.rejects(
+      runStream([
+        { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+        action,
+        serverPreviewMessageEvent(),
+        { type: 'done', data: { finish_reason: 'stop' } },
+      ]),
+      expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+    );
+  });
+}
+
+test('a non-confirmable action without a raw token may omit expiry without becoming a prepared action', async () => {
+  const events = [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent({ confirmationToken: undefined, omitExpiresAt: true }),
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ];
+  assert.deepEqual(await runStream(events), events);
+});
+
+test('an outcome-unknown confirmation result leaves the action executing without a preview no-change assertion', () => {
+  assert.equal(
+    typeof actionCard.actionAfterConfirmationFailure,
+    'function',
+    'AssistantActionCard does not yet expose its production confirmation-failure mapping',
+  );
+  const initial = {
+    action_id: '01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    risk: 'L3',
+    preview: { title: 'Server-owned preview' },
+    confirmation_token: 'one-time-confirmation-token',
+    confirmation_expires_at: '2030-01-01T00:10:00Z',
+    status: 'confirming',
+  };
+  const next = actionCard.actionAfterConfirmationFailure(
+    initial,
+    new api.AssistantStreamError('AI_ACTION_OUTCOME_UNKNOWN', 'untrusted backend detail'),
+  );
+  assert.equal(next.status, 'executing');
+  assert.equal(next.confirmation_token, undefined);
+  assert.equal(actionCard.actionNoticeTranslationKey(next.status), 'assistant.action.executingNotice');
+  assert.equal(assistantLocale.zh['assistant.action.executingNotice'].includes('尚未证明'), true);
+  assert.equal(assistantLocale.en['assistant.action.executingNotice'].includes('No business outcome'), true);
+  assert.notEqual(assistantLocale.zh['assistant.action.executingNotice'], assistantLocale.zh['assistant.action.previewNotice']);
+  assert.notEqual(assistantLocale.en['assistant.action.executingNotice'], assistantLocale.en['assistant.action.previewNotice']);
 });
 
 test('replayed previews reject an invalid action id before rendering and in the completed-message presenter', async () => {

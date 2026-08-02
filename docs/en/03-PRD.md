@@ -555,6 +555,8 @@ Independent Task 8B closes the confirmation bridge between the frontend consumer
 
 Task 8C adds no business capability, migration, or deployment acceptance. Public action `confirmation_expires_at` and first action-SSE `expires_at` are explicit-`Z` RFC 3339 UTC, and the browser rejects offset-free values so naive UTC storage cannot be misread in a local timezone. Live and replay completed-message `server_preview.action_id` values use the same 26-character ULID validation and fail closed before presentation. After owner, token, expiry, and runtime checks, the server commits an internal non-confirmable/non-cancellable `executing` claim before the handler may start; a failed claim runs no handler. A known handler/audit failure can persist `failed`, but uncertain handler or final persistence retains the non-retryable state and returns only safe outcome-unknown: it never restores `prepared`, issues another token, or reports an uncommitted business outcome as success. Task 9 IDC UAT remains incomplete.
 
+Task 8C Round 1 makes a valid raw confirmation token and a non-null, parseable explicit-`Z` expiry an indivisible live-action-SSE contract: missing, `null`, offset-free, or malformed expiry fails closed before a `prepared` card exists. A tokenless informational action cannot become confirmable because it lacks expiry. In the card, `AI_ACTION_OUTCOME_UNKNOWN` maps only to non-retryable `executing/outcome pending verification`: it clears the token, disables both controls, and never asserts that no business change ran; the sole success text remains exclusive to server-returned `succeeded`.
+
 ---
 
 ## 11. Non-Functional Requirements

@@ -297,6 +297,8 @@ WA0 Task 8 只增加前端消费层，不修改上述后端契约。`frontend/sr
 
 Task 8C 固定 WA0 的 action 线缆和执行声明。`confirmation_expires_at` 与 SSE `expires_at` 都是 RFC 3339 UTC `Z` 字符串；客户端只接受该格式，拒绝 offset-free/畸形期限。`server_preview.action_id` 在 action 与 replay completed-message 两条路径使用同一 ULID 语法，非法重放不渲染。确认 API 先完成属主、Token、期限和运行时校验，再提交 `executing` 的 durable claim；只有该提交成功才进入 handler。后续成功事务仍原子写领域变更、`succeeded` 和审计；已知失败可持久化 `failed`，但 claim 后的处理器或终态提交不确定时响应 `AI_ACTION_OUTCOME_UNKNOWN`，动作保持非确认态，客户端不能将其呈现为成功或再次确认/取消。该任务不新增 API 路由、迁移、Aily/MCP 或 IDC 验收结论。
 
+Round 1 收紧 live action SSE：含有效原始 `confirmation_token` 时，`confirmation_expires_at`/`expires_at` 的有效值必须存在、非 `null` 且为可解析 RFC 3339 UTC `Z`；否则流解析器在向展示层交付 action 前以 `AI_ASSISTANT_STREAM_PAYLOAD` 失败关闭。无有效 Token 的 action 可作不可确认信息，不能借缺失期限变为 `prepared`。`AI_ACTION_OUTCOME_UNKNOWN` 由确认接口到卡片统一映射为 `executing`，不返回或展示成功结论。
+
 ### 4.2 ITSM
 
 ```text
