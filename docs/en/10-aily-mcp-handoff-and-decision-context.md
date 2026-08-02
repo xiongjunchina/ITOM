@@ -336,3 +336,5 @@ A green CI run, successful image build, `/api/health`, MCP initialization, one s
 ## 12. Maintenance
 
 This file is the current final design baseline. Any decision changing routing, tool contracts, identity, security, data, messaging, deployment, or acceptance must update this file, `docs/03–06`, README, and English mirrors in the same change. After code delivery, target statements must be reconciled with real implementation and verification evidence.
+
+Task 8C Round 2 evidence: the shared frontend expiry parser now rejects explicit-`Z` strings whose day/month/hour is only accepted through JavaScript normalization, while valid leap-day and fractional-second UTC inputs remain compatible. No backend, database, deployment, Aily/MCP, or IDC behavior changed.

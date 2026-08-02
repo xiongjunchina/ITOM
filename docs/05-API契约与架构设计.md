@@ -537,3 +537,5 @@ POST /api/admin/ui-branding/reset                    # 草稿恢复内置默认
 
 除两个 public 读取端点外均要求 `admin_ui_branding` 权限，写操作进入 `audit_log`。前端启动先读取公开配置；接口失败、无发布版本或字段缺失时逐字段合并内置默认值，确保品牌配置故障不会阻断登录。
 M44：审批接口生成 12 位密码并保存加密密文，不发信。`GET /api/admin/users/{id}/initial-password` 鉴权解密查看；`POST .../initial-password/email` 手工发送。`GET/PUT /api/admin/integrations/email|ldap` 管理全局配置，`POST .../test` 执行连接测试。敏感配置只返回 `has_secret`，不回显密钥。
+
+Task 8C Round 2：action SSE 的共享前端 expiry parser 在显式 `Z` 和 RFC 3339 形状校验之后执行日历有效性校验，拒绝 `2030-02-30T00:10:00Z`、`2030-01-01T24:00:00Z` 等 JavaScript 规范化输入；有效闰日与小数秒仍可通过。该轮不改变后端语义、路由、数据库或 Aily/MCP。

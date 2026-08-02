@@ -143,3 +143,32 @@ commit for this round is `fix(web-agent): fail closed action expiry and outcome 
 Task 9 real PostgreSQL/ASGI/IDC evidence remains pending by design and was not
 attempted. This round adds deterministic SQLite failure-injection coverage; it
 does not claim a replacement for Task 9's real PostgreSQL/IDC acceptance.
+
+## Review-fix round 2 — calendar-valid UTC expiry (2026-08-02)
+
+### Scope and guardrails
+
+- Began from clean, synchronized `feature/AI-agent-version` at `f2512fdb7fbfaa51d4c6b5113afe041280de3cf0`; local `HEAD` and `origin/feature/AI-agent-version` matched before edits.
+- Changed only the shared frontend expiry parser, its production harness, affected CN/EN contract documentation, and this report.
+- No push, deployment, Docker/Compose, IDC access, backend semantic change, Aily/MCP change, or `main` work was performed.
+
+### RED evidence
+
+`frontend/node --test scripts/assistant-review-fix.test.mjs` failed exactly the three new calendar-invalid cases before the parser change: `2030-02-30T00:10:00Z`, `2030-04-31T00:10:00Z`, and `2030-01-01T24:00:00Z` reached the existing `Date.parse` boundary without throwing. The valid leap-day and fractional-second assertions passed, confirming the regression tests target only semantic calendar validity.
+
+### GREEN evidence
+
+`parseAssistantActionExpiry()` now extracts the UTC components and checks month/day limits, Gregorian leap years, and 00–23/00–59/00–59 time ranges before calling `Date.parse`. The existing stream validator and drawer continue to call this same shared boundary; no action can become `prepared` through a normalized invalid expiry. Valid leap-day and fractional-second explicit-`Z` inputs remain accepted.
+
+### Verification
+
+| Command | Result |
+| --- | --- |
+| `node --test scripts/assistant-review-fix.test.mjs` (RED) | `61 passed, 3 failed`; all 3 failures were the intended new assertions |
+| `node --test scripts/assistant-review-fix.test.mjs` (GREEN) | `64 passed, 0 failed` |
+| `npm run build` | Passed: `tsc --noEmit` and Vite production build; Vite emitted its existing chunk-size advisory only |
+| `git diff --check` | Passed |
+
+### Remaining concern
+
+Task 9 real PostgreSQL/ASGI/IDC evidence remains pending by design and was not attempted. This round is limited to frontend calendar validation and does not claim backend or production acceptance.

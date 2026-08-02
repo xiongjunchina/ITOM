@@ -266,6 +266,30 @@ test('the production action-expiry boundary rejects naive UTC and preserves a te
   assert.equal(drawer.parseAssistantActionExpiry(canonicalUtc) - serverNow, 10 * 60 * 1000);
 });
 
+for (const invalidExpiry of [
+  '2030-02-30T00:10:00Z',
+  '2030-04-31T00:10:00Z',
+  '2030-01-01T24:00:00Z',
+]) {
+  test(`the production action-expiry boundary rejects calendar-invalid UTC: ${invalidExpiry}`, () => {
+    assert.throws(
+      () => drawer.parseAssistantActionExpiry(invalidExpiry),
+      expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+    );
+  });
+}
+
+test('the production action-expiry boundary preserves valid leap-day and fractional-second UTC', () => {
+  assert.equal(
+    drawer.parseAssistantActionExpiry('2032-02-29T00:10:00Z'),
+    Date.parse('2032-02-29T00:10:00Z'),
+  );
+  assert.equal(
+    drawer.parseAssistantActionExpiry('2030-01-01T00:10:00.123Z'),
+    Date.parse('2030-01-01T00:10:00.123Z'),
+  );
+});
+
 for (const [name, action] of [
   ['missing expiry', actionEvent({ omitExpiresAt: true })],
   ['null expiry', actionEvent({ expiresAt: null })],
