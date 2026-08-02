@@ -37,23 +37,46 @@ function messageEvent({
   text = 'Advice only. No ITOM action was executed.',
   advisoryText = 'Check the service request status first.',
   authority = 'advisory',
+  operationStatus = authority === 'advisory' ? 'not_executed' : 'prepared_not_executed',
+  role = 'assistant',
+  status = 'completed',
 } = {}) {
   return {
     type: 'message',
     data: {
       message: {
         id: '01ASSISTANTMESSAGE0000000000',
-        role: 'assistant',
+        role,
         content: {
           text,
           advisory_text: advisoryText,
           authority,
-          operation_status: authority === 'advisory' ? 'not_executed' : 'prepared_not_executed',
+          operation_status: operationStatus,
         },
-        status: 'completed',
+        status,
       },
     },
   };
+}
+
+function serverPreviewMessageEvent({
+  text = 'A server preview was prepared. Nothing has been executed.',
+  authority = 'server_preview',
+  operationStatus = 'prepared_not_executed',
+  role = 'assistant',
+  status = 'completed',
+} = {}) {
+  const event = messageEvent({
+    text,
+    advisoryText: undefined,
+    authority,
+    operationStatus,
+    role,
+    status,
+  });
+  delete event.data.message.content.advisory_text;
+  event.data.message.content.action_id = '01ASSISTANTACTION000000000000';
+  return event;
 }
 
 async function runStream(events) {
@@ -69,6 +92,26 @@ async function runStream(events) {
     clientMessageId: '01CLIENTMESSAGE0000000000000',
     pageContext: { route: '/', selected_ids: [] },
     onEvent: (event) => delivered.push(event),
+  });
+  return delivered;
+}
+
+async function runPresentedStream(events) {
+  const body = events.map((event) => frame(event.type, event.data)).join('');
+  globalThis.fetch = async () => new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream; charset=utf-8' },
+  });
+  const delivered = [];
+  await api.streamAssistantMessage({
+    conversationId: '01CONVERSATION00000000000000',
+    content: 'help',
+    clientMessageId: '01CLIENTMESSAGE0000000000000',
+    pageContext: { route: '/', selected_ids: [] },
+    onEvent: (event) => {
+      if (event.type === 'message') drawer.presentAssistantServerMessage(event.data.message);
+      delivered.push(event);
+    },
   });
   return delivered;
 }
@@ -90,6 +133,98 @@ test('advisory presentation keeps the real answer and the no-action authority no
     authorityNotice: 'Advice only. No ITOM action was executed.',
   });
 });
+
+test('server preview presentation accepts only the server-owned prepared but unexecuted message', () => {
+  assert.deepEqual(
+    drawer.presentAssistantServerMessage(serverPreviewMessageEvent().data.message),
+    {
+      text: 'A server preview was prepared. Nothing has been executed.',
+      authority: 'server_preview',
+    },
+  );
+});
+
+for (const [name, mutation] of [
+  ['unexpected authority', { authority: 'unexpected', operationStatus: 'succeeded' }],
+  ['advisory with succeeded status', { operationStatus: 'succeeded' }],
+  ['non-completed message', { status: 'streaming' }],
+  ['non-assistant message', { role: 'user' }],
+]) {
+  test(`${name} fails the production message path closed`, async () => {
+    await assert.rejects(
+      runPresentedStream([
+        { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+        messageEvent(mutation),
+        { type: 'done', data: { finish_reason: 'stop' } },
+      ]),
+      expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+    );
+  });
+}
+
+for (const [name, field] of [
+  ['missing authority', 'authority'],
+  ['advisory with missing operation status', 'operation_status'],
+]) {
+  test(`${name} fails the production message path closed`, async () => {
+    const event = messageEvent();
+    delete event.data.message.content[field];
+    await assert.rejects(
+      runPresentedStream([
+        { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+        event,
+        { type: 'done', data: { finish_reason: 'stop' } },
+      ]),
+      expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+    );
+  });
+}
+
+test('server preview rejects model advisory prose instead of rendering it as authority', async () => {
+  const event = serverPreviewMessageEvent();
+  event.data.message.content.advisory_text = 'The model says the operation succeeded.';
+  await assert.rejects(
+    runPresentedStream([
+      { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+      event,
+      { type: 'done', data: { finish_reason: 'stop' } },
+    ]),
+    expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+  );
+});
+
+test('server preview with an executed status fails closed', async () => {
+  await assert.rejects(
+    runPresentedStream([
+      { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+      serverPreviewMessageEvent({ operationStatus: 'succeeded' }),
+      { type: 'done', data: { finish_reason: 'stop' } },
+    ]),
+    expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+  );
+});
+
+for (const [name, mutate] of [
+  ['empty message id', (message) => { message.id = '   '; }],
+  ['extra message envelope field', (message) => { message.unexpected = 'accepted'; }],
+  ['extra advisory content field', (message) => { message.content.unexpected = 'accepted'; }],
+  ['empty advisory answer', (message) => { message.content.advisory_text = '   '; }],
+  ['empty no-execution notice', (message) => { message.content.text = '   '; }],
+  ['server preview without action id', (message) => { delete message.content.action_id; }],
+]) {
+  test(`${name} is rejected by the exact completed assistant envelope`, async () => {
+    const event = name.startsWith('server preview') ? serverPreviewMessageEvent() : messageEvent();
+    mutate(event.data.message);
+    await assert.rejects(
+      runPresentedStream([
+        { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+        event,
+        { type: 'done', data: { finish_reason: 'stop' } },
+      ]),
+      expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+    );
+  });
+}
 
 test('stream error presentation ignores raw server details and uses the localized safe text', () => {
   assert.equal(
@@ -166,6 +301,17 @@ test('done with an unknown finish reason is rejected', async () => {
       { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
       messageEvent(),
       { type: 'done', data: { finish_reason: 'length' } },
+    ]),
+    expectStreamError('AI_ASSISTANT_STREAM_TERMINAL'),
+  );
+});
+
+test('done with an extra terminal key is rejected', async () => {
+  await assert.rejects(
+    runStream([
+      { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+      messageEvent(),
+      { type: 'done', data: { finish_reason: 'stop', unexpected: 'accepted' } },
     ]),
     expectStreamError('AI_ASSISTANT_STREAM_TERMINAL'),
   );

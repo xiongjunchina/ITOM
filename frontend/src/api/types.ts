@@ -2355,6 +2355,7 @@ export interface AssistantServerMessage {
     advisory_text?: string;
     authority?: 'advisory' | 'server_preview' | string;
     operation_status?: 'not_executed' | 'prepared_not_executed' | string;
+    action_id?: string;
   };
   status: 'completed' | string;
 }

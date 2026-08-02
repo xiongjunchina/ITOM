@@ -146,7 +146,10 @@ export function createAssistantStreamSequenceValidator() {
         if (sawError || sawMessage || sawDelta || sawAction) invalidTerminal();
         sawError = true;
       } else {
+        const terminalKeys = Object.keys(event.data);
+        if (terminalKeys.length !== 1 || terminalKeys[0] !== 'finish_reason') invalidTerminal();
         const reason = event.data.finish_reason;
+        if (typeof reason !== 'string') invalidTerminal();
         if (reason === 'error') {
           if (!sawError || sawMessage || sawDelta || sawAction) invalidTerminal();
         } else if (reason === 'stop') {

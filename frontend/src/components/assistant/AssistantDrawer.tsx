@@ -29,22 +29,57 @@ const MAX_VISIBLE_RESPONSE_CHARS = 512 * 1024;
 
 type AssistantMessagePresentation = Pick<AssistantMessageItem, 'text' | 'authority' | 'authorityNotice'>;
 
-/** Keep advisory prose separate from the server-owned no-action notice. */
+function hasExactKeys(value: object, expected: readonly string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function isNonEmptyText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/** Accept only the two completed, server-owned authority envelopes. */
 export function presentAssistantServerMessage(message: AssistantServerMessage | undefined): AssistantMessagePresentation {
-  if (!message || typeof message.id !== 'string') {
+  if (
+    !message
+    || !hasExactKeys(message, ['content', 'id', 'role', 'status'])
+    || !isNonEmptyText(message.id)
+    || message.role !== 'assistant'
+    || message.status !== 'completed'
+    || !message.content
+    || typeof message.content !== 'object'
+    || Array.isArray(message.content)
+  ) {
     throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid message');
   }
-  const { advisory_text: advisoryText, authority, text: authorityNotice } = message.content;
+  const {
+    action_id: actionId,
+    advisory_text: advisoryText,
+    authority,
+    operation_status: operationStatus,
+    text: authorityNotice,
+  } = message.content;
   if (authority === 'advisory') {
-    if (typeof advisoryText !== 'string' || typeof authorityNotice !== 'string') {
+    if (
+      operationStatus !== 'not_executed'
+      || !hasExactKeys(message.content, ['advisory_text', 'authority', 'operation_status', 'text'])
+      || !isNonEmptyText(advisoryText)
+      || !isNonEmptyText(authorityNotice)
+    ) {
       throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid advisory message');
     }
     return { text: advisoryText, authority, authorityNotice };
   }
-  if (typeof authorityNotice !== 'string') {
-    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid message');
+  if (
+    authority === 'server_preview'
+    && operationStatus === 'prepared_not_executed'
+    && hasExactKeys(message.content, ['action_id', 'authority', 'operation_status', 'text'])
+    && isNonEmptyText(actionId)
+    && isNonEmptyText(authorityNotice)
+  ) {
+    return { text: authorityNotice, authority };
   }
-  return { text: authorityNotice, authority };
+  throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid message');
 }
 
 /** Server error details are untrusted; only the fixed localized client fallback is displayable. */
