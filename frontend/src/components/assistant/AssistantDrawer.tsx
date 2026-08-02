@@ -9,10 +9,10 @@ import {
   isAssistantConfirmationToken,
   streamAssistantMessage,
 } from '../../api/assistant';
-import type { AssistantBootstrap, AssistantSseEvent } from '../../api/types';
+import type { AssistantBootstrap, AssistantServerMessage, AssistantSseEvent } from '../../api/types';
 import { useT } from '../../i18n';
 import { useLangStore } from '../../i18n/store';
-import AssistantMessageList, { type AssistantTimelineItem } from './AssistantMessageList';
+import AssistantMessageList, { type AssistantMessageItem, type AssistantTimelineItem } from './AssistantMessageList';
 import type { AssistantActionView } from './AssistantActionCard';
 import {
   buildAssistantPageContext,
@@ -26,6 +26,34 @@ interface Props {
 }
 
 const MAX_VISIBLE_RESPONSE_CHARS = 512 * 1024;
+
+type AssistantMessagePresentation = Pick<AssistantMessageItem, 'text' | 'authority' | 'authorityNotice'>;
+
+/** Keep advisory prose separate from the server-owned no-action notice. */
+export function presentAssistantServerMessage(message: AssistantServerMessage | undefined): AssistantMessagePresentation {
+  if (!message || typeof message.id !== 'string') {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid message');
+  }
+  const { advisory_text: advisoryText, authority, text: authorityNotice } = message.content;
+  if (authority === 'advisory') {
+    if (typeof advisoryText !== 'string' || typeof authorityNotice !== 'string') {
+      throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid advisory message');
+    }
+    return { text: advisoryText, authority, authorityNotice };
+  }
+  if (typeof authorityNotice !== 'string') {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid message');
+  }
+  return { text: authorityNotice, authority };
+}
+
+/** Server error details are untrusted; only the fixed localized client fallback is displayable. */
+export function safeAssistantStreamErrorDetail(
+  _data: Extract<AssistantSseEvent, { type: 'error' }>['data'],
+  localizedFallback: string,
+): string {
+  return localizedFallback;
+}
 
 function clientMessageId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -149,18 +177,14 @@ export default function AssistantDrawer({ open, onClose }: Props) {
         }
         if (event.type === 'message') {
           const serverMessage = event.data.message;
-          const text = serverMessage?.content?.text ?? serverMessage?.content?.advisory_text;
-          if (!serverMessage || typeof serverMessage.id !== 'string' || typeof text !== 'string') {
-            throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid message');
-          }
+          const presentation = presentAssistantServerMessage(serverMessage);
           setItems((current) => [
             ...current.filter((item) => !(item.kind === 'message' && item.id === streamId)),
             {
               kind: 'message',
-              id: serverMessage.id,
+              id: serverMessage!.id,
               role: 'assistant',
-              text,
-              authority: serverMessage.content.authority,
+              ...presentation,
             },
           ]);
         }
@@ -194,8 +218,7 @@ export default function AssistantDrawer({ open, onClose }: Props) {
         if (event.type === 'error') {
           const safeFallback = safeAssistantNavigationPath(event.data.fallback_path);
           if (safeFallback) setFallbackPath(safeFallback);
-          const detail = typeof event.data.message === 'string' ? event.data.message : t('assistant.stream.error');
-          appendBrokenStream(detail);
+          appendBrokenStream(safeAssistantStreamErrorDetail(event.data, t('assistant.stream.error')));
         }
         if (event.type === 'done') {
           setItems((current) => current.map((item) => item.kind === 'message' && item.streaming

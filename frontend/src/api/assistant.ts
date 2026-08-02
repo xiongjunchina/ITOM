@@ -107,6 +107,67 @@ export function createAssistantSseParser() {
   };
 }
 
+/** Validate the server-owned event order separately from frame parsing. */
+export function createAssistantStreamSequenceValidator() {
+  let terminal = false;
+  let eventCount = 0;
+  let sawMeta = false;
+  let sawDelta = false;
+  let sawAction = false;
+  let sawMessage = false;
+  let sawError = false;
+
+  const invalidTerminal = () => {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_TERMINAL', 'Assistant stream terminal sequence is invalid');
+  };
+
+  return {
+    accept(event: AssistantSseEvent): void {
+      if (terminal) {
+        throw new AssistantStreamError('AI_ASSISTANT_STREAM_AFTER_DONE', 'Assistant stream continued after completion');
+      }
+      if (sawError && event.type !== 'done') {
+        throw new AssistantStreamError('AI_ASSISTANT_STREAM_AFTER_ERROR', 'Assistant stream continued after an error');
+      }
+
+      if (event.type === 'meta') {
+        if (eventCount !== 0 || sawMeta) invalidTerminal();
+        sawMeta = true;
+      } else if (event.type === 'delta') {
+        if (!sawMeta || sawMessage || sawError) invalidTerminal();
+        sawDelta = true;
+      } else if (event.type === 'action') {
+        if (!sawMeta || sawMessage || sawError) invalidTerminal();
+        sawAction = true;
+      } else if (event.type === 'message') {
+        if (!sawMeta || sawMessage || sawError) invalidTerminal();
+        sawMessage = true;
+      } else if (event.type === 'error') {
+        if (sawError || sawMessage || sawDelta || sawAction) invalidTerminal();
+        sawError = true;
+      } else {
+        const reason = event.data.finish_reason;
+        if (reason === 'error') {
+          if (!sawError || sawMessage || sawDelta || sawAction) invalidTerminal();
+        } else if (reason === 'stop') {
+          if (sawError || !sawMeta || !sawMessage) invalidTerminal();
+        } else if (reason === 'replay') {
+          if (sawError || !sawMeta || !sawMessage || sawDelta || sawAction) invalidTerminal();
+        } else {
+          invalidTerminal();
+        }
+        terminal = true;
+      }
+      eventCount += 1;
+    },
+    finish(): void {
+      if (!terminal) {
+        throw new AssistantStreamError('AI_ASSISTANT_STREAM_TRUNCATED', 'Assistant stream ended before completion');
+      }
+    },
+  };
+}
+
 function forceExistingUnauthorizedBehavior() {
   useAuthStore.getState().logout();
   if (window.location.pathname !== '/login') window.location.href = '/login';
@@ -167,18 +228,10 @@ export async function streamAssistantMessage(input: StreamAssistantMessageInput)
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true });
   const parser = createAssistantSseParser();
-  let terminal = false;
-  let errored = false;
+  const sequence = createAssistantStreamSequenceValidator();
   const deliver = (events: AssistantSseEvent[]) => {
     for (const event of events) {
-      if (terminal) {
-        throw new AssistantStreamError('AI_ASSISTANT_STREAM_AFTER_DONE', 'Assistant stream continued after completion');
-      }
-      if (errored && event.type !== 'done') {
-        throw new AssistantStreamError('AI_ASSISTANT_STREAM_AFTER_ERROR', 'Assistant stream continued after an error');
-      }
-      if (event.type === 'error') errored = true;
-      if (event.type === 'done') terminal = true;
+      sequence.accept(event);
       input.onEvent(event);
     }
   };
@@ -191,7 +244,7 @@ export async function streamAssistantMessage(input: StreamAssistantMessageInput)
     }
     deliver(parser.push(decoder.decode()));
     deliver(parser.finish());
-    if (!terminal) throw new AssistantStreamError('AI_ASSISTANT_STREAM_TRUNCATED', 'Assistant stream ended before completion');
+    sequence.finish();
   } catch (error) {
     try {
       await reader.cancel();

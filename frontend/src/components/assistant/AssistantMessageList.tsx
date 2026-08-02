@@ -10,6 +10,7 @@ export interface AssistantMessageItem {
   role: 'user' | 'assistant' | 'system';
   text: string;
   authority?: string;
+  authorityNotice?: string;
   streaming?: boolean;
   error?: boolean;
 }
@@ -85,6 +86,11 @@ export default function AssistantMessageList({ items, actionInteractionDisabled 
                 {item.authority === 'server_preview' && <Tag color="warning">{t('assistant.authority.preview')}</Tag>}
               </Space>
               <Typography.Paragraph className="assistant-message__text">{item.text}</Typography.Paragraph>
+              {item.authorityNotice && (
+                <Typography.Text type="secondary" className="assistant-message__authority-notice">
+                  {item.authorityNotice}
+                </Typography.Text>
+              )}
               {item.streaming && <span className="assistant-message__cursor" aria-label={t('assistant.streaming')} />}
             </div>
           </article>

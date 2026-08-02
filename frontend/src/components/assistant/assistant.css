@@ -85,6 +85,15 @@
   line-height: 1.65;
 }
 
+.assistant-message__authority-notice {
+  display: block;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e4e8ee;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .assistant-message__cursor {
   display: inline-block;
   width: 7px;
@@ -201,6 +210,10 @@ html[data-theme='dark'] .assistant-action {
   color: #e5eaf1;
   background: #1b2028;
   border-color: #3b4654;
+}
+
+html[data-theme='dark'] .assistant-message__authority-notice {
+  border-top-color: #3b4654;
 }
 
 html[data-theme='dark'] .assistant-message--user .assistant-message__body {
