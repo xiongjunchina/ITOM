@@ -163,12 +163,18 @@ export function createAssistantStreamSequenceValidator() {
           && content.action_id.length > 0;
         if (!advisoryPair && !previewPair) invalidPayload();
         if (previewPair && Object.prototype.hasOwnProperty.call(content, 'advisory_text')) invalidPayload();
-        if (actionId === null && !advisoryPair) invalidTerminal();
+        if (actionId === null && !advisoryPair && !previewPair) invalidTerminal();
         if (actionId !== null && (!previewPair || content?.action_id !== actionId)) invalidTerminal();
         messageAuthority = advisoryPair ? 'advisory' : 'server_preview';
         sawMessage = true;
       } else if (event.type === 'error') {
-        if (eventCount !== 0 || sawMeta || sawError || sawMessage || sawDelta || actionId !== null) invalidTerminal();
+        if (
+          sawError
+          || sawMessage
+          || sawDelta
+          || actionId !== null
+          || (sawMeta ? eventCount !== 1 : eventCount !== 0)
+        ) invalidTerminal();
         sawError = true;
       } else {
         const terminalKeys = Object.keys(event.data);
@@ -176,7 +182,7 @@ export function createAssistantStreamSequenceValidator() {
         const reason = event.data.finish_reason;
         if (typeof reason !== 'string') invalidTerminal();
         if (reason === 'error') {
-          if (!sawError || sawMeta || sawMessage || sawDelta || actionId !== null) invalidTerminal();
+          if (!sawError || sawMessage || sawDelta || actionId !== null) invalidTerminal();
         } else if (reason === 'stop') {
           if (
             sawError
@@ -192,7 +198,7 @@ export function createAssistantStreamSequenceValidator() {
             || !sawMessage
             || sawDelta
             || actionId !== null
-            || messageAuthority !== 'advisory'
+            || !['advisory', 'server_preview'].includes(messageAuthority ?? '')
           ) invalidTerminal();
         } else {
           invalidTerminal();

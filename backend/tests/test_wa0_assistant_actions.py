@@ -537,6 +537,13 @@ def test_other_user_wrong_token_and_cancel_are_owner_scoped(
     )
     assert wrong_token.status_code == 403, wrong_token.text
     assert wrong_token.json()["error"]["code"] == "AI_ACTION_TOKEN_INVALID"
+    redacted_token = client.post(
+        f"/api/assistant/actions/{prepared['action_id']}/confirm",
+        headers=owner_headers,
+        json={"confirmation_token": "[REDACTED]"},
+    )
+    assert redacted_token.status_code == 403, redacted_token.text
+    assert redacted_token.json()["error"]["code"] == "AI_ACTION_TOKEN_INVALID"
     with SessionLocal() as db:
         assert db.get(AiAction, prepared["action_id"]).status == "prepared"
 

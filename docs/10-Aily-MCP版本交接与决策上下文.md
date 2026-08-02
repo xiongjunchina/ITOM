@@ -93,6 +93,8 @@ Task 7A 在不扩大 WA0 或进入 Task 8 的前提下修复最终化权威：�
 
 Task 8 已完成 WA0 前端消费层：业务门户与内部工作台顶栏共享全局启动器，响应式抽屉调用既有 bootstrap/会话/POST-SSE/动作 API；严格有界解析器只接受固定事件并拒绝未知、畸形、截断、错误后成功及超限数据。页面上下文只来自路由/标签/显式 GLID 白名单，不抓取 DOM；输出和服务端预览只按文本渲染。L3 卡片覆盖确认、取消、过期、冲突、失败和成功终态，仅服务端确认结果 `succeeded` 为权威成功，确认 Token 不展示且终态清除。系统管理新增 `admin_ai` 守卫的提供商、四类固定档案、健康、用量和动作审计五页签控制台，密钥只写不回填。该任务未修改后端、持久化模型、具体领域能力或部署；Task 9 仍负责真实 PostgreSQL/ASGI/IDC 角色与动作证据，WA1+ 仍负责具体业务 capability。
 
+独立 Task 8B 已修复 Task 8 前端与既有 L3 后端之间的确认桥，且不重开 Task 8 五轮审查、不扩大 WA0。严格状态机现精确接受启动前 `error → done(error)`、元数据后 `meta → error → done(error)`，以及 `advisory` 或 `server_preview` 的 `meta → message → done(replay)`；错误出现在 delta/action/message 后、错误终态混入成功载荷、重放预览夹带 action/delta/Token 或其他畸形交叉序列均失败关闭。重放的服务端预览只作信息展示，不产生卡片或可执行含义。首次同属主 L3 action SSE 通过服务端固定窄投影交付一次原始确认 Token 和安全预览；通用脱敏规则不变，Token 仍只存 SHA-256，且不进入模型、message、持久化、日志、审计或 REST 响应。同一属主恰好一次合法确认成功，重复、跨属主、过期、取消、脱敏占位与畸形凭证全部失败关闭。Task 8B 未新增字段、迁移、业务 capability、部署或 IDC 证据；Task 9 延后范围不变。
+
 ## 4. 已确认的架构
 
 采用**方案 A：MCP Server 内嵌现有 FastAPI 后端**。

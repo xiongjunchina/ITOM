@@ -344,15 +344,13 @@ test('valid normal stream with meta, message and stop terminal passes', async ()
   assert.deepEqual(await runStream(events), events);
 });
 
-test('error turn rejects meta before error', async () => {
-  await assert.rejects(
-    runStream([
-      { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
-      { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE', message: 'raw detail' } },
-      { type: 'done', data: { finish_reason: 'error' } },
-    ]),
-    expectStreamError('AI_ASSISTANT_STREAM_TERMINAL'),
-  );
+test('valid post-start error stream accepts meta, error and error terminal', async () => {
+  const events = [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE', message: 'raw detail', fallback_path: '/intake' } },
+    { type: 'done', data: { finish_reason: 'error' } },
+  ];
+  assert.deepEqual(await runStream(events), events);
 });
 
 test('valid replay stream requires and accepts the persisted message', async () => {
@@ -364,6 +362,18 @@ test('valid replay stream requires and accepts the persisted message', async () 
   assert.deepEqual(await runStream(events), events);
 });
 
+test('valid replayed server preview stays informational without an action or token', async () => {
+  const events = [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'replay' } },
+  ];
+  const delivered = await runPresentedStream(events);
+  assert.deepEqual(delivered, events);
+  assert.equal(delivered.some((event) => event.type === 'action'), false);
+  assert.equal(JSON.stringify(delivered).includes('confirmation_token'), false);
+});
+
 test('valid error terminal passes without being treated as success', async () => {
   const events = [
     { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE', message: 'raw detail' } },
@@ -371,6 +381,51 @@ test('valid error terminal passes without being treated as success', async () =>
   ];
   assert.deepEqual(await runStream(events), events);
 });
+
+for (const [name, events] of [
+  ['error after delta', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    { type: 'delta', data: { text: 'provisional text' } },
+    { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE' } },
+    { type: 'done', data: { finish_reason: 'error' } },
+  ]],
+  ['error after action', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent(),
+    { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE' } },
+    { type: 'done', data: { finish_reason: 'error' } },
+  ]],
+  ['error after completed message', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    messageEvent(),
+    { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE' } },
+    { type: 'done', data: { finish_reason: 'error' } },
+  ]],
+  ['post-start error with success terminal', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    { type: 'error', data: { code: 'AI_ASSISTANT_UNAVAILABLE' } },
+    { type: 'done', data: { finish_reason: 'stop' } },
+  ]],
+  ['preview replay containing an action', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    actionEvent(),
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'replay' } },
+  ]],
+  ['preview replay containing a delta', [
+    { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+    { type: 'delta', data: { text: 'must not be replayed' } },
+    serverPreviewMessageEvent(),
+    { type: 'done', data: { finish_reason: 'replay' } },
+  ]],
+]) {
+  test(`${name} fails the exact error and replay grammar closed`, async () => {
+    await assert.rejects(
+      runStream(events),
+      expectStreamError('AI_ASSISTANT_STREAM_TERMINAL'),
+    );
+  });
+}
 
 test('valid L3 preview binds one action to the matching server preview', async () => {
   const events = [

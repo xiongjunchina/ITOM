@@ -293,6 +293,8 @@ Fix Round 5 补齐 SQLAlchemy 原始查询修饰面：`_projection_metadata()` �
 
 WA0 Task 8 只增加前端消费层，不修改上述后端契约。`frontend/src/api/assistant.ts` 使用原生 `fetch` 发起带 Bearer Token 与 `X-Lang` 的 POST-SSE 请求，并以有限帧/缓冲、严格事件白名单、单对象 JSON 和完整终态校验失败关闭；401 复用现有退出/登录跳转。页面上下文由显式路由表及有限 tab/GLID 参数构造，未知路径退回 `/`，不读取 DOM、HTML、表单、Cookie、存储或 URL 凭据。业务门户与内部工作台均挂载同一全局抽屉；所有消息、预览和审计值只按 React 文本呈现，不使用 raw HTML。L3 卡片的确认/取消只调用 Task 6 API，防重复点击、按服务端期限过期并只把确认响应中的 `status=succeeded` 认定为权威成功。`/admin/ai-assistant` 由 `admin_ai:view` 路由/菜单守卫暴露五页签控制台；编辑/删除动作还检查对应前端权限，但后端各端点的 `require_perm` 仍是最终授权。提供商表单从不读取或预填密钥，只在用户输入非空新值时写出。该任务不增加后端路由、模型、迁移、配置或具体领域 capability。
 
+独立 Task 8B 明确 SSE 消费状态机与 L3 凭证投影。合法错误流精确为 `error → done(error)` 或 `meta → error → done(error)`；error 前若已出现 delta/action/message、`done(error)` 带成功数据、error 后出现非对应终态、或终态后仍有事件，客户端统一失败关闭。重放流精确为 `meta → message → done(replay)`，message 可为 `advisory/not_executed` 或 `server_preview/prepared_not_executed`；后者只重放安全说明，必须没有 action/delta/确认 Token，客户端不得构造可操作卡片。首次 L3 prepare 的 action 事件不再把整个对象送入通用 `redact_for_message()`，而由服务端专用投影只输出经过通用脱敏的 `preview`，以及精确的 `action_id`、`risk=L3`、原始一次性 `confirmation_token` 和 `expires_at`；字段缺失、越界、风险不符或 Token 为 `[REDACTED]` 均拒绝发出。该例外只属于同属主 action SSE 传输，通用脱敏规则不变，凭证仍只存 SHA-256，不进入 message、数据库正文/结果、日志、审计、provider/model 或确认 REST 响应。确认 API 继续按属主、状态、期限和 SHA-256 校验并一次消费；重放、重复、跨属主、过期、取消、脱敏占位和畸形凭证均不能执行 handler。
+
 ### 4.2 ITSM
 
 ```text

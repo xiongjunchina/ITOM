@@ -121,3 +121,10 @@ def test_redaction_scrubs_all_sensitive_assignment_name_variants_without_losing_
         rendered = json.dumps(output, ensure_ascii=False)
         assert not any(secret in rendered for secret in secrets)
         assert "status=ok project=printer after" in output["note"]
+
+
+def test_generic_confirmation_token_field_remains_redacted():
+    """The owner-only action SSE projection must not weaken generic token-key redaction."""
+    assert redact_for_message({"confirmation_token": "one-time-value"}) == {
+        "confirmation_token": "[REDACTED]"
+    }

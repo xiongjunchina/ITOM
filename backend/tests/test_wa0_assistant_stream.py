@@ -33,6 +33,7 @@ from app.models import (
     AiConversation,
     AiMessage,
     AiProviderConfig,
+    AuditLog,
     AuthUser,
 )
 from app.routers import assistant as assistant_router
@@ -440,8 +441,10 @@ def test_fixed_tool_code_is_reauthorized_and_result_is_untrusted(client, admin_h
     assert "UNTRUSTED_TOOL_RESULT" in tool_message["content"]
 
 
-def test_l3_stream_only_prepares_server_action_and_never_executes(client, admin_headers, monkeypatch):
-    """Calling an L3 handler during streaming would bypass Task 6 explicit confirmation."""
+def test_l3_stream_delivers_owner_token_once_without_persisting_or_logging_it(
+    client, admin_headers, monkeypatch, caplog
+):
+    """Redacting the owner SSE token breaks confirmation; leaking it outside SSE breaks security."""
     profile_id, version_id = _install_runtime()
     headers, user_id = _create_user(client, admin_headers, "wa0_stream_action")
     conversation_id = _conversation(user_id, profile_id, version_id)
@@ -459,13 +462,113 @@ def test_l3_stream_only_prepares_server_action_and_never_executes(client, admin_
     assert ACTION_HANDLER.executions == before
     assert [event["type"] for event in events] == ["meta", "action", "delta", "message", "done"]
     action = events[1]["data"]
+    assert set(action) == {
+        "action_id", "risk", "preview", "confirmation_token", "expires_at"
+    }
     assert action["risk"] == "L3"
     assert action["preview"] == {"title": "需要确认", "status": "preview"}
-    assert action["confirmation_token"]
+    raw_token = action["confirmation_token"]
+    assert isinstance(raw_token, str) and raw_token
+    assert raw_token != "[REDACTED]"
+    assert len(raw_token) <= 512
     with SessionLocal() as db:
         row = db.get(AiAction, action["action_id"])
         assert row is not None and row.status == "prepared"
-        assert row.token_hash and row.token_hash != action["confirmation_token"]
+        assert row.token_hash and row.token_hash != raw_token
+        persisted = json.dumps({
+            "message": [
+                message.content for message in db.query(AiMessage).filter(
+                    AiMessage.conversation_id == conversation_id
+                )
+            ],
+            "action_payload": row.normalized_payload,
+            "action_result": row.result_summary,
+            "action_token_hash": row.token_hash,
+            "audits": [audit.summary for audit in db.query(AuditLog).filter(
+                AuditLog.entity_type == "ai_action",
+                AuditLog.entity_id == row.id,
+            )],
+        }, default=str, ensure_ascii=False)
+        assert raw_token not in persisted
+    assert raw_token not in json.dumps(fake.requests, default=str, ensure_ascii=False)
+    assert raw_token not in caplog.text
+
+    confirmed = client.post(
+        f"/api/assistant/actions/{action['action_id']}/confirm",
+        headers=headers,
+        json={"confirmation_token": raw_token},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["data"]["status"] == "succeeded"
+    assert ACTION_HANDLER.executions == before + 1
+    repeated = client.post(
+        f"/api/assistant/actions/{action['action_id']}/confirm",
+        headers=headers,
+        json={"confirmation_token": raw_token},
+    )
+    assert repeated.status_code == 409, repeated.text
+    assert repeated.json()["error"]["code"] == "AI_ACTION_NOT_PREPARED"
+    assert ACTION_HANDLER.executions == before + 1
+    with SessionLocal() as db:
+        row = db.get(AiAction, action["action_id"])
+        after_confirm = json.dumps({
+            "message": [
+                message.content for message in db.query(AiMessage).filter(
+                    AiMessage.conversation_id == conversation_id
+                )
+            ],
+            "action_payload": row.normalized_payload,
+            "action_result": row.result_summary,
+            "audits": [audit.summary for audit in db.query(AuditLog).filter(
+                AuditLog.entity_type == "ai_action",
+                AuditLog.entity_id == row.id,
+            )],
+        }, default=str, ensure_ascii=False)
+        assert raw_token not in after_confirm
+
+
+def test_l3_replay_keeps_server_preview_without_action_event_or_token(
+    client, admin_headers, monkeypatch
+):
+    """Persisted L3 previews replay as non-executing information, never as a new capability."""
+    profile_id, version_id = _install_runtime()
+    headers, user_id = _create_user(client, admin_headers, "wa0_stream_action_replay")
+    conversation_id = _conversation(user_id, profile_id, version_id)
+    fake = FakeProvider([_events(
+        ModelStreamEvent(
+            kind="tool_call",
+            tool_call_id="action-replay-1",
+            tool_name=ACTION_CODE,
+            arguments={"title": "仅重放预览"},
+        ),
+        ModelStreamEvent(kind="done", finish_reason="tool_calls"),
+    )])
+
+    first = _post_stream(
+        client,
+        monkeypatch,
+        headers,
+        conversation_id,
+        fake,
+        client_id="same-l3-replay-message",
+        content="准备一次动作",
+    )
+    second = _post_stream(
+        client,
+        monkeypatch,
+        headers,
+        conversation_id,
+        fake,
+        client_id="same-l3-replay-message",
+        content="准备一次动作",
+    )
+
+    assert [event["type"] for event in first] == ["meta", "action", "delta", "message", "done"]
+    assert [event["type"] for event in second] == ["meta", "message", "done"]
+    assert second[1]["data"]["message"]["content"]["authority"] == "server_preview"
+    assert second[-1]["data"] == {"finish_reason": "replay"}
+    assert "confirmation_token" not in json.dumps(second, ensure_ascii=False)
+    assert len(fake.requests) == 1
 
 
 @pytest.mark.parametrize(

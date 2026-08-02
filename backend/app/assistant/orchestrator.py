@@ -268,6 +268,36 @@ def _message_for_client(row_id: str, content: Mapping[str, Any]) -> dict[str, An
     return {"id": row_id, "role": "assistant", "content": dict(content), "status": "completed"}
 
 
+def _owner_action_sse_projection(action: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one prepared owner action without weakening generic token redaction."""
+    action_id = action.get("action_id")
+    risk = action.get("risk")
+    preview = redact_for_message(action.get("preview", {}))
+    raw_token = action.get("confirmation_token")
+    expires_at = action.get("confirmation_expires_at")
+    if (
+        not isinstance(action_id, str)
+        or not action_id
+        or len(action_id) > 64
+        or risk != "L3"
+        or not isinstance(preview, dict)
+        or not isinstance(raw_token, str)
+        or not raw_token
+        or len(raw_token) > 512
+        or raw_token.strip() != raw_token
+        or raw_token == "[REDACTED]"
+        or expires_at is None
+    ):
+        raise AppError("AI_ACTION_PREVIEW_INVALID", "动作预览无效", 409)
+    return {
+        "action_id": action_id,
+        "risk": risk,
+        "preview": preview,
+        "confirmation_token": raw_token,
+        "expires_at": expires_at,
+    }
+
+
 @dataclass(frozen=True)
 class _LeakText:
     semantic: str
@@ -1011,20 +1041,13 @@ class AssistantOrchestrator:
                     reservation=reservation,
                     deadline_monotonic=deadline,
                 )
-                event_data = {
-                    "action_id": action["action_id"],
-                    "risk": action["risk"],
-                    "preview": action.get("preview", {}),
-                    "confirmation_token": action.get("confirmation_token"),
-                    "expires_at": action.get("confirmation_expires_at"),
-                }
                 preview_text = (
                     "A server preview was prepared. Nothing has been executed; confirm it separately to continue."
                     if state.language.lower().startswith("en")
                     else "服务端已生成待确认预览；当前仅为预览，尚未执行任何业务变更。"
                 )
                 return _ToolResult(
-                    client_event={"type": "action", "data": redact_for_message(event_data)},
+                    client_event={"type": "action", "data": _owner_action_sse_projection(action)},
                     preview_outcome=_TurnOutcome(
                         authority="server_preview",
                         operation_status="prepared_not_executed",

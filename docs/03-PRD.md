@@ -538,6 +538,8 @@ Task 7A 进一步固定最终化权威：只有 `db.commit()` 成功返回才设
 
 WA0 Task 8 完成网页前端闭环：业务门户和内部工作台共用顶栏启动器与响应式助手抽屉；页面上下文仅从受控路由、允许的标签及显式选中 GLID 构造，不抓取 DOM、表单或浏览器凭据。POST-SSE 客户端严格限制帧/缓冲并仅接受 `meta|delta|message|action|error|done`，未知事件、非法/截断 JSON、错误后的非 `done` 或 `done` 后数据均失败关闭，认证与语言行为沿用现有 API 客户端。消息和服务端预览只按 React 文本渲染，不执行 HTML。L3 卡片覆盖待确认、确认中、取消中、成功、取消、过期、冲突和失败；Token 不展示且终态清除，只有确认 API 的服务端 `succeeded` 结果可标为权威成功。系统管理新增 `admin_ai` 路由/菜单守卫及提供商、固定档案、健康、用量、动作审计五页签控制台；提供商密钥只写、编辑不回填。Task 8 不新增后端、数据字段、WA1 领域能力或部署验收，真实 IDC 角色、动作与断流证据仍属于 Task 9。
 
+独立 Task 8B 补齐前端消费与后端 L3 动作之间的确认桥，但不扩大 Task 8/WA0 业务能力。浏览器只新增接受启动前 `error → done(error)` 与元数据后 `meta → error → done(error)`；一旦已出现 delta、action 或 message，再出现 error，或错误终态混入成功数据，仍失败关闭且不向用户展示 provider/model 原始错误。`meta → message → done(replay)` 重放同时接受 `advisory` 与 `server_preview` 权威，但重放预览只作说明，不生成卡片、不携带 action/Token，也不能表示 mutation 已准备或可确认。仅首次同属主 L3 action SSE 通过后端固定窄投影一次性交付原始确认 Token；通用脱敏器继续将任意普通 `confirmation_token` 字段处理为 `[REDACTED]`。凭证不进入模型、消息、持久化、日志、审计或 REST 响应；只有同一属主的首次合法确认成功，重复、跨用户、过期、取消、脱敏占位和畸形值全部失败关闭。Task 8B 不新增数据字段、迁移、领域能力或部署验收。
+
 ---
 
 ## 11. 非功能需求
