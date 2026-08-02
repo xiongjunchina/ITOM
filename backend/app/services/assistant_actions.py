@@ -202,6 +202,17 @@ def _safe_result(result: CapabilityResult) -> tuple[dict, str | None]:
     return data, message
 
 
+def _public_utc(value: datetime | None) -> str | None:
+    """Serialize the naive-UTC persistence value as an explicit UTC wire timestamp."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
 def _action_payload(row: AiAction, *, include_token: str | None = None) -> dict:
     summary = row.result_summary if isinstance(row.result_summary, dict) else {}
     body = {
@@ -209,7 +220,7 @@ def _action_payload(row: AiAction, *, include_token: str | None = None) -> dict:
         "capability_code": row.capability_code,
         "risk": row.risk_level,
         "status": row.status,
-        "confirmation_expires_at": row.expires_at,
+        "confirmation_expires_at": _public_utc(row.expires_at),
     }
     if row.status == "prepared":
         body["preview"] = summary.get("preview", {})
@@ -549,6 +560,26 @@ def _public_execution_error(exc: Exception) -> tuple[AppError, str]:
     )
 
 
+def _commit_execution_claim(db: Session, row: AiAction) -> None:
+    """Durably consume the confirmation before any handler can begin."""
+    row.status = "executing"
+    row.consumed_at = _utcnow()
+    row.result_code = "AI_ACTION_EXECUTING"
+    row.result_summary = {
+        "result": {},
+        "error": {"code": "AI_ACTION_OUTCOME_UNKNOWN", "message": "执行结果待核实"},
+    }
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise AppError(
+            "AI_ACTION_EXECUTION_CLAIM_FAILED",
+            "操作未执行，请稍后重试",
+            503,
+        ) from None
+
+
 def _commit_locked_failure(db: Session, row: AiAction, code: str) -> None:
     """Persist failure on the already locked row without releasing the outer lock."""
     row.status = "failed"
@@ -565,8 +596,8 @@ def _commit_locked_failure(db: Session, row: AiAction, code: str) -> None:
             db.rollback()
         finally:
             raise AppError(
-                "AI_ACTION_FAILURE_PERSISTENCE_FAILED",
-                "操作未执行，失败状态未能持久化，请稍后重试",
+                "AI_ACTION_OUTCOME_UNKNOWN",
+                "操作结果暂时无法确认，请勿重试",
                 503,
             ) from None
 
@@ -599,6 +630,8 @@ def confirm_action(
         db.rollback()
         raise AppError("AI_ACTION_TOKEN_INVALID", "确认凭证无效", 403)
 
+    execution_claimed = False
+    success_commit_started = False
     try:
         conversation = _owned_conversation(
             db,
@@ -613,6 +646,11 @@ def confirm_action(
             row,
             conversation,
         )
+        _commit_execution_claim(db, row)
+        execution_claimed = True
+        row = _locked_owned_action(db, actor, action_id)
+        if row.status != "executing":
+            raise AppError("AI_ACTION_OUTCOME_UNKNOWN", "操作结果暂时无法确认，请勿重试", 503)
         uow = ActionUnitOfWork(db)
         with db.begin_nested():
             with _handler_transaction_boundary(db):
@@ -649,12 +687,23 @@ def confirm_action(
                     "result_entity_id": entity_id,
                 },
             )
+        success_commit_started = True
         db.commit()
         db.refresh(row)
         return _action_payload(row)
     except Exception as exc:
-        if isinstance(exc, AppError) and exc.code == "AI_ACTION_FAILURE_PERSISTENCE_FAILED":
+        if isinstance(exc, AppError) and exc.code in {
+            "AI_ACTION_EXECUTION_CLAIM_FAILED",
+            "AI_ACTION_OUTCOME_UNKNOWN",
+        }:
             raise
+        if execution_claimed and success_commit_started:
+            db.rollback()
+            raise AppError(
+                "AI_ACTION_OUTCOME_UNKNOWN",
+                "操作结果暂时无法确认，请勿重试",
+                503,
+            ) from None
         public_error, failure_code = _public_execution_error(exc)
         _commit_locked_failure(db, row, failure_code)
         raise public_error from None

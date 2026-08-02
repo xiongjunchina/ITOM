@@ -466,6 +466,8 @@ def test_l3_stream_delivers_owner_token_once_without_persisting_or_logging_it(
         "action_id", "risk", "preview", "confirmation_token", "expires_at"
     }
     assert action["risk"] == "L3"
+    assert isinstance(action["expires_at"], str)
+    assert action["expires_at"].endswith("Z")
     assert action["preview"] == {"title": "需要确认", "status": "preview"}
     raw_token = action["confirmation_token"]
     assert isinstance(raw_token, str) and raw_token

@@ -540,6 +540,8 @@ WA0 Task 8 完成网页前端闭环：业务门户和内部工作台共用顶栏
 
 独立 Task 8B 补齐前端消费与后端 L3 动作之间的确认桥，但不扩大 Task 8/WA0 业务能力。浏览器只新增接受启动前 `error → done(error)` 与元数据后 `meta → error → done(error)`；一旦已出现 delta、action 或 message，再出现 error，或错误终态混入成功数据，仍失败关闭且不向用户展示 provider/model 原始错误。`meta → message → done(replay)` 重放同时接受 `advisory` 与 `server_preview` 权威，但重放预览只作说明，不生成卡片、不携带 action/Token，也不能表示 mutation 已准备或可确认。仅首次同属主 L3 action SSE 通过后端固定窄投影一次性交付原始确认 Token；通用脱敏器继续将任意普通 `confirmation_token` 字段处理为 `[REDACTED]`。凭证不进入模型、消息、持久化、日志、审计或 REST 响应；只有同一属主的首次合法确认成功，重复、跨用户、过期、取消、脱敏占位和畸形值全部失败关闭。Task 8B 不新增数据字段、迁移、领域能力或部署验收。
 
+Task 8C 不增加业务能力、迁移或部署验收。公开 action 载荷中的 `confirmation_expires_at` 和首次 action SSE 的 `expires_at` 必须是显式 `Z` 的 RFC 3339 UTC，浏览器拒绝无偏移值，故 UTC 存储语义不再被本地时区误读。实时流和 completed replay 的 `server_preview.action_id` 均须通过同一 26 位 ULID 校验，非法值在展示前失败关闭。确认经过属主、Token、期限和运行时校验后，先提交内部、不可确认/不可取消的 `executing` 声明，handler 才可开始；声明提交失败不执行 handler。后续已知 handler/审计失败可提交 `failed`，但 handler 或终态持久化不确定时保持不可重试状态并只返回安全的结果待核实，不得恢复 `prepared`、重发 Token 或把未成功提交的领域结果说成成功。Task 9 IDC UAT 尚未完成。
+
 ---
 
 ## 11. 非功能需求

@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   AssistantStreamError,
   assistantApi,
+  isAssistantActionId,
   isAssistantConfirmationToken,
   streamAssistantMessage,
 } from '../../api/assistant';
@@ -46,6 +47,21 @@ function isNonEmptyText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+const ASSISTANT_UTC_EXPIRY = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+
+/** Accept only the explicit UTC wire format used for server-issued action expiry. */
+export function parseAssistantActionExpiry(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'string' || !ASSISTANT_UTC_EXPIRY.test(value)) {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
+  }
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
+  }
+  return parsed;
+}
+
 /** Accept only the two completed, server-owned authority envelopes. */
 export function presentAssistantServerMessage(message: AssistantServerMessage | undefined): AssistantMessagePresentation {
   if (
@@ -82,7 +98,7 @@ export function presentAssistantServerMessage(message: AssistantServerMessage | 
     authority === 'server_preview'
     && operationStatus === 'prepared_not_executed'
     && hasExactKeys(message.content, ['action_id', 'authority', 'operation_status', 'text'])
-    && isNonEmptyText(actionId)
+    && isAssistantActionId(actionId)
     && isNonEmptyText(authorityNotice)
   ) {
     return { text: authorityNotice, authority };
@@ -278,9 +294,7 @@ export default function AssistantDrawer({ open, onClose }: Props) {
             throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action');
           }
           const expires = payload.confirmation_expires_at ?? payload.expires_at ?? null;
-          if (expires !== null && (typeof expires !== 'string' || !Number.isFinite(Date.parse(expires)))) {
-            throw new AssistantStreamError('AI_ASSISTANT_STREAM_PAYLOAD', 'Invalid action expiry');
-          }
+          parseAssistantActionExpiry(expires);
           const confirmationToken = isAssistantConfirmationToken(payload.confirmation_token)
             ? payload.confirmation_token
             : undefined;

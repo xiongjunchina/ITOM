@@ -18,7 +18,7 @@ interface Props {
   onNavigate: (path: string) => void;
 }
 
-const TERMINAL = new Set<AssistantActionStatus>(['succeeded', 'cancelled', 'expired', 'conflict', 'failed']);
+const TERMINAL = new Set<AssistantActionStatus>(['succeeded', 'cancelled', 'expired', 'conflict', 'failed', 'executing']);
 
 function displayValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '-';
@@ -54,7 +54,7 @@ export default function AssistantActionCard({ action, interactionDisabled = fals
 
   const status = useMemo(() => {
     const colors: Record<AssistantActionStatus, string> = {
-      prepared: 'warning', confirming: 'processing', cancelling: 'processing', succeeded: 'success',
+      prepared: 'warning', executing: 'warning', confirming: 'processing', cancelling: 'processing', succeeded: 'success',
       cancelled: 'default', expired: 'default', conflict: 'error', failed: 'error',
     };
     return <Tag color={colors[action.status]}>{t(`assistant.action.status.${action.status}`)}</Tag>;

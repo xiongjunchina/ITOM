@@ -2362,6 +2362,7 @@ export interface AssistantServerMessage {
 
 export type AssistantActionStatus =
   | 'prepared'
+  | 'executing'
   | 'confirming'
   | 'cancelling'
   | 'succeeded'

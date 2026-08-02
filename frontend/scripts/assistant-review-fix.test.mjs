@@ -237,6 +237,41 @@ test('server preview presentation accepts only the server-owned prepared but une
   );
 });
 
+test('the production action-expiry boundary rejects naive UTC and preserves a ten-minute UTC deadline for Asia/Shanghai', () => {
+  assert.equal(
+    typeof drawer.parseAssistantActionExpiry,
+    'function',
+    'AssistantDrawer does not yet expose the production action-expiry boundary',
+  );
+  const serverNow = Date.parse('2030-01-01T00:00:00Z');
+  const originalNaiveUtc = '2030-01-01T00:10:00';
+  const canonicalUtc = '2030-01-01T00:10:00Z';
+
+  // A browser in Asia/Shanghai treats the old offset-free server value as local time.
+  assert.equal(Date.parse(`${originalNaiveUtc}+08:00`) - serverNow, -470 * 60 * 1000);
+  assert.throws(
+    () => drawer.parseAssistantActionExpiry(originalNaiveUtc),
+    expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+  );
+  assert.equal(drawer.parseAssistantActionExpiry(canonicalUtc) - serverNow, 10 * 60 * 1000);
+});
+
+test('replayed previews reject an invalid action id before rendering and in the completed-message presenter', async () => {
+  const invalid = serverPreviewMessageEvent({ actionId: 'not-a-valid-action-id' });
+  await assert.rejects(
+    runPresentedStream([
+      { type: 'meta', data: { conversation_id: '01CONVERSATION00000000000000' } },
+      invalid,
+      { type: 'done', data: { finish_reason: 'replay' } },
+    ]),
+    expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+  );
+  assert.throws(
+    () => drawer.presentAssistantServerMessage(invalid.data.message),
+    expectStreamError('AI_ASSISTANT_STREAM_PAYLOAD'),
+  );
+});
+
 for (const [name, mutation] of [
   ['unexpected authority', { authority: 'unexpected', operationStatus: 'succeeded' }],
   ['advisory with succeeded status', { operationStatus: 'succeeded' }],
@@ -531,6 +566,7 @@ test('known action-audit statuses map to explicit bilingual translation keys', (
   );
   const expected = {
     prepared: 'admin.ai.audit.status.prepared',
+    executing: 'admin.ai.audit.status.executing',
     succeeded: 'admin.ai.audit.status.succeeded',
     cancelled: 'admin.ai.audit.status.cancelled',
     expired: 'admin.ai.audit.status.expired',

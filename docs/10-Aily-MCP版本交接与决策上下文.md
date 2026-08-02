@@ -95,6 +95,8 @@ Task 8 已完成 WA0 前端消费层：业务门户与内部工作台顶栏共�
 
 独立 Task 8B 已修复 Task 8 前端与既有 L3 后端之间的确认桥，且不重开 Task 8 五轮审查、不扩大 WA0。严格状态机现精确接受启动前 `error → done(error)`、元数据后 `meta → error → done(error)`，以及 `advisory` 或 `server_preview` 的 `meta → message → done(replay)`；错误出现在 delta/action/message 后、错误终态混入成功载荷、重放预览夹带 action/delta/Token 或其他畸形交叉序列均失败关闭。重放的服务端预览只作信息展示，不产生卡片或可执行含义。首次同属主 L3 action SSE 通过服务端固定窄投影交付一次原始确认 Token 和安全预览；通用脱敏规则不变，Token 仍只存 SHA-256，且不进入模型、message、持久化、日志、审计或 REST 响应。同一属主恰好一次合法确认成功，重复、跨属主、过期、取消、脱敏占位与畸形凭证全部失败关闭。Task 8B 未新增字段、迁移、业务 capability、部署或 IDC 证据；Task 9 延后范围不变。
 
+Task 8C 修复 WA0 确认传输/状态边界而不新增业务 capability、迁移、部署或 Aily/MCP 变更。`AiAction.expires_at` 仍为 naive UTC 存储，但公开 `confirmation_expires_at` 和 action SSE `expires_at` 统一输出带 `Z` 的 RFC 3339 UTC；浏览器拒绝无时区日期。live/replay `server_preview.action_id` 都按相同 ULID 语法失败关闭。确认在既有属主、凭证、期限、会话/档案/能力重授权完成后，先提交内部非可确认、非可取消且不可重试的 `executing` 声明；只有成功声明后才调用 handler。已知 handler/审计失败仍可写 `failed`，而声明后的 handler 或终态持久化不确定时保留非确认态并返回安全 outcome-unknown，绝不恢复 `prepared`、再发 Token 或未经成功事务就报告业务成功。成功领域变更、`succeeded` 结果和审计仍同事务；Task 9 的真实 PostgreSQL/ASGI/IDC 证据仍待完成。
+
 ## 4. 已确认的架构
 
 采用**方案 A：MCP Server 内嵌现有 FastAPI 后端**。

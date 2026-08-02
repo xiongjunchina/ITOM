@@ -23,6 +23,10 @@ const SSE_EVENT_TYPES = new Set<AssistantSseEvent['type']>([
 ]);
 const ASSISTANT_ACTION_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
+export function isAssistantActionId(value: unknown): value is string {
+  return typeof value === 'string' && ASSISTANT_ACTION_ID.test(value);
+}
+
 /** A single final message may be large; both limits remain finite and fail closed. */
 export const ASSISTANT_SSE_MAX_FRAME_CHARS = 1024 * 1024;
 export const ASSISTANT_SSE_MAX_BUFFER_CHARS = ASSISTANT_SSE_MAX_FRAME_CHARS * 2;
@@ -149,7 +153,7 @@ export function createAssistantStreamSequenceValidator() {
           || sawError
           || actionId !== null
           || event.data.risk !== 'L3'
-          || !ASSISTANT_ACTION_ID.test(event.data.action_id)
+          || !isAssistantActionId(event.data.action_id)
         ) invalidTerminal();
         actionId = event.data.action_id;
       } else if (event.type === 'message') {
@@ -159,8 +163,7 @@ export function createAssistantStreamSequenceValidator() {
           && content.operation_status === 'not_executed';
         const previewPair = content?.authority === 'server_preview'
           && content.operation_status === 'prepared_not_executed'
-          && typeof content.action_id === 'string'
-          && content.action_id.length > 0;
+          && isAssistantActionId(content.action_id);
         if (!advisoryPair && !previewPair) invalidPayload();
         if (previewPair && Object.prototype.hasOwnProperty.call(content, 'advisory_text')) invalidPayload();
         if (actionId === null && !advisoryPair && !previewPair) invalidTerminal();

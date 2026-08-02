@@ -295,6 +295,8 @@ WA0 Task 8 只增加前端消费层，不修改上述后端契约。`frontend/sr
 
 独立 Task 8B 明确 SSE 消费状态机与 L3 凭证投影。合法错误流精确为 `error → done(error)` 或 `meta → error → done(error)`；error 前若已出现 delta/action/message、`done(error)` 带成功数据、error 后出现非对应终态、或终态后仍有事件，客户端统一失败关闭。重放流精确为 `meta → message → done(replay)`，message 可为 `advisory/not_executed` 或 `server_preview/prepared_not_executed`；后者只重放安全说明，必须没有 action/delta/确认 Token，客户端不得构造可操作卡片。首次 L3 prepare 的 action 事件不再把整个对象送入通用 `redact_for_message()`，而由服务端专用投影只输出经过通用脱敏的 `preview`，以及精确的 `action_id`、`risk=L3`、原始一次性 `confirmation_token` 和 `expires_at`；字段缺失、越界、风险不符或 Token 为 `[REDACTED]` 均拒绝发出。该例外只属于同属主 action SSE 传输，通用脱敏规则不变，凭证仍只存 SHA-256，不进入 message、数据库正文/结果、日志、审计、provider/model 或确认 REST 响应。确认 API 继续按属主、状态、期限和 SHA-256 校验并一次消费；重放、重复、跨属主、过期、取消、脱敏占位和畸形凭证均不能执行 handler。
 
+Task 8C 固定 WA0 的 action 线缆和执行声明。`confirmation_expires_at` 与 SSE `expires_at` 都是 RFC 3339 UTC `Z` 字符串；客户端只接受该格式，拒绝 offset-free/畸形期限。`server_preview.action_id` 在 action 与 replay completed-message 两条路径使用同一 ULID 语法，非法重放不渲染。确认 API 先完成属主、Token、期限和运行时校验，再提交 `executing` 的 durable claim；只有该提交成功才进入 handler。后续成功事务仍原子写领域变更、`succeeded` 和审计；已知失败可持久化 `failed`，但 claim 后的处理器或终态提交不确定时响应 `AI_ACTION_OUTCOME_UNKNOWN`，动作保持非确认态，客户端不能将其呈现为成功或再次确认/取消。该任务不新增 API 路由、迁移、Aily/MCP 或 IDC 验收结论。
+
 ### 4.2 ITSM
 
 ```text

@@ -71,6 +71,7 @@ export function createLatestRequestGuard() {
 
 const ACTION_AUDIT_STATUS_KEYS = {
   prepared: 'admin.ai.audit.status.prepared',
+  executing: 'admin.ai.audit.status.executing',
   succeeded: 'admin.ai.audit.status.succeeded',
   cancelled: 'admin.ai.audit.status.cancelled',
   expired: 'admin.ai.audit.status.expired',

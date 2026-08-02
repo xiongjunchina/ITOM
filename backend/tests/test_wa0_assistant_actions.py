@@ -458,6 +458,8 @@ def test_prepare_uses_registered_schema_and_authoritative_preview_with_one_time_
     }
     assert first["confirmation_token"]
     assert first["confirmation_expires_at"]
+    assert isinstance(first["confirmation_expires_at"], str)
+    assert first["confirmation_expires_at"].endswith("Z")
 
     replay = _prepare("wa0_action_prepare", conversation_id, ticket_code, "prepare-key-0001")
     assert replay["action_id"] == first["action_id"]
@@ -476,6 +478,9 @@ def test_prepare_uses_registered_schema_and_authoritative_preview_with_one_time_
         assert row.token_hash != first["confirmation_token"]
         assert first["confirmation_token"] not in persisted
         assert row.payload_digest and len(row.payload_digest) == 64
+
+        # Storage remains naive UTC, while the public wire value is unambiguous.
+        assert row.expires_at is not None and row.expires_at.tzinfo is None
 
     invalid_secret = "Bearer validation-secret-raw"
     with pytest.raises(AppError) as invalid:
@@ -2222,6 +2227,7 @@ def test_confirm_failure_state_persistence_error_is_bounded_and_not_silently_swa
         "failure-persistence-key",
         "explode before failure persistence",
     )
+    execute_calls_before = HANDLER.execute_calls
     with SessionLocal() as db:
         actor = db.get(AuthUser, actor_id)
         original_commit = db.commit
@@ -2245,13 +2251,21 @@ def test_confirm_failure_state_persistence_error_is_bounded_and_not_silently_swa
             assistant_actions.confirm_action(
                 db, actor, prepared["action_id"], prepared["confirmation_token"]
             )
-        _assert_code(raised, "AI_ACTION_FAILURE_PERSISTENCE_FAILED")
+        _assert_code(raised, "AI_ACTION_OUTCOME_UNKNOWN")
         assert "secret internal detail" not in raised.value.message
         assert begin_nested_calls == 1
 
     with SessionLocal() as db:
-        assert db.get(AiAction, prepared["action_id"]).status == "prepared"
+        action = db.get(AiAction, prepared["action_id"])
+        assert action.status == "executing"
         assert db.query(Ticket).filter(Ticket.ticket_code == ticket_code).one().remarks is None
+        actor = db.get(AuthUser, actor_id)
+        with pytest.raises(AppError) as retry:
+            assistant_actions.confirm_action(
+                db, actor, prepared["action_id"], prepared["confirmation_token"]
+            )
+        _assert_code(retry, "AI_ACTION_NOT_PREPARED")
+    assert HANDLER.execute_calls == execute_calls_before + 1
 
 
 def test_preview_result_status_must_be_exactly_prepared(
