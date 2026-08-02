@@ -14,6 +14,7 @@ import { MENU_TREE, breadcrumbOf, filterMenu, isRequesterOnly, type MenuNode } f
 import { localized, useBrandingStore } from '../stores/branding';
 import StaffIntakeDrawer from './StaffIntakeDrawer';
 import type { ItDocumentGuideResponse } from './DocumentTypeHint';
+import AssistantLauncher from './assistant/AssistantLauncher';
 
 const { Header, Sider, Content } = Layout;
 
@@ -153,6 +154,7 @@ export default function MainLayout() {
           </nav>
           <Space size={12}>
             <Button className="portal-f__search" type="text" icon={<SearchOutlined />} aria-label="搜索" />
+            <AssistantLauncher />
             {canViewManual && (
               <Button className="app-manual-entry" type="text" icon={<BookOutlined />} onClick={() => navigate('/user-manual')}>
                 {t('header.manual')}
@@ -201,6 +203,7 @@ export default function MainLayout() {
             </div>
           </Space>
           <Space size="middle">
+            <AssistantLauncher />
             {staffIntakeEnabled && (
               <Button type="primary" icon={<FormOutlined />} onClick={() => setStaffIntakeOpen(true)}>
                 {t('intake.title')}

@@ -23,6 +23,7 @@ import AuditLogs from './pages/admin/AuditLogs';
 import WorkflowConfig from './pages/admin/WorkflowConfig';
 import SystemIntegrations from './pages/admin/SystemIntegrations';
 import UiBranding from './pages/admin/UiBranding';
+import AiAssistant from './pages/admin/AiAssistant';
 import Definitions from './pages/process/Definitions';
 import Tickets from './pages/itsm/Tickets';
 import TicketDetail from './pages/itsm/TicketDetail';
@@ -67,6 +68,15 @@ function UserManualGate() {
   if (!user) return null;
   if (!user?.roles.includes('admin')) return <Navigate to={firstAccessiblePath(user)} replace />;
   return <UserManual />;
+}
+
+/** WA0 管理页双门禁：前端按 admin_ai 隐藏/拦截，后端 403 仍是最终授权。 */
+function AdminAiGate() {
+  const user = useAuthStore((s) => s.user);
+  if (!user) return null;
+  const allowed = user.permissions ? hasPermission(user, 'admin_ai', 'view') : user.roles.includes('admin');
+  if (!allowed) return <Navigate to={firstAccessiblePath(user)} replace />;
+  return <AiAssistant />;
 }
 
 /** M17 旧地址兼容：/projects?tab=portfolios、/requirements?tab=tasks|scoring → 新二级菜单路径 */
@@ -157,6 +167,7 @@ export const router = createBrowserRouter([
       // 需求评分规则已并入需求管理标签页（2026-07-14），保留旧地址重定向
       { path: 'admin/requirement-scoring', element: <Navigate to="/requirements/scoring" replace /> },
       { path: 'admin/integrations', element: <SystemIntegrations /> },
+      { path: 'admin/ai-assistant', element: <AdminAiGate /> },
       { path: 'admin/feishu', element: <Navigate to="/admin/integrations?tab=feishu" replace /> },
       { path: 'admin/ui-branding', element: <UiBranding /> },
       { path: 'admin/audit-logs', element: <AuditLogs /> },

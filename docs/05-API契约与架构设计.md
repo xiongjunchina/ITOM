@@ -291,6 +291,8 @@ Fix Round 4 进一步固定 handler 数据端口：`ReadOnlyActionData` 对完�
 
 Fix Round 5 补齐 SQLAlchemy 原始查询修饰面：`_projection_metadata()` 在任何 SQL 执行前对非空 `_prefixes`、`_suffixes`、`_statement_hints` 或 `_hints` 一律返回对应端口 violation，不解析也不允许字符串白名单。由此 `prefix_with()`、`suffix_with()`、`with_statement_hint()` 和 `with_hint()` 不能注入 `FOR UPDATE`、大 offset、`DISTINCT` 或其他方言 SQL；`ReadOnlyActionData` 与共用校验的 `ActionUnitOfWork.lock_one()` 使用同一 fail-closed 契约。
 
+WA0 Task 8 只增加前端消费层，不修改上述后端契约。`frontend/src/api/assistant.ts` 使用原生 `fetch` 发起带 Bearer Token 与 `X-Lang` 的 POST-SSE 请求，并以有限帧/缓冲、严格事件白名单、单对象 JSON 和完整终态校验失败关闭；401 复用现有退出/登录跳转。页面上下文由显式路由表及有限 tab/GLID 参数构造，未知路径退回 `/`，不读取 DOM、HTML、表单、Cookie、存储或 URL 凭据。业务门户与内部工作台均挂载同一全局抽屉；所有消息、预览和审计值只按 React 文本呈现，不使用 raw HTML。L3 卡片的确认/取消只调用 Task 6 API，防重复点击、按服务端期限过期并只把确认响应中的 `status=succeeded` 认定为权威成功。`/admin/ai-assistant` 由 `admin_ai:view` 路由/菜单守卫暴露五页签控制台；编辑/删除动作还检查对应前端权限，但后端各端点的 `require_perm` 仍是最终授权。提供商表单从不读取或预填密钥，只在用户输入非空新值时写出。该任务不增加后端路由、模型、迁移、配置或具体领域 capability。
+
 ### 4.2 ITSM
 
 ```text
@@ -486,7 +488,7 @@ IDC Kubernetes:
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
 | Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
-| 网页智能体 WA0（Task 1–7 已实现；Task 8+ 待实施）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关、模型/档案管理 API、本人网页会话生命周期、通用 L3 服务端预览/确认边界及受控 POST-SSE/工具循环；具体领域能力待实施 | 全局助手、结构化卡片、AI 智能体管理 UI 待实施 | 网页智能体设计基线 |
+| 网页智能体 WA0（Task 1–8 已实现；Task 9 验收待执行）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关、模型/档案管理 API、本人网页会话生命周期、通用 L3 服务端预览/确认边界、受控 POST-SSE/工具循环、全局助手、结构化动作卡和 AI 智能体管理 UI；具体领域能力待 WA1+ | Task 9 真实 PostgreSQL/ASGI/IDC 证据及后续领域能力 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 

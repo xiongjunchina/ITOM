@@ -145,6 +145,7 @@ const zh: Dict = {
   'module.admin_master_data': '数据字典',
   'module.admin_workflow': '状态机配置',
   'module.admin_feishu': '系统集成',
+  'module.admin_ai': 'AI 智能体',
   'module.admin_audit': '审计日志',
   'module.admin_ui_branding': '界面与品牌',
   // 权限配置：菜单页小标题（合并页）
@@ -203,6 +204,7 @@ const zh: Dict = {
   'menu./admin/workflow-config': '状态机配置',
   'menu./admin/feishu': '飞书集成',
   'menu./admin/integrations': '系统集成',
+  'menu./admin/ai-assistant': 'AI 智能体',
   'menu./admin/audit-logs': '审计日志',
   'menu./admin/ui-branding': '界面与品牌',
 };
@@ -342,6 +344,7 @@ const en: Dict = {
   'module.admin_master_data': 'Data Dictionary',
   'module.admin_workflow': 'State Machine',
   'module.admin_feishu': 'System Integrations',
+  'module.admin_ai': 'AI Agent',
   'module.admin_audit': 'Audit Log',
   'module.admin_ui_branding': 'Interface & Branding',
   'permPage.admin_org': 'Organization',
@@ -397,6 +400,7 @@ const en: Dict = {
   'menu./admin/workflow-config': 'State Machine',
   'menu./admin/feishu': 'Feishu Integration',
   'menu./admin/integrations': 'System Integrations',
+  'menu./admin/ai-assistant': 'AI Agent',
   'menu./admin/audit-logs': 'Audit Log',
   'menu./admin/ui-branding': 'Interface & Branding',
 };
@@ -412,8 +416,9 @@ import * as dashboard from './locales/dashboard';
 import * as components from './locales/components';
 import * as profile from './locales/profile';
 import * as taskManagement from './locales/taskManagement';
+import * as assistant from './locales/assistant';
 
-const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement];
+const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement, assistant];
 
 export const DICT: Record<'zh' | 'en', Dict> = {
   zh: Object.assign({}, zh, ...domains.map((d) => d.zh)),

@@ -71,7 +71,7 @@ IT 事件专指网络、服务器、应用等影响范围较大的故障，只�
 
 IT 员工和系统管理员已获得网页“创建单据指引”轻量分流和跨单据关系能力；它只服务内部人员的 ITIL 判断，不对普通业务用户增加网页选择负担。Aily 中普通业务用户仍只创建服务请求，业务部门指定的 BDO 可登记 IT 需求；Aily 不执行服务请求→事件、服务请求/事件→问题、事件/问题→变更或需求→项目的转单。任何后续 MCP 范围扩展必须重新确认架构、权限、审计和用户体验。
 
-### 3.5 ITOM 网页智能体（设计已确认；WA0 Task 1–7 已实现）
+### 3.5 ITOM 网页智能体（设计已确认；WA0 Task 1–8 已实现）
 
 Task 5 会话运行时只接受可证明完整的 schema 标记版本快照、双语提示、合法能力/风险、健康兼容提供商及与活动行一致的最新发布版本；`enabled_capabilities` 和 `knowledge_scope` 必须是原始合法 list，缺失、`null` 或畸形值不归一化为空列表；未发布、停用、删除或不一致均失败关闭。创建会话在同一事务先取得与 Task 4 发布/撤回相同的 PostgreSQL 治理锁，再 `FOR UPDATE` 重载目标档案、验证、插入和提交，SQLite 保留相同调用顺序作确定性测试。普通消息保留期只从创建时捕获的版本读取，绝不由活动档案或 `expires_at` 推断：捕获为 0 时后续正值再发布也不保存正文，捕获为 1–90 时保持原决定和创建时 `expires_at`，但当前档案撤销或受众不一致时停止新正文。所有正文先递归脱敏。`fallback_available` 只反映认证用户既有、权限感知“创建单据指引”的安全载荷可用性，不代表 WA1；列表页码限制为 1–10,000。PostgreSQL 双会话竞争留待 Task 9 IDC 验收，本轮未执行。
 
@@ -81,7 +81,7 @@ Fix Round 4 已把 Task 6 支持接口进一步固定为可验证的查询与 mu
 
 Fix Round 5 封闭了 SQLAlchemy 不进入 visitor AST 的原始查询修饰入口：`_prefixes/_suffixes/_statement_hints/_hints` 任一非空即在执行前拒绝，字符串不解析、不设白名单；只读预览和 mutation `lock_one()` 共用此门禁。该修复不新增能力、字段或迁移，也不改变 Task 9 PostgreSQL/IDC 延后证据范围。
 
-网页智能体采用双入口、统一能力内核：网页使用当前 ITOM 登录会话，Aily 保持现有 JWT/MCP 身份，两者只复用下层领域服务和业务约束。WA0 Task 1–7 已实现默认关闭的持久化与 `admin_ai` 权限基础、固定能力注册/请求级策略/递归脱敏、安全 OpenAI-compatible 模型网关、仅限 `admin_ai` 的提供商/四类固定档案管理 API、当前登录用户的会话 API、L3 预览/确认/取消通用动作边界，以及事件固定为 `meta|delta|message|action|error|done` 的受控 POST-SSE/工具循环。Task 7 Fix Round 1 把运行时收紧为标量 turn 快照和分段短事务：L1/L2 只取得只读门面与不可变 actor，L3 只产生服务端“待确认、未执行”预览，普通模型 prose 只作为 `advisory/not_executed`，请求幂等摘要使用服务端密钥 HMAC。Fix Round 2 进一步完成四项收口：提示泄漏检测使用 NFKC/casefold、清除 format/零宽字符并同时比较语义文本与去标点紧凑文本；最终事务先锁定刷新账号并锁后校验，再按会话/档案/占位顺序完成；L1/L2 改为专用有界执行器和合作式取消，满载在工具 Session 创建前拒绝；工具/数据库 deadline 与 worker/queue 均有安全配置范围和关系校验。断流/deadline 立即停止等待和发事件，但不承诺强杀任意 Python 同步线程，非合作式阻塞可能后台运行至返回且 Session 最终关闭；任意硬终止需要进程隔离。会话和动作均按数据库 `auth_user_id` 隔离，模型、提示词和客户端声明不是授权来源；每次工具调用按固定 code 重新授权。已有的提供商安全、档案发布、会话归属/保留、递归脱敏、审计原子性和失败关闭契约继续有效。管理员 UI 和具体业务处理器仍待 Task 8+ 实现。普通业务用户网页智能体仍只处理本人服务请求，BDO 增加本人 IT 需求；IT 员工按实际权限和流程任务获得全模块指导及分阶段写操作。现有“创建单据指引”由真实权限计算可用路径，仍是模型不可用时的确定性降级。真实 PostgreSQL 双 Session、账号/会话/档案锁等待、非合作式线程与真实 ASGI 断流证据留待 Task 9。正式设计见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
+网页智能体采用双入口、统一能力内核：网页使用当前 ITOM 登录会话，Aily 保持现有 JWT/MCP 身份，两者只复用下层领域服务和业务约束。WA0 Task 1–8 已实现默认关闭的持久化与 `admin_ai` 权限基础、固定能力注册/请求级策略/递归脱敏、安全 OpenAI-compatible 模型网关、仅限 `admin_ai` 的提供商/四类固定档案管理 API、当前登录用户的会话 API、L3 预览/确认/取消通用动作边界，以及事件固定为 `meta|delta|message|action|error|done` 的受控 POST-SSE/工具循环。Task 7 Fix Round 1 把运行时收紧为标量 turn 快照和分段短事务：L1/L2 只取得只读门面与不可变 actor，L3 只产生服务端“待确认、未执行”预览，普通模型 prose 只作为 `advisory/not_executed`，请求幂等摘要使用服务端密钥 HMAC。Fix Round 2 进一步完成四项收口：提示泄漏检测使用 NFKC/casefold、清除 format/零宽字符并同时比较语义文本与去标点紧凑文本；最终事务先锁定刷新账号并锁后校验，再按会话/档案/占位顺序完成；L1/L2 改为专用有界执行器和合作式取消，满载在工具 Session 创建前拒绝；工具/数据库 deadline 与 worker/queue 均有安全配置范围和关系校验。断流/deadline 立即停止等待和发事件，但不承诺强杀任意 Python 同步线程，非合作式阻塞可能后台运行至返回且 Session 最终关闭；任意硬终止需要进程隔离。会话和动作均按数据库 `auth_user_id` 隔离，模型、提示词和客户端声明不是授权来源；每次工具调用按固定 code 重新授权。已有的提供商安全、档案发布、会话归属/保留、递归脱敏、审计原子性和失败关闭契约继续有效。管理员 UI 已由 Task 8 实现；具体业务处理器仍待 WA1+ 实现。普通业务用户网页智能体仍只处理本人服务请求，BDO 增加本人 IT 需求；IT 员工按实际权限和流程任务获得全模块指导及分阶段写操作。现有“创建单据指引”由真实权限计算可用路径，仍是模型不可用时的确定性降级。真实 PostgreSQL 双 Session、账号/会话/档案锁等待、非合作式线程与真实 ASGI 断流证据留待 Task 9。正式设计见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
 
 Task 7 Fix Round 3 在不扩大业务能力的前提下关闭四项运行时缺口：泄漏紧凑指纹在 NFKC/casefold 后只保留 Unicode `L*`/`N*`，因此 `M*`/`C*`/`Z*`/`P*`/`S*` 插入均不能切断匹配；工具调用先预留有界容量，再进行能力发现/重授权，满载不创建 Session、不查权限、不运行 handler；开始/幂等、能力发现、原生降级、Gateway 选择/审计、最终化和失败清理的同步数据库边界全部移出 async SSE 事件循环；最终化在 provider 返回后及锁齐账号/会话/档案/占位后、写 `completed`/commit 前合作式检查断流并在已观察取消时 rollback。该护栏不宣称强杀线程或消除真实 socket/锁调度的全部微小竞态，Task 9 仍须提供真实 PostgreSQL/ASGI 证据。
 
@@ -90,6 +90,8 @@ Task 7 Fix Round 4 修正前三项剩余审查结论且不进入 Task 8：泄漏
 Task 7 Fix Round 5 关闭最后三项独立审查缺口且仍不进入 Task 8：生产 Provider DNS 改为专用有界 DNS/IO executor 内同步 `socket.getaddrinfo`，容量准入与等待共享请求 absolute deadline，禁止 `loop.getaddrinfo`、`asyncio.to_thread` 和默认 executor；SSRF、DNS rebinding 与 TLS 原主机绑定保持不变。断流取消审计经既有有界 DB executor 非阻塞 reserve 后后台 best effort 执行，取消立即传播，满载不创建 Session，异常只产生脱敏本地告警；正常成功/可处理错误仍等待审计持久化。单一 absolute deadline 严格覆盖所有 pre-commit 工作；最终锁齐且 deadline 前最后检查通过后进入权威 commit，调用方会等待 commit 与 Session 收尾以保持 durable `completed` 和客户端终态一致，因此该收尾可能小幅越过 deadline，不再把整个返回路径描述为绝对硬上限。真实 PostgreSQL commit/断流临界竞态、真实 ASGI socket 和双 Session 幂等继续留 Task 9。
 
 Task 7A 在不扩大 WA0 或进入 Task 8 的前提下修复最终化权威：线程安全 durable-success 只在 `db.commit()` 成功返回后设置；之后的 Session close 异常只记录脱敏异常类型，不重查数据库猜测事务结果，也不能把 durable `completed` 改报 `error → done`。commit 已开始后观察到断流时取消语义优先且不再发送后续 SSE 终态，即使清理同时失败；commit 自身失败不设置 durable-success，继续 rollback、失败占位清理和安全错误路径。真实 PostgreSQL commit/断流临界竞态与真实 ASGI socket 证据仍由 Task 9 留存。
+
+Task 8 已完成 WA0 前端消费层：业务门户与内部工作台顶栏共享全局启动器，响应式抽屉调用既有 bootstrap/会话/POST-SSE/动作 API；严格有界解析器只接受固定事件并拒绝未知、畸形、截断、错误后成功及超限数据。页面上下文只来自路由/标签/显式 GLID 白名单，不抓取 DOM；输出和服务端预览只按文本渲染。L3 卡片覆盖确认、取消、过期、冲突、失败和成功终态，仅服务端确认结果 `succeeded` 为权威成功，确认 Token 不展示且终态清除。系统管理新增 `admin_ai` 守卫的提供商、四类固定档案、健康、用量和动作审计五页签控制台，密钥只写不回填。该任务未修改后端、持久化模型、具体领域能力或部署；Task 9 仍负责真实 PostgreSQL/ASGI/IDC 角色与动作证据，WA1+ 仍负责具体业务 capability。
 
 ## 4. 已确认的架构
 

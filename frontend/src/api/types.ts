@@ -2315,3 +2315,181 @@ export interface PersonalAuditLog {
   summary: Record<string, unknown> | null;
   created_at: string;
 }
+
+// ============ WA0 网页智能体 ============
+
+/** 浏览器只可提交由路由与显式页面白名单生成的非敏感上下文。 */
+export interface AssistantPageContext {
+  route: string;
+  page_type?: string;
+  entity_type?: string;
+  entity_id?: string;
+  tab?: string;
+  selected_ids: string[];
+}
+
+export interface AssistantBootstrap {
+  enabled: boolean;
+  profile: { code: string; version: number } | null;
+  max_risk: 'L1' | 'L2' | 'L3' | null;
+  suggested_prompts: string[];
+  retention_days: number | null;
+  fallback_available: boolean;
+}
+
+export interface AssistantConversation {
+  id: string;
+  language: string;
+  page_context: AssistantPageContext;
+  status: 'active' | 'archived' | string;
+  expires_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+}
+
+export interface AssistantServerMessage {
+  id: string;
+  role: 'assistant';
+  content: {
+    text?: string;
+    advisory_text?: string;
+    authority?: 'advisory' | 'server_preview' | string;
+    operation_status?: 'not_executed' | 'prepared_not_executed' | string;
+  };
+  status: 'completed' | string;
+}
+
+export type AssistantActionStatus =
+  | 'prepared'
+  | 'confirming'
+  | 'cancelling'
+  | 'succeeded'
+  | 'cancelled'
+  | 'expired'
+  | 'conflict'
+  | 'failed';
+
+export interface AssistantActionPayload {
+  action_id: string;
+  capability_code?: string;
+  risk: 'L3';
+  status?: AssistantActionStatus;
+  preview?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  confirmation_token?: string;
+  confirmation_expires_at?: string | null;
+  expires_at?: string | null;
+}
+
+export type AssistantSseEvent =
+  | { type: 'meta'; data: Record<string, unknown> }
+  | { type: 'delta'; data: { text?: string } }
+  | { type: 'message'; data: { message?: AssistantServerMessage } }
+  | { type: 'action'; data: AssistantActionPayload }
+  | { type: 'error'; data: { code?: string; message?: string; retryable?: boolean; fallback_path?: string } }
+  | { type: 'done'; data: { finish_reason?: string } };
+
+/** 管理端模型提供商响应不含 api_key；has_secret 是唯一密钥状态。 */
+export interface AiProviderConfig {
+  id: string;
+  code: string;
+  name: string;
+  provider_type: 'openai_compatible';
+  api_base_url: string;
+  model: string;
+  timeout_seconds: number;
+  max_output_tokens: number;
+  temperature: number | null;
+  capability_probe: Partial<Record<
+    'authentication' | 'supports_streaming' | 'supports_tools' | 'supports_json_schema' | 'error_code' | 'error_message',
+    boolean | string | null
+  >>;
+  probe_status: 'success' | 'failed' | string | null;
+  last_probed_at: string | null;
+  is_primary: boolean;
+  fallback_provider_id: string | null;
+  enabled: boolean;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiProviderWrite {
+  code?: string;
+  name: string;
+  provider_type?: 'openai_compatible';
+  api_base_url: string;
+  api_key?: string;
+  model: string;
+  timeout_seconds: number;
+  max_output_tokens: number;
+  temperature?: number | null;
+  is_primary: boolean;
+  fallback_provider_id?: string | null;
+  enabled: boolean;
+}
+
+export interface AiProfileDraft {
+  id: string;
+  code: 'requester' | 'bdo' | 'it_staff' | 'admin';
+  name: string;
+  audience: 'requester' | 'bdo' | 'it' | 'admin';
+  default_provider_id: string | null;
+  retention_days: number;
+  status: string;
+  enabled: boolean;
+  system_prompt_zh: string;
+  system_prompt_en: string;
+  enabled_capabilities: string[];
+  knowledge_scope: string[];
+  max_risk_level: 'L1' | 'L2' | 'L3';
+  draft_updated_at: string;
+  latest_published_version: number | null;
+}
+
+export interface AiProfileVersion {
+  id: string;
+  version: number;
+  status: string;
+  system_prompt_zh: string;
+  system_prompt_en: string;
+  enabled_capabilities: string[];
+  knowledge_scope: string[];
+  max_risk_level: 'L1' | 'L2' | 'L3';
+  config_schema_version: number | null;
+  name: string;
+  default_provider_id: string | null;
+  retention_days: number;
+  enabled: boolean;
+  published_at: string | null;
+}
+
+export interface AiHealthSummary {
+  providers: { total: number; enabled: number; healthy: number; failed: number; unverified: number };
+  profiles: { fixed_total: number; published: number; enabled: number };
+}
+
+export interface AiUsageSummary {
+  window_days: number;
+  window_started_at: string;
+  total_calls: number;
+  completed_calls: number;
+  failed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  average_duration_ms: number;
+  by_provider: { provider_code: string; calls: number; input_tokens: number; output_tokens: number }[];
+  by_result_code: { result_code: string; count: number }[];
+}
+
+export interface AiActionAuditRow {
+  id: string;
+  capability_code: string;
+  risk_level: string;
+  status: string;
+  result_code: string | null;
+  result_entity_type: string | null;
+  result_entity_id: string | null;
+  created_at: string;
+  consumed_at: string | null;
+}
