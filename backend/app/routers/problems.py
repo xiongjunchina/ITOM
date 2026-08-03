@@ -118,7 +118,19 @@ def list_problems(
     items, total = paginate(query.order_by(Problem.is_example.desc(), Problem.created_at.desc()), page, page_size)
     names = status_names(db, "problem")
     pend = process_engine.pending_steps_map(db, ["problem"], [x.id for x in items], user)
-    return ok([{**_row(p, db, names), "pending_step": pend.get(p.id)} for p in items], total=total, page=page)
+    rows = []
+    for problem in items:
+        edit_access = process_engine.workflow_edit_access(db, user, "problem", problem.id, "problems")
+        delete_access = process_engine.workflow_delete_access(db, user, "problem", problem.id, "problems")
+        rows.append({
+            **_row(problem, db, names),
+            "pending_step": pend.get(problem.id),
+            "can_edit": edit_access.allowed and not problem.is_example,
+            "can_delete": delete_access.allowed and not problem.is_example,
+            "workflow_edit_mode": edit_access.mode,
+            "workflow_edit_locked_reason": edit_access.reason,
+        })
+    return ok(rows, total=total, page=page)
 
 
 @router.post("/api/problems")
@@ -136,6 +148,8 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
         raise AppError("NOT_FOUND", "问题不存在", 404)
     names = status_names(db, "problem")
     detail = _row(p, db, names)
+    edit_access = process_engine.workflow_edit_access(db, user, "problem", p.id, "problems")
+    delete_access = process_engine.workflow_delete_access(db, user, "problem", p.id, "problems")
     links = db.query(ProblemTicket).filter(ProblemTicket.problem_id == p.id, ProblemTicket.is_deleted.is_(False)).all()
     tickets = db.query(Ticket).filter(Ticket.id.in_([l.ticket_id for l in links] or ["-"])).all()
     cur_task = process_engine.current_pending_task(db, "problem", p.id)
@@ -167,18 +181,24 @@ def get_problem(problem_id: str, db: Session = Depends(get_db), user: AuthUser =
                 if code == "known_error" or _is_admin(db, user)
             ],
             "process": process_engine.instance_view(db, "problem", p.id),
+            "can_edit": edit_access.allowed and not p.is_example,
+            "can_delete": delete_access.allowed and not p.is_example,
+            "workflow_edit_mode": edit_access.mode,
+            "workflow_edit_locked_reason": edit_access.reason,
         }
     )
     return ok(detail)
 
 
 @router.patch("/api/problems/{problem_id}")
-def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("problems", "edit"))):
+def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_not_example(p)
     data = body.model_dump(exclude_unset=True)
+    access = process_engine.require_workflow_edit(db, user, "problem", p.id, "problems")
+    process_engine.require_safe_correction_fields(access, data, {"owner", "service_item_id"})
     if "owner" in data:
         require_it_member_if_configured(db, data["owner"], "问题负责人")
     root_cause_filled = data.get("root_cause") and not p.root_cause
@@ -186,18 +206,19 @@ def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(g
         setattr(p, k, v)
     if root_cause_filled:
         publish(db, "problem.root_cause_found", "problem", p.id, {})
-    audit(db, "problem", p.id, "update", user, {"fields": list(data.keys())})
+    audit(db, "problem", p.id, "update", user, {"fields": list(data.keys()), "workflow_edit_mode": access.mode})
     db.commit()
     return ok({"id": p.id})
 
 
 @router.delete("/api/problems/{problem_id}")
-def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("problems", "delete"))):
+def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends(get_current_user)):
     """删除问题（M21，软删）：级联软删流程实例与任务；来源工单解除关联。"""
     p = db.get(Problem, problem_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "问题不存在", 404)
     ensure_example_delete_allowed(p, db, actor)
+    access = process_engine.require_workflow_delete(db, actor, "problem", p.id, "problems")
     from app.models import ProcessInstance, ProcessTask, Ticket
 
     p.is_deleted = True
@@ -215,7 +236,9 @@ def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends
         inst.is_deleted = True
         for task in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
             task.is_deleted = True
-    audit(db, "problem", p.id, "delete", actor, {"code": p.problem_code, "tickets_unlinked": unlinked})
+    audit(db, "problem", p.id, "delete", actor, {
+        "code": p.problem_code, "tickets_unlinked": unlinked, "workflow_delete_mode": access.mode,
+    })
     db.commit()
     return ok({"id": p.id, "tickets_unlinked": unlinked})
 

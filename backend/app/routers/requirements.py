@@ -225,14 +225,20 @@ def list_requirements(
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     cfg = requirement_scoring.get_config(db)
-    return ok([
-        {
-            **_row(r, db, names, domains, status_map, cfg),
-            "pending_step": pend.get(r.id),
-            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
-        }
-        for r in items
-    ], total=total, page=page)
+    rows = []
+    for requirement in items:
+        edit_access = process_engine.workflow_edit_access(db, user, "requirement", requirement.id, "requirements")
+        delete_access = process_engine.workflow_delete_access(db, user, "requirement", requirement.id, "requirements")
+        rows.append({
+            **_row(requirement, db, names, domains, status_map, cfg),
+            "pending_step": pend.get(requirement.id),
+            "can_manage_tasks": _can_manage_requirement_tasks(db, user, requirement),
+            "can_edit": edit_access.allowed and not requirement.is_example,
+            "can_delete": delete_access.allowed and not requirement.is_example,
+            "workflow_edit_mode": edit_access.mode,
+            "workflow_edit_locked_reason": edit_access.reason,
+        })
+    return ok(rows, total=total, page=page)
 
 
 def _current_process_task(db: Session, requirement_id: str):
@@ -288,16 +294,24 @@ def _complete_review_step(db: Session, r: Requirement, user: AuthUser, comment: 
         process_engine.complete_task(db, task.id, user, comment[:500])
 
 
-def _assign_solution_review(db: Session, r: Requirement):
-    """立项后进入方案评估：产品 leader 主责、开发 leader 知会（评分规则配置页可配）。"""
+def _assign_solution_review(db: Session, r: Requirement, fallback_assignee: str | None = None):
+    """立项后进入方案评估：产品 leader 主责、开发 leader 知会。
+
+    A newly deployed tenant may not yet have a configured product-development
+    leader.  In that narrow case, keep the workflow operable by assigning the
+    person who made the approved review decision; otherwise the new M92 rule
+    would correctly prevent unrelated editors from filling the solution route,
+    but leave the record without a real next handler.
+    """
     cfg = requirement_scoring.get_config(db)
     assignees = cfg.review_assignees or {}
     pdm_leader = assignees.get("pdm_leader")
     dev_leader = assignees.get("dev_leader")
+    assignee = pdm_leader or fallback_assignee
     task = _current_process_task(db, r.id)
-    if task and pdm_leader:
-        task.assignee = pdm_leader
-    recipients = [p for p in (pdm_leader, dev_leader) if p]
+    if task and assignee:
+        task.assignee = assignee
+    recipients = [p for p in (assignee, dev_leader) if p]
     if recipients:
         notifier.notify(db, "requirement.solution_review", "requirement", r.id, recipients,
                         f"方案评估：{r.requirement_code} {r.title}",
@@ -543,6 +557,8 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     detail = _row(r, db, names, domains, status_map, requirement_scoring.get_config(db))
+    edit_access = process_engine.workflow_edit_access(db, user, "requirement", r.id, "requirements")
+    delete_access = process_engine.workflow_delete_access(db, user, "requirement", r.id, "requirements")
     project = db.get(Project, r.project_id) if r.project_id else None
     project_relation = None
     if project:
@@ -610,7 +626,10 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         ],
         "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
         "process": process_engine.instance_view(db, "requirement", r.id),
-        "can_edit": (not r.is_example) and has_perm(db, user, "requirements", "edit"),
+        "can_edit": (not r.is_example) and edit_access.allowed,
+        "can_delete": (not r.is_example) and delete_access.allowed,
+        "workflow_edit_mode": edit_access.mode,
+        "workflow_edit_locked_reason": edit_access.reason,
         "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
         "can_delete_tasks": _can_delete_requirement_tasks(db, user),
     })
@@ -618,12 +637,14 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
 
 
 @router.patch("/{requirement_id}")
-def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
+def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
     if r.status in ("closed", "cancelled"):
         raise AppError("REQ_FINAL", "终态需求不可编辑")
     data = body.model_dump(exclude_unset=True)
+    access = process_engine.require_workflow_edit(db, user, "requirement", r.id, "requirements")
+    process_engine.require_safe_correction_fields(access, data, {"business_domain_id", "owner", "project_id"})
     if data.get("moscow") and data["moscow"] not in MOSCOW:
         raise AppError("INVALID_MOSCOW", "优先级必须为 M/S/C/W")
     if data.get("req_type") and data["req_type"] not in REQ_TYPES:
@@ -639,18 +660,19 @@ def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session
             data[df] = _date.fromisoformat(str(data[df]))
     for k, v in data.items():
         setattr(r, k, v)
-    audit(db, "requirement", r.id, "update", user, {"fields": list(data.keys())})
+    audit(db, "requirement", r.id, "update", user, {"fields": list(data.keys()), "workflow_edit_mode": access.mode})
     db.commit()
     return ok({"id": r.id})
 
 
 @router.delete("/{requirement_id}")
-def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("requirements", "delete"))):
+def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor=Depends(get_current_user)):
     """删除需求（M21，软删；delete 权限默认仅 admin）：级联软删开发任务清单与流程实例。"""
     r = db.get(Requirement, requirement_id)
     if not r or r.is_deleted:
         raise AppError("NOT_FOUND", "需求不存在", 404)
     ensure_example_delete_allowed(r, db, actor)
+    access = process_engine.require_workflow_delete(db, actor, "requirement", r.id, "requirements")
     from app.models import ProcessInstance, ProcessTask, RequirementTask
 
     r.is_deleted = True
@@ -667,7 +689,9 @@ def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor
         stats["process_instances"] += 1
         for ptask in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
             ptask.is_deleted = True
-    audit(db, "requirement", r.id, "delete", actor, {"code": r.requirement_code, **stats})
+    audit(db, "requirement", r.id, "delete", actor, {
+        "code": r.requirement_code, **stats, "workflow_delete_mode": access.mode,
+    })
     db.commit()
     return ok({"id": r.id, **stats})
 
@@ -838,7 +862,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
             if not r.analyzing_at:
                 r.analyzing_at = now
             _complete_review_step(db, r, user, f"评审通过（象限：{quadrant}）")
-            _assign_solution_review(db, r)  # 产品 leader 主责、开发 leader 知会
+            _assign_solution_review(db, r, fallback_assignee=user.person_id)  # 产品 leader 主责、开发 leader 知会
             flowed_to = "analyzing"
         elif r.decision == "搁置":
             wf_transition(db, r, "requirement", "on_hold", {}, user)

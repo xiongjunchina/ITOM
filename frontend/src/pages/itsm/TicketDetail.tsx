@@ -28,6 +28,7 @@ import ProcessActionButtons from '../../components/ProcessActionButtons';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
@@ -125,6 +126,7 @@ export default function TicketDetail() {
   useEffect(() => {
     void load();
   }, [load]);
+  useProcessTaskView(detail?.process, user, load);
 
   const loadMembers = () => {
     if (members.length === 0) {

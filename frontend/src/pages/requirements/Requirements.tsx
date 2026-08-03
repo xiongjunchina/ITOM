@@ -350,7 +350,7 @@ export default function Requirements() {
       render: (_, r) => <PendingStepCell pending={(r as RequirementRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/requirements/${r.id}`)} />,
     },
     // M21：删除（delete 权限，默认仅 admin）：级联移除任务清单与流程记录，示例只读
-    ...(canDelete
+    ...(canDelete || items.some((item) => item.can_delete)
       ? ([
           {
             title: t('common.actions'),
@@ -359,6 +359,7 @@ export default function Requirements() {
             fixed: 'right' as const,
             render: (_: unknown, r: RequirementRow) =>
               r.is_example && !isAdmin ? null : (
+                (r.can_delete ?? canDelete) ? (
                 <Popconfirm
                   title={t('common.deleteConfirm')}
                   onConfirm={async () => {
@@ -371,6 +372,7 @@ export default function Requirements() {
                     {t('common.delete')}
                   </Button>
                 </Popconfirm>
+                ) : null
               ),
           },
         ] as ColumnsType<RequirementRow>)

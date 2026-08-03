@@ -26,6 +26,8 @@ import { api } from '../../api/client';
 import type { BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import { useT } from '../../i18n';
+import { useAuthStore } from '../../stores/auth';
+import { useProcessTaskView } from '../../utils/processTaskView';
 
 const BUG_STATUS: Record<string, { label: string; color: string }> = {
   registered: { label: '待确认', color: 'gold' },
@@ -70,11 +72,13 @@ interface FixTaskFormValues {
 
 export default function BugListPage() {
   const t = useT();
+  const user = useAuthStore((state) => state.user);
   const [rows, setRows] = useState<BugRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>();
   const [mineOnly, setMineOnly] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingBug, setEditingBug] = useState<BugRow | null>(null);
   const [detail, setDetail] = useState<BugRow | null>(null);
   const [action, setAction] = useState<'reject' | 'verify-fail' | 'verify-close' | 'reopen' | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
@@ -120,6 +124,8 @@ export default function BugListPage() {
     void load();
   };
 
+  useProcessTaskView(detail?.process, user, detail ? () => { void refreshDetail(detail.id); } : undefined);
+
   const openCreate = () => {
     bugForm.resetFields();
     bugForm.setFieldValue('priority', 'P2');
@@ -136,6 +142,45 @@ export default function BugListPage() {
       setCreateOpen(false);
       await load();
       if (created?.id) setDetail(created);
+    } catch {
+      // API client 已统一提示错误
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (bug: BugRow) => {
+    bugForm.setFieldsValue({
+      title: bug.title,
+      description: bug.description,
+      priority: bug.priority,
+      reproduction: bug.reproduction ?? undefined,
+      expected_result: bug.expected_result ?? undefined,
+      actual_result: bug.actual_result ?? undefined,
+      environment: bug.environment ?? undefined,
+      evidence: bug.evidence ?? undefined,
+    });
+    setEditingBug(bug);
+  };
+
+  const submitEdit = async () => {
+    if (!editingBug) return;
+    const values = await bugForm.validateFields();
+    setSaving(true);
+    try {
+      await api.patch(`/task-management/bugs/${editingBug.id}`, {
+        title: values.title,
+        description: values.description,
+        priority: values.priority,
+        reproduction: values.reproduction || null,
+        expected_result: values.expected_result || null,
+        actual_result: values.actual_result || null,
+        environment: values.environment || null,
+        evidence: values.evidence || null,
+      });
+      message.success(t('common.saved'));
+      setEditingBug(null);
+      await refreshDetail(editingBug.id);
     } catch {
       // API client 已统一提示错误
     } finally {
@@ -276,6 +321,8 @@ export default function BugListPage() {
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
             {detail.status === 'registered' && detail.capabilities.confirm && <Button type="primary" onClick={() => void (async () => { await api.post(`/task-management/bugs/${detail.id}/confirm`, { comment: '' }); message.success(t('task.bug.actionDone')); await refreshDetail(detail.id); })()}>{t('task.bug.confirm')}</Button>}
             {detail.status === 'registered' && detail.capabilities.confirm && <Button danger onClick={() => openAction('reject')}>{t('task.bug.reject')}</Button>}
+            {detail.capabilities.edit && <Button onClick={() => openEdit(detail)}>{t('common.edit')}</Button>}
+            {detail.capabilities.delete && <Button danger onClick={() => Modal.confirm({ title: t('common.confirmDelete'), content: t('common.confirmDelete'), onOk: async () => { await api.delete(`/task-management/bugs/${detail.id}`); message.success(t('common.deleted')); setDetail(null); await load(); } })}>{t('common.delete')}</Button>}
             {detail.status === 'confirmed' && detail.capabilities.generate_fix_tasks && <Button type="primary" onClick={openGenerate}>{t('task.bug.generate')}</Button>}
             {detail.status === 'resolved' && detail.capabilities.verify && <><Button type="primary" onClick={() => openAction('verify-close')}>{t('task.bug.verifyClose')}</Button><Button onClick={() => openAction('verify-fail')}>{t('task.bug.verifyFail')}</Button></>}
             {['rejected', 'resolved', 'closed'].includes(detail.status) && detail.capabilities.reopen && <Button onClick={() => openAction('reopen')}>{t('task.bug.reopen')}</Button>}
@@ -303,6 +350,29 @@ export default function BugListPage() {
           />
           {detail.resolution_note && <Alert style={{ marginTop: 12 }} type="info" message={detail.resolution_note} />}
         </>}
+      </Modal>
+
+      <Modal
+        title={editingBug ? `${t('common.edit')} · ${editingBug.bug_code}` : t('common.edit')}
+        open={!!editingBug}
+        onOk={() => void submitEdit()}
+        confirmLoading={saving}
+        onCancel={() => setEditingBug(null)}
+        destroyOnClose
+        width={680}
+      >
+        <Form form={bugForm} layout="vertical" preserve={false}>
+          <Form.Item name="title" label={t('task.title')} rules={[{ required: true, message: t('task.titleRequired') }]}><Input maxLength={200} /></Form.Item>
+          <Space wrap size={16}>
+            <Form.Item name="priority" label={t('task.priority')} rules={[{ required: true }]}><Select style={{ width: 120 }} options={['P1', 'P2', 'P3', 'P4'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+            <Form.Item name="environment" label={t('task.bug.environment')}><Input style={{ width: 220 }} /></Form.Item>
+          </Space>
+          <Form.Item name="description" label={t('task.description')} rules={[{ required: true, message: t('task.descriptionRequired') }]}><Input.TextArea rows={3} maxLength={2000} /></Form.Item>
+          <Form.Item name="reproduction" label={t('task.bug.reproduction')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="expected_result" label={t('task.bug.expected')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="actual_result" label={t('task.bug.actual')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="evidence" label={t('task.bug.evidence')}><Input.TextArea rows={2} /></Form.Item>
+        </Form>
       </Modal>
 
       <Modal title={action === 'reject' ? t('task.bug.reject') : action === 'reopen' ? t('task.bug.reopen') : action === 'verify-close' ? t('task.bug.verifyClose') : t('task.bug.verifyFail')} open={!!action} onOk={() => void submitAction()} confirmLoading={actionSaving} onCancel={() => setAction(null)} destroyOnClose>

@@ -195,6 +195,14 @@ def update_bug(bug_id: str, body: BugUpdate, db: Session = Depends(get_db), user
     return ok(task_management._bug_row(db, bug, user))
 
 
+@router.delete("/bugs/{bug_id}")
+def delete_bug(bug_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    bug = _get_bug(db, bug_id)
+    stats = task_management.delete_bug(db, bug, user)
+    db.commit()
+    return ok({"id": bug.id, "deleted": True, "cascade": stats})
+
+
 @router.post("/bugs/{bug_id}/confirm")
 def confirm_bug(bug_id: str, body: ConfirmIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     bug = task_management.confirm_bug(db, _get_bug(db, bug_id), user, body.comment)

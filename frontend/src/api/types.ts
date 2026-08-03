@@ -435,6 +435,12 @@ export interface TicketRow {
   satisfaction: number | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  /** 当前用户在流程权限下可编辑（含上游回改窗口） */
+  can_edit?: boolean;
+  /** 当前用户在流程权限下可删除（仅首节点创建人窗口或管理员） */
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 可执行的状态流转 */
@@ -459,6 +465,10 @@ export interface ProcessStep {
   assignee?: string | null;
   assignee_name?: string | null;
   due_at?: string | null;
+  /** 当前处理人首次实际打开该节点详情的事实（不等同于任务分派时间）。 */
+  viewed_at?: string | null;
+  viewed_by?: string | null;
+  viewed_by_name?: string | null;
   completed_at?: string | null;
   raci_snapshot?: Record<string, unknown> | null;
 }
@@ -504,6 +514,10 @@ export interface TicketDetail extends TicketRow {
   allowed_transitions: AllowedTransition[];
   /** 当前用户对该类型工单有编辑权限（M18）：控制改派等写入口显隐 */
   can_edit?: boolean;
+  /** 首节点未查阅前创建人可删除；管理员保留全权。 */
+  can_delete?: boolean;
+  workflow_edit_mode?: 'admin' | 'module_permission' | 'current_handler' | 'upstream_creator' | 'upstream_handler' | null;
+  workflow_edit_locked_reason?: string | null;
   /** 可主动/强制关闭（M28）：admin 或服务请求登记人本人 */
   can_close?: boolean;
   /** 当前流程节点处理人姓名（M25） */
@@ -870,6 +884,10 @@ export interface ProblemRow {
   created_at: string;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 关联工单摘要 */
@@ -894,6 +912,10 @@ export interface ProblemDetail extends ProblemRow {
   /** M29：当前用户是「问题确认」节点处理人 → 显示确认/驳回按钮 */
   can_confirm?: boolean;
   process?: TicketProcess | null;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 // ============ M3 CMDB ============
@@ -990,6 +1012,10 @@ export interface BugRow {
   closed_at: string | null;
   fix_tasks: BugFixTaskRow[];
   capabilities: TaskCapabilities;
+  /** Bug 管理也使用同一流程任务视图，以便记录产品经理/开发负责人首次查阅。 */
+  process?: TicketProcess | null;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 export interface WorkTaskRow {
@@ -1238,6 +1264,10 @@ export interface ProjectRow {
   red_risks: number;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 项目详情 */
@@ -1288,6 +1318,9 @@ export interface ProjectDetail extends ProjectRow {
   process: TicketProcess | null;
   /** 当前用户是否有 projects.edit 权限（写操作按钮显隐） */
   can_edit: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** WBS 任务状态（状态由后端计算；已延期 = 实际结束晚于计划结束或已超期未完成） */
@@ -1643,6 +1676,10 @@ export interface RequirementRow {
   route: string | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 六维评分记录（多评审人；单人场景通常一条） */
@@ -1738,6 +1775,9 @@ export interface RequirementDetail extends RequirementRow {
   process: TicketProcess | null;
   /** 当前用户是否有 requirements.edit 权限 */
   can_edit: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
   /** 当前用户是否可维护该需求的任务 */
   can_manage_tasks: boolean;
   /** 当前用户是否可删除该需求的任务 */

@@ -249,7 +249,19 @@ def list_projects(
     pend = process_engine.pending_steps_map(db, ["project"], [x.id for x in items], user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     status_map = status_names(db, "project")
-    return ok([{**_project_row(p, db, names, status_map), "pending_step": pend.get(p.id)} for p in items], total=total, page=page)
+    rows = []
+    for project in items:
+        edit_access = process_engine.workflow_edit_access(db, user, "project", project.id, "projects")
+        delete_access = process_engine.workflow_delete_access(db, user, "project", project.id, "projects")
+        rows.append({
+            **_project_row(project, db, names, status_map),
+            "pending_step": pend.get(project.id),
+            "can_edit": edit_access.allowed and not project.is_example,
+            "can_delete": delete_access.allowed and not project.is_example,
+            "workflow_edit_mode": edit_access.mode,
+            "workflow_edit_locked_reason": edit_access.reason,
+        })
+    return ok(rows, total=total, page=page)
 
 
 def _link_requirement(db: Session, project: Project, requirement_id: str, actor: AuthUser):
@@ -308,7 +320,12 @@ def _create_project(db: Session, data: dict, actor: AuthUser) -> Project:
     require_it_member_if_configured(db, data["pm"], "项目经理")
     if data.get("service_item_id") and not db.get(ServiceItem, data["service_item_id"]):
         raise AppError("NOT_FOUND", "关联服务项不存在", 404)
-    project = Project(**data, project_code=gen_code(db, Project, "project_code", "PJ"), status="planning")
+    project = Project(
+        **data,
+        project_code=gen_code(db, Project, "project_code", "PJ"),
+        created_by=actor.id,
+        status="planning",
+    )
     db.add(project)
     db.flush()
     process_engine.start_instance(db, "project", project.id, {}, preferred_assignee=project.pm)
@@ -341,6 +358,8 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     status_map = status_names(db, "project")
     detail = _project_row(p, db, names, status_map)
+    edit_access = process_engine.workflow_edit_access(db, user, "project", p.id, "projects")
+    delete_access = process_engine.workflow_delete_access(db, user, "project", p.id, "projects")
     detail.update({
         "description": p.description,
         "background": p.background, "goals": p.goals,
@@ -356,7 +375,10 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
         ],
         "can_close": (not p.is_example) and _can_close_project(db, user, p),
         "process": process_engine.instance_view(db, "project", p.id),
-        "can_edit": (not p.is_example) and has_perm(db, user, "projects", "edit"),
+        "can_edit": (not p.is_example) and edit_access.allowed,
+        "can_delete": (not p.is_example) and delete_access.allowed,
+        "workflow_edit_mode": edit_access.mode,
+        "workflow_edit_locked_reason": edit_access.reason,
     })
     # 关联需求（PRD §6.2 概述页）：M5 需求经 project_id 挂接
     from app.models import Requirement
@@ -394,7 +416,7 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
 
 
 @router.patch("/api/projects/{project_id}")
-def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(get_db), actor=Depends(get_current_user)):
     p = db.get(Project, project_id)
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
@@ -402,19 +424,21 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     if p.status in ("closed", "cancelled"):
         raise AppError("PROJECT_FINAL", "终态项目不可编辑")
     data = body.model_dump(exclude_unset=True)
+    access = process_engine.require_workflow_edit(db, actor, "project", p.id, "projects")
+    process_engine.require_safe_correction_fields(access, data, {"pm"})
     if data.get("pm"):
         require_it_member_if_configured(db, data["pm"], "项目经理")
     for k, v in data.items():
         setattr(p, k, v)
     if p.planned_end < p.planned_start:
         raise AppError("INVALID_DATES", "计划结束不能早于计划开始")
-    audit(db, "project", p.id, "update", actor, {"fields": list(data.keys())})
+    audit(db, "project", p.id, "update", actor, {"fields": list(data.keys()), "workflow_edit_mode": access.mode})
     db.commit()
     return ok({"id": p.id})
 
 
 @router.delete("/api/projects/{project_id}")
-def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "delete"))):
+def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends(get_current_user)):
     """删除项目（软删，M14；M14.1 起不限状态）。
 
     级联：WBS/里程碑/成本/风险/附件/流程实例与任务 软删；关联需求解除挂接；
@@ -424,6 +448,7 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
     if not p or p.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_example_delete_allowed(p, db, actor)
+    access = process_engine.require_workflow_delete(db, actor, "project", p.id, "projects")
     from app.models import Attachment, PointEntry, ProcessInstance, ProcessTask, Requirement
 
     stats = {"wbs": 0, "milestones": 0, "costs": 0, "risks": 0, "attachments": 0,
@@ -462,7 +487,9 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
             pe.is_deleted = True
             stats["point_entries"] += 1
     p.is_deleted = True
-    audit(db, "project", p.id, "delete", actor, {"code": p.project_code, **stats})
+    audit(db, "project", p.id, "delete", actor, {
+        "code": p.project_code, **stats, "workflow_delete_mode": access.mode,
+    })
     db.commit()
     return ok({"id": p.id, "cascade": stats})
 

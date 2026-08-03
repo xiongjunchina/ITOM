@@ -349,9 +349,12 @@ POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {
 GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code，已有实例的节点/RACI/SLA 改动需另存新版本)
 GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时聚合
 POST /api/process-tasks/{id}/complete | /reassign
+POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时记录查阅；幂等返回 viewed_at/viewed_by
 ```
 
 流程定义列表的稳定展示顺序为：ITSM（服务请求）→ ITSM（变更）→ ITSM（事件）→ ITSM（问题）→ 项目 → 需求 → Bug 管理；后端按触发实体归一排序，前端分组与左侧菜单保持一致，不能依赖数据库返回顺序。
+
+流程单据的 `GET` 详情与清单行均返回 `can_edit`、`can_delete`、`workflow_edit_mode` 和 `workflow_edit_locked_reason`，但这些仅用于界面呈现；`PATCH/DELETE` 必须重新执行领域级流程授权。当前节点处理人以 `POST /api/process-tasks/{id}/view`、完成、同意或驳回形成首次查阅事实；清单/通知读取不调用该接口。管理员仅查看详情不会写查阅事实；管理员改派任务只改变 `assignee`，也不写查阅事实。若待办尚未被下游处理人查阅，首节点创建人可编辑/删除，后续节点的上一实际完成者只可编辑；回改请求若携带会改变路由的字段返回 `WORKFLOW_CORRECTION_FIELD_FORBIDDEN`，不满足窗口返回 `WORKFLOW_EDIT_LOCKED` 或 `WORKFLOW_DELETE_LOCKED`。新任务窗口默认启用，数据库升级前的待处理任务保持关闭，避免追溯扩大既有权限。
 
 ### 4.6 团队
 

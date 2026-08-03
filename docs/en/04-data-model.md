@@ -242,7 +242,7 @@ code [C], name, owner FK, year, description, status.
 
 | Group | Fields |
 | --- | --- |
-| Required on creation | name, pm FK, planned_start, planned_end |
+| Required on creation | name, pm FK, planned_start, planned_end; created_by FK (creator account, used for first-node correction/delete authorization) |
 | Optional on creation | portfolio_id FK, description, budget_10k, service_item_id FK |
 | Staged | latest_update (one-line update) |
 | Derived [C] | project_code, status, actual_start, actual_end, progress_pct (WBS-weighted), health_status (green/yellow/red, per PRD 6.1 rules), actual_cost_10k (rolled up from cost_entry) |
@@ -318,7 +318,7 @@ definition_id FK, entity_type, entity_id (triggering record), status (In Progres
 
 ### 5.4 process_task — process task
 
-instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Skipped), started_at, due_at [C] (from the step SLA), completed_at, completed_by FK, comment. Snapshots keep historical performance extraction stable after later process versions.
+instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Skipped), started_at, due_at [C] (from the step SLA), `viewed_at`, `viewed_by` FK (the current handler's first actual-view fact), `upstream_correction_enabled` (true for new tasks; false by default for pre-upgrade pending tasks), completed_at, completed_by FK, comment. `started_at` only records generation/dispatch and never substitutes for an actual view; snapshots plus the view fact keep workflow versions, performance extraction, and correction-window history auditable.
 
 ---
 

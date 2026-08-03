@@ -84,6 +84,7 @@ ENSURE_COLUMNS = {
         ("evaluating_at", "TIMESTAMP"),
     ],
     "project": [
+        ("created_by", "VARCHAR(26)"),
         ("background", "TEXT"),
         ("goals", "TEXT"),
         ("scope_in", "TEXT"),
@@ -133,6 +134,12 @@ ENSURE_COLUMNS = {
         ("step_code_snapshot", "VARCHAR(64)"),
         ("raci_snapshot", "JSONB"),
         ("completed_by", "VARCHAR(26)"),
+        ("viewed_at", "TIMESTAMP"),
+        ("viewed_by", "VARCHAR(26)"),
+        # Existing open tasks deliberately default to false.  New tasks are
+        # created by the engine with true, preventing a retroactive permission
+        # grant on records already being processed at release time.
+        ("upstream_correction_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ],
     "point_rule": [
         ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),

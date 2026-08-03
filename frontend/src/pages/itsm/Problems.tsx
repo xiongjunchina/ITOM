@@ -186,7 +186,7 @@ export default function Problems() {
       ),
     },
     // M21：删除（delete 权限，默认仅 admin），示例数据只读
-    ...(canDelete
+    ...(canDelete || items.some((item) => item.can_delete)
       ? ([
           {
             title: t('common.actions'),
@@ -195,6 +195,7 @@ export default function Problems() {
             fixed: 'right' as const,
             render: (_: unknown, r: ProblemRow) =>
               r.is_example && !isAdmin ? null : (
+                (r.can_delete ?? canDelete) ? (
                 <Popconfirm
                   title={t('common.deleteConfirm')}
                   onConfirm={async () => {
@@ -207,6 +208,7 @@ export default function Problems() {
                     {t('common.delete')}
                   </Button>
                 </Popconfirm>
+                ) : null
               ),
           },
         ] as ColumnsType<ProblemRow>)

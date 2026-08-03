@@ -351,9 +351,12 @@ POST /api/requirements/{id}/close        # validate all acceptance criteria chec
 GET/POST/PATCH /api/admin/process-definitions (nested steps with stable step_code; used-version node/RACI/SLA changes require a new version)
 GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue aggregation
 POST /api/process-tasks/{id}/complete | /reassign
+POST /api/process-tasks/{id}/view       # current handler records first detail view; idempotently returns viewed_at/viewed_by
 ```
 
 The stable display order for process definitions is ITSM (Service Request) → ITSM (Change) → ITSM (Incident) → ITSM (Problem) → Project → Requirement → Bug Management. The backend normalizes ordering by trigger entity and the UI keeps the same grouping order as the left navigation; it must not depend on database row order.
+
+Workflow-record detail and list rows return `can_edit`, `can_delete`, `workflow_edit_mode`, and `workflow_edit_locked_reason` only as UI capability hints; `PATCH/DELETE` re-run domain workflow authorization. The current handler's first view is persisted by `POST /api/process-tasks/{id}/view`, complete, approve, or reject; list/notification reads do not call this endpoint. An administrator's passive detail inspection and administrator reassignment create no view fact; reassignment only changes `assignee`. Before downstream first view, the first-node creator may edit/delete and a later node's actual previous completer may edit only. A correction carrying routing fields returns `WORKFLOW_CORRECTION_FIELD_FORBIDDEN`; an unavailable window returns `WORKFLOW_EDIT_LOCKED` or `WORKFLOW_DELETE_LOCKED`. New tasks enable the window by default, while pending tasks that existed before the database upgrade remain disabled so no historical permission is broadened retroactively.
 
 ### 4.6 Team
 

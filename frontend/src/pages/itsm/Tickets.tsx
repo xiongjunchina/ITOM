@@ -359,14 +359,16 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const handleEditSave = async () => {
     if (!editing) return;
     const v = await editForm.validateFields();
+    const isUpstreamCorrection = editing.workflow_edit_mode?.startsWith('upstream_') === true;
     setEditSaving(true);
     try {
       await api.patch(`/tickets/${editing.id}`, {
         title: v.title,
         priority: v.priority,
-        assignee: v.assignee ?? null,
         description: v.description,
         remarks: v.remarks,
+        // 回改窗口仅允许更正业务内容，不能借此改派下一节点。
+        ...(isUpstreamCorrection ? {} : { assignee: v.assignee ?? null }),
       });
       message.success(t('itsm.ticket.updatedMsg'));
       setEditing(null);
@@ -458,7 +460,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       render: (_, r) => <PendingStepCell pending={(r as TicketRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/itsm/tickets/${r.id}`)} />,
     },
     // M20：管理动作列（编辑/关闭需 edit；删除需 delete——默认矩阵仅 admin），示例数据只读
-    ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin
+    ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin || items.some((item) => item.can_edit || item.can_delete)
       ? ([
           {
             title: t('common.actions'),
@@ -468,7 +470,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
             render: (_: unknown, r: TicketRow) =>
               r.is_example && !isAdmin ? null : (
                 <Space size={8}>
-                  {canEdit && r.status !== 'closed' && r.status !== 'rejected' && (
+                  {(r.can_edit ?? canEdit) && r.status !== 'closed' && r.status !== 'rejected' && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openEdit(r)}>
                       {t('common.edit')}
                     </Button>
@@ -486,7 +488,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                       {t('itsm.ticket.close')}
                     </Button>
                   )}
-                  {canDelete && (
+                  {(r.can_delete ?? canDelete) && (
                     <Popconfirm title={t('itsm.ticket.deleteConfirm')} onConfirm={() => void handleDelete(r)}>
                       <Button type="link" size="small" danger style={{ padding: 0 }}>
                         {t('common.delete')}
@@ -792,17 +794,19 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
             <Select options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))} />
           </Form.Item>
-          <Form.Item name="assignee" label={t('itsm.f.assignee')}>
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              options={members.map((m) => ({
-                value: m.id,
-                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-              }))}
-            />
-          </Form.Item>
+          {!editing?.workflow_edit_mode?.startsWith('upstream_') && (
+            <Form.Item name="assignee" label={t('itsm.f.assignee')}>
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={members.map((m) => ({
+                  value: m.id,
+                  label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+                }))}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={4} maxLength={2000} />
           </Form.Item>

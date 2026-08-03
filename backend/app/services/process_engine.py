@@ -1,5 +1,6 @@
 """流程引擎最小版（PRD §8）：单据触发实例，任务按步骤推进，默认角色指派。"""
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -247,6 +248,10 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
             assignee=assignee,
             status="待处理",
             started_at=now,
+            # This is intentionally explicit rather than relying only on the
+            # model default: the production migration keeps historical pending
+            # tasks disabled while every task spawned after this release opts in.
+            upstream_correction_enabled=True,
             due_at=now + timedelta(hours=step.sla_hours) if step.sla_hours else None,
         )
     )
@@ -306,6 +311,12 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
     if task.status != "待处理":
         raise AppError("TASK_DONE", "该任务已处理")
+    # Any completion is necessarily an actual handling action.  Direct domain
+    # service calls (for example Bug/Problem orchestration) therefore close the
+    # upstream correction window even when they do not pass through HTTP /view.
+    if task.viewed_at is None:
+        task.viewed_at = datetime.now()
+        task.viewed_by = actor.person_id
     task.status = "已完成"
     task.completed_at = datetime.now()
     task.completed_by = actor.person_id
@@ -375,6 +386,9 @@ def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> Proc
         raise AppError("REASON_REQUIRED", "驳回理由至少 5 个字")
     instance = db.get(ProcessInstance, task.instance_id)
     now = datetime.now()
+    if task.viewed_at is None:
+        task.viewed_at = now
+        task.viewed_by = actor.person_id
     task.status = "已驳回"
     task.completed_at = now
     task.comment = f"[驳回] {reason.strip()}"
@@ -439,7 +453,13 @@ def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: in
     return instance
 
 
-def current_pending_task(db: Session, entity_type: str, entity_id: str) -> ProcessTask | None:
+def current_pending_task(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    *,
+    for_update: bool = False,
+) -> ProcessTask | None:
     """最新活跃流程实例的当前待处理任务；无实例或流程已完成返回 None。"""
     db.flush()  # Session autoflush=False：先落刚生成的实例/任务再查
     instance = (
@@ -458,7 +478,7 @@ def current_pending_task(db: Session, entity_type: str, entity_id: str) -> Proce
     # 不使用已经加载过的 instance.tasks 集合：完成当前节点后，_spawn_task
     # 会在同一 Session 新增下一节点任务，懒加载集合可能仍保留旧快照，导致
     # 流程服务误判为“没有当前任务”。直接查询保证同事务内看到最新任务。
-    return (
+    query = (
         db.query(ProcessTask)
         .filter(
             ProcessTask.instance_id == instance.id,
@@ -466,8 +486,265 @@ def current_pending_task(db: Session, entity_type: str, entity_id: str) -> Proce
             ProcessTask.is_deleted.is_(False),
         )
         .order_by(ProcessTask.created_at.desc())
+    )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
+
+
+@dataclass(frozen=True)
+class WorkflowEditAccess:
+    """The single authorization decision for a running workflow record.
+
+    ``mode`` is kept deliberately small so routes can audit a correction without
+    disclosing field values: normal permission, current-node handler, admin, or
+    a narrowly scoped upstream correction.
+    """
+
+    allowed: bool
+    mode: str | None = None
+    reason: str | None = None
+    task: ProcessTask | None = None
+
+
+def entity_creator_user_id(db: Session, entity_type: str, entity_id: str) -> str | None:
+    """Return the immutable creator user for workflow correction authorization."""
+    if entity_type in {"ticket", "ticket_change"}:
+        ticket = db.get(Ticket, entity_id)
+        return ticket.submitter if ticket else None
+    if entity_type == "requirement":
+        from app.models import Requirement
+
+        requirement = db.get(Requirement, entity_id)
+        return requirement.requester if requirement else None
+    if entity_type == "problem":
+        from app.models import Problem
+
+        problem = db.get(Problem, entity_id)
+        return problem.reporter if problem else None
+    if entity_type == "project":
+        from app.models import Project
+
+        project = db.get(Project, entity_id)
+        return project.created_by if project else None
+    if entity_type == "bug":
+        from app.models import Bug
+
+        bug = db.get(Bug, entity_id)
+        return bug.reporter_id if bug else None
+    return None
+
+
+def _is_admin(db: Session, user: AuthUser) -> bool:
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    return ADMIN in actor_keys(db, user)
+
+
+def upstream_correction_access(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    *,
+    for_update: bool = False,
+) -> WorkflowEditAccess:
+    """Check the short upstream correction window without changing task state.
+
+    First node: the record creator can correct or delete before the next handler
+    has viewed the generated task.  Later nodes: only the actual completer of the
+    immediately previous node can correct before the next handler has viewed it.
+    Historical pending tasks have ``upstream_correction_enabled=false`` by the
+    release migration and therefore never receive a retroactive grant.
+    """
+    task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
+    if not task:
+        return WorkflowEditAccess(False, reason="流程当前没有待处理节点")
+    if not task.upstream_correction_enabled:
+        return WorkflowEditAccess(False, reason="该历史流程任务不适用上游更正窗口", task=task)
+    if task.viewed_at is not None:
+        return WorkflowEditAccess(False, reason="当前节点已被查阅或处理", task=task)
+    if not task.step:
+        return WorkflowEditAccess(False, reason="当前流程任务缺少节点定义", task=task)
+
+    steps = _live_steps(db.get(ProcessInstance, task.instance_id).definition)
+    first_seq = steps[0].seq if steps else 1
+    if task.step.seq == first_seq:
+        creator_id = entity_creator_user_id(db, entity_type, entity_id)
+        if creator_id and creator_id == user.id:
+            return WorkflowEditAccess(True, mode="upstream_creator", task=task)
+        return WorkflowEditAccess(False, reason="仅创建人可在首节点未查阅前更正", task=task)
+
+    previous = (
+        db.query(ProcessTask)
+        .join(ProcessStep, ProcessStep.id == ProcessTask.step_id)
+        .filter(
+            ProcessTask.instance_id == task.instance_id,
+            ProcessTask.status.in_(["已完成", "已驳回"]),
+            ProcessTask.completed_at.is_not(None),
+            ProcessTask.is_deleted.is_(False),
+            ProcessStep.seq < task.step.seq,
+        )
+        .order_by(ProcessStep.seq.desc(), ProcessTask.completed_at.desc())
         .first()
     )
+    if previous and user.person_id and previous.completed_by == user.person_id:
+        return WorkflowEditAccess(True, mode="upstream_handler", task=task)
+    return WorkflowEditAccess(False, reason="仅上一节点实际处理人可在本节点未查阅前更正", task=task)
+
+
+def workflow_edit_access(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+    *,
+    for_update: bool = False,
+) -> WorkflowEditAccess:
+    """Authorise content editing without allowing a live workflow to be bypassed."""
+    from app.services.permissions import has_perm
+
+    if _is_admin(db, user):
+        return WorkflowEditAccess(True, mode="admin")
+    task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
+    if not task:
+        return WorkflowEditAccess(
+            has_perm(db, user, module, "edit"),
+            mode="module_permission" if has_perm(db, user, module, "edit") else None,
+            reason="当前角色无编辑权限",
+        )
+    if has_perm(db, user, module, "edit") and can_act_on_task(db, user, task):
+        return WorkflowEditAccess(True, mode="current_handler", task=task)
+    correction = upstream_correction_access(db, user, entity_type, entity_id, for_update=for_update)
+    if correction.allowed:
+        return correction
+    return WorkflowEditAccess(False, reason=correction.reason or "当前流程节点不允许编辑", task=task)
+
+
+def require_workflow_edit(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+) -> WorkflowEditAccess:
+    """Raise a stable error for routes that modify a workflow record."""
+    access = workflow_edit_access(db, user, entity_type, entity_id, module, for_update=True)
+    if not access.allowed:
+        raise AppError("WORKFLOW_EDIT_LOCKED", access.reason or "当前流程节点不允许编辑", 403)
+    return access
+
+
+def require_safe_correction_fields(access: WorkflowEditAccess, data: dict, forbidden: set[str]) -> None:
+    """Upstream correction never changes the task routing or current assignee."""
+    if access.mode not in {"upstream_creator", "upstream_handler"}:
+        return
+    unsafe = sorted(set(data) & forbidden)
+    if unsafe:
+        raise AppError(
+            "WORKFLOW_CORRECTION_FIELD_FORBIDDEN",
+            "上游更正窗口仅可修改单据内容，不能改变当前流程处理人或路由字段",
+            403,
+        )
+
+
+def workflow_delete_access(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+    *,
+    for_update: bool = False,
+) -> WorkflowEditAccess:
+    """Deletion is intentionally narrower: only the creator can delete at node 1."""
+    from app.services.permissions import has_perm
+
+    if _is_admin(db, user):
+        return WorkflowEditAccess(True, mode="admin")
+    task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
+    if not task:
+        return WorkflowEditAccess(
+            has_perm(db, user, module, "delete"),
+            mode="module_permission" if has_perm(db, user, module, "delete") else None,
+            reason="当前角色无删除权限",
+        )
+    correction = upstream_correction_access(db, user, entity_type, entity_id, for_update=for_update)
+    if correction.allowed and correction.mode == "upstream_creator":
+        return correction
+    # Bug registration is modelled as an automatically completed first step so
+    # the Product Manager immediately receives a confirmation task.  Preserve
+    # the same create-before-first-review deletion experience for its reporter.
+    if (
+        correction.allowed
+        and entity_type == "bug"
+        and entity_creator_user_id(db, entity_type, entity_id) == user.id
+    ):
+        return WorkflowEditAccess(True, mode="upstream_creator", task=correction.task)
+    return WorkflowEditAccess(False, reason=correction.reason or "仅创建人可在首节点未查阅前删除", task=task)
+
+
+def require_workflow_delete(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+) -> WorkflowEditAccess:
+    access = workflow_delete_access(db, user, entity_type, entity_id, module, for_update=True)
+    if not access.allowed:
+        raise AppError("WORKFLOW_DELETE_LOCKED", access.reason or "当前流程节点不允许删除", 403)
+    return access
+
+
+def mark_task_viewed(
+    db: Session,
+    user: AuthUser,
+    task_id: str,
+    *,
+    handling_action: bool = False,
+) -> tuple[ProcessTask, bool]:
+    """Persist a first *actual handler* view with a row lock.
+
+    An administrator may inspect any detail or dispatch a task.  That passive
+    observation is not the downstream handler's read and must not consume the
+    upstream correction window.  An administrator who actually completes,
+    approves or rejects the task is, however, handling it and is recorded.
+    """
+    task = (
+        db.query(ProcessTask)
+        .filter(ProcessTask.id == task_id, ProcessTask.is_deleted.is_(False))
+        .with_for_update()
+        .first()
+    )
+    if not task:
+        raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    if task.status != "待处理":
+        raise AppError("TASK_DONE", "该任务已处理")
+    if not can_act_on_task(db, user, task):
+        raise AppError("FORBIDDEN", "仅该任务的当前处理人可确认查阅", 403)
+    if _is_admin(db, user) and task.assignee != user.person_id and not handling_action:
+        # Do not turn a system administrator's passive inspection into a
+        # downstream-view fact.  The UI normally avoids this request; keeping
+        # the server behaviour safe protects direct API callers as well.
+        return task, False
+    # A role-routed task can be unassigned when no preferred person existed at
+    # spawn time.  The first eligible person who opens it becomes its concrete
+    # handler, preventing a second role holder from racing the correction lock.
+    if task.assignee is None and user.person_id:
+        task.assignee = user.person_id
+        instance = db.get(ProcessInstance, task.instance_id)
+        if instance and instance.entity_type in {"ticket", "ticket_change"}:
+            ticket = db.get(Ticket, instance.entity_id)
+            if ticket and not ticket.is_deleted:
+                ticket.assignee = user.person_id
+    newly_viewed = task.viewed_at is None
+    if newly_viewed:
+        task.viewed_at = datetime.now()
+        task.viewed_by = user.person_id
+    return task, newly_viewed
 
 
 def can_act_on_task(db: Session, user: AuthUser, task: ProcessTask) -> bool:
@@ -691,6 +968,9 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
                 "assignee": tasks_by_step[s.id].assignee if s.id in tasks_by_step else None,
                 "assignee_name": member_names.get(tasks_by_step[s.id].assignee) if s.id in tasks_by_step and tasks_by_step[s.id].assignee else None,
                 "due_at": tasks_by_step[s.id].due_at if s.id in tasks_by_step else None,
+                "viewed_at": tasks_by_step[s.id].viewed_at if s.id in tasks_by_step else None,
+                "viewed_by": tasks_by_step[s.id].viewed_by if s.id in tasks_by_step else None,
+                "viewed_by_name": member_names.get(tasks_by_step[s.id].viewed_by) if s.id in tasks_by_step and tasks_by_step[s.id].viewed_by else None,
                 "completed_at": tasks_by_step[s.id].completed_at if s.id in tasks_by_step else None,
                 "raci_snapshot": tasks_by_step[s.id].raci_snapshot if s.id in tasks_by_step else None,
             }

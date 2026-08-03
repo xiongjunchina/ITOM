@@ -39,6 +39,7 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -328,6 +329,7 @@ export default function ProjectDetail() {
       loadAttachments(),
     ]).finally(() => setLoading(false));
   }, [loadDetail, loadWbs, loadMilestones, loadMilestoneTracking, loadRisks, loadCosts, loadAttachments]);
+  useProcessTaskView(detail?.process, user, loadDetail);
 
   useEffect(() => {
     api
@@ -1462,6 +1464,7 @@ export default function ProjectDetail() {
                 resource_note: detail.resource_note,
                 org_members: detail.org_members ?? [],
                 stakeholders: detail.stakeholders ?? [],
+                workflow_edit_mode: detail.workflow_edit_mode,
               }
             : null
         }

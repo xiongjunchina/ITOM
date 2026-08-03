@@ -38,6 +38,7 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
@@ -623,6 +624,7 @@ export default function RequirementDetail() {
     setLoading(true);
     void load().finally(() => setLoading(false));
   }, [load]);
+  useProcessTaskView(detail?.process, user, load);
 
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
@@ -760,12 +762,12 @@ export default function RequirementDetail() {
 
   const submitEdit = async () => {
     const v = await editForm.validateFields();
+    const isUpstreamCorrection = detail?.workflow_edit_mode?.startsWith('upstream_') === true;
     setEditSaving(true);
     try {
       await api.patch(`/requirements/${id}`, {
         title: v.title,
         req_type: v.req_type,
-        business_domain_id: v.business_domain_id,
         source: v.source ?? null,
         description: v.description,
         remarks: v.remarks || null,
@@ -775,6 +777,8 @@ export default function RequirementDetail() {
         business_value_note: v.business_value_note || null,
         prd_effort: v.prd_effort ?? null,
         dev_effort: v.dev_effort ?? null,
+        // 上游回改不可更改业务域，避免改变下一节点的责任归属与流程路由。
+        ...(isUpstreamCorrection ? {} : { business_domain_id: v.business_domain_id }),
       });
       message.success(t('req.basicUpdated'));
       setEditOpen(false);
@@ -1541,13 +1545,15 @@ export default function RequirementDetail() {
           <Form.Item name="req_type" label={t('req.reqType')} rules={[{ required: true, message: t('req.reqTypeRequired') }]}>
             <Select options={REQ_TYPES.map((v) => ({ value: v, label: et.reqType(v) }))} />
           </Form.Item>
-          <Form.Item
-            name="business_domain_id"
-            label={t('req.belongDomain')}
-            rules={[{ required: true, message: t('req.domainRequired') }]}
-          >
-            <Select showSearch optionFilterProp="label" options={domains.map((d) => ({ value: d.id, label: d.name }))} />
-          </Form.Item>
+          {!detail?.workflow_edit_mode?.startsWith('upstream_') && (
+            <Form.Item
+              name="business_domain_id"
+              label={t('req.belongDomain')}
+              rules={[{ required: true, message: t('req.domainRequired') }]}
+            >
+              <Select showSearch optionFilterProp="label" options={domains.map((d) => ({ value: d.id, label: d.name }))} />
+            </Form.Item>
+          )}
           <Form.Item name="source" label={t('req.source')}>
             <Select allowClear options={sources.map((s) => ({ value: s.name, label: s.name }))} />
           </Form.Item>

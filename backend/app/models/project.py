@@ -24,6 +24,9 @@ class Project(GlidBase):
 
     project_code: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(200))
+    # Project manager and creator are different responsibilities.  The latter is
+    # needed for the first-node upstream correction window.
+    created_by: Mapped[str | None] = mapped_column(String(26), comment="创建人 auth_user.id")
     pm: Mapped[str] = mapped_column(ForeignKey("org_member.id"), comment="项目经理")
     status: Mapped[str] = mapped_column(String(32), default="planning", index=True)
     planned_start: Mapped[date] = mapped_column(Date)

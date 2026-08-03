@@ -109,7 +109,20 @@ def list_tickets(
     items, total = paginate(query.order_by(Ticket.is_example.desc(), Ticket.submitted_at.desc()), page, page_size)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
     pend = process_engine.pending_steps_map(db, ["ticket", "ticket_change"], [t.id for t in items], user)
-    return ok([{**_row(t, db, names), "pending_step": pend.get(t.id)} for t in items], total=total, page=page)
+    rows = []
+    for ticket in items:
+        entity_type = svc.entity_type_of(ticket)
+        edit_access = process_engine.workflow_edit_access(db, user, entity_type, ticket.id, _ticket_module(ticket.ticket_type))
+        delete_access = process_engine.workflow_delete_access(db, user, entity_type, ticket.id, _ticket_module(ticket.ticket_type))
+        rows.append({
+            **_row(ticket, db, names),
+            "pending_step": pend.get(ticket.id),
+            "can_edit": edit_access.allowed and not ticket.is_example,
+            "can_delete": delete_access.allowed and not ticket.is_example,
+            "workflow_edit_mode": edit_access.mode,
+            "workflow_edit_locked_reason": edit_access.reason,
+        })
+    return ok(rows, total=total, page=page)
 
 
 @router.post("")
@@ -157,7 +170,13 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
         .first()
     )
     # M18：无该类型编辑权限（如业务用户看自己的单）不下发流转按钮，与 transition 接口守卫一致
-    can_edit = has_perm(db, user, _ticket_module(t.ticket_type), "edit")
+    edit_access = process_engine.workflow_edit_access(
+        db, user, etype, t.id, _ticket_module(t.ticket_type)
+    )
+    delete_access = process_engine.workflow_delete_access(
+        db, user, etype, t.id, _ticket_module(t.ticket_type)
+    )
+    can_edit = edit_access.allowed
     # M25：流程驱动——普通流转按钮只给当前节点处理人（或 admin）；审批类（显式授权）保留
     _flow_ok, flow_assignee = process_engine.flow_operator_check(db, user, etype, t.id)
     detail.update(
@@ -197,6 +216,9 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             ],
             "can_close": _can_close_ticket(db, user, t) and not t.is_example and t.status not in ("closed", "rejected"),
             "can_edit": can_edit and not t.is_example,
+            "can_delete": delete_access.allowed and not t.is_example,
+            "workflow_edit_mode": edit_access.mode,
+            "workflow_edit_locked_reason": edit_access.reason,
             "flow_operator_name": flow_assignee,  # 前端可提示"由谁处理中"
             "process": process_engine.instance_view(db, etype, t.id),
             "satisfaction_detail": (
@@ -218,17 +240,18 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
 @router.patch("/{ticket_id}")
 def update_ticket(ticket_id: str, body: TicketUpdate, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     t = _get_ticket(db, ticket_id, user)
-    _require_type_perm(db, user, t.ticket_type, "edit")  # M17.2
     ensure_not_example(t)
     if t.status in ("closed", "rejected"):
         raise AppError("TICKET_FINAL", "终态工单不可编辑")
     data = body.model_dump(exclude_unset=True)
+    access = process_engine.require_workflow_edit(db, user, svc.entity_type_of(t), t.id, _ticket_module(t.ticket_type))
+    process_engine.require_safe_correction_fields(access, data, {"assignee"})
     if "assignee" in data:
         require_it_member_if_configured(db, data["assignee"], "工单受理人")
     reassigned = "assignee" in data and data["assignee"] != t.assignee
     for k, v in data.items():
         setattr(t, k, v)
-    audit(db, "ticket", t.id, "update", user, {"fields": list(data.keys())})
+    audit(db, "ticket", t.id, "update", user, {"fields": list(data.keys()), "workflow_edit_mode": access.mode})
     if reassigned and t.assignee:
         # The detail page edits Ticket.assignee directly.  When a live process
         # task exists, route the same change through the process engine so the
@@ -310,8 +333,8 @@ def close_ticket(ticket_id: str, body: TicketCloseIn, db: Session = Depends(get_
 def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """删除工单（M20，软删）：按类型模块 delete 权限（默认仅 admin）；级联软删流程实例与任务。"""
     t = _get_ticket(db, ticket_id, user)
-    _require_type_perm(db, user, t.ticket_type, "delete")
     ensure_example_delete_allowed(t, db, user)
+    access = process_engine.require_workflow_delete(db, user, svc.entity_type_of(t), t.id, _ticket_module(t.ticket_type))
     from app.models import ProcessInstance, ProcessTask
 
     t.is_deleted = True
@@ -326,7 +349,9 @@ def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser 
         instances += 1
         for task in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
             task.is_deleted = True
-    audit(db, "ticket", t.id, "delete", user, {"code": t.ticket_code, "process_instances": instances})
+    audit(db, "ticket", t.id, "delete", user, {
+        "code": t.ticket_code, "process_instances": instances, "workflow_delete_mode": access.mode,
+    })
     db.commit()
     return ok({"id": t.id, "process_instances": instances})
 

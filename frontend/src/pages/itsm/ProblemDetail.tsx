@@ -20,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
 import { ArrowLeftOutlined, LinkOutlined } from '@ant-design/icons';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { isRequesterOnly } from '../../components/menu';
 import { canHandleTask, useAuthStore } from '../../stores/auth';
 import dayjs from 'dayjs';
@@ -78,6 +79,11 @@ export default function ProblemDetail() {
   const [ticketOptions, setTicketOptions] = useState<TicketRow[]>([]);
   const [ticketSearching, setTicketSearching] = useState(false);
 
+  // 登记内容更正：当前处理人或未被查阅前的上游登记人均由后端统一裁决。
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editForm] = Form.useForm<{ title: string; description: string; priority: string }>();
+
   // 完成流程步骤
   const [completingTask, setCompletingTask] = useState<ProcessStep | null>(null);
   const [taskComment, setTaskComment] = useState('');
@@ -99,6 +105,7 @@ export default function ProblemDetail() {
   useEffect(() => {
     void load();
   }, [load]);
+  useProcessTaskView(detail?.process, user, load);
 
   const openTransition = (tr: AllowedTransition) => {
     if (!NEEDS_ROOT_CAUSE.has(tr.to)) {
@@ -151,6 +158,32 @@ export default function ProblemDetail() {
     setLinkTicketId(undefined);
     setLinkOpen(true);
     searchTickets('');
+  };
+
+  const openEdit = () => {
+    if (!detail) return;
+    editForm.setFieldsValue({
+      title: detail.title,
+      description: detail.description,
+      priority: detail.priority,
+    });
+    setEditOpen(true);
+  };
+
+  const submitEdit = async () => {
+    if (!detail) return;
+    const values = await editForm.validateFields();
+    setEditSaving(true);
+    try {
+      await api.patch(`/problems/${detail.id}`, values);
+      message.success(t('common.saved'));
+      setEditOpen(false);
+      void load();
+    } catch {
+      // API client 已统一提示错误
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   const submitLink = async () => {
@@ -318,6 +351,7 @@ export default function ProblemDetail() {
                 </Button>
               </>
             )}
+            {detail.can_edit && <Button onClick={openEdit}>{t('common.edit')}</Button>}
             {canCreateRemediationChange && id && (
               <RecordRelationCreateButton
                 sourceEntityType="problem"
@@ -470,6 +504,27 @@ export default function ProblemDetail() {
           </Form.Item>
           <Form.Item name="workaround" label={t('itsm.problem.workaroundOptional')}>
             <Input.TextArea rows={3} maxLength={2000} placeholder={t('itsm.problem.workaroundPlaceholder')} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('common.edit')}
+        open={editOpen}
+        onOk={() => void submitEdit()}
+        confirmLoading={editSaving}
+        onCancel={() => setEditOpen(false)}
+        destroyOnClose
+      >
+        <Form form={editForm} layout="vertical" preserve={false}>
+          <Form.Item name="title" label={t('itsm.f.title')} rules={[{ required: true, message: t('itsm.rule.title') }]}>
+            <Input maxLength={200} />
+          </Form.Item>
+          <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
+            <Select options={['P1', 'P2', 'P3', 'P4'].map((value) => ({ value, label: value }))} />
+          </Form.Item>
+          <Form.Item name="description" label={t('itsm.f.description')} rules={[{ required: true, message: t('itsm.rule.description') }]}>
+            <Input.TextArea rows={5} maxLength={2000} />
           </Form.Item>
         </Form>
       </Modal>

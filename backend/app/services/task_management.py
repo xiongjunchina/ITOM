@@ -71,6 +71,10 @@ def _require_bug_operator(db: Session, bug: Bug, user: AuthUser, expected_seq: i
         raise AppError("BUG_FLOW_STAGE", "Bug 当前不在允许执行此操作的流程节点")
     if not process_engine.can_act_on_task(db, user, task):
         raise AppError("FORBIDDEN", "仅当前流程节点处理人可以执行此操作", 403)
+    # Clicking any Bug processing action is an actual handling event, so it
+    # must close the upstream correction window even outside the generic
+    # process-task HTTP routes.
+    task, _ = process_engine.mark_task_viewed(db, user, task.id, handling_action=True)
     return task
 
 
@@ -102,10 +106,15 @@ def _bug_row(db: Session, bug: Bug, user: AuthUser | None = None) -> dict:
     tasks = db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)).all()
     is_admin = bool(user and _is_admin(db, user))
     person_id = user.person_id if user else None
-    can_edit = is_admin or (
-        bool(person_id and bug.reporter_id == user.id)
-        and bug.status in ("registered", "rejected")
+    edit_access = (
+        process_engine.workflow_edit_access(db, user, "bug", bug.id, "task_bug")
+        if user else process_engine.WorkflowEditAccess(False)
     )
+    delete_access = (
+        process_engine.workflow_delete_access(db, user, "bug", bug.id, "task_bug")
+        if user else process_engine.WorkflowEditAccess(False)
+    )
+    can_edit = edit_access.allowed
     can_confirm = bool(user and bug.product_manager_id and person_id == bug.product_manager_id and bug.status == "registered")
     can_generate = bool(user and bug.dev_leader_id and person_id == bug.dev_leader_id and bug.status == "confirmed")
     can_verify = bool(user and bug.product_manager_id and person_id == bug.product_manager_id and bug.status == "resolved")
@@ -134,13 +143,17 @@ def _bug_row(db: Session, bug: Bug, user: AuthUser | None = None) -> dict:
         "reopened_at": bug.reopened_at,
         "closed_at": bug.closed_at,
         "fix_tasks": [_fix_task_row(db, task) for task in tasks],
+        "process": process_engine.instance_view(db, "bug", bug.id),
         "capabilities": {
             "edit": can_edit,
+            "delete": delete_access.allowed,
             "confirm": can_confirm or is_admin,
             "generate_fix_tasks": can_generate or is_admin,
             "verify": can_verify or is_admin,
             "reopen": is_admin or bool(person_id and (bug.reporter_id == user.id or bug.product_manager_id == person_id)),
         },
+        "workflow_edit_mode": edit_access.mode,
+        "workflow_edit_locked_reason": edit_access.reason,
     }
 
 
@@ -196,19 +209,45 @@ def create_bug(db: Session, data: dict, actor: AuthUser) -> Bug:
 
 
 def update_bug(db: Session, bug: Bug, data: dict, actor: AuthUser) -> Bug:
-    _require_module(db, actor, "task_bug", "edit")
-    if not _is_admin(db, actor) and bug.reporter_id != actor.id:
-        raise AppError("FORBIDDEN", "只有 Bug 登记人或管理员可以编辑 Bug", 403)
-    if bug.status not in ("registered", "rejected") and not _is_admin(db, actor):
-        raise AppError("BUG_READONLY_STAGE", "Bug 进入确认流程后不可修改登记信息")
+    access = process_engine.require_workflow_edit(db, actor, "bug", bug.id, "task_bug")
     allowed = {
         "title", "description", "priority", "reproduction", "expected_result", "actual_result", "environment", "evidence",
     }
     for key, value in data.items():
         if key in allowed:
             setattr(bug, key, value)
-    audit(db, "bug", bug.id, "update", actor, {"fields": [key for key in data if key in allowed]})
+    audit(db, "bug", bug.id, "update", actor, {
+        "fields": [key for key in data if key in allowed], "workflow_edit_mode": access.mode,
+    })
     return bug
+
+
+def delete_bug(db: Session, bug: Bug, actor: AuthUser):
+    """Soft-delete an unreviewed Bug registration and its dependent work safely."""
+    access = process_engine.require_workflow_delete(db, actor, "bug", bug.id, "task_bug")
+    from app.models import BugFixTask, ProcessInstance, ProcessTask
+
+    stats = {"fix_tasks": 0, "process_instances": 0}
+    for task in db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)):
+        task.is_deleted = True
+        stats["fix_tasks"] += 1
+    for instance in db.query(ProcessInstance).filter(
+        ProcessInstance.entity_type == "bug",
+        ProcessInstance.entity_id == bug.id,
+        ProcessInstance.is_deleted.is_(False),
+    ):
+        instance.is_deleted = True
+        stats["process_instances"] += 1
+        for task in db.query(ProcessTask).filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.is_deleted.is_(False),
+        ):
+            task.is_deleted = True
+    bug.is_deleted = True
+    audit(db, "bug", bug.id, "delete", actor, {
+        "code": bug.bug_code, **stats, "workflow_delete_mode": access.mode,
+    })
+    return stats
 
 
 def confirm_bug(db: Session, bug: Bug, actor: AuthUser, comment: str = "") -> Bug:

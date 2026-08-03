@@ -83,17 +83,47 @@ class DefinitionUpdate(BaseModel):
     steps: list[StepIn] | None = None
 
 
-def _require_task_operator(db: Session, user: AuthUser, task_id: str) -> None:
+def _require_task_operator(
+    db: Session,
+    user: AuthUser,
+    task_id: str,
+    *,
+    mark_view: bool = True,
+    handling_action: bool = False,
+) -> tuple[ProcessTask, bool]:
     """流程任务操作权限（M18/M25）：admin、任务处理人本人；未指派任务由步骤默认角色持有者认领。
 
     用户实测漏洞：业务用户能完成/改派指派给 IT 运维的「受理确认」任务。
     提交人在「用户确认关闭」类步骤（任务指派其本人）天然放行。
     """
-    task = db.get(ProcessTask, task_id)
-    if not task or task.is_deleted:
+    # Viewing and acting are both processing facts.  The engine locks the task
+    # row so an upstream correction cannot race a first handler action.
+    if mark_view:
+        return process_engine.mark_task_viewed(db, user, task_id, handling_action=handling_action)
+
+    # 管理员在节点尚未被实际处理人查阅时改派，不等同于下一节点已经查阅；
+    # 因而只做同一套任务授权校验，不能写入 viewed_at/viewed_by。
+    task = (
+        db.query(ProcessTask)
+        .filter(ProcessTask.id == task_id, ProcessTask.is_deleted.is_(False))
+        .with_for_update()
+        .first()
+    )
+    if not task:
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
     if not process_engine.can_act_on_task(db, user, task):
-        raise AppError("FORBIDDEN", "仅该任务的当前处理人可执行此操作", 403)
+        raise AppError("FORBIDDEN", "仅当前流程节点处理人或管理员可以操作", 403)
+    return task, False
+
+
+@router.post("/api/process-tasks/{task_id}/view")
+def view_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """Current handler explicitly records the first task-detail view."""
+    task, newly_viewed = _require_task_operator(db, user, task_id, handling_action=False)
+    if newly_viewed:
+        audit(db, "process_task", task_id, "view", user, {"step_code": task.step_code_snapshot})
+    db.commit()
+    return ok({"id": task.id, "viewed_at": task.viewed_at, "viewed_by": task.viewed_by, "newly_viewed": newly_viewed})
 
 
 def _requester_confirmation_ticket(db: Session, user: AuthUser, task_id: str):
@@ -145,7 +175,7 @@ def _after_task_advanced(db: Session, instance: ProcessInstance, user: AuthUser)
 
 @router.post("/api/process-tasks/{task_id}/complete")
 def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_operator(db, user, task_id)
+    _require_task_operator(db, user, task_id, handling_action=True)
     _requester_confirmation_ticket(db, user, task_id)
     # 审批节点的流程图入口与右上角“同意”语义完全一致：
     # 变更审批等状态机联动必须走 approve_task，不能只把任务标成已完成。
@@ -164,7 +194,7 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
 @router.post("/api/process-tasks/{task_id}/approve")
 def approve(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """审批节点右上角「同意」按钮；审批理由可选。"""
-    _require_task_operator(db, user, task_id)
+    _require_task_operator(db, user, task_id, handling_action=True)
     _requester_confirmation_ticket(db, user, task_id)
     instance = process_engine.approve_task(db, task_id, user, body.comment)
     audit(db, "process_task", task_id, "approve", user, {"comment": body.comment})
@@ -176,7 +206,7 @@ def approve(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user:
 @router.post("/api/process-tasks/{task_id}/reject")
 def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """审批节点右上角「驳回」按钮；驳回理由必填并保留在流程任务记录。"""
-    _require_task_operator(db, user, task_id)
+    _require_task_operator(db, user, task_id, handling_action=True)
     requester_ticket = _requester_confirmation_ticket(db, user, task_id)
     if requester_ticket:
         from app.services import service_request_closure
@@ -200,11 +230,25 @@ def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: Au
 
 @router.post("/api/process-tasks/{task_id}/reassign")
 def reassign(task_id: str, body: ReassignIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_operator(db, user, task_id)
+    # 仅管理员的路由调整不应伪造为“下游已查阅”；当前处理人自行改派仍视为已处理。
+    _require_task_operator(
+        db,
+        user,
+        task_id,
+        mark_view=not _is_process_admin(db, user),
+        handling_action=True,
+    )
     task = process_engine.reassign_task(db, task_id, body.assignee)
     audit(db, "process_task", task_id, "reassign", user, {"assignee": body.assignee})
     db.commit()
     return ok({"id": task.id, "assignee": task.assignee})
+
+
+def _is_process_admin(db: Session, user: AuthUser) -> bool:
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    return ADMIN in actor_keys(db, user)
 
 
 def _def_row(d: ProcessDefinition, db: Session) -> dict:

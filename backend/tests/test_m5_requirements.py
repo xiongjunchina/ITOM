@@ -143,10 +143,13 @@ def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers)
     assert {task["name"] for task in detail["tasks"]} == {"接口开发（已调整）", "自测与联调"}
 
 
-def test_handover_problem_and_knowledge(client, ctx):
+def test_handover_problem_and_knowledge(client, ctx, admin_headers):
     r = _register(client, ctx["bp"], ctx["domain"], title="带遗留的需求")
     rid = r["id"]
-    client.patch(f"/api/requirements/{rid}", json={"solution": "上线方案A"}, headers=ctx["pdm"])
+    # M92: the PDM has not completed the current review task on this record,
+    # so only the system-level administrator may correct its route-sensitive
+    # solution field before the workflow reaches that handler.
+    client.patch(f"/api/requirements/{rid}", json={"solution": "上线方案A"}, headers=admin_headers)
 
     p = client.post(f"/api/requirements/{rid}/to-problem",
                     json={"description": "性能未达标，需持续优化"}, headers=ctx["pdm"]).json()["data"]
