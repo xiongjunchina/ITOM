@@ -237,10 +237,10 @@ Extend `notification_outbox` with recipient, idempotency key, retry count, next 
 ### 8.3 New ITSM models
 
 - `service_item_form_version`: versioned form and JSON Schema [implemented in P1];
-- `service_dispatch_rule`: item/catalog/global dispatch rules [implemented in P1];
+- `service_dispatch_rule`: item/catalog/global dispatch rules; P1 acceptance and M93 implementation-delivery rules are separated by `dispatch_stage=acceptance|implementation` [implemented in P1/M93];
 - `ticket_satisfaction`: one effective rating with score/tags/comment/source/audit [implemented in P2].
 
-P1 extends `service_item` with search metadata, active form, bound process, and default priority. Dispatch resolves through `scope_type + scope_id`. P1 extends `ticket` with form answers/schema snapshot, dispatch facts, and suspected-major-impact. P2 stamps `accepted_at` on first processing entry and derives `confirmation_due_at` from the final requester task SLA. The effective rating also updates the compatibility `ticket.satisfaction` score.
+P1 extends `service_item` with search metadata, active form, bound process, and default priority. Dispatch resolves through `scope_type + scope_id + dispatch_stage`. P1 extends `ticket` with form answers/schema snapshot, dispatch facts, and suspected-major-impact. M93 adds the implementation assignee, matched implementation rule, source, selector, and selection time as read-only audit facts. P2 stamps `accepted_at` on first processing entry and derives `confirmation_due_at` from the final requester task SLA. The effective rating also updates the compatibility `ticket.satisfaction` score.
 
 ## 9. Feishu Helpdesk removal
 

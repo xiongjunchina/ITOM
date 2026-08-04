@@ -312,6 +312,9 @@ GET/POST/PATCH /api/catalogs | /api/service-items。目录列表返回 `item_cou
 GET /api/service-items/{id}/form                # P1：当前用户可申请的已发布表单
 GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # P1：动态表单版本
 GET/PUT /api/service-items/{id}/dispatch-rule  # P1：服务项派单规则；运行时仍支持目录/全局兜底
+GET/PUT/DELETE /api/service-items/{id}/implementation-dispatch-rule  # M93：服务项实施交付派单；GET 可说明目录/全局继承
+GET/PUT/DELETE /api/catalogs/{id}/implementation-dispatch-rule       # M93：目录实施交付兜底
+GET/PUT/DELETE /api/service-dispatch/implementation-fallback         # M93：全局实施交付兜底，仅 admin/CIO
 POST /api/tickets/{id}/accept                  # 目标：实际受理打点，响应 SLA 以此为准
 POST /api/tickets/{id}/confirm-resolution      # 目标：提交人确认关闭或未解决重开；网页与 MCP 共用服务
 POST /api/integrations/feishu/card-actions     # P2.1：飞书新版验签卡片回调；无需 ITOM Bearer Token
@@ -455,7 +458,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 9. **MCP 适配边界（P1 已实现）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
 10. **确认与幂等（P1 已实现）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、过期时间和 idempotency key；payload digest 在准备阶段防止同键异内容，重复调用返回首次结果，不重复建单或启动流程。
 11. **动态表单快照（P1 已实现）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项在提交时二次校验。
-12. **服务派单（P1 已实现）**：服务项规则 → 目录默认组 → 全局兜底组；组内轮询只选择启用且在岗并有活动账号的成员。没有可用规则时保留工单并产生未派单事件，禁止静默丢单。
+12. **服务派单（P1/M93）**：受理阶段继续按服务项规则 → 目录默认组 → 全局兜底组解析；组内轮询只选择启用且在岗并有活动账号的成员。实施阶段使用独立 `dispatch_stage=implementation` 规则，也按服务项→目录→全局优先级，但只在服务请求首个受理节点完成时求值。当前受理人可以在 `POST /api/process-tasks/{id}/complete`（或审批节点的 `/approve`）受控提交 `implementation_mode=self|member|auto`，`member` 必须提交在岗 IT 人员；服务端锁定当前任务并复核单据/节点后才会写入实施事实和生成下一任务。Aily/MCP 建单契约不含这些字段。`manual_queue` 保留未指派任务供下一节点合格角色认领；无实施规则才落到节点 `default_role`。全局实施兜底只允许 admin/CIO；所有选择、命中规则、认领和改派均审计，禁止静默丢单。
 
 ## 7. 部署架构
 

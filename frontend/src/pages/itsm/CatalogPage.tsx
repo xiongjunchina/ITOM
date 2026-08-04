@@ -105,14 +105,28 @@ interface ServiceConfigValues {
   fields: DesignerField[];
   dispatch_target?: string;
   dispatch_strategy?: 'round_robin' | 'fixed' | 'manual_queue';
+  implementation_dispatch_target?: string;
+  implementation_dispatch_strategy?: 'round_robin' | 'fixed' | 'manual_queue';
 }
 
 interface DispatchRuleView {
+  id?: string;
   name: string;
+  scope_type?: 'service_item' | 'catalog' | 'global';
+  scope_id?: string | null;
+  dispatch_stage?: 'acceptance' | 'implementation';
   target_type: 'group' | 'member';
   target_id: string;
   strategy: 'round_robin' | 'fixed' | 'manual_queue';
+  inherited?: boolean;
 }
+
+interface DeliveryDispatchValues {
+  target?: string;
+  strategy?: 'round_robin' | 'fixed' | 'manual_queue';
+}
+
+type DeliveryRuleScope = { kind: 'catalog'; catalog: Catalog } | { kind: 'global' };
 
 type AudienceRef = { type: 'department' | 'member'; id: string };
 
@@ -160,6 +174,14 @@ export default function CatalogPage() {
   const [configSaving, setConfigSaving] = useState(false);
   const [configForm] = Form.useForm<ServiceConfigValues>();
   const [loadedSchema, setLoadedSchema] = useState<ServiceItemFormVersion['schema'] | null>(null);
+  const [loadedImplementationRule, setLoadedImplementationRule] = useState<DispatchRuleView | null>(null);
+
+  // 目录与全局兜底不和服务项表单混在一起：作用范围更大，单独打开并明确展示。
+  const [deliveryRuleScope, setDeliveryRuleScope] = useState<DeliveryRuleScope | null>(null);
+  const [loadedDeliveryRule, setLoadedDeliveryRule] = useState<DispatchRuleView | null>(null);
+  const [deliveryRuleLoading, setDeliveryRuleLoading] = useState(false);
+  const [deliveryRuleSaving, setDeliveryRuleSaving] = useState(false);
+  const [deliveryRuleForm] = Form.useForm<DeliveryDispatchValues>();
 
   // 服务对象范围选择器：结构化保存部门/员工引用，兼容旧版 target_audience 文本。
   const [audienceMode, setAudienceMode] = useState<'all' | 'custom'>('all');
@@ -256,11 +278,13 @@ export default function CatalogPage() {
     setConfigLoading(true);
     configForm.resetFields();
     try {
-      const [formVersion, dispatchRule] = await Promise.all([
+      const [formVersion, dispatchRule, implementationRule] = await Promise.all([
         api.get<ServiceItemFormVersion>(`/service-items/${item.id}/form`),
         api.get<DispatchRuleView | null>(`/service-items/${item.id}/dispatch-rule`),
+        api.get<DispatchRuleView | null>(`/service-items/${item.id}/implementation-dispatch-rule`),
       ]);
       setLoadedSchema(formVersion.schema);
+      setLoadedImplementationRule(implementationRule);
       configForm.setFieldsValue({
         fields: Object.entries(formVersion.schema.properties).map(([code, definition]) => ({
           code,
@@ -272,10 +296,15 @@ export default function CatalogPage() {
         })),
         dispatch_target: dispatchRule ? `${dispatchRule.target_type}:${dispatchRule.target_id}` : undefined,
         dispatch_strategy: dispatchRule?.strategy ?? 'round_robin',
+        implementation_dispatch_target: implementationRule
+          ? `${implementationRule.target_type}:${implementationRule.target_id}`
+          : undefined,
+        implementation_dispatch_strategy: implementationRule?.strategy ?? 'round_robin',
       });
     } catch {
       setConfigItem(null);
       setLoadedSchema(null);
+      setLoadedImplementationRule(null);
     } finally {
       setConfigLoading(false);
     }
@@ -344,14 +373,108 @@ export default function CatalogPage() {
           fallback: false,
         });
       }
+      const loadedImplementationTarget = loadedImplementationRule
+        ? `${loadedImplementationRule.target_type}:${loadedImplementationRule.target_id}`
+        : undefined;
+      const loadedImplementationStrategy = loadedImplementationRule?.strategy ?? 'round_robin';
+      const implementationChanged = values.implementation_dispatch_target !== loadedImplementationTarget
+        || (values.implementation_dispatch_target != null
+          && values.implementation_dispatch_strategy !== loadedImplementationStrategy);
+      if (implementationChanged) {
+        if (values.implementation_dispatch_target) {
+          const [targetType, targetId] = values.implementation_dispatch_target.split(':') as ['group' | 'member', string];
+          const targetName = targetType === 'group'
+            ? groups.find((row) => row.id === targetId)?.name
+            : members.find((row) => row.id === targetId)?.name;
+          const strategy = values.implementation_dispatch_strategy ?? (targetType === 'member' ? 'fixed' : 'round_robin');
+          await api.put(`/service-items/${configItem.id}/implementation-dispatch-rule`, {
+            name: `${configItem.name} · ${t('itsm.catalog.deliveryDispatch')} · ${targetName ?? t('itsm.catalog.supportGroup')}`,
+            target_type: targetType,
+            target_id: targetId,
+            strategy: targetType === 'member' ? 'fixed' : strategy,
+            priority: 1,
+            active: true,
+            fallback: false,
+          });
+        } else if (loadedImplementationRule?.scope_type === 'service_item') {
+          await api.delete(`/service-items/${configItem.id}/implementation-dispatch-rule`);
+        }
+      }
       message.success('服务表单与派单配置已发布');
       setConfigItem(null);
       setLoadedSchema(null);
+      setLoadedImplementationRule(null);
       void loadItems();
     } catch {
       // 已统一提示
     } finally {
       setConfigSaving(false);
+    }
+  };
+
+  const dispatchTargetOptions = [
+    ...groups.map((row) => ({ value: `group:${row.id}`, label: `${t('itsm.catalog.supportGroup')}：${row.name}` })),
+    ...members.map((row) => ({ value: `member:${row.id}`, label: `${t('itsm.catalog.person')}：${row.name}` })),
+  ];
+
+  const openDeliveryFallback = async (scope: DeliveryRuleScope) => {
+    setDeliveryRuleScope(scope);
+    setDeliveryRuleLoading(true);
+    deliveryRuleForm.resetFields();
+    try {
+      const path = scope.kind === 'global'
+        ? '/service-dispatch/implementation-fallback'
+        : `/catalogs/${scope.catalog.id}/implementation-dispatch-rule`;
+      const rule = await api.get<DispatchRuleView | null>(path);
+      setLoadedDeliveryRule(rule);
+      deliveryRuleForm.setFieldsValue({
+        target: rule ? `${rule.target_type}:${rule.target_id}` : undefined,
+        strategy: rule?.strategy ?? 'round_robin',
+      });
+    } catch {
+      setDeliveryRuleScope(null);
+      setLoadedDeliveryRule(null);
+    } finally {
+      setDeliveryRuleLoading(false);
+    }
+  };
+
+  const saveDeliveryFallback = async () => {
+    if (!deliveryRuleScope) return;
+    const values = await deliveryRuleForm.validateFields();
+    setDeliveryRuleSaving(true);
+    try {
+      const path = deliveryRuleScope.kind === 'global'
+        ? '/service-dispatch/implementation-fallback'
+        : `/catalogs/${deliveryRuleScope.catalog.id}/implementation-dispatch-rule`;
+      if (values.target) {
+        const [targetType, targetId] = values.target.split(':') as ['group' | 'member', string];
+        const targetName = targetType === 'group'
+          ? groups.find((row) => row.id === targetId)?.name
+          : members.find((row) => row.id === targetId)?.name;
+        const scopeName = deliveryRuleScope.kind === 'global'
+          ? t('itsm.catalog.globalDeliveryFallback')
+          : `${deliveryRuleScope.catalog.name} · ${t('itsm.catalog.deliveryFallback')}`;
+        const strategy = values.strategy ?? (targetType === 'member' ? 'fixed' : 'round_robin');
+        await api.put(path, {
+          name: `${scopeName} · ${targetName ?? t('itsm.catalog.supportGroup')}`,
+          target_type: targetType,
+          target_id: targetId,
+          strategy: targetType === 'member' ? 'fixed' : strategy,
+          priority: 1,
+          active: true,
+          fallback: true,
+        });
+      } else if (loadedDeliveryRule) {
+        await api.delete(path);
+      }
+      message.success(t('itsm.catalog.deliveryRuleSaved'));
+      setDeliveryRuleScope(null);
+      setLoadedDeliveryRule(null);
+    } catch {
+      // 已统一提示
+    } finally {
+      setDeliveryRuleSaving(false);
     }
   };
 
@@ -770,9 +893,14 @@ export default function CatalogPage() {
           loading={catalogLoading}
           extra={
             canManage && (
-              <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCatalogCreate}>
-                {t('itsm.catalog.newCatalog')}
-              </Button>
+              <Space size={4}>
+                <Button size="small" onClick={() => void openDeliveryFallback({ kind: 'global' })}>
+                  {t('itsm.catalog.globalDeliveryFallback')}
+                </Button>
+                <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCatalogCreate}>
+                  {t('itsm.catalog.newCatalog')}
+                </Button>
+              </Space>
             )
           }
         >
@@ -840,6 +968,18 @@ export default function CatalogPage() {
                           />
                         </Tooltip>
                       </>
+                    )}
+                    {canManage && !c.is_example && (
+                      <Button
+                        type="text"
+                        size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void openDeliveryFallback({ kind: 'catalog', catalog: c });
+                        }}
+                      >
+                        {t('itsm.catalog.deliveryFallback')}
+                      </Button>
                     )}
                     {canManage && !c.is_example && (
                       <Button
@@ -1034,6 +1174,7 @@ export default function CatalogPage() {
         onCancel={() => {
           setConfigItem(null);
           setLoadedSchema(null);
+          setLoadedImplementationRule(null);
         }}
         width={920}
         destroyOnClose
@@ -1112,10 +1253,7 @@ export default function CatalogPage() {
                   allowClear
                   showSearch
                   optionFilterProp="label"
-                  options={[
-                    ...groups.map((row) => ({ value: `group:${row.id}`, label: `支持组：${row.name}` })),
-                    ...members.map((row) => ({ value: `member:${row.id}`, label: `人员：${row.name}` })),
-                  ]}
+                  options={dispatchTargetOptions}
                 />
               </Form.Item>
             </Col>
@@ -1129,6 +1267,74 @@ export default function CatalogPage() {
               </Form.Item>
             </Col>
           </Row>
+          <Typography.Title level={5} style={{ marginTop: 20 }}>{t('itsm.catalog.deliveryDispatch')}</Typography.Title>
+          <Alert
+            type="info"
+            showIcon
+            message={t('itsm.catalog.deliveryDispatchHint')}
+            style={{ marginBottom: 12 }}
+          />
+          <Row gutter={12}>
+            <Col span={14}>
+              <Form.Item
+                name="implementation_dispatch_target"
+                label={t('itsm.catalog.deliveryTarget')}
+                extra={loadedImplementationRule?.inherited ? t('itsm.catalog.inheritedDeliveryRule') : undefined}
+              >
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  options={dispatchTargetOptions}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item name="implementation_dispatch_strategy" label={t('itsm.catalog.groupAssignmentStrategy')}>
+                <Select options={[
+                  { value: 'round_robin', label: t('itsm.catalog.roundRobin') },
+                  { value: 'fixed', label: t('itsm.catalog.fixedMember') },
+                  { value: 'manual_queue', label: t('itsm.catalog.manualQueue') },
+                ]} />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={deliveryRuleScope?.kind === 'global'
+          ? t('itsm.catalog.globalDeliveryFallback')
+          : deliveryRuleScope ? `${deliveryRuleScope.catalog.name} · ${t('itsm.catalog.deliveryFallback')}` : ''}
+        open={!!deliveryRuleScope}
+        onOk={() => void saveDeliveryFallback()}
+        confirmLoading={deliveryRuleSaving}
+        onCancel={() => {
+          setDeliveryRuleScope(null);
+          setLoadedDeliveryRule(null);
+        }}
+        destroyOnClose
+      >
+        <Alert
+          type="info"
+          showIcon
+          message={deliveryRuleScope?.kind === 'global'
+            ? t('itsm.catalog.globalDeliveryFallbackHint')
+            : t('itsm.catalog.catalogDeliveryFallbackHint')}
+          style={{ marginBottom: 16 }}
+        />
+        <Form<DeliveryDispatchValues> form={deliveryRuleForm} layout="vertical" preserve={false} disabled={deliveryRuleLoading}>
+          <Form.Item name="target" label={t('itsm.catalog.deliveryTarget')}>
+            <Select allowClear showSearch optionFilterProp="label" options={dispatchTargetOptions} />
+          </Form.Item>
+          <Form.Item name="strategy" label={t('itsm.catalog.groupAssignmentStrategy')}>
+            <Select options={[
+              { value: 'round_robin', label: t('itsm.catalog.roundRobin') },
+              { value: 'fixed', label: t('itsm.catalog.fixedMember') },
+              { value: 'manual_queue', label: t('itsm.catalog.manualQueue') },
+            ]} />
+          </Form.Item>
+          <Typography.Text type="secondary">{t('itsm.catalog.deliveryFallbackClearHint')}</Typography.Text>
         </Form>
       </Modal>
 

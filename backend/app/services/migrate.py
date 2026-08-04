@@ -181,6 +181,10 @@ ENSURE_COLUMNS = {
         ("process_definition_id", "VARCHAR(26)"),
         ("default_priority", "VARCHAR(8) NOT NULL DEFAULT 'P3'"),
     ],
+    "service_dispatch_rule": [
+        # M93：历史规则均为首节点受理派单；实施交付规则按新增 stage 独立维护。
+        ("dispatch_stage", "VARCHAR(16) NOT NULL DEFAULT 'acceptance'"),
+    ],
     "ticket": [
         ("service_category", "VARCHAR(128)"),
         ("other_info", "TEXT"),
@@ -191,6 +195,12 @@ ENSURE_COLUMNS = {
         ("dispatch_source", "VARCHAR(32)"),
         ("assigned_at", "TIMESTAMP"),
         ("accepted_at", "TIMESTAMP"),
+        # M93：新增事实，不回填或改写任何历史服务请求。
+        ("implementation_assignee", "VARCHAR(26)"),
+        ("implementation_rule_id", "VARCHAR(26)"),
+        ("implementation_source", "VARCHAR(32)"),
+        ("implementation_selected_by", "VARCHAR(26)"),
+        ("implementation_selected_at", "TIMESTAMP"),
         ("confirmation_due_at", "TIMESTAMP"),
         ("suspected_major_impact", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ],

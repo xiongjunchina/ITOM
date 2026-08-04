@@ -427,6 +427,9 @@ export interface TicketRow {
   submitter_dept: string | null;
   assignee: string | null;
   assignee_name: string | null;
+  /** 服务请求受理转交时确定的实施交付人；与首节点受理人分开保存。 */
+  implementation_assignee?: string | null;
+  implementation_assignee_name?: string | null;
   submitted_at: string;
   sla_resolution_hours: number | null;
   sla_response_met: boolean | null;
@@ -496,6 +499,12 @@ export interface TicketDetail extends TicketRow {
   change_reason?: string | null;
   rollback_plan?: string | null;
   implementation_plan?: string | null;
+  implementation_rule_id?: string | null;
+  implementation_rule_name?: string | null;
+  /** self_selected / handler_selected / service_item / catalog / global / manual_queue / step_default */
+  implementation_source?: string | null;
+  implementation_selected_by?: string | null;
+  implementation_selected_at?: string | null;
   planned_start_at?: string | null;
   planned_end_at?: string | null;
   approved_at?: string | null;

@@ -237,10 +237,10 @@ new → processing → resolved → closed
 ### 8.3 新增 ITSM 模型
 
 - `service_item_form_version`：服务项表单版本和 JSON Schema [P1 已实现]；
-- `service_dispatch_rule`：服务项/目录/全局派单规则 [P1 已实现]；
+- `service_dispatch_rule`：服务项/目录/全局派单规则；P1 的受理派单规则与 M93 的实施交付派单规则通过 `dispatch_stage=acceptance|implementation` 隔离 [P1/M93 已实现]；
 - `ticket_satisfaction`：评分、标签、意见、来源和审计时间，每张工单一条有效评价 [P2 已实现]。
 
-P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id` 分层解析。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；P2 在首次进入处理中时写 `accepted_at`，在进入最终用户确认节点时从流程任务 SLA 写 `confirmation_due_at`。`ticket.satisfaction` 由有效评价记录同步回填，兼容既有统计。
+P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id + dispatch_stage` 分层解析。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；M93 追加实施交付人、命中的实施规则、派单来源、选择人及选择时间，均为只读审计事实。P2 在首次进入处理中时写 `accepted_at`，在进入最终用户确认节点时从流程任务 SLA 写 `confirmation_due_at`。`ticket.satisfaction` 由有效评价记录同步回填，兼容既有统计。
 
 ## 9. 飞书服务台移除范围
 

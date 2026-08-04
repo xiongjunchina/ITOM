@@ -44,6 +44,9 @@ def _definition_display_order(definition: ProcessDefinition) -> tuple[int, int, 
 
 class CompleteIn(BaseModel):
     comment: str = ""
+    # 仅服务请求的首个受理节点可使用；由服务端复核流程位置、当前处理人和 IT 团队范围。
+    implementation_mode: Literal["auto", "self", "member"] | None = None
+    implementation_assignee: str | None = None
 
 
 class RejectIn(BaseModel):
@@ -175,17 +178,47 @@ def _after_task_advanced(db: Session, instance: ProcessInstance, user: AuthUser)
 
 @router.post("/api/process-tasks/{task_id}/complete")
 def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    _require_task_operator(db, user, task_id, handling_action=True)
+    task, _ = _require_task_operator(db, user, task_id, handling_action=True)
     _requester_confirmation_ticket(db, user, task_id)
+    from app.services.tickets import prepare_implementation_handoff
+
+    handoff = prepare_implementation_handoff(
+        db,
+        task,
+        user,
+        mode=body.implementation_mode,
+        implementation_assignee=body.implementation_assignee,
+    )
     # 审批节点的流程图入口与右上角“同意”语义完全一致：
     # 变更审批等状态机联动必须走 approve_task，不能只把任务标成已完成。
-    task = db.get(ProcessTask, task_id)
     instance = (
-        process_engine.approve_task(db, task_id, user, body.comment)
+        process_engine.approve_task(
+            db,
+            task_id,
+            user,
+            body.comment,
+            next_preferred_assignee=handoff.assignee_id if handoff else None,
+            force_next_unassigned=handoff.force_unassigned if handoff else False,
+        )
         if task and task.step and task.step.node_type == "approval"
-        else process_engine.complete_task(db, task_id, user, body.comment)
+        else process_engine.complete_task(
+            db,
+            task_id,
+            user,
+            body.comment,
+            next_preferred_assignee=handoff.assignee_id if handoff else None,
+            force_next_unassigned=handoff.force_unassigned if handoff else False,
+        )
     )
-    audit(db, "process_task", task_id, "complete", user, {"comment": body.comment})
+    audit_data = {"comment": body.comment}
+    if handoff:
+        audit_data["implementation_assignment"] = {
+            "source": handoff.source,
+            "assignee": handoff.assignee_id,
+            "rule_id": handoff.rule_id,
+            "manual_queue": handoff.force_unassigned,
+        }
+    audit(db, "process_task", task_id, "complete", user, audit_data)
     _after_task_advanced(db, instance, user)
     db.commit()
     return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
@@ -194,10 +227,34 @@ def complete(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user
 @router.post("/api/process-tasks/{task_id}/approve")
 def approve(task_id: str, body: CompleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """审批节点右上角「同意」按钮；审批理由可选。"""
-    _require_task_operator(db, user, task_id, handling_action=True)
+    task, _ = _require_task_operator(db, user, task_id, handling_action=True)
     _requester_confirmation_ticket(db, user, task_id)
-    instance = process_engine.approve_task(db, task_id, user, body.comment)
-    audit(db, "process_task", task_id, "approve", user, {"comment": body.comment})
+    from app.services.tickets import prepare_implementation_handoff
+
+    handoff = prepare_implementation_handoff(
+        db,
+        task,
+        user,
+        mode=body.implementation_mode,
+        implementation_assignee=body.implementation_assignee,
+    )
+    instance = process_engine.approve_task(
+        db,
+        task_id,
+        user,
+        body.comment,
+        next_preferred_assignee=handoff.assignee_id if handoff else None,
+        force_next_unassigned=handoff.force_unassigned if handoff else False,
+    )
+    audit_data = {"comment": body.comment}
+    if handoff:
+        audit_data["implementation_assignment"] = {
+            "source": handoff.source,
+            "assignee": handoff.assignee_id,
+            "rule_id": handoff.rule_id,
+            "manual_queue": handoff.force_unassigned,
+        }
+    audit(db, "process_task", task_id, "approve", user, audit_data)
     _after_task_advanced(db, instance, user)
     db.commit()
     return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})

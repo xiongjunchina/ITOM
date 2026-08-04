@@ -1,4 +1,5 @@
 """工单域业务逻辑（PRD §5.1）。"""
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -6,7 +7,17 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.events import notifier
 from app.events.bus import publish
-from app.models import AuthUser, OrgMember, ServiceItem, ServiceItemFormVersion, Ticket, TicketSatisfaction
+from app.models import (
+    AuthUser,
+    OrgMember,
+    ProcessInstance,
+    ProcessStep,
+    ProcessTask,
+    ServiceItem,
+    ServiceItemFormVersion,
+    Ticket,
+    TicketSatisfaction,
+)
 from app.services import dispatch, process_engine, service_forms, sla
 from app.services.audit import audit
 from app.services.codes import gen_code
@@ -14,6 +25,130 @@ from app.services.workflow import transition as wf_transition
 
 CHANGE = "change"
 TICKET_TYPES = ("incident", "service_request", "change")
+
+
+@dataclass(frozen=True)
+class ImplementationHandoff:
+    """受理节点转交实施交付时传给流程引擎的唯一派单决定。"""
+
+    assignee_id: str | None
+    force_unassigned: bool
+    source: str
+    rule_id: str | None
+
+
+def _actor_can_select_implementation(db: Session, actor: AuthUser) -> None:
+    """实施交付选择只能由当前 IT 处理人或管理员做出，不能从 Aily/业务报单绕过。"""
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+    from app.services.team_scope import require_it_member
+
+    if ADMIN in actor_keys(db, actor):
+        return
+    require_it_member(db, actor.person_id, "当前处理人")
+
+
+def _validate_implementation_member(db: Session, person_id: str | None) -> str:
+    from app.services.team_scope import require_it_member
+
+    if not person_id:
+        raise AppError("IMPLEMENTATION_ASSIGNEE_REQUIRED", "请选择实施交付人")
+    require_it_member(db, person_id, "实施交付人")
+    # 复用派单目标校验：除团队范围外还必须是在岗且有启用账号的真实 ITOM 人员。
+    dispatch.validate_rule_target(db, "member", person_id, "fixed")
+    return person_id
+
+
+def _service_request_handoff_ticket(db: Session, task: ProcessTask) -> Ticket | None:
+    """仅识别服务请求首个受理节点 → 非 requester 后续交付节点。
+
+    不依赖展示名称“受理/实施”，以流程实例的稳定顺序和 requester 动态节点为准。
+    这样不同服务项绑定的流程仍能使用同一规则，同时不会把后续回改窗口当作派单入口。
+    """
+    instance = db.get(ProcessInstance, task.instance_id)
+    if not instance or instance.is_deleted or instance.entity_type != "ticket":
+        return None
+    ticket = db.get(Ticket, instance.entity_id)
+    if not ticket or ticket.is_deleted or ticket.ticket_type != "service_request":
+        return None
+    steps = sorted((step for step in instance.definition.steps if not step.is_deleted), key=lambda step: step.seq)
+    try:
+        index = next(i for i, step in enumerate(steps) if step.id == task.step_id)
+    except StopIteration:
+        return None
+    if index != 0 or index + 1 >= len(steps) or steps[index + 1].default_role == "requester":
+        return None
+    return ticket
+
+
+def prepare_implementation_handoff(
+    db: Session,
+    task: ProcessTask,
+    actor: AuthUser,
+    *,
+    mode: str | None,
+    implementation_assignee: str | None,
+) -> ImplementationHandoff | None:
+    """在首节点完成前解析实施交付人，并将可审计事实写入服务请求。
+
+    优先级固定为：受理人明确指定（本人/同事）→ 服务项实施规则 → 目录实施兜底
+    → 全局实施兜底 → 后续流程节点默认角色。最后一种没有额外规则记录，保持原流程
+    定义的职责语义。该方法不得被工单 PATCH/上游回改调用。
+    """
+    ticket = _service_request_handoff_ticket(db, task)
+    if not ticket:
+        if mode is not None or implementation_assignee is not None:
+            raise AppError("IMPLEMENTATION_ASSIGNMENT_NOT_AVAILABLE", "仅服务请求受理转交实施节点时可安排实施交付人")
+        return None
+
+    selected_mode = mode or "auto"
+    if selected_mode not in {"auto", "self", "member"}:
+        raise AppError("INVALID_IMPLEMENTATION_MODE", "实施交付安排只能选择自动、本人或指定同事")
+    if selected_mode != "member" and implementation_assignee is not None:
+        raise AppError("INVALID_IMPLEMENTATION_ASSIGNEE", "仅“指定同事”可提交实施交付人")
+
+    _actor_can_select_implementation(db, actor)
+    now = datetime.now()
+    if selected_mode == "self":
+        assignee_id = _validate_implementation_member(db, actor.person_id)
+        ticket.implementation_assignee = assignee_id
+        ticket.implementation_rule_id = None
+        ticket.implementation_source = "self_selected"
+        ticket.implementation_selected_by = actor.id
+        ticket.implementation_selected_at = now
+        return ImplementationHandoff(assignee_id, False, "self_selected", None)
+
+    if selected_mode == "member":
+        assignee_id = _validate_implementation_member(db, implementation_assignee)
+        ticket.implementation_assignee = assignee_id
+        ticket.implementation_rule_id = None
+        ticket.implementation_source = "handler_selected"
+        ticket.implementation_selected_by = actor.id
+        ticket.implementation_selected_at = now
+        return ImplementationHandoff(assignee_id, False, "handler_selected", None)
+
+    # 自动模式：每次在实际交接时取最新的有效规则，避免“配置更新了但尚未受理的
+    # 旧单据仍按过时负责人执行”。无规则时由下一流程节点的默认角色兜底。
+    decision = dispatch.assign(db, ticket.service_item, dispatch_stage="implementation")
+    if decision.rule:
+        ticket.implementation_assignee = decision.assignee_id
+        ticket.implementation_rule_id = decision.rule.id
+        ticket.implementation_source = "manual_queue" if decision.manual_queue else decision.source
+        ticket.implementation_selected_by = actor.id
+        ticket.implementation_selected_at = now
+        return ImplementationHandoff(
+            decision.assignee_id,
+            decision.manual_queue,
+            ticket.implementation_source,
+            decision.rule.id,
+        )
+
+    ticket.implementation_assignee = None
+    ticket.implementation_rule_id = None
+    ticket.implementation_source = "step_default"
+    ticket.implementation_selected_by = actor.id
+    ticket.implementation_selected_at = now
+    return ImplementationHandoff(None, False, "step_default", None)
 
 
 def entity_type_of(ticket: Ticket) -> str:
@@ -44,6 +179,7 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
 
     data = dict(data)
     process_definition_id = None
+    force_initial_unassigned = False
     if data["ticket_type"] == "service_request":
         form = None
         if data.get("request_form_version_id"):
@@ -88,6 +224,7 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
             data["assignee"] = decision.assignee_id
             data["dispatch_rule_id"] = decision.rule.id if decision.rule else None
             data["dispatch_source"] = decision.source
+            force_initial_unassigned = decision.manual_queue
             if decision.assignee_id:
                 data["assigned_at"] = datetime.now()
         else:
@@ -120,6 +257,7 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
         {"ticket_type": ticket.ticket_type},
         preferred_assignee=ticket.assignee,
         definition_id=process_definition_id,
+        force_unassigned=force_initial_unassigned,
     )
     audit(db, "ticket", ticket.id, "create", actor, {"code": ticket.ticket_code, "type": ticket.ticket_type})
     publish(db, "ticket.created", "ticket", ticket.id, {"code": ticket.ticket_code})

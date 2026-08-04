@@ -7,7 +7,7 @@ from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_
 from app.core.rbac import BDO, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import AuthUser, OrgMember, ServiceItem, Ticket, TicketSatisfaction
+from app.models import AuthUser, OrgMember, ServiceDispatchRule, ServiceItem, Ticket, TicketSatisfaction
 from app.schemas.common import ok, paginate
 from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, TicketUpdate, TransitionIn
 from app.services import process_engine
@@ -58,6 +58,7 @@ def _is_requester_only(db: Session, user: AuthUser) -> bool:
 
 def _row(t: Ticket, db: Session, names: dict) -> dict:
     assignee = db.get(OrgMember, t.assignee) if t.assignee else None
+    implementation_assignee = db.get(OrgMember, t.implementation_assignee) if t.implementation_assignee else None
     return {
         "id": t.id, "ticket_code": t.ticket_code, "title": t.title,
         "ticket_type": t.ticket_type, "priority": t.priority,
@@ -69,6 +70,8 @@ def _row(t: Ticket, db: Session, names: dict) -> dict:
         "service_line": t.service_line,
         "submitter": t.submitter, "submitter_name": t.submitter_name, "submitter_dept": t.submitter_dept,
         "assignee": t.assignee, "assignee_name": assignee.name if assignee else None,
+        "implementation_assignee": t.implementation_assignee,
+        "implementation_assignee_name": implementation_assignee.name if implementation_assignee else None,
         "submitted_at": t.submitted_at,
         "sla_resolution_hours": t.sla_resolution_hours,
         "sla_response_met": t.sla_response_met, "sla_resolution_met": t.sla_resolution_met,
@@ -161,6 +164,7 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
     etype = svc.entity_type_of(t)
     names = status_names(db, etype)
     detail = _row(t, db, names)
+    implementation_rule = db.get(ServiceDispatchRule, t.implementation_rule_id) if t.implementation_rule_id else None
     rating = (
         db.query(TicketSatisfaction)
         .filter(
@@ -194,6 +198,11 @@ def get_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = D
             "request_form_snapshot": t.request_form_snapshot,
             "dispatch_source": t.dispatch_source,
             "assigned_at": t.assigned_at,
+            "implementation_rule_id": t.implementation_rule_id,
+            "implementation_rule_name": implementation_rule.name if implementation_rule else None,
+            "implementation_source": t.implementation_source,
+            "implementation_selected_by": t.implementation_selected_by,
+            "implementation_selected_at": t.implementation_selected_at,
             "accepted_at": t.accepted_at,
             "confirmation_due_at": t.confirmation_due_at,
             "suspected_major_impact": t.suspected_major_impact,

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -9,6 +10,7 @@ import {
   Input,
   Modal,
   Rate,
+  Radio,
   Select,
   Space,
   Spin,
@@ -100,6 +102,8 @@ export default function TicketDetail() {
   const [completingTask, setCompletingTask] = useState<ProcessStep | null>(null);
   const [taskComment, setTaskComment] = useState('');
   const [taskSaving, setTaskSaving] = useState(false);
+  const [implementationMode, setImplementationMode] = useState<'auto' | 'self' | 'member'>('self');
+  const [implementationAssignee, setImplementationAssignee] = useState<string | undefined>();
 
   // 满意度
   const [rating, setRating] = useState(0);
@@ -209,18 +213,45 @@ export default function TicketDetail() {
 
   const submitTaskComplete = async () => {
     if (!completingTask?.task_id) return;
+    const payload: Record<string, string> = { comment: taskComment };
+    if (isImplementationHandoff) {
+      if (implementationMode === 'member' && !implementationAssignee) {
+        message.warning(t('itsm.ticket.implementationAssigneeRequired'));
+        return;
+      }
+      payload.implementation_mode = implementationMode;
+      if (implementationMode === 'member' && implementationAssignee) {
+        payload.implementation_assignee = implementationAssignee;
+      }
+    }
     setTaskSaving(true);
     try {
-      await api.post(`/process-tasks/${completingTask.task_id}/complete`, { comment: taskComment });
+      await api.post(`/process-tasks/${completingTask.task_id}/complete`, payload);
       message.success(t('itsm.stepDone'));
       setCompletingTask(null);
       setTaskComment('');
+      setImplementationAssignee(undefined);
       void load();
     } catch {
       // 已统一提示
     } finally {
       setTaskSaving(false);
     }
+  };
+
+  const isImplementationHandoff = Boolean(
+    detail?.ticket_type === 'service_request'
+      && completingTask?.task_id
+      && detail.process?.steps?.[0]?.task_id === completingTask.task_id
+      && detail.process.steps.length > 1
+      && detail.process.steps[1]?.default_role !== 'requester',
+  );
+
+  const implementationSourceLabel = (source?: string | null) => {
+    if (!source) return '-';
+    const key = `itsm.ticket.implementationSource.${source}`;
+    const translated = t(key);
+    return translated === key ? source : translated;
   };
 
   const toKnowledge = async () => {
@@ -419,6 +450,18 @@ export default function TicketDetail() {
                       style={{ padding: 0 }}
                       onClick={() => {
                         setTaskComment('');
+                        const firstStep = detail.process?.steps?.[0];
+                        const nextStep = detail.process?.steps?.[1];
+                        if (
+                          detail.ticket_type === 'service_request'
+                          && firstStep?.task_id === s.task_id
+                          && nextStep
+                          && nextStep.default_role !== 'requester'
+                        ) {
+                          loadMembers();
+                          setImplementationMode(user?.person_id ? 'self' : 'auto');
+                          setImplementationAssignee(undefined);
+                        }
                         setCompletingTask(s);
                       }}
                     >
@@ -461,6 +504,23 @@ export default function TicketDetail() {
               )}
             </Space>
           </Descriptions.Item>
+          {detail.ticket_type === 'service_request' && (
+            <Descriptions.Item label={t('itsm.ticket.implementationAssignee')}>
+              {detail.implementation_assignee_name ?? (
+                detail.implementation_source === 'manual_queue'
+                  ? t('itsm.ticket.implementationSource.manual_queue')
+                  : detail.implementation_source === 'step_default'
+                    ? t('itsm.ticket.implementationSource.step_default')
+                    : '-'
+              )}
+              {detail.implementation_source && (
+                <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                  （{implementationSourceLabel(detail.implementation_source)}
+                  {detail.implementation_rule_name ? ` · ${detail.implementation_rule_name}` : ''}）
+                </Typography.Text>
+              )}
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label={t('itsm.f.submittedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.submitted_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.firstResponse')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.first_response_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.acceptedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.accepted_at)}</Descriptions.Item>
@@ -654,9 +714,54 @@ export default function TicketDetail() {
         open={!!completingTask}
         onOk={() => void submitTaskComplete()}
         confirmLoading={taskSaving}
-        onCancel={() => setCompletingTask(null)}
+        onCancel={() => {
+          setCompletingTask(null);
+          setImplementationAssignee(undefined);
+        }}
         destroyOnClose
       >
+        {isImplementationHandoff && (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              message={t('itsm.ticket.implementationHandoffHint')}
+              style={{ marginBottom: 16 }}
+            />
+            <Form layout="vertical">
+              <Form.Item label={t('itsm.ticket.implementationArrangement')}>
+                <Radio.Group
+                  value={implementationMode}
+                  onChange={(event) => {
+                    setImplementationMode(event.target.value);
+                    if (event.target.value !== 'member') setImplementationAssignee(undefined);
+                  }}
+                >
+                  <Space direction="vertical">
+                    <Radio value="self">{t('itsm.ticket.implementationSelf')}</Radio>
+                    <Radio value="member">{t('itsm.ticket.implementationMember')}</Radio>
+                    <Radio value="auto">{t('itsm.ticket.implementationAuto')}</Radio>
+                  </Space>
+                </Radio.Group>
+              </Form.Item>
+              {implementationMode === 'member' && (
+                <Form.Item label={t('itsm.ticket.implementationAssignee')} required>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    value={implementationAssignee}
+                    onChange={setImplementationAssignee}
+                    placeholder={t('itsm.ticket.implementationAssigneePlaceholder')}
+                    options={members.map((member) => ({
+                      value: member.id,
+                      label: member.department_name ? `${member.name}（${member.department_name}）` : member.name,
+                    }))}
+                  />
+                </Form.Item>
+              )}
+            </Form>
+          </>
+        )}
         <Input.TextArea
           rows={3}
           maxLength={500}

@@ -218,7 +218,14 @@ def _notify_assignee(db: Session, instance: ProcessInstance, step: ProcessStep, 
     )
 
 
-def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):
+def _spawn_task(
+    db: Session,
+    instance: ProcessInstance,
+    step: ProcessStep,
+    preferred: str | None,
+    *,
+    force_unassigned: bool = False,
+):
     now = datetime.now()
     # 项目流程中的 IT PM 节点必须跟随项目主数据指定的项目经理，不能从所有
     # it_pm 角色持有人中任取一人。这样章程导入/手工创建、后续推进与流程回退
@@ -228,7 +235,11 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
 
         project = db.get(Project, instance.entity_id)
         preferred = project.pm if project and step.default_role == "it_pm" else None
-    if step.default_role == "requester":
+    if force_unassigned:
+        # 服务目录明确配置「人工队列」时，不得再静默按节点默认角色挑选一人。
+        # 任务保留为待处理，满足节点角色的 IT 人员可按既有认领机制处理。
+        assignee = None
+    elif step.default_role == "requester":
         # 「用户确认」类步骤：指派该单据的提交人本人，而非任意业务用户
         assignee = _requester_person(db, instance.entity_type, instance.entity_id) or _resolve_assignee(db, step, preferred)
     else:
@@ -288,6 +299,7 @@ def start_instance(
     entity_attrs: dict,
     preferred_assignee: str | None = None,
     definition_id: str | None = None,
+    force_unassigned: bool = False,
 ) -> ProcessInstance | None:
     definition = resolve_definition(db, entity_type, entity_attrs, definition_id)
     if not definition or not _live_steps(definition):
@@ -301,11 +313,25 @@ def start_instance(
     )
     db.add(instance)
     db.flush()
-    _spawn_task(db, instance, _live_steps(definition)[0], preferred_assignee)
+    _spawn_task(
+        db,
+        instance,
+        _live_steps(definition)[0],
+        preferred_assignee,
+        force_unassigned=force_unassigned,
+    )
     return instance
 
 
-def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") -> ProcessInstance:
+def complete_task(
+    db: Session,
+    task_id: str,
+    actor: AuthUser,
+    comment: str = "",
+    *,
+    next_preferred_assignee: str | None = None,
+    force_next_unassigned: bool = False,
+) -> ProcessInstance:
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
@@ -328,7 +354,13 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     if current_idx + 1 < len(steps):
         next_step = steps[current_idx + 1]
         instance.current_step_seq = next_step.seq
-        _spawn_task(db, instance, next_step, None)
+        _spawn_task(
+            db,
+            instance,
+            next_step,
+            next_preferred_assignee,
+            force_unassigned=force_next_unassigned,
+        )
     else:
         instance.status = "completed"
         instance.completed_at = datetime.now()
@@ -353,7 +385,15 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     return instance
 
 
-def approve_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") -> ProcessInstance:
+def approve_task(
+    db: Session,
+    task_id: str,
+    actor: AuthUser,
+    comment: str = "",
+    *,
+    next_preferred_assignee: str | None = None,
+    force_next_unassigned: bool = False,
+) -> ProcessInstance:
     """审批节点同意：审批节点专用入口，理由可选，复用正常完成推进。"""
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
@@ -370,7 +410,14 @@ def approve_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") 
             do_transition(db, ticket, "pending_approval", {}, actor, system=True)
         elif ticket and ticket.status == "pending_approval":
             do_transition(db, ticket, "approved", {"approval_comment": comment}, actor, system=True)
-    return complete_task(db, task_id, actor, comment)
+    return complete_task(
+        db,
+        task_id,
+        actor,
+        comment,
+        next_preferred_assignee=next_preferred_assignee,
+        force_next_unassigned=force_next_unassigned,
+    )
 
 
 def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> ProcessInstance:

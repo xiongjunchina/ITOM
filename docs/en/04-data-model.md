@@ -6,7 +6,7 @@
 > Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
 > This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, dispatch, and rating-detail models are implemented. Database facts must be checked against real models and migrations.
 
-> This task-management enhancement changes only read aggregations, presentation, and authentication configuration. It adds or deletes no business table and rewrites no existing record; `business_initial_password` is deployment configuration, not a persisted business field.
+> M93 implementation-delivery routing adds only nullable/defaulted columns to existing `service_dispatch_rule` and `ticket` tables. It creates/deletes no business table and never backfills, migrates, or rewrites existing records; `business_initial_password` is deployment configuration, not a persisted business field.
 
 ## 0. Global Conventions
 
@@ -162,7 +162,8 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | Derived [C] | ticket_code, status, submitter, submitter_dept, service_line, submitted_at, first_response_at, resolved_at, closed_at, paused_minutes (on-hold accumulation, deducted from SLA), reopen_count, first_time_fix, sla_response_min, sla_resolution_hours, sla_response_met, sla_resolution_met | |
 | Links | problem_id FK→problem (back-written after escalation), requirement_id FK→requirement, process_instance_id | |
 | Dynamic form [P1] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
-| Dispatch/acceptance facts | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records rule/source/dispatch; P2 stamps actual acceptance on first entry to processing |
+| Acceptance-dispatch/acceptance facts | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records the first-task acceptance rule/source/dispatch; P2 stamps actual acceptance on first entry to processing |
+| Implementation-delivery dispatch facts [M93] | implementation_assignee, implementation_rule_id, implementation_source, implementation_selected_by, implementation_selected_at | Written only when the first service-request acceptance task completes; distinguishes self, selected colleague, item/catalog/global automatic rule, manual queue, and workflow default role; never rewritten through upstream correction |
 | Confirmation | confirmation_due_at, suspected_major_impact | P2 takes the deadline from the active requester-confirmation task; broad impact remains a service-request flag |
 
 Indexes: status, assignee, service_item_id, submitted_at, (ticket_type, status).
@@ -175,7 +176,7 @@ service_item_id, version, status (draft/published/retired), schema JSONB, publis
 
 ### 2.14 service_dispatch_rule [cfg][implemented in P1]
 
-name, scope_type (service_item/catalog/global), scope_id, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. A service item does not duplicate a current-rule FK; resolution uses `scope_type + scope_id` in item → catalog → global order, and records the execution facts on the ticket.
+name, scope_type (service_item/catalog/global), scope_id, **dispatch_stage (acceptance/implementation)**, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. A service item does not duplicate a current-rule FK; resolution uses `dispatch_stage + scope_type + scope_id` in item → catalog → global order. Migration classifies historic rules as `acceptance` without changing historic tickets. `implementation` is resolved only at service-request acceptance handoff; `manual_queue` intentionally creates an unassigned process task for the next step's eligible role to claim rather than selecting a person through the default role. The two stages write separate ticket facts.
 
 ### 2.15 ticket_satisfaction [implemented in P2]
 

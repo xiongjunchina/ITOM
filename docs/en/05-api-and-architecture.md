@@ -314,6 +314,9 @@ GET/POST/PATCH /api/catalogs | /api/service-items. The catalog list returns `ite
 GET /api/service-items/{id}/form                # P1 active form visible to the requester
 GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # P1
 GET/PUT /api/service-items/{id}/dispatch-rule  # P1 item rule; runtime also resolves catalog/global fallback
+GET/PUT/DELETE /api/service-items/{id}/implementation-dispatch-rule  # M93 service-item implementation-delivery rule; GET can identify catalog/global inheritance
+GET/PUT/DELETE /api/catalogs/{id}/implementation-dispatch-rule       # M93 catalog implementation-delivery fallback
+GET/PUT/DELETE /api/service-dispatch/implementation-fallback         # M93 global implementation-delivery fallback, admin/CIO only
 POST /api/tickets/{id}/accept                  # target; actual acceptance timestamp and response SLA
 POST /api/tickets/{id}/confirm-resolution      # target; requester close or reopen, shared by web and MCP
 POST /api/integrations/feishu/card-actions     # P2.1; signed Feishu callback, no ITOM Bearer token
@@ -454,7 +457,7 @@ Scheduled tasks cover SLA, contracts, milestones, one reminder at 80% of the req
 9. **MCP boundary (implemented in P1)**: tools call domain services only. `x-aily-jwt` passes allowlist and `external_identity` mapping before creating request-scoped `AuthUser` context. Prompts are never the sole business validator.
 10. **Confirmation/idempotency (implemented in P1)**: preview stores `mcp_operation_intent`; submission validates token hash, user, tool, expiry, and idempotency key. Payload digest prevents key reuse with different content; retries return the first result.
 11. **Form snapshots (implemented in P1)**: published versions are immutable; ticket creation stores version, answers, and schema. Person/department choices are revalidated at submit time.
-12. **Dispatch (implemented in P1)**: service-item rule → catalog default → global fallback; round-robin selects only enabled, active members with an active account. No matching assignee preserves the ticket and emits an unassigned event.
+12. **Dispatch (P1, M93 extension)**: ticket creation still resolves the acceptance rule through service item → catalog default → global fallback. At the first service-request acceptance completion only, the current handler (or an administrator) may select `implementation_mode=self|member|auto`; a named assignee must be an enabled IT member with an active account. `auto` resolves the independent implementation-delivery rule through service item → catalog fallback → global fallback. Round-robin selects only enabled, active members with an active account. `manual_queue` intentionally creates an unassigned implementation task for an eligible next-step user to claim; only no matched implementation rule falls back to that workflow step's default role. ITOM records the selected target, selector, timestamp, source, and rule. Aily/MCP never accepts implementation selection, and no dispatch choice bypasses workflow authorization, RBAC, audit, or idempotency.
 
 ## 7. Deployment Architecture
 
