@@ -304,10 +304,10 @@ export const zh: Dict = {
   'req.activeTask.pickReqHint': '仅列出「实现中·开发路径」的需求；转项目的需求由项目侧交付',
   'req.activeTask.nameRequired': '请输入任务名称',
   'req.solution.toDev': '转开发实现',
-  'req.solution.toDevHint': '指派开发负责人后需求进入「实现中」，其将收到通知，请在「任务跟踪」登记开发任务清单并排期（优先级按六维评分排序）。',
-  'req.solution.toDevDone': '已指派开发负责人并通知登记任务清单',
+  'req.solution.toDevHint': '开发负责人由「需求评分规则」统一配置。转入实现后，负责人必须先在本需求的「实现」区域登记至少一条开发任务，才能完成实现交付。',
+  'req.solution.toDevDone': '已按评分规则指派开发负责人并进入实现',
   'req.solution.devOwner': '开发负责人',
-  'req.solution.devOwnerRequired': '请选择开发负责人',
+  'req.solution.devOwnerNotConfigured': '未配置（请先到「需求评分规则」配置）',
 
   // 评分规则配置：分流规则
   'req.cfg.routing': '分流规则',
@@ -640,10 +640,10 @@ export const en: Dict = {
   'req.activeTask.pickReqHint': 'Only "Implementing · in-house dev" requirements are listed; project-routed ones are delivered via the project',
   'req.activeTask.nameRequired': 'Please enter the task name',
   'req.solution.toDev': 'Route to In-house Dev',
-  'req.solution.toDevHint': 'Assign a dev owner; the requirement moves to Implementing and the owner is notified to register the task list under "Task Tracking" (priority ordered by weighted score).',
-  'req.solution.toDevDone': 'Dev owner assigned and notified to register the task list',
+  'req.solution.toDevHint': 'The development lead is centrally configured in Requirement Scoring Rules. After routing, the lead must create at least one development task in this requirement’s Implementation section before completing delivery.',
+  'req.solution.toDevDone': 'The configured development lead has been assigned and the requirement is now Implementing',
   'req.solution.devOwner': 'Dev Owner',
-  'req.solution.devOwnerRequired': 'Please select the dev owner',
+  'req.solution.devOwnerNotConfigured': 'Not configured (set it in Requirement Scoring Rules first)',
 
   // Scoring config: routing rules
   'req.cfg.routing': 'Routing Rules',

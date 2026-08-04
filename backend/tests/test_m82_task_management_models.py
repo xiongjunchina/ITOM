@@ -3,7 +3,7 @@
 from sqlalchemy import inspect
 
 from app.db import Base, engine
-from app.models import Bug, BugFixTask, Ci, RequirementTask, WorkTask
+from app.models import Bug, BugFixTask, Ci, Requirement, RequirementTask, WorkTask
 
 
 def test_task_management_models_are_registered_without_replacing_requirement_task():
@@ -18,6 +18,11 @@ def test_task_management_models_are_registered_without_replacing_requirement_tas
 
 def test_ci_product_manager_is_nullable_for_existing_configuration_items():
     column = next(c for c in Ci.__table__.columns if c.name == "product_manager_id")
+    assert column.nullable is True
+
+
+def test_requirement_implementation_route_is_nullable_for_legacy_records():
+    column = next(c for c in Requirement.__table__.columns if c.name == "implementation_route")
     assert column.nullable is True
 
 

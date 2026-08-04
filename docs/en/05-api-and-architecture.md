@@ -169,7 +169,9 @@ DELETE /api/requirements/tasks/{task_id}
 GET /api/requirements/tasks/active
 ```
 
-The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. No database migration is involved; existing tasks remain readable under their original IDs and soft-delete state.
+The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. Existing tasks remain readable under their original IDs and soft-delete state; this change only adds a nullable route-snapshot column through the idempotent startup migration and never backfills or rewrites historical requirements or tasks.
+
+`POST /api/requirements/{id}/to-dev` uses an empty payload (legacy clients may send `owner_id`, but a value that differs from scoring-rule `review_assignees.dev_leader` returns `DEV_LEADER_FIXED`). The configured active IT development lead must exist; a missing or invalid setting returns `DEV_LEADER_NOT_CONFIGURED`. Both route endpoints may handle only the current “Solution assessment & routing” task, otherwise return `PROCESS_STEP_MISMATCH`, and advance only to “Delivery”. Before an in-house-dev Delivery task can complete, the process engine requires at least one non-deleted `requirement_task`; it does not apply that check to project routes or legacy records without an `implementation_route` snapshot.
 
 #### Task-management APIs (M82)
 
@@ -343,6 +345,8 @@ GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + mi
 ```text
 GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
+POST /api/requirements/{id}/to-dev       # {}; fixed scoring-rule dev_leader and an in-house-dev route snapshot
+POST /api/requirements/{id}/to-project   # {pm_id}; persists a project-route snapshot
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
 # P1: only BDO/authorized IT roles use requirements.create/view plus enforced own-record scope; no second requirement entity

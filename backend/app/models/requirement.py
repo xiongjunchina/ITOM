@@ -40,6 +40,8 @@ class Requirement(GlidBase):
     solution_type: Mapped[str | None] = mapped_column(String(16), comment="方案类型（M16）：二次开发/新购系统")
     prd_effort: Mapped[float | None] = mapped_column(Float, comment="PRD 人天")
     dev_effort: Mapped[float | None] = mapped_column(Float, comment="开发人天")
+    # 在实际执行“转开发实现/转项目管理”时冻结路径；不回填历史记录，避免评分阈值调整后改写既有流转事实。
+    implementation_route: Mapped[str | None] = mapped_column(String(32), comment="实现路径快照：需求开发实现/转项目管理")
     # 分析阶段
     moscow: Mapped[str | None] = mapped_column(String(2), comment="M/S/C/W（辅助标签）")
     owner: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="负责人")

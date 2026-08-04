@@ -167,7 +167,9 @@ DELETE /api/requirements/tasks/{task_id}
 GET /api/requirements/tasks/active
 ```
 
-同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。该接口变更不涉及数据库迁移，存量任务按原主键和软删除状态继续可读。
+同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。既有任务按原主键和软删除状态继续可读；本次仅通过启动期幂等补列新增可空的路径快照字段，不回填或改写历史需求/任务。
+
+`POST /api/requirements/{id}/to-dev` 使用空载荷（兼容旧客户端可携带 `owner_id`，但若与评分规则 `review_assignees.dev_leader` 不一致则返回 `DEV_LEADER_FIXED`）。服务端必须存在并校验该在岗 IT 开发负责人；缺失/失效返回 `DEV_LEADER_NOT_CONFIGURED`。两个路径接口都只可处理当前「方案评估与路径判定」任务，否则返回 `PROCESS_STEP_MISMATCH`，并且只推进到「实现交付」。完成开发路径的实现交付任务前，流程引擎检查未删除的 `requirement_task` 至少一条，否则返回 `REQUIREMENT_TASK_REQUIRED`；此检查不适用于项目路径或没有 `implementation_route` 快照的既有记录。
 
 #### 任务管理接口（M82）
 
@@ -341,6 +343,8 @@ GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ```text
 GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
+POST /api/requirements/{id}/to-dev       # {}；固定使用评分规则 dev_leader，并写入开发路径快照
+POST /api/requirements/{id}/to-project   # {pm_id}；写入项目路径快照
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
 # P1：仅 BDO/授权 IT 角色复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体

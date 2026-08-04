@@ -428,16 +428,15 @@ function SolutionEvalSection({
     }
   };
 
-  // 转开发实现（M16.2，对称转项目）：选开发负责人 → POST to-dev → 通知其去任务跟踪登记清单
+  // 转开发实现：开发负责人由评分规则统一配置，避免每条需求临时选人偏离组织分工。
   const [devOpen, setDevOpen] = useState(false);
   const [devSaving, setDevSaving] = useState(false);
-  const [devForm] = Form.useForm();
+  const configuredDevLeader = memberOptions.find((member) => member.value === config?.review_assignees?.dev_leader);
 
   const submitToDev = async () => {
-    const v = await devForm.validateFields();
     setDevSaving(true);
     try {
-      await api.post(`/requirements/${id}/to-dev`, { owner_id: v.owner_id });
+      await api.post(`/requirements/${id}/to-dev`, {});
       message.success(t('req.solution.toDevDone'));
       setDevOpen(false);
       onSaved();
@@ -505,7 +504,6 @@ function SolutionEvalSection({
                 <Button
                   type="primary"
                   onClick={() => {
-                    devForm.resetFields();
                     setDevOpen(true);
                   }}
                 >
@@ -541,7 +539,7 @@ function SolutionEvalSection({
         </Form>
       </Modal>
 
-      {/* 转开发实现：选开发负责人 */}
+      {/* 转开发实现：展示评分规则中的固定开发负责人 */}
       <Modal
         title={t('req.solution.toDev')}
         open={devOpen}
@@ -551,15 +549,11 @@ function SolutionEvalSection({
         destroyOnClose
       >
         <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.solution.toDevHint')} />
-        <Form form={devForm} layout="vertical" preserve={false}>
-          <Form.Item
-            name="owner_id"
-            label={t('req.solution.devOwner')}
-            rules={[{ required: true, message: t('req.solution.devOwnerRequired') }]}
-          >
-            <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
-          </Form.Item>
-        </Form>
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label={t('req.solution.devOwner')}>
+            {configuredDevLeader?.label || t('req.solution.devOwnerNotConfigured')}
+          </Descriptions.Item>
+        </Descriptions>
       </Modal>
     </>
   );

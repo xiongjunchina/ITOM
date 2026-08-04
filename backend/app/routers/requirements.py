@@ -190,7 +190,9 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
         "quadrant": requirement_scoring.compute_quadrant(scores, thresholds, weights),
         "decision": r.decision, "prd_effort": r.prd_effort, "dev_effort": r.dev_effort,
         "solution_type": r.solution_type,
-        "route": requirement_scoring.compute_route(
+        # 已执行路径的需求使用当时落库的快照；尚未分流的需求才随当前评分规则实时计算。
+        "implementation_route": r.implementation_route,
+        "route": r.implementation_route or requirement_scoring.compute_route(
             r.solution_type, r.dev_effort, cfg.effort_threshold if cfg else None
         ),
         **_task_progress(db, r.id),
@@ -287,11 +289,49 @@ def _enter_evaluating(db: Session, r: Requirement):
     _assign_review_to_domain_owner(db, r)
 
 
-def _complete_review_step(db: Session, r: Requirement, user: AuthUser, comment: str):
-    """决议落定时同步推进流程：完成「需求评审」步骤任务（引擎自动生成下一步骤任务）。"""
+def _current_requirement_step_name(db: Session, task) -> str:
+    from app.models import ProcessStep
+
+    step = db.get(ProcessStep, task.step_id) if task else None
+    return (step.name or "") if step else ""
+
+
+def _complete_initial_requirement_review(db: Session, r: Requirement, user: AuthUser, comment: str):
+    """评分通过仅可完成第 1 步「需求评审」，绝不越过方案评估或实现步骤。
+
+    业务域负责人可能已先在流程页完成第 1 步，再由产品负责人回填六维评分。
+    此时当前任务已是「方案评估与路径判定」，评分保存只应补齐数据和指派，不能再推进流程。
+    """
     task = _current_process_task(db, r.id)
-    if task:
+    if not task:
+        raise AppError("PROCESS_STEP_MISSING", "需求流程没有待处理节点，无法保存通过决议", 409)
+    step_name = _current_requirement_step_name(db, task)
+    if "需求评审" in step_name:
         process_engine.complete_task(db, task.id, user, comment[:500])
+        return
+    if "方案评估" in step_name:
+        return
+    raise AppError("PROCESS_STEP_MISMATCH", f"当前流程节点为「{step_name or '未知'}」，不可执行需求评分流转", 409)
+
+
+def _require_solution_review_task(db: Session, r: Requirement):
+    """路径决策只能处理当前的「方案评估与路径判定」任务，防止二次提交跳过实现节点。"""
+    task = _current_process_task(db, r.id)
+    if not task:
+        raise AppError("PROCESS_STEP_MISSING", "需求流程没有待处理的方案评估节点", 409)
+    step_name = _current_requirement_step_name(db, task)
+    if "方案评估" not in step_name:
+        raise AppError("PROCESS_STEP_MISMATCH", f"当前流程节点为「{step_name or '未知'}」，不可执行路径决定", 409)
+    return task
+
+
+def _require_spawned_implementation_task(db: Session, r: Requirement):
+    """确认路径决定仅推进一步，且下一步必为实现交付。"""
+    task = _current_process_task(db, r.id)
+    step_name = _current_requirement_step_name(db, task)
+    if not task or "实现交付" not in step_name:
+        raise AppError("PROCESS_STEP_MISMATCH", "方案评估完成后未进入「实现交付」节点，请检查需求流程定义", 409)
+    return task
 
 
 def _assign_solution_review(db: Session, r: Requirement, fallback_assignee: str | None = None):
@@ -861,7 +901,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
             wf_transition(db, r, "requirement", "analyzing", {}, user)
             if not r.analyzing_at:
                 r.analyzing_at = now
-            _complete_review_step(db, r, user, f"评审通过（象限：{quadrant}）")
+            _complete_initial_requirement_review(db, r, user, f"评审通过（象限：{quadrant}）")
             _assign_solution_review(db, r, fallback_assignee=user.person_id)  # 产品 leader 主责、开发 leader 知会
             flowed_to = "analyzing"
         elif r.decision == "搁置":
@@ -914,7 +954,7 @@ def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depen
     if r.status != "analyzing":
         raise AppError("ROUTE_STAGE", "仅「方案评估（分析中）」阶段可执行转项目")
     cfg = requirement_scoring.get_config(db)
-    route = requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
+    route = r.implementation_route or requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
     if route != requirement_scoring.ROUTE_PROJECT:
         raise AppError("ROUTE_NOT_PROJECT",
                        "当前方案不满足转项目条件（需 新购系统 或 二开人天≥阈值），请先完善方案类型与开发人天")
@@ -922,15 +962,16 @@ def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depen
     if not pm or pm.is_deleted:
         raise AppError("NOT_FOUND", "项目经理不存在", 404)
     require_it_member_if_configured(db, body.pm_id, "项目经理")
+    solution_task = _require_solution_review_task(db, r)
     r.owner = pm.id
+    r.implementation_route = requirement_scoring.ROUTE_PROJECT
     wf_transition(db, r, "requirement", "implementing", {}, user)
     if not r.implementing_at:
         r.implementing_at = datetime.now()
     # 推进流程：完成「方案评估」步骤 → 「实现交付」任务指派给项目经理（跟踪项目交付）
-    _complete_review_step(db, r, user, f"转项目管理，项目经理：{pm.name}")
-    task = _current_process_task(db, r.id)
-    if task:
-        task.assignee = pm.id
+    process_engine.complete_task(db, solution_task.id, user, f"转项目管理，项目经理：{pm.name}")
+    implementation_task = _require_spawned_implementation_task(db, r)
+    implementation_task.assignee = pm.id
     notifier.notify(db, "requirement.to_project", "requirement", r.id, [pm.id],
                     f"需求转项目：{r.requirement_code} {r.title}",
                     "您被指派为项目经理。请准备项目章程，在「项目管理」创建项目并关联本需求；项目验收关闭后需求将自动闭环。",
@@ -942,39 +983,46 @@ def route_to_project(requirement_id: str, body: ToProjectIn, db: Session = Depen
 
 
 class ToDevIn(BaseModel):
-    owner_id: str
+    # 历史客户端可继续携带该字段；新逻辑只接受与评分配置完全一致的开发负责人，防止绕过配置选人。
+    owner_id: str | None = None
 
 
 @router.post("/{requirement_id}/to-dev")
 def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
-    """转开发实现（M16.2，与转项目对称）：指派开发负责人→进入实现→通知其登记任务清单排期。"""
+    """转开发实现：评分配置中的开发负责人处理实现交付，并先登记开发任务后才可完成该节点。"""
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
     if r.status != "analyzing":
         raise AppError("ROUTE_STAGE", "仅「方案评估（分析中）」阶段可执行转开发实现")
     cfg = requirement_scoring.get_config(db)
-    route = requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
+    route = r.implementation_route or requirement_scoring.compute_route(r.solution_type, r.dev_effort, cfg.effort_threshold)
     if route != requirement_scoring.ROUTE_DEV:
         raise AppError("ROUTE_NOT_DEV",
                        "当前方案不满足转开发条件（需 二次开发 且 人天<阈值）；新购或超阈值请走「转项目管理」")
-    owner = db.get(OrgMember, body.owner_id)
+    configured_owner_id = (cfg.review_assignees or {}).get("dev_leader")
+    if not configured_owner_id:
+        raise AppError("DEV_LEADER_NOT_CONFIGURED", "请先在「需求评分规则」配置开发负责人", 409)
+    if body.owner_id and body.owner_id != configured_owner_id:
+        raise AppError("DEV_LEADER_FIXED", "转开发实现必须由评分规则中配置的开发负责人处理", 409)
+    owner = db.get(OrgMember, configured_owner_id)
     if not owner or owner.is_deleted:
-        raise AppError("NOT_FOUND", "开发负责人不存在", 404)
-    require_it_member_if_configured(db, body.owner_id, "开发负责人")
+        raise AppError("DEV_LEADER_NOT_CONFIGURED", "评分规则中的开发负责人不存在或已删除，请重新配置", 409)
+    require_it_member_if_configured(db, configured_owner_id, "开发负责人")
+    solution_task = _require_solution_review_task(db, r)
     r.owner = owner.id
+    r.implementation_route = requirement_scoring.ROUTE_DEV
     wf_transition(db, r, "requirement", "implementing", {}, user)
     if not r.implementing_at:
         r.implementing_at = datetime.now()
     # 推进流程：完成「方案评估」步骤 → 「实现交付」任务指派给开发负责人
-    _complete_review_step(db, r, user, f"转开发实现，开发负责人：{owner.name}")
-    task = _current_process_task(db, r.id)
-    if task:
-        task.assignee = owner.id
+    process_engine.complete_task(db, solution_task.id, user, f"转开发实现，开发负责人：{owner.name}")
+    implementation_task = _require_spawned_implementation_task(db, r)
+    implementation_task.assignee = owner.id
     notifier.notify(db, "requirement.to_dev", "requirement", r.id, [owner.id],
                     f"需求转开发实现：{r.requirement_code} {r.title}",
-                    "您被指派为开发负责人。请在「需求管理 → 任务跟踪」登记开发任务清单并排期（优先级按六维评分排序）。",
-                    link="/requirements/tasks")
-    audit(db, "requirement", r.id, "to_dev", user, {"owner": owner.name})
+                    "您被指派为开发负责人。请先在需求「实现」区域登记至少一条开发任务并排期，之后才能完成实现交付。",
+                    link=f"/requirements/{r.id}")
+    audit(db, "requirement", r.id, "to_dev", user, {"owner": owner.name, "source": "scoring_config"})
     publish(db, "requirement.to_dev", "requirement", r.id, {"owner_id": owner.id})
     db.commit()
     return ok({"id": r.id, "status": r.status, "owner": r.owner})

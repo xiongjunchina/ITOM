@@ -278,7 +278,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 | Optional at registration | source, parent_requirement_id FK, department, expected_date, expected_effect, business_value_note |
 | Evaluation stage | six D1–D6 scores, decision, solution_type, PRD/dev effort |
 | Analysis stage | moscow, owner FK, target_date, solution, acceptance_criteria JSONB |
-| Implementation stage | project_id FK (optional attachment) |
+| Implementation stage | project_id FK (optional attachment), implementation_route (nullable route snapshot: In-house Dev / To Project; written when routing is executed and never backfilled into history) |
 | Derived [C] | requirement_code, status, requester/name, registered/evaluating/analyzing/implementing/closed timestamps, closure_note |
 
 ### 4.2 requirement_task — requirement task

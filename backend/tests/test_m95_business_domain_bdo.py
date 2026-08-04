@@ -158,14 +158,27 @@ def test_requirement_acceptance_is_assigned_to_business_bdo(client, admin_header
         f"/api/requirements/{requirement_id}", json={"solution_type": "二次开发", "dev_effort": 8}, headers=admin_headers,
     )
     assert configured.status_code == 200, configured.text
+    # 开发实现由评分规则中的开发负责人承接；不能由操作人临时改派。
+    scoring = client.put(
+        "/api/requirements/scoring-config",
+        json={"review_assignees": {"dev_leader": developer_id}},
+        headers=admin_headers,
+    )
+    assert scoring.status_code == 200, scoring.text
     moved = client.post(
-        f"/api/requirements/{requirement_id}/to-dev", json={"owner_id": developer_id}, headers=admin_headers,
+        f"/api/requirements/{requirement_id}/to-dev", json={}, headers=admin_headers,
     )
     assert moved.status_code == 200, moved.text
     detail = client.get(f"/api/requirements/{requirement_id}", headers=admin_headers).json()["data"]
     delivery = next(step for step in detail["process"]["steps"] if "实现交付" in step["name"])
     assert delivery["assignee_name"] == "M95C 开发人员"
 
+    task = client.post(
+        f"/api/requirements/{requirement_id}/tasks",
+        json={"name": "M95C 开发实现", "assignee": developer_id, "plan_effort": 1},
+        headers=admin_headers,
+    )
+    assert task.status_code == 200, task.text
     completed = client.post(
         f"/api/process-tasks/{delivery['task_id']}/complete", json={"comment": "开发已交付"}, headers=admin_headers,
     )

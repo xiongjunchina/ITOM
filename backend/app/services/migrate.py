@@ -86,6 +86,8 @@ ENSURE_COLUMNS = {
         ("decision", "VARCHAR(16)"),
         ("prd_effort", "DOUBLE PRECISION"),
         ("dev_effort", "DOUBLE PRECISION"),
+        # M96：仅为新路径决定写入快照；不回填、不改写既有需求的历史流转事实。
+        ("implementation_route", "VARCHAR(32)"),
         ("evaluating_at", "TIMESTAMP"),
     ],
     "project": [

@@ -1681,7 +1681,9 @@ export interface RequirementRow {
   // ---- M16 需求评审分流 ----
   /** 方案类型（中文权威值：二次开发/新购系统；方案评估阶段填写） */
   solution_type: string | null;
-  /** 实现路径（后端按方案类型+开发人天+阈值派生：需求开发实现/转项目管理；未填方案类型为 null） */
+  /** 已执行时冻结的实现路径快照；未分流时为 null。 */
+  implementation_route?: string | null;
+  /** 已执行路径使用快照；未分流时按方案类型+开发人天+阈值实时派生。 */
   route: string | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;

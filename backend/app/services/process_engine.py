@@ -17,7 +17,10 @@ from app.models import (
     UserGroup,
     UserGroupMember,
     Ticket,
+    Requirement,
+    RequirementTask,
 )
+from app.services.requirement_scoring import ROUTE_DEV
 from app.services.rbac import GROUP_PREFIX
 
 logger = logging.getLogger("aom.process")
@@ -323,6 +326,45 @@ def start_instance(
     return instance
 
 
+def _require_requirement_implementation_tasks(
+    db: Session,
+    instance: ProcessInstance | None,
+    task: ProcessTask,
+):
+    """需求开发实现的「实现交付」节点至少要有一条开发任务。
+
+    该校验放在流程引擎而不是前端或单一路由，确保网页、API 和后续自动化调用
+    都不能绕过它。仅约束写入 implementation_route 快照后的新记录，存量需求
+    保持原有行为，避免上线时影响正在处理的历史单据。
+    """
+    if not instance or instance.entity_type != "requirement":
+        return
+    step = db.get(ProcessStep, task.step_id)
+    if not step or "实现交付" not in (step.name or ""):
+        return
+    requirement = db.get(Requirement, instance.entity_id)
+    if (
+        not requirement
+        or requirement.is_deleted
+        or requirement.implementation_route != ROUTE_DEV
+    ):
+        return
+    has_task = (
+        db.query(RequirementTask.id)
+        .filter(
+            RequirementTask.requirement_id == requirement.id,
+            RequirementTask.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if not has_task:
+        raise AppError(
+            "REQUIREMENT_TASK_REQUIRED",
+            "需求开发实现须先在“实现”区域创建至少一条开发任务后，才能完成实现交付",
+            409,
+        )
+
+
 def complete_task(
     db: Session,
     task_id: str,
@@ -337,6 +379,8 @@ def complete_task(
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
     if task.status != "待处理":
         raise AppError("TASK_DONE", "该任务已处理")
+    instance = db.get(ProcessInstance, task.instance_id)
+    _require_requirement_implementation_tasks(db, instance, task)
     # Any completion is necessarily an actual handling action.  Direct domain
     # service calls (for example Bug/Problem orchestration) therefore close the
     # upstream correction window even when they do not pass through HTTP /view.
@@ -348,7 +392,6 @@ def complete_task(
     task.completed_by = actor.person_id
     task.comment = comment or task.comment
 
-    instance = db.get(ProcessInstance, task.instance_id)
     steps = _live_steps(instance.definition)
     current_idx = next(i for i, s in enumerate(steps) if s.id == task.step_id)
     if current_idx + 1 < len(steps):
