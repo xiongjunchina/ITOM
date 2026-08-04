@@ -800,7 +800,7 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
         raise AppError("USE_PROCESS_STEP", "请使用评审决议、转开发/转项目或完成流程步骤推进，需求状态将自动同步", 403)
     # 阶段门校验
     if body.to == "analyzing" and r.status == "evaluating":
-        # 评估门：从评估进入分析，必须已完成六维评分且决议为「立项」
+        # 评估门：从评估进入分析，必须已完成六维评分且决议为「通过」
         if requirement_scoring.compute_weighted_total(requirement_scoring.requirement_scores(r)) is None:
             raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
         if r.decision != "通过":
@@ -862,7 +862,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
         setattr(r, field_map[k], v)
     if "decision" in data:
         r.decision = data["decision"]
-    # M16 评估门：决议按象限约束——「重新评估」象限仅可 搁置/驳回；其余象限方可立项；
+    # M16 评估门：决议按象限约束——「重新评估」象限仅可搁置/驳回；其余象限可选择通过；
     # 驳回=关闭需求，必填理由（≥5 字）
     cfg = requirement_scoring.get_config(db)
     scores_now = requirement_scoring.requirement_scores(r)

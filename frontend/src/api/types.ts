@@ -1670,6 +1670,13 @@ export interface RequirementRow {
   weighted_total?: number | null;
   /** 四象限（中文权威值：战略下注/速赢项目/低优先级/重新评估） */
   quadrant?: string | null;
+  /** 已持久化的六维评分。导入或历史数据可能没有评分历史行，详情页仍须以此回填。 */
+  d1_strategy?: number | null;
+  d2_value?: number | null;
+  d3_tech?: number | null;
+  d4_org?: number | null;
+  d5_risk?: number | null;
+  d6_speed?: number | null;
   /** 评估决议（中文权威值：通过/搁置/驳回） */
   decision?: string | null;
   /** PRD 人天 */

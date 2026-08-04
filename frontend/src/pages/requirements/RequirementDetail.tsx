@@ -95,11 +95,41 @@ function EvaluationPanel({
   const { roleLabel } = useRoleOptions();
   const [config, setConfig] = useState<ScoringConfig | null>(null);
 
-  // 单人评分场景：用共识分或首条评分回填
-  const seed = useMemo(() => {
+  // 单人评分场景：优先共识分或首条评分记录。
+  // 导入/历史数据可能仅保存到了需求主表，没有评分历史行；这时也必须回填主表评分。
+  const scoreRecord = useMemo(() => {
     const list = detail.scores ?? [];
     return list.find((s) => s.is_consensus) ?? list[0] ?? null;
   }, [detail.scores]);
+
+  const persistedScores = useMemo<DimScores>(() => {
+    if (scoreRecord) {
+      return {
+        d1_strategy: scoreRecord.d1_strategy,
+        d2_value: scoreRecord.d2_value,
+        d3_tech: scoreRecord.d3_tech,
+        d4_org: scoreRecord.d4_org,
+        d5_risk: scoreRecord.d5_risk,
+        d6_speed: scoreRecord.d6_speed,
+      };
+    }
+    return {
+      d1_strategy: detail.d1_strategy ?? undefined,
+      d2_value: detail.d2_value ?? undefined,
+      d3_tech: detail.d3_tech ?? undefined,
+      d4_org: detail.d4_org ?? undefined,
+      d5_risk: detail.d5_risk ?? undefined,
+      d6_speed: detail.d6_speed ?? undefined,
+    };
+  }, [
+    detail.d1_strategy,
+    detail.d2_value,
+    detail.d3_tech,
+    detail.d4_org,
+    detail.d5_risk,
+    detail.d6_speed,
+    scoreRecord,
+  ]);
 
   const [scores, setScores] = useState<DimScores>({});
   const [decision, setDecision] = useState<string | undefined>(detail.decision ?? undefined);
@@ -107,21 +137,10 @@ function EvaluationPanel({
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setScores(
-      seed
-        ? {
-            d1_strategy: seed.d1_strategy,
-            d2_value: seed.d2_value,
-            d3_tech: seed.d3_tech,
-            d4_org: seed.d4_org,
-            d5_risk: seed.d5_risk,
-            d6_speed: seed.d6_speed,
-          }
-        : {},
-    );
-    setComment(seed?.comment ?? '');
+    setScores(persistedScores);
+    setComment(scoreRecord?.comment ?? '');
     setDecision(detail.decision ?? undefined);
-  }, [seed, detail.decision]);
+  }, [persistedScores, scoreRecord, detail.decision]);
 
   useEffect(() => {
     api
@@ -136,22 +155,29 @@ function EvaluationPanel({
     [scores, config],
   );
 
-  // M16 决议按本地实时象限约束：重新评估象限仅可 搁置/驳回；其余象限（评满）可 通过/搁置；驳回仅重评象限可选
-  const isReeval = preview?.quadrant === '重新评估';
+  // 评分配置仍在加载或历史主表评分无法由前端立即重算时，优先展示后端已计算的权威结果。
+  const displayPreview = preview ?? (
+    detail.weighted_total != null && detail.quadrant
+      ? { total: detail.weighted_total, quadrant: detail.quadrant }
+      : null
+  );
+
+  // 与后端契约保持一致：通过需完成六维评分且不得落入重新评估；搁置和驳回均可用，驳回必须填写理由。
+  const isReeval = displayPreview?.quadrant === '重新评估';
   const decisionDisabled = (d: string): boolean =>
-    d === '通过' ? !preview || isReeval : d === '驳回' ? !isReeval : false;
+    d === '通过' ? !displayPreview || isReeval : false;
   const decisionDisabledTip = (d: string): string =>
     d === '通过'
       ? isReeval
         ? t('req.eval.quadrantBlocked')
         : t('req.eval.needFullScores')
-      : t('req.eval.rejectOnlyReeval');
+      : '';
 
   // 打分变化导致象限变化时，已选决议若被禁用则自动清空，避免提交无效决议
   useEffect(() => {
     if (editable && decision && decisionDisabled(decision)) setDecision(undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, decision, preview?.quadrant]);
+  }, [editable, decision, displayPreview?.quadrant]);
 
   /** 驳回必填理由（≥5 字，前端校验 + 后端 REASON_REQUIRED 兜底） */
   const rejectCommentInvalid = decision === '驳回' && comment.trim().length < 5;
@@ -236,21 +262,21 @@ function EvaluationPanel({
 
       {/* 实时预览：加权总分 + 象限 */}
       <div style={{ margin: '16px 0', display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
-        {preview ? (
+        {displayPreview ? (
           <>
             <Space direction="vertical" size={0}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {t('req.weightedTotal')}
               </Typography.Text>
               <Typography.Title level={3} style={{ margin: 0 }}>
-                {preview.total.toFixed(1)}
+                {displayPreview.total.toFixed(1)}
               </Typography.Title>
             </Space>
             <Space direction="vertical" size={4}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {t('req.quadrant')}
               </Typography.Text>
-              <QuadrantTag value={preview.quadrant} />
+              <QuadrantTag value={displayPreview.quadrant} />
             </Space>
           </>
         ) : (
@@ -318,9 +344,9 @@ function EvaluationPanel({
             )}
           </>
         ) : (
-          seed?.comment && (
+          scoreRecord?.comment && (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-              {seed.comment}
+              {scoreRecord.comment}
             </Typography.Paragraph>
           )
         )}

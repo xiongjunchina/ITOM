@@ -79,7 +79,7 @@ GET /api/admin/master-data?category=     # 字典（全员只读，admin 可写�
 GET/PUT /api/admin/workflow-config       # 状态机
 GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # 站内通知、批量已读与已读清理
-POST /api/attachments (multipart) | GET /api/attachments?entity=
+POST /api/attachments?entity_type=&entity_id= (multipart) | GET /api/attachments?entity_type=&entity_id= | GET /api/attachments/{id}/download
 ```
 
 个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
@@ -169,6 +169,8 @@ GET /api/requirements/tasks/active
 
 同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。既有任务按原主键和软删除状态继续可读；本次仅通过启动期幂等补列新增可空的路径快照字段，不回填或改写历史需求/任务。
 
+需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回仍要求不少于 5 字的理由。
+
 `POST /api/requirements/{id}/to-dev` 使用空载荷（兼容旧客户端可携带 `owner_id`，但若与评分规则 `review_assignees.dev_leader` 不一致则返回 `DEV_LEADER_FIXED`）。服务端必须存在并校验该在岗 IT 开发负责人；缺失/失效返回 `DEV_LEADER_NOT_CONFIGURED`。两个路径接口都只可处理当前「方案评估与路径判定」任务，否则返回 `PROCESS_STEP_MISMATCH`，并且只推进到「实现交付」。完成开发路径的实现交付任务前，流程引擎检查未删除的 `requirement_task` 至少一条，否则返回 `REQUIREMENT_TASK_REQUIRED`；此检查不适用于项目路径或没有 `implementation_route` 快照的既有记录。
 
 #### 任务管理接口（M82）
@@ -193,6 +195,8 @@ DELETE /api/task-management/work-tasks/{id}
 ```
 
 Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+
+Bug 创建成功后，网页可用通用附件接口依次上传零个或多个文件：`POST /api/attachments?entity_type=bug&entity_id={bug_id}`，multipart 字段固定为 `file`，单个文件上限 50MB。创建与附件上传不是同一事务：Bug 创建成功后单个附件失败不得删除或回滚该 Bug；详情继续通过 `GET /api/attachments?entity_type=bug&entity_id={bug_id}` 列出并允许补传/下载。附件接口不绕过 `task_bug`、身份认证或记录级工作流校验。
 
 `GET /api/task-management/reference/cis` 只返回未删除、未退役的 CMDB 配置项及其产品经理可读信息，供 Bug 登记页选择“所属系统”；它不维护第二套系统字典，也不放宽 `cmdb.view` 之外的写权限。CMDB 的 `owner` 是全部配置项均必填的技术负责人；仅“应用”类别的 `product_manager_id` 是 Bug 确认和验证关闭的产品经理，二者可为同一人但不是重复字段。后端拒绝新建或编辑时缺少产品经理的应用；历史应用缺值的 Bug 登记返回 `PRODUCT_MANAGER_REQUIRED`，补配后重新登记即可，登记成功后保存快照。
 

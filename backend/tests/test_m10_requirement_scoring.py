@@ -4,6 +4,9 @@ import io
 import pytest
 from openpyxl import load_workbook
 
+from app.db import SessionLocal
+from app.models import Requirement
+
 
 @pytest.fixture(scope="module")
 def ctx(client, admin_headers):
@@ -47,6 +50,34 @@ def test_score_weighted_total_and_quadrant(client, ctx):
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
     assert detail["d1_strategy"] == 5 and detail["weighted_total"] == 3.8
     assert len(detail["scores"]) == 1 and detail["scores"][0]["is_consensus"] is True
+
+
+def test_detail_exposes_persisted_scores_without_history_and_rejects_with_reason(client, ctx):
+    """历史/导入需求即使缺评分历史行，也必须能回填六维评分并选择驳回。"""
+    r = _register(client, ctx["pdm"], ctx["domain"], title="历史主表评分需求")
+    rid = r["id"]
+    with SessionLocal() as db:
+        requirement = db.get(Requirement, rid)
+        requirement.score_d1_strategy = 5
+        requirement.score_d2_value = 4
+        requirement.score_d3_tech = 4
+        requirement.score_d4_org = 3
+        requirement.score_d5_risk = 2
+        requirement.score_d6_speed = 4
+        db.commit()
+
+    detail = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
+    assert detail["scores"] == []
+    assert [detail[key] for key in ("d1_strategy", "d2_value", "d3_tech", "d4_org", "d5_risk", "d6_speed")] == [5, 4, 4, 3, 2, 4]
+    assert detail["weighted_total"] == 4.1 and detail["quadrant"] == "战略下注"
+
+    rejected = client.post(
+        f"/api/requirements/{rid}/score",
+        json={"decision": "驳回", "comment": "当前业务优先级已调整，停止投入实施"},
+        headers=ctx["admin"],
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["data"]["status"] == "cancelled"
 
 
 def test_eval_gate_quadrant_and_auto_flow(client, ctx):

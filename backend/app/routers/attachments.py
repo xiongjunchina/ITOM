@@ -9,12 +9,32 @@ from app.core.errors import AppError
 from app.core.glid import new_glid
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import Attachment, AuthUser
+from app.models import Attachment, AuthUser, Bug
 from app.schemas.common import ok
+from app.services import process_engine
+from app.services.permissions import has_perm
 
 router = APIRouter(prefix="/api/attachments", tags=["support"])
 
 MAX_SIZE = 50 * 1024 * 1024  # 50MB
+
+
+def _require_bug_attachment_access(db: Session, user: AuthUser, bug_id: str, *, mutate: bool) -> None:
+    """Keep Bug evidence inside the same permission boundary as the Bug record.
+
+    Generic attachments predate task management and are still used by several
+    legacy entities.  Bug evidence is different: an upload changes the Bug's
+    evidence set, so it must respect the workflow correction window instead of
+    allowing every authenticated account to append a file.
+    """
+    bug = db.get(Bug, bug_id)
+    if not bug or bug.is_deleted:
+        raise AppError("NOT_FOUND", "Bug 不存在", 404)
+    if mutate:
+        process_engine.require_workflow_edit(db, user, "bug", bug.id, "task_bug")
+        return
+    if not has_perm(db, user, "task_bug", "view"):
+        raise AppError("FORBIDDEN", "没有查看 Bug 附件的权限", 403)
 
 
 @router.post("")
@@ -25,6 +45,8 @@ async def upload(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
+    if entity_type == "bug":
+        _require_bug_attachment_access(db, user, entity_id, mutate=True)
     content = await file.read()
     if len(content) > MAX_SIZE:
         raise AppError("FILE_TOO_LARGE", "附件不能超过 50MB")
@@ -52,8 +74,10 @@ def list_attachments(
     entity_type: str,
     entity_id: str,
     db: Session = Depends(get_db),
-    _: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_user),
 ):
+    if entity_type == "bug":
+        _require_bug_attachment_access(db, user, entity_id, mutate=False)
     items = (
         db.query(Attachment)
         .filter(
@@ -71,8 +95,10 @@ def list_attachments(
 
 
 @router.get("/{attachment_id}/download")
-def download(attachment_id: str, db: Session = Depends(get_db), _: AuthUser = Depends(get_current_user)):
+def download(attachment_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     att = db.get(Attachment, attachment_id)
     if not att or att.is_deleted or not os.path.exists(att.storage_path):
         raise AppError("NOT_FOUND", "附件不存在", 404)
+    if att.entity_type == "bug":
+        _require_bug_attachment_access(db, user, att.entity_id, mutate=False)
     return FileResponse(att.storage_path, filename=att.filename)

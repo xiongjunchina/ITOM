@@ -1,5 +1,6 @@
 import pytest
 
+from app.core.config import settings
 from app.db import SessionLocal
 from app.models import Ci, ProcessInstance, ProcessTask
 
@@ -99,6 +100,45 @@ def test_cmdb_requires_product_manager_for_new_app_and_legacy_ci_can_be_repaired
     )
     assert registered.status_code == 200, registered.text
     assert registered.json()["data"]["product_manager_id"] == actors["pm_id"]
+
+
+def test_bug_supports_evidence_attachment_upload_and_download(client, actors, tmp_path, monkeypatch):
+    """Bug 创建后可使用通用附件能力上传截图，并在详情下载。"""
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+    bug = _register_bug(client, actors, "带截图证据的 Bug")
+
+    uploaded = client.post(
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}",
+        files={"file": ("error-screen.png", b"fake-png-content", "image/png")},
+        headers=actors["dev"],
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    attachment = uploaded.json()["data"]
+    assert attachment["filename"] == "error-screen.png"
+
+    listed = client.get(
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}", headers=actors["dev"]
+    )
+    assert listed.status_code == 200, listed.text
+    assert [row["filename"] for row in listed.json()["data"]] == ["error-screen.png"]
+
+    downloaded = client.get(f"/api/attachments/{attachment['id']}/download", headers=actors["dev"])
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"fake-png-content"
+
+    for endpoint in (
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}",
+        f"/api/attachments/{attachment['id']}/download",
+    ):
+        response = client.get(endpoint, headers=actors["requester"])
+        assert response.status_code == 403
+
+    forbidden_upload = client.post(
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}",
+        files={"file": ("not-allowed.txt", b"not-allowed", "text/plain")},
+        headers=actors["requester"],
+    )
+    assert forbidden_upload.status_code == 403
 
 
 def test_bug_registration_confirmation_multi_tasks_and_verification_close(client, actors):

@@ -284,7 +284,7 @@ export default function Requirements() {
         </Space>
       ),
     },
-    { title: t('req.col.title'), dataIndex: 'title', width: 240, ellipsis: true },
+    { title: t('req.col.title'), dataIndex: 'title', width: 280, ellipsis: true, fixed: 'left' },
     { title: t('req.col.type'), dataIndex: 'req_type', width: 80, render: (v) => et.reqType(v) },
     { title: t('req.col.domain'), dataIndex: 'business_domain_name', width: 130, ellipsis: true, render: (v) => v || '-' },
     {
@@ -527,7 +527,8 @@ export default function Requirements() {
           {boardView}
         </Spin>
       ) : (
-        <Table<RequirementRow>
+      <Table<RequirementRow>
+        className="sticky-table--freeze-columns"
           rowKey="id"
           loading={loading}
           columns={columns}

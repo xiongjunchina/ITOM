@@ -16,14 +16,17 @@ import {
   Switch,
   Table as AntTable,
   Tag,
+  Typography,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import type { UploadFile } from 'antd/es/upload/interface';
+import { DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
 import { api } from '../../api/client';
-import type { BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
+import type { AttachmentItem, BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
@@ -89,6 +92,8 @@ export default function BugListPage() {
   const [fixForm] = Form.useForm<FixTaskFormValues>();
   const [cis, setCis] = useState<CiRow[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<UploadFile[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -118,10 +123,37 @@ export default function BugListPage() {
     }
   };
 
+  const loadAttachments = async (bugId: string) => {
+    const result = await api.getList<AttachmentItem>('/attachments', {
+      entity_type: 'bug', entity_id: bugId,
+    });
+    setAttachments(result.items);
+    return result.items;
+  };
+
   const refreshDetail = async (bugId: string) => {
-    const next = await api.get<BugRow>(`/task-management/bugs/${bugId}`);
+    const [next] = await Promise.all([
+      api.get<BugRow>(`/task-management/bugs/${bugId}`),
+      loadAttachments(bugId),
+    ]);
     setDetail(next);
     void load();
+  };
+
+  const uploadEvidenceFiles = async (bugId: string, files: UploadFile[]) => {
+    let uploaded = 0;
+    for (const item of files) {
+      const file = item.originFileObj ?? item;
+      if (!(file instanceof File)) continue;
+      try {
+        await api.upload<AttachmentItem>(`/attachments?entity_type=bug&entity_id=${bugId}`, file);
+        uploaded += 1;
+      } catch {
+        // 单个文件失败不回滚已登记的 Bug；用户可在详情中补传。
+      }
+    }
+    await loadAttachments(bugId);
+    return uploaded;
   };
 
   useProcessTaskView(detail?.process, user, detail ? () => { void refreshDetail(detail.id); } : undefined);
@@ -129,6 +161,7 @@ export default function BugListPage() {
   const openCreate = () => {
     bugForm.resetFields();
     bugForm.setFieldValue('priority', 'P2');
+    setPendingFiles([]);
     setCreateOpen(true);
     void loadReferences();
   };
@@ -138,10 +171,17 @@ export default function BugListPage() {
     setSaving(true);
     try {
       const created = await api.post<BugRow>('/task-management/bugs', values);
-      message.success(t('task.bug.created'));
+      const uploaded = created?.id && pendingFiles.length
+        ? await uploadEvidenceFiles(created.id, pendingFiles)
+        : 0;
+      if (pendingFiles.length && uploaded < pendingFiles.length) {
+        message.warning(t('task.bug.attachmentPartial', { uploaded, total: pendingFiles.length }));
+      } else {
+        message.success(t('task.bug.created'));
+      }
       setCreateOpen(false);
       await load();
-      if (created?.id) setDetail(created);
+      if (created?.id) await refreshDetail(created.id);
     } catch {
       // API client 已统一提示错误
     } finally {
@@ -272,7 +312,7 @@ export default function BugListPage() {
     { title: t('task.bug.devLeader'), dataIndex: 'dev_leader_name', width: 110, render: (v) => v || '-' },
     {
       title: t('common.actions'), key: 'actions', width: 100, fixed: 'right',
-      render: (_: unknown, row: BugRow) => <Button type="link" size="small" onClick={() => setDetail(row)}>{t('common.detail')}</Button>,
+      render: (_: unknown, row: BugRow) => <Button type="link" size="small" onClick={() => void refreshDetail(row.id)}>{t('common.detail')}</Button>,
     },
   ], [t]);
 
@@ -311,6 +351,16 @@ export default function BugListPage() {
           <Form.Item name="expected_result" label={t('task.bug.expected')}><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="actual_result" label={t('task.bug.actual')}><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="evidence" label={t('task.bug.evidence')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item label={t('task.bug.attachments')} extra={t('task.bug.attachmentHint')}>
+            <Upload
+              multiple
+              beforeUpload={() => false}
+              fileList={pendingFiles}
+              onChange={({ fileList }) => setPendingFiles(fileList)}
+            >
+              <Button icon={<UploadOutlined />}>{t('task.bug.uploadAttachments')}</Button>
+            </Upload>
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -334,8 +384,38 @@ export default function BugListPage() {
             <Descriptions.Item label={t('task.bug.devLeader')}>{detail.dev_leader_name || '-'}</Descriptions.Item>
             <Descriptions.Item label={t('task.description')} span={2}>{detail.description}</Descriptions.Item>
             <Descriptions.Item label={t('task.bug.actual')} span={2}>{detail.actual_result || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('task.bug.evidence')} span={2}>{detail.evidence || '-'}</Descriptions.Item>
             <Descriptions.Item label={t('task.bug.rejectionReason')} span={2}>{detail.rejection_reason || '-'}</Descriptions.Item>
           </Descriptions>
+          <Divider orientation="left">{t('task.bug.attachments')}</Divider>
+          <Space wrap>
+            {attachments.length > 0 ? attachments.map((attachment) => (
+              <Button
+                key={attachment.id}
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => void api.download(`/attachments/${attachment.id}/download`)}
+              >
+                {attachment.filename}
+              </Button>
+            )) : <Typography.Text type="secondary">{t('task.bug.noAttachments')}</Typography.Text>}
+            {detail.capabilities.edit && (
+              <Upload
+                showUploadList={false}
+                customRequest={({ file, onSuccess, onError }) => {
+                  api.upload<AttachmentItem>(`/attachments?entity_type=bug&entity_id=${detail.id}`, file as File)
+                    .then((result) => {
+                      onSuccess?.(result);
+                      message.success(t('task.bug.attachmentUploaded', { count: 1 }));
+                      void loadAttachments(detail.id);
+                    })
+                    .catch((error) => onError?.(error as Error));
+                }}
+              >
+                <Button size="small" type="dashed" icon={<UploadOutlined />}>{t('task.bug.uploadAttachments')}</Button>
+              </Upload>
+            )}
+          </Space>
           <Divider orientation="left">{t('task.bug.fixTasks')}</Divider>
           <AntTable<BugFixTaskRow>
             rowKey="id" size="small" pagination={false} dataSource={detail.fix_tasks}

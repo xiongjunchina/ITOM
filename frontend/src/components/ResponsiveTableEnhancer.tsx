@@ -157,7 +157,11 @@ export default function ResponsiveTableEnhancer(): null {
         .filter((entry) => entry.area > 0)
         .sort((left, right) => right.area - left.area)[0]?.wrapper;
       if (visibleWrapper) activeWrapper = visibleWrapper;
-      if (activeWrapper && !active.has(activeWrapper)) activeWrapper = visibleWrapper ?? null;
+      // 筛选、分页会整体替换 antd 表格节点。旧节点已消失时，必须立即接管新的宽表，
+      // 否则全局唯一的底部滚动条会被错误隐藏，导致少量筛选结果无法横向查看。
+      if (!activeWrapper || !active.has(activeWrapper) || !wideWrappers.includes(activeWrapper)) {
+        activeWrapper = visibleWrapper ?? wideWrappers[0] ?? null;
+      }
 
       controllers.forEach((controller, wrapper) => {
         if (!active.has(wrapper) || !document.body.contains(wrapper)) {

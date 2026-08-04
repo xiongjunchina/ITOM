@@ -98,7 +98,7 @@ recipient FK→org_member, title, content, link (front-end route), read_at. The 
 
 ### 1.9 attachment — generic attachment
 
-entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, and original charter files.
+entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, original charter files, and Bug evidence. A Bug uses `entity_type=bug` and `entity_id=bug.id`; evidence text remains in `bug.evidence`, so no Bug-specific attachment table is introduced.
 
 ### 1.10 external_identity [implemented in P0]
 
@@ -287,7 +287,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.3 bug — defect record
 
-`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK (the selectable system comes from CMDB), `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, evidence, resolution and verification notes, rejection reason, and reopen/close timestamps. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
+`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK (the selectable system comes from CMDB), `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, `evidence` text, resolution and verification notes, rejection reason, and reopen/close timestamps. Screenshot, log, and other binary evidence is related through generic `attachment(entity_type=bug, entity_id=bug.id)` without duplicating file metadata. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
 
 ### 4.4 bug_fix_task — Bug repair task
 
