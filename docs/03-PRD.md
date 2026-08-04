@@ -556,7 +556,7 @@ Task 8C Round 1 进一步规定：有效原始确认 Token 与非空、可解析
 | 项 | 要求 |
 | --- | --- |
 | 技术栈 | 后端 FastAPI + SQLAlchemy + PostgreSQL；前端 React + Ant Design；单仓库 |
-| 部署 | IDC Kubernetes 是唯一运行、联调和验收环境；本地不得启动 ITOM 应用栈、数据库、Compose、8180 或 ngrok，除非用户明确要求临时隔离排障。提交先通过 GitHub Actions 的完整后端回归、前端生产构建和仓库契约检查，再从干净提交构建 Git SHA 不可变 linux/amd64 镜像、推送 Harbor 并部署同一标签。正式验收覆盖 rollout、实际镜像、内外健康链路、MCP 入口和真实角色业务 UAT，自动化测试不得连接 IDC 业务数据库 |
+| 部署 | IDC Kubernetes 是唯一运行、联调和验收环境；本地不得启动 ITOM 应用栈、数据库、Compose、8180 或 ngrok，除非用户明确要求临时隔离排障。提交先通过 GitHub Actions 的完整后端回归、前端生产构建和仓库契约检查，再从干净提交构建 Git SHA 不可变 linux/amd64 镜像、推送 Harbor 并部署同一标签。前端两个副本以主机名软拓扑分布（`maxSkew=1`、`ScheduleAnyway`）优先跨节点，节点缩减时仍可同节点恢复；发布必须逐一验证每个 Ready 前端 Endpoint 的后端代理。正式验收覆盖 rollout、实际镜像、内外健康链路、MCP 入口和真实角色业务 UAT，自动化测试不得连接 IDC 业务数据库 |
 | 性能 | 列表页 ≤ 1s；Dashboard ≤ 2s；数据规模按 5 年 10 万工单设计 |
 | 安全 | 密码哈希存储、JWT 会话、接口级 RBAC、审计日志不可改 |
 | API 约定 | 统一响应 `{success, data, total, page}`；RESTful；OpenAPI 文档自动生成 |

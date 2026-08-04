@@ -26,12 +26,16 @@ spec:
     metadata:
       labels: { app: itom-frontend }
     spec:
-      # Temporary production workaround: the Flannel/CNI path on k8s-01/02 is
-      # intermittently unable to resolve/reach the backend Service, which makes
-      # nginx return 502. Keep the frontend with backend + DB on healthy k8s-03
-      # until the cluster network incident is resolved.
-      nodeSelector:
-        kubernetes.io/hostname: sn-prod-k8s-03
+      # Prefer placing the two web replicas on different Kubernetes hosts. The
+      # policy is deliberately soft: a temporarily reduced cluster must still
+      # be able to restore both replicas on one remaining node instead of
+      # leaving users without the web entry point.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: itom-frontend }
       imagePullSecrets:
         - name: harbor-isa
       containers:

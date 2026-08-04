@@ -96,9 +96,9 @@ echo "==> Wait for backend (first boot runs schema create + seed)"
 echo "==> Wait for frontend"
 "${KC[@]}" -n "$NS" rollout status deploy/itom-frontend --timeout=180s
 
-# Self-heal the flaky cluster CNI: a pod that drew an unreachable Flannel IP
-# fails readiness and never joins Endpoints. Recreate such pods a few times.
-echo "==> Ensuring Ready endpoints (self-heal past flaky-CNI bad pod IPs)"
+# Endpoint recovery: if a rollout has no Ready endpoint, recreate one pending
+# pod a bounded number of times before failing the release.
+echo "==> Ensuring Ready endpoints"
 for dep in itom-backend itom-frontend; do
   svc="$dep"; [ "$dep" = "itom-backend" ] && svc="backend"
   ok=
@@ -131,18 +131,24 @@ actual_frontend="$("${KC[@]}" -n "$NS" get deployment itom-frontend -o jsonpath=
 echo "   backend: $actual_backend"
 echo "   frontend: $actual_frontend"
 
-# An endpoint alone is insufficient on this cluster: nginx can be Ready while
-# cross-node DNS/backend access is degraded. Verify the complete frontend ->
-# backend proxy path and fail the deployment if it returns anything but health.
-echo "==> Verify frontend -> backend proxy"
-front_pod="$("${KC[@]}" -n "$NS" get endpoints itom-frontend \
-  -o jsonpath='{.subsets[0].addresses[0].targetRef.name}' 2>/dev/null)"
-if [ -z "$front_pod" ] || ! "${KC[@]}" -n "$NS" exec "$front_pod" -- \
-  wget -qO- --timeout=10 http://localhost/api/health | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
-  echo "   !! frontend cannot proxy /api/health to backend"
+# An endpoint alone is insufficient: nginx can be Ready while cross-node
+# DNS/backend access is degraded. Check every Ready frontend endpoint, because
+# the web replicas are intentionally spread across Kubernetes hosts.
+echo "==> Verify every frontend -> backend proxy"
+front_pods="$("${KC[@]}" -n "$NS" get endpoints itom-frontend \
+  -o jsonpath='{.subsets[*].addresses[*].targetRef.name}' 2>/dev/null)"
+if [ -z "$front_pods" ]; then
+  echo "   !! no Ready frontend endpoint"
   exit 1
 fi
-echo "   frontend proxy health: OK"
+for front_pod in $front_pods; do
+  if ! "${KC[@]}" -n "$NS" exec "$front_pod" -- \
+    wget -qO- --timeout=10 http://localhost/api/health | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'; then
+    echo "   !! $front_pod cannot proxy /api/health to backend"
+    exit 1
+  fi
+  echo "   $front_pod proxy health: OK"
+done
 
 echo "==> Verify external health and MCP initialize"
 curl_args=(--fail --silent --show-error --max-time 20)
