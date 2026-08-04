@@ -362,7 +362,7 @@ POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时�
 ### 4.6 团队
 
 ```text
-GET /api/team/overview                   # 负载/积分Top/培训数/招聘进度聚合
+GET /api/team/overview                   # 全部在岗 IT 成员负载（网页本地 20 条分页）/积分Top/培训数/招聘进度聚合
 GET/POST/PATCH /api/positions | /api/hiring-needs；岗位与招聘需求另提供 `GET /api/positions/template`、`GET /api/positions/export`、`POST /api/positions/import`，以及对应的 `/api/hiring-needs/template`、`GET /api/hiring-needs/export`、`POST /api/hiring-needs/import` Excel 闭环。
 GET/POST/PATCH/DELETE /api/trainings     # 培训提升活动；PATCH/DELETE 仅 admin/CIO/登记人
 GET/PUT /api/team-charter

@@ -571,7 +571,9 @@ def team_overview(db: Session = Depends(get_db), _=Depends(require_perm("team_ov
     )
     return ok({
         "period": period,
-        "workload": _workload(db)[:20],
+        # 团队总览需要展示全部在岗 IT 成员；页面在客户端按 20 条分页，
+        # 不能在接口层截断，否则工具栏和在岗人数会产生不一致。
+        "workload": _workload(db),
         "points_board": [{"person_name": names.get(pid), "points": round(float(pts), 1)} for pid, pts in board],
         "trainings_month": trainings_month,
         "active_campaigns": active_campaigns,

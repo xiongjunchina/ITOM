@@ -445,6 +445,8 @@ The Requirement “solution assessment and routing” node prefers the product o
 
 **Unified scope (M40)**: this module reports and displays IT team members only, never the whole-company population. Membership primarily follows `department.dept_type=it`; legacy accounts without a department are recognized through IT roles such as `cio`, `it_*`, and `is_mgr`. Business-department members and requester/auditor-only users are excluded from workload, points, performance, campaign awards, position occupancy, and team member pickers.
 
+**Team Overview workload list**: `/api/team/overview` returns aggregated open tickets, project tasks, and requirement tasks for every active IT-team member, ordered by total descending. The web UI applies local 20-row pagination with paging, search, sorting, and export; the API must not silently truncate the result to a “Top 20”, and the toolbar count can be reconciled with the same IT-scope onboard metric.
+
 ### 9.1 Performance Management (staged review)
 
 Performance is role-based for the matrix organization, not position-only. Business-line role weights plus professional-line role weights equal 80%; team contribution is fixed at 20%. Each role is independently scored out of 100. Business-line leads/BPs score business roles, professional-line leads score product/project/development/operations roles, and the CIO scores professional-line leads and platform roles. The CIO is not included in this regular score.

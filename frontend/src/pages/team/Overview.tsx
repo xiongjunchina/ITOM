@@ -136,7 +136,7 @@ export default function Overview() {
               columns={workloadColumns}
               dataSource={workload}
               standardToolbar={{ exportFileName: '团队工作负载', searchPlaceholder: '搜索员工或工作负载' }}
-              pagination={false}
+              pagination={{ pageSize: 20, showSizeChanger: false, hideOnSinglePage: true }}
               locale={{ emptyText: t('team.overview.workload.empty') }}
             />
           </Card>
