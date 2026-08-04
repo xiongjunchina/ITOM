@@ -351,7 +351,7 @@ POST /api/requirements/{id}/close        # validate all acceptance criteria chec
 ### 4.5 Process
 
 ```text
-GET/POST/PATCH /api/admin/process-definitions (nested steps with stable step_code; used-version node/RACI/SLA changes require a new version)
+GET/POST/PATCH /api/admin/process-definitions (nested steps with stable step_code; a used version may maintain only cc_roles in place for future node activations, while node/RACI/SLA changes require a new version)
 GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue aggregation
 POST /api/process-tasks/{id}/complete | /reassign
 POST /api/process-tasks/{id}/view       # current handler records first detail view; idempotently returns viewed_at/viewed_by

@@ -216,12 +216,12 @@ def test_process_definition_crud_and_versioning(client, admin_headers, ctx):
 
     # 给 incident_flow 制造一个实例 → 步骤锁定
     _, u = ctx["member_and_user"]("吴十", "wu01", ["it_ops"])
-    client.post(
+    used_ticket = client.post(
         "/api/tickets",
         json={"title": "占用流程的事件单", "ticket_type": "incident", "priority": "P3", "description": "d",
               "service_item_id": ctx["item"]},
         headers=u,
-    )
+    ).json()["data"]
     defs = client.get("/api/admin/process-definitions", headers=admin_headers).json()["data"]
     incident = next(d for d in defs if d["code"] == "incident_flow")
     assert incident["instance_count"] > 0 and incident["steps_locked"]
@@ -239,6 +239,35 @@ def test_process_definition_crud_and_versioning(client, admin_headers, ctx):
     role_steps[0]["default_role"] = "cio" if role_steps[0].get("default_role") != "cio" else "it_ops"
     r = client.patch(f"/api/admin/process-definitions/{incident['id']}", json={"steps": role_steps}, headers=admin_headers)
     assert r.json()["error"]["code"] == "STEPS_LOCKED"
+
+    name_steps = [{k: step.get(k) for k in ("seq", "step_code", "name", "node_type", "default_role", "cc_roles", "autonomy_level", "sla_hours", "description")}
+                  for step in incident["steps"]]
+    name_steps[0]["name"] = f"{name_steps[0]['name']}（改）"
+    r = client.patch(f"/api/admin/process-definitions/{incident['id']}", json={"steps": name_steps}, headers=admin_headers)
+    assert r.json()["error"]["code"] == "STEPS_LOCKED"
+
+    # 已有实例允许仅维护非阻塞的知会人。历史任务保留创建时的 RACI 快照，
+    # 新生成的任务才读取更新后的知会名单。
+    original_cc = incident["steps"][0].get("cc_roles") or []
+    changed_cc = ["cio"] if "cio" not in original_cc else ["it_ops"]
+    cc_steps = [{k: step.get(k) for k in ("seq", "step_code", "name", "node_type", "default_role", "cc_roles", "autonomy_level", "sla_hours", "description")}
+                for step in incident["steps"]]
+    cc_steps[0]["cc_roles"] = changed_cc
+    r = client.patch(f"/api/admin/process-definitions/{incident['id']}", json={"steps": cc_steps}, headers=admin_headers)
+    assert r.json()["success"], r.text
+    assert r.json()["data"]["steps"][0]["cc_roles"] == changed_cc
+
+    old_detail = client.get(f"/api/tickets/{used_ticket['id']}", headers=u).json()["data"]
+    assert old_detail["process"]["steps"][0]["cc_roles"] == original_cc
+
+    new_ticket = client.post(
+        "/api/tickets",
+        json={"title": "更新知会后的事件单", "ticket_type": "incident", "priority": "P3", "description": "d",
+              "service_item_id": ctx["item"]},
+        headers=u,
+    ).json()["data"]
+    new_detail = client.get(f"/api/tickets/{new_ticket['id']}", headers=u).json()["data"]
+    assert new_detail["process"]["steps"][0]["cc_roles"] == changed_cc
 
     # 另存新版本：旧版停用、新版 active、老实例不受影响
     r = client.post(

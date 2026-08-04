@@ -349,7 +349,7 @@ POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {
 ### 4.5 流程
 
 ```text
-GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code，已有实例的节点/RACI/SLA 改动需另存新版本)
+GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code；已有实例的版本仅 cc_roles 可原地维护且只影响后续节点激活，节点/RACI/SLA 改动需另存新版本)
 GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时聚合
 POST /api/process-tasks/{id}/complete | /reassign
 POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时记录查阅；幂等返回 viewed_at/viewed_by

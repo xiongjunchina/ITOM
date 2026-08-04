@@ -151,7 +151,7 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 - The process-definition page shows a **process diagram** for each process (node cards: step name + handler in blue + CC in gray + autonomy level/SLA), with live preview in the editor.
 - The record-detail process bar also shows the CC parties.
 - Current runtime change-management process: Change request (it_ops) → Change approval (it_op_leader, CC it_bm) → Implementation & verification (it_ops) → Change retrospective/PIR (is_mgr, CC cio). Do not treat the old five-step “risk assessment → change approval” seed or its former CC relationships as the current process definition.
-- Task creation also stores the process version, `step_code`, and RACI snapshot. Changing a handler or CC relationship requires a new process version, so historical tasks and performance extraction remain stable.
+- Task creation also stores the process version, `step_code`, and RACI snapshot. Once a version has instances, node order/type, handler, autonomy level, and SLA require a new process version. Only non-blocking `cc_roles` may be maintained in place, and only for nodes that first activate after the save. Historical tasks keep `raci_snapshot.informed`, and sent CC notifications are neither replayed nor rewritten, so history and performance extraction remain stable.
 
 ## 11. Aily + MCP identity and normal-user permissions (P0/P1 implemented)
 

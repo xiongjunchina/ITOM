@@ -18,8 +18,6 @@ import {
   Typography,
   message,
   Popconfirm} from 'antd';
-import type { ColumnsType } from 'antd/es/table';
-import Table from '../../components/SortableTable';
 import {
   ArrowDownOutlined,
   ArrowUpOutlined,
@@ -121,15 +119,13 @@ export default function Definitions() {
     void load();
   }, [load]);
 
-  /** 步骤是否可编辑：新建/另存新版本总是可编辑；编辑时受 steps_locked 限制 */
-  const stepsEditable = mode !== 'edit' || !target?.steps_locked;
+  /** 已被引用的流程锁定结构与主责；知会人仍可作为非阻塞通知规则维护。 */
+  const stepStructureEditable = mode !== 'edit' || !target?.steps_locked;
 
-  /** Drawer 实时预览：Form.List 值驱动示意图即时更新；步骤锁定时用 target.steps */
+  /** Drawer 实时预览：知会人即使在已引用流程中更新，也立即反映在示意图中。 */
   const stepsWatch = Form.useWatch('steps', form) as StepFormRow[] | undefined;
   const previewSteps: FlowDiagramStep[] = useMemo(() => {
-    const rows: (StepFormRow | ProcessStepDef | undefined)[] = stepsEditable
-      ? stepsWatch ?? []
-      : target?.steps ?? [];
+    const rows: (StepFormRow | ProcessStepDef | undefined)[] = stepsWatch ?? target?.steps ?? [];
     return rows
       .filter((r): r is StepFormRow | ProcessStepDef => !!r)
       .map((s, i) => ({
@@ -141,7 +137,7 @@ export default function Definitions() {
         autonomy_level: s.autonomy_level,
         sla_hours: s.sla_hours ?? null,
       }));
-  }, [stepsEditable, stepsWatch, target]);
+  }, [stepsWatch, target]);
 
   const openDrawer = (m: DrawerMode, record?: ProcessDefinition) => {
     setMode(m);
@@ -235,7 +231,7 @@ export default function Definitions() {
           name: values.name,
           trigger_condition: trigger,
           description: values.description ?? null,
-          ...(stepsEditable ? { steps } : {}),
+          steps,
         });
         message.success(t('proc.updated'));
       } else if (mode === 'new-version' && target) {
@@ -278,41 +274,6 @@ export default function Definitions() {
       void load();
     }
   };
-
-  const lockedStepColumns: ColumnsType<ProcessStepDef> = [
-    { title: '#', dataIndex: 'seq', width: 50 },
-    { title: t('proc.col.name'), dataIndex: 'name' },
-    {
-      title: t('proc.col.nodeType'),
-      dataIndex: 'node_type',
-      width: 120,
-      render: (v: ProcessNodeType) => t(v === 'approval' ? 'proc.node.approval' : 'proc.node.processing'),
-    },
-    {
-      title: t('proc.col.defaultAssign'),
-      dataIndex: 'default_role',
-      render: (v: string | null | undefined) => roleLabel(v),
-    },
-    {
-      title: t('proc.col.cc'),
-      dataIndex: 'cc_roles',
-      render: (v: string[] | undefined) =>
-        v && v.length > 0 ? v.map((k) => roleLabel(k)).join('、') : '-',
-    },
-    {
-      title: t('proc.col.autonomy'),
-      dataIndex: 'autonomy_level',
-      width: 160,
-      render: (v: AutonomyLevel) => et.autonomy(v),
-    },
-    {
-      title: t('proc.col.sla'),
-      dataIndex: 'sla_hours',
-      width: 100,
-      render: (v: number | null) => v ?? '-',
-    },
-    { title: t('proc.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
-  ];
 
   const renderCard = (def: ProcessDefinition) => (
     <Col xs={24} xl={12} key={def.id}>
@@ -571,8 +532,7 @@ export default function Definitions() {
           </Form.Item>
 
           <Typography.Title level={5}>{t('proc.stepDef')}</Typography.Title>
-          {stepsEditable ? (
-            <Form.List name="steps">
+          <Form.List name="steps">
               {(fields, { add, remove, move }) => (
                 <>
                   {fields.map((field, index) => (
@@ -598,7 +558,11 @@ export default function Definitions() {
                               name={[field.name, 'step_code']}
                               style={{ marginBottom: 8 }}
                             >
-                              <Input placeholder={t('proc.stepCodePlaceholder')} maxLength={64} />
+                              <Input
+                                disabled={!stepStructureEditable}
+                                placeholder={t('proc.stepCodePlaceholder')}
+                                maxLength={64}
+                              />
                             </Form.Item>
                           </Col>
                           <Col span={4}>
@@ -607,7 +571,11 @@ export default function Definitions() {
                               rules={[{ required: true, message: t('proc.stepNameRequired') }]}
                               style={{ marginBottom: 8 }}
                             >
-                              <Input placeholder={t('proc.stepNamePlaceholder')} maxLength={50} />
+                              <Input
+                                disabled={!stepStructureEditable}
+                                placeholder={t('proc.stepNamePlaceholder')}
+                                maxLength={50}
+                              />
                             </Form.Item>
                           </Col>
                           <Col span={4}>
@@ -616,7 +584,11 @@ export default function Definitions() {
                               rules={[{ required: true, message: t('proc.required') }]}
                               style={{ marginBottom: 8 }}
                             >
-                              <Select placeholder={t('proc.node.placeholder')} options={nodeTypeOptions} />
+                              <Select
+                                disabled={!stepStructureEditable}
+                                placeholder={t('proc.node.placeholder')}
+                                options={nodeTypeOptions}
+                              />
                             </Form.Item>
                           </Col>
                           <Col span={5}>
@@ -627,6 +599,7 @@ export default function Definitions() {
                               <Select
                                 allowClear
                                 showSearch
+                                disabled={!stepStructureEditable}
                                 optionFilterProp="label"
                                 placeholder={t('proc.defaultAssignPlaceholder')}
                                 options={roleOptions}
@@ -639,7 +612,11 @@ export default function Definitions() {
                               rules={[{ required: true, message: t('proc.required') }]}
                               style={{ marginBottom: 8 }}
                             >
-                              <Select placeholder={t('proc.autonomyPlaceholder')} options={autonomyOptions} />
+                              <Select
+                                disabled={!stepStructureEditable}
+                                placeholder={t('proc.autonomyPlaceholder')}
+                                options={autonomyOptions}
+                              />
                             </Form.Item>
                           </Col>
                           <Col span={3}>
@@ -649,6 +626,7 @@ export default function Definitions() {
                             >
                               <InputNumber
                                 min={0}
+                                disabled={!stepStructureEditable}
                                 placeholder={t('proc.slaPlaceholder')}
                                 style={{ width: '100%' }}
                               />
@@ -677,7 +655,11 @@ export default function Definitions() {
                               name={[field.name, 'description']}
                               style={{ marginBottom: 8 }}
                             >
-                              <Input placeholder={t('proc.stepDescPlaceholder')} maxLength={100} />
+                              <Input
+                                disabled={!stepStructureEditable}
+                                placeholder={t('proc.stepDescPlaceholder')}
+                                maxLength={100}
+                              />
                             </Form.Item>
                           </Col>
                         </Row>
@@ -688,14 +670,14 @@ export default function Definitions() {
                             type="text"
                             size="small"
                             icon={<ArrowUpOutlined />}
-                            disabled={index === 0}
+                            disabled={!stepStructureEditable || index === 0}
                             onClick={() => move(index, index - 1)}
                           />
                           <Button
                             type="text"
                             size="small"
                             icon={<ArrowDownOutlined />}
-                            disabled={index === fields.length - 1}
+                            disabled={!stepStructureEditable || index === fields.length - 1}
                             onClick={() => move(index, index + 1)}
                           />
                           <Button
@@ -703,6 +685,7 @@ export default function Definitions() {
                             size="small"
                             danger
                             icon={<DeleteOutlined />}
+                            disabled={!stepStructureEditable}
                             onClick={() => remove(index)}
                           />
                         </Space>
@@ -713,6 +696,7 @@ export default function Definitions() {
                     type="dashed"
                     block
                     icon={<PlusOutlined />}
+                    disabled={!stepStructureEditable}
                     onClick={() => add({ name: '', node_type: 'processing', autonomy_level: 'L4', cc_roles: [] })}
                   >
                     {t('proc.addStep')}
@@ -722,16 +706,7 @@ export default function Definitions() {
                   </Typography.Paragraph>
                 </>
               )}
-            </Form.List>
-          ) : (
-            <Table<ProcessStepDef>
-              rowKey="seq"
-              size="small"
-              columns={lockedStepColumns}
-              dataSource={target?.steps ?? []}
-              pagination={false}
-            />
-          )}
+          </Form.List>
         </Form>
       </Drawer>
     </Card>

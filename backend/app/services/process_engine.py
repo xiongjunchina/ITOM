@@ -994,33 +994,41 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
         return None
     member_names = {m.id: m.name for m in db.query(OrgMember).all()}
     tasks_by_step = {t.step_id: t for t in instance.tasks if not t.is_deleted}  # 回退作废的任务不算现状
+    step_rows = []
+    for step in _live_steps(instance.definition):
+        task = tasks_by_step.get(step.id)
+        snapshot = task.raci_snapshot if task and isinstance(task.raci_snapshot, dict) else {}
+        informed = snapshot.get("informed")
+        # A process definition may later adjust its non-blocking CC rule.  A
+        # task that already exists must continue to show its own RACI snapshot,
+        # including an intentionally empty CC list; a not-yet-started step uses
+        # the latest definition and will snapshot it when activated.
+        cc_roles = list(informed) if isinstance(informed, list) else (step.cc_roles or [])
+        step_rows.append({
+            "seq": step.seq,
+            "step_code": step.step_code or f"step_{step.seq}",
+            "name": step.name,
+            "description": step.description,
+            "node_type": step.node_type or "processing",
+            "default_role": step.default_role,
+            "cc_roles": cc_roles,
+            "autonomy_level": step.autonomy_level,
+            "task_id": task.id if task else None,
+            "task_status": task.status if task else "未开始",
+            "assignee": task.assignee if task else None,
+            "assignee_name": member_names.get(task.assignee) if task and task.assignee else None,
+            "due_at": task.due_at if task else None,
+            "viewed_at": task.viewed_at if task else None,
+            "viewed_by": task.viewed_by if task else None,
+            "viewed_by_name": member_names.get(task.viewed_by) if task and task.viewed_by else None,
+            "completed_at": task.completed_at if task else None,
+            "raci_snapshot": task.raci_snapshot if task else None,
+        })
     return {
         "id": instance.id,
         "definition_name": instance.definition.name,
         "definition_version": instance.definition.version,
         "status": instance.status,
         "current_step_seq": instance.current_step_seq,
-        "steps": [
-            {
-                "seq": s.seq,
-                "step_code": s.step_code or f"step_{s.seq}",
-                "name": s.name,
-                "description": s.description,
-                "node_type": s.node_type or "processing",
-                "default_role": s.default_role,
-                "cc_roles": s.cc_roles or [],
-                "autonomy_level": s.autonomy_level,
-                "task_id": tasks_by_step[s.id].id if s.id in tasks_by_step else None,
-                "task_status": tasks_by_step[s.id].status if s.id in tasks_by_step else "未开始",
-                "assignee": tasks_by_step[s.id].assignee if s.id in tasks_by_step else None,
-                "assignee_name": member_names.get(tasks_by_step[s.id].assignee) if s.id in tasks_by_step and tasks_by_step[s.id].assignee else None,
-                "due_at": tasks_by_step[s.id].due_at if s.id in tasks_by_step else None,
-                "viewed_at": tasks_by_step[s.id].viewed_at if s.id in tasks_by_step else None,
-                "viewed_by": tasks_by_step[s.id].viewed_by if s.id in tasks_by_step else None,
-                "viewed_by_name": member_names.get(tasks_by_step[s.id].viewed_by) if s.id in tasks_by_step and tasks_by_step[s.id].viewed_by else None,
-                "completed_at": tasks_by_step[s.id].completed_at if s.id in tasks_by_step else None,
-                "raci_snapshot": tasks_by_step[s.id].raci_snapshot if s.id in tasks_by_step else None,
-            }
-            for s in _live_steps(instance.definition)
-        ],
+        "steps": step_rows,
     }

@@ -413,8 +413,9 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
             .filter(ProcessStep.definition_id == definition.id, ProcessStep.is_deleted.is_(False))
             .count()
         )
-        # 有运行实例时锁结构和责任映射：历史任务必须沿用生成时的节点/RACI；
-        # 仅允许改展示名称、说明等非取数字段。需要改节点、处理人或知会关系时另存新版本。
+        # 有运行实例时锁结构和主责映射：历史任务必须沿用生成时的节点/RACI。
+        # 知会人是非阻塞通知规则，允许单独维护；已生成任务仍读取自己的
+        # RACI 快照，保存不会补发或改写历史通知。其他受保护字段仍需另存新版本。
         if instance_count > 0 and len(step_models) != live:
             raise AppError(
                 "STEPS_LOCKED",
@@ -429,21 +430,44 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
             .order_by(ProcessStep.seq)
             .all()
         )
+        cc_role_changes: list[dict[str, object]] = []
         for i, sm in enumerate(step_models):
             if i < len(existing):
                 if sm.step_code is None:
                     sm.step_code = existing[i].step_code or f"step_{sm.seq}"
                 if instance_count > 0:
                     old = existing[i]
-                    protected_before = (old.seq, old.step_code or f"step_{old.seq}", old.node_type or "processing", old.default_role,
-                                        old.cc_roles or [], old.autonomy_level, old.sla_hours)
-                    protected_after = (sm.seq, sm.step_code, sm.node_type or "processing", sm.default_role,
-                                       sm.cc_roles or [], sm.autonomy_level, sm.sla_hours)
+                    protected_before = (
+                        old.seq,
+                        old.step_code or f"step_{old.seq}",
+                        old.name,
+                        old.node_type or "processing",
+                        old.default_role,
+                        old.autonomy_level,
+                        old.sla_hours,
+                        old.description,
+                    )
+                    protected_after = (
+                        sm.seq,
+                        sm.step_code,
+                        sm.name,
+                        sm.node_type or "processing",
+                        sm.default_role,
+                        sm.autonomy_level,
+                        sm.sla_hours,
+                        sm.description,
+                    )
                     if protected_before != protected_after:
                         raise AppError(
                             "STEPS_LOCKED",
-                            f"该流程已有 {instance_count} 个实例，步骤「{old.name}」的节点/RACI/SLA 已被历史任务引用，请「另存新版本」",
+                            f"该流程已有 {instance_count} 个实例，步骤「{old.name}」除知会人外的节点字段已被历史任务引用，请「另存新版本」",
                         )
+                    if (old.cc_roles or []) != (sm.cc_roles or []):
+                        cc_role_changes.append({
+                            "step_code": old.step_code or f"step_{old.seq}",
+                            "before": old.cc_roles or [],
+                            "after": sm.cc_roles or [],
+                        })
                 for k, v in sm.model_dump().items():
                     setattr(existing[i], k, v)
             else:
@@ -456,7 +480,10 @@ def update_definition(def_id: str, body: DefinitionUpdate, db: Session = Depends
         )
     for k, v in data.items():
         setattr(definition, k, v)
-    audit(db, "process_definition", definition.id, "update", actor, {"fields": list(data.keys()), "steps_replaced": steps is not None})
+    audit_data: dict[str, object] = {"fields": list(data.keys()), "steps_replaced": steps is not None}
+    if steps is not None and cc_role_changes:
+        audit_data["cc_role_changes"] = cc_role_changes
+    audit(db, "process_definition", definition.id, "update", actor, audit_data)
     db.commit()
     db.refresh(definition)
     return ok(_def_row(definition, db))

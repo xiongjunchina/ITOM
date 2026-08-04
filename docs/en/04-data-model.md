@@ -311,7 +311,7 @@ code, name, entity_type, trigger_condition JSONB, version, active, description. 
 
 ### 5.2 process_step — process step [cfg]
 
-definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R; the Bug Development Fix node is intentionally empty and executes through repair-child assignees), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step_code, node type, handler, CC parties, and SLA cannot be changed in place; use a new version. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
+definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R; the Bug Development Fix node is intentionally empty and executes through repair-child assignees), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step code, node order/type, handler, autonomy level, and SLA cannot be changed in place; use a new version. `cc_roles` is the only non-blocking rule that may be maintained in place and applies only when a later node first activates. Existing tasks' `raci_snapshot.informed` values and sent notifications are never rewritten. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
 
 ### 5.3 process_instance — process instance
 

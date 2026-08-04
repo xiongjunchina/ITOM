@@ -532,7 +532,7 @@ Menu structure (8 entry points):
 
 Also: SLA policies are maintained on the ITSM-SLA board page; the notification outbox is retained in the background.
 
-**Process-definition management** (process center): processes/steps are fully configurable — stable step code, step name, node type, default assignment (role / user group), CC parties, L1–L4 autonomy level, step SLA, trigger condition (the trigger condition activating a process for the same record type must be unique). Task creation stores process version, step code, and RACI (responsible/informed) snapshots; node/handler/CC/node-type/SLA changes on a used version are locked and evolve via **Save as a new version** (old records keep the old version; new records use the new version).
+**Process-definition management** (process center): processes/steps are fully configurable — stable step code, step name, node type, default assignment (role / user group), CC parties, L1–L4 autonomy level, step SLA, trigger condition (the trigger condition activating a process for the same record type must be unique). Task creation stores process version, step code, and RACI (responsible/informed) snapshots. Once a version has instances, node order/stable code, node type, default handler, autonomy level, and SLA are locked and evolve through **Save as a new version**. Only CC parties may be maintained in place; the update applies only when a later node activates. Existing tasks keep their creation snapshot, and sent notifications are neither replayed nor rewritten.
 
 ### 10.1 ITOM Web Agent (design approved; WA0 Tasks 1–8 implemented)
 
