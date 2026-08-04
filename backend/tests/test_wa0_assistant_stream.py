@@ -800,12 +800,13 @@ def test_disconnect_cancels_provider_and_does_not_complete_assistant_message(cli
     _headers, user_id = _create_user(client, admin_headers, "wa0_stream_disconnect")
     conversation_id = _conversation(user_id, profile_id, version_id)
     fake = FakeProvider([_events(ModelStreamEvent(kind="text_delta", text="partial"), ("sleep", 1), ModelStreamEvent(kind="done", finish_reason="stop"))])
-    checks = 0
-
     async def disconnected():
-        nonlocal checks
-        checks += 1
-        return checks >= 3
+        # The orchestrator checks the client connection while setting up its
+        # database work as well as while consuming the provider stream.  A
+        # count-based trigger could therefore disconnect before FakeProvider
+        # had started, making its cancellation assertion timing-dependent.
+        # Trigger only after the provider has actually accepted the request.
+        return bool(fake.requests)
 
     async def consume():
         with SessionLocal() as db:
@@ -1618,7 +1619,10 @@ def test_gateway_provider_selection_and_audit_database_work_are_off_event_loop()
     assert events[-1].kind == "done"
     assert session_threads
     assert all(thread_id != loop_thread for thread_id in session_threads)
-    assert max(heartbeat_delays) < 0.04
+    # The injected synchronous boundary blocks for 60ms.  Leave a small
+    # scheduler margin for a busy CI worker while still detecting that block
+    # if it ever returns to the event loop.
+    assert max(heartbeat_delays) < 0.05
 
 
 def test_gateway_db_pool_saturation_fails_closed_before_session_creation(monkeypatch):
@@ -2198,7 +2202,10 @@ def test_all_orchestration_database_boundaries_run_off_event_loop(
 
     assert factory_threads
     assert all(thread_id != loop_thread for thread_id in factory_threads)
-    assert heartbeat_delays and max(heartbeat_delays) < 0.04
+    # Keep the same margin as the gateway boundary test above: the injected
+    # blocking Session factory sleeps for 60ms, so a 50ms delay remains a
+    # meaningful event-loop blocking regression signal.
+    assert heartbeat_delays and max(heartbeat_delays) < 0.05
     assert events[-1]["type"] == "done"
 
 
