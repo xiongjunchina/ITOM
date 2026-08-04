@@ -187,7 +187,7 @@ The external-input page supports period, metric, target, evaluator name/departme
 
 The page also shows an indicator-definition list with code, source (system/external/derived/manual), collection method, calculation definition, and consuming roles. Only external raw facts such as external business satisfaction are entered there; the internal/external satisfaction metric is derived and must not be entered directly.
 
-External business satisfaction is entered by business service domain, not by manually typing a person ID. The resulting score applies only to that domain's owner (including backup owner) and its IT BP, not to business-department members or other professional-line staff.
+External business satisfaction is entered by business service domain, not by manually typing a person ID. The resulting score applies only to that domain's IT-side BM and its IT BP, not to the business BDO, business-department members, or other professional-line staff.
 
 The employee result page exposes only the published role scores, team contribution, bonus, penalty, and final score. It must not expose reference scores, preliminary adjustments, CIO deltas, reviewer identities, or external comments.
 

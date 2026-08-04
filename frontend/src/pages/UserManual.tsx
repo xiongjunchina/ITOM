@@ -132,7 +132,7 @@ const ZH_SECTIONS: ManualSection[] = [
     logic: [
       '团队总览展示数字化团队人数、负载、培训、招聘和积分；面板布局按账号保存。',
       '人效评分默认由角色贡献 80% + 团队贡献 20% 组成；多人评审按配置权重汇总。',
-      '外部原数据只允许录入 external_business_satisfaction，评价对象必须是业务服务域，作用于该域负责人、备份负责人和 IT BP。',
+      '外部原数据只允许录入 external_business_satisfaction，评价对象必须是业务服务域，作用于该域 IT 侧负责人（BM）和 IT BP，不作用于业务 BDO。',
       '学习任务记录目标、完成进度、佐证和说明，进度比例自动换算团队贡献积分。',
     ],
     steps: [

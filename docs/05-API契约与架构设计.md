@@ -508,18 +508,20 @@ IDC Kubernetes:
 GET /api/admin/departments
     # 读取组织架构部门；前端筛选 active=true 且 dept_type=business 并构造部门树
 GET /api/admin/business-domains
-    # 每个业务域返回 departments[]：id/name/parent_id/active/include_children
+    # 每个业务域返回 departments[]：id/name/parent_id/active/include_children，及 business_bdo_id/business_bdo_name
+GET /api/admin/business-domains/bdo-candidates
+    # 仅返回已启用账号、持有有效 BDO 角色且归属启用业务部门的业务人员
 PUT /api/admin/business-domains/{domain_id}/departments
     # body: { department_ids: string[], include_children: boolean }
 POST /api/admin/business-domains
-    # 新建 body 可直接带 department_ids/include_children；owner_id/backup_owner_id 仅允许数字化团队成员
+    # 新建 body 可直接带 department_ids/include_children；owner_id 必须属于数字化团队；business_bdo_id 为可选业务 BDO
 PATCH /api/admin/business-domains/{domain_id}
-    # 编辑 body 可同步替换 department_ids/include_children；负责人范围同上
+    # 编辑 body 可同步替换 department_ids/include_children；若设置 business_bdo_id，必须仍处于有效服务部门范围
 PUT /api/admin/business-domains/{domain_id}/members
     # 服务团队成员必须属于统一数字化团队口径
 ```
 
-部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。负责人、备份负责人和服务团队在服务端统一通过 `it_member_ids` 校验，不允许全公司其他人员绕过前端写入。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。
+部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。IT 侧负责人（BM）和服务团队在服务端统一通过 `it_member_ids` 校验；业务 BDO 则必须有活动账号、有效 `bdo` 角色，并属于该业务域服务部门范围（`include_children=true` 时可在任一后代部门）。变更服务部门时服务端也会复核既有 BDO，不能留下越界定义。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。历史 `backup_owner_id` 仅作数据兼容，不出现在新接口写模型，也不参与路由或绩效归属。
 
 M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队范围和飞书自动同步策略。范围请求包含 `digital_team_department_ids`、`digital_team_member_ids` 与 `digital_team_include_children`；服务端分别校验有效部门和人员并去重，实际口径取部门成员与指定人员并集。新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
 

@@ -5,13 +5,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.rbac import BDO
 from app.db import get_db
 from app.deps import get_current_user, require_perm, require_roles
-from app.models import BusinessDomain, BusinessDomainDepartment, BusinessDomainMember, Department, OrgMember, ProvisionRule, Requirement
+from app.models import AuthUser, BusinessDomain, BusinessDomainDepartment, BusinessDomainMember, Department, OrgMember, ProvisionRule, Requirement
 from app.schemas.common import ok
 from app.services.audit import audit
 from app.services.feishu import is_enabled as feishu_enabled
-from app.services.rbac import valid_role_codes
+from app.services.rbac import effective_roles, valid_role_codes
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -39,7 +40,7 @@ class DomainIn(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
     owner_id: str | None = None
-    backup_owner_id: str | None = None
+    business_bdo_id: str | None = None
     department_ids: list[str] = Field(default_factory=list)
     include_children: bool = True
     sort: int = 0
@@ -49,7 +50,7 @@ class DomainUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     owner_id: str | None = None
-    backup_owner_id: str | None = None
+    business_bdo_id: str | None = None
     department_ids: list[str] | None = None
     include_children: bool | None = None
     sort: int | None = None
@@ -219,20 +220,110 @@ def _validate_it_people(db: Session, person_ids: list[str | None]):
         raise AppError("NOT_IT_TEAM_MEMBER", "负责人和服务团队成员只能从数字化团队中选择")
 
 
-def _replace_domain_departments(db: Session, domain_id: str, department_ids: list[str], include_children: bool):
+def _business_department_scope_ids(
+    db: Session, department_ids: list[str], include_children: bool,
+) -> set[str]:
+    """校验服务部门根节点并展开其业务部门范围，供 BDO 归属校验复用。"""
     unique_ids = list(dict.fromkeys(department_ids))
-    rows = db.query(Department).filter(Department.id.in_(unique_ids or ["-"]), Department.is_deleted.is_(False)).all()
-    by_id = {d.id: d for d in rows}
+    rows = db.query(Department).filter(
+        Department.id.in_(unique_ids or ["-"]), Department.is_deleted.is_(False),
+    ).all()
+    by_id = {department.id: department for department in rows}
     if set(unique_ids) - set(by_id):
         raise AppError("INVALID_DEPARTMENT", "包含不存在的部门")
-    if any(not d.active or d.dept_type != "business" for d in rows):
+    if any(not department.active or department.dept_type != "business" for department in rows):
         raise AppError("INVALID_DEPARTMENT", "只能选择启用的业务部门")
+    if not include_children:
+        return set(unique_ids)
+
+    business_departments = db.query(Department).filter(
+        Department.is_deleted.is_(False), Department.active.is_(True), Department.dept_type == "business",
+    ).all()
+    children_by_parent: dict[str | None, list[str]] = {}
+    for department in business_departments:
+        children_by_parent.setdefault(department.parent_id, []).append(department.id)
+    scope = set(unique_ids)
+    pending = list(unique_ids)
+    while pending:
+        parent_id = pending.pop()
+        for child_id in children_by_parent.get(parent_id, []):
+            if child_id not in scope:
+                scope.add(child_id)
+                pending.append(child_id)
+    return scope
+
+
+def _bdo_candidates(db: Session) -> dict[str, dict]:
+    """返回有效账号所承载的业务 BDO 人员；角色可以来自直接授予或用户组。"""
+    members = {
+        member.id: member
+        for member in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False)).all()
+    }
+    departments = {
+        department.id: department
+        for department in db.query(Department).filter(Department.is_deleted.is_(False)).all()
+    }
+    candidates: dict[str, dict] = {}
+    users = db.query(AuthUser).filter(
+        AuthUser.is_deleted.is_(False), AuthUser.is_active.is_(True), AuthUser.person_id.isnot(None),
+    ).all()
+    for user in users:
+        if BDO not in effective_roles(db, user) or not user.person_id or user.person_id in candidates:
+            continue
+        member = members.get(user.person_id)
+        if not member or member.status == "离职" or not member.department_id:
+            continue
+        department = departments.get(member.department_id)
+        if not department or not department.active or department.dept_type != "business":
+            continue
+        candidates[member.id] = {
+            "id": member.id,
+            "name": member.name,
+            "department_id": department.id,
+            "department_name": department.name,
+        }
+    return candidates
+
+
+def _validate_business_bdo(
+    db: Session, person_id: str | None, department_ids: list[str], include_children: bool,
+):
+    if not person_id:
+        return
+    candidate = _bdo_candidates(db).get(person_id)
+    if not candidate:
+        raise AppError("BDO_REQUIRED", "业务 BDO 必须是拥有 BDO 角色的在岗业务人员")
+    service_scope = _business_department_scope_ids(db, department_ids, include_children)
+    if candidate["department_id"] not in service_scope:
+        raise AppError("BDO_OUT_OF_SCOPE", "业务 BDO 必须归属该业务域的服务部门范围")
+
+
+def _current_domain_departments(db: Session, domain_id: str) -> tuple[list[str], bool]:
+    links = db.query(BusinessDomainDepartment).filter(
+        BusinessDomainDepartment.domain_id == domain_id,
+        BusinessDomainDepartment.is_deleted.is_(False),
+    ).all()
+    return [link.department_id for link in links], any(link.include_children for link in links)
+
+
+def _replace_domain_departments(db: Session, domain_id: str, department_ids: list[str], include_children: bool):
+    unique_ids = list(dict.fromkeys(department_ids))
+    _business_department_scope_ids(db, unique_ids, include_children)
     db.query(BusinessDomainDepartment).filter(BusinessDomainDepartment.domain_id == domain_id).delete()
     for department_id in unique_ids:
         db.add(BusinessDomainDepartment(
             domain_id=domain_id, department_id=department_id, include_children=include_children,
         ))
     return len(unique_ids)
+
+
+@router.get("/business-domains/bdo-candidates")
+def list_business_domain_bdo_candidates(
+    db: Session = Depends(get_db), _=Depends(require_perm("admin_business_domains", "view")),
+):
+    """供业务域维护页选择 BDO；仅返回已激活、已授权且归属业务部门的人员。"""
+    rows = sorted(_bdo_candidates(db).values(), key=lambda row: (row["department_name"], row["name"]))
+    return ok(rows, total=len(rows))
 
 
 @router.get("/business-domains")
@@ -258,7 +349,7 @@ def list_domains(db: Session = Depends(get_db), _=Depends(get_current_user)):
             {
                 "id": d.id, "code": d.code, "name": d.name, "description": d.description,
                 "owner_id": d.owner_id, "owner_name": names.get(d.owner_id),
-                "backup_owner_id": d.backup_owner_id, "backup_owner_name": names.get(d.backup_owner_id),
+                "business_bdo_id": d.business_bdo_id, "business_bdo_name": names.get(d.business_bdo_id),
                 "members": members_by_domain.get(d.id, []),
                 "departments": departments_by_domain.get(d.id, []),
                 "sort": d.sort, "active": d.active,
@@ -294,6 +385,7 @@ def set_domain_departments(domain_id: str, body: DomainDepartmentsIn, db: Sessio
     domain = db.get(BusinessDomain, domain_id)
     if not domain or domain.is_deleted:
         raise AppError("NOT_FOUND", "业务域不存在", 404)
+    _validate_business_bdo(db, domain.business_bdo_id, body.department_ids, body.include_children)
     count = _replace_domain_departments(db, domain.id, body.department_ids, body.include_children)
     audit(db, "business_domain", domain.id, "set_departments", actor, {
         "count": count, "include_children": body.include_children,
@@ -306,7 +398,8 @@ def set_domain_departments(domain_id: str, body: DomainDepartmentsIn, db: Sessio
 def create_domain(body: DomainIn, db: Session = Depends(get_db), actor=Depends(require_perm("admin_business_domains", "create"))):
     if db.query(BusinessDomain).filter(BusinessDomain.code == body.code, BusinessDomain.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "业务域编码已存在")
-    _validate_it_people(db, [body.owner_id, body.backup_owner_id])
+    _validate_it_people(db, [body.owner_id])
+    _validate_business_bdo(db, body.business_bdo_id, body.department_ids, body.include_children)
     data = body.model_dump(exclude={"department_ids", "include_children"})
     domain = BusinessDomain(**data)
     db.add(domain)
@@ -323,9 +416,18 @@ def update_domain(domain_id: str, body: DomainUpdate, db: Session = Depends(get_
     if not domain or domain.is_deleted:
         raise AppError("NOT_FOUND", "业务域不存在", 404)
     data = body.model_dump(exclude_unset=True)
-    _validate_it_people(db, [data.get("owner_id"), data.get("backup_owner_id")])
+    _validate_it_people(db, [data.get("owner_id")])
     department_ids = data.pop("department_ids", None)
     include_children = data.pop("include_children", None)
+    effective_bdo_id = data.get("business_bdo_id", domain.business_bdo_id)
+    if "business_bdo_id" in data or department_ids is not None:
+        current_department_ids, current_include_children = _current_domain_departments(db, domain.id)
+        _validate_business_bdo(
+            db,
+            effective_bdo_id,
+            department_ids if department_ids is not None else current_department_ids,
+            include_children if department_ids is not None and include_children is not None else current_include_children,
+        )
     for k, v in data.items():
         setattr(domain, k, v)
     if department_ids is not None:

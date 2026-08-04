@@ -42,7 +42,7 @@
 ### 1.0 department / business_domain / provision_rule (added in M3.5)
 
 - **department**: code UNIQUE, name, parent_id self-reference, dept_type (it/business/audit), external_source/external_id (reserved for Feishu/AD sync), sort, active. One person, one department; pure data.
-- **business_domain**: code UNIQUE, name, description, owner_id FK org_member (the BP owner, a field not a role), backup_owner_id, sort, active.
+- **business_domain**: code UNIQUE, name, description, owner_id FK org_member (the IT-side BM, a field not a role), business_bdo_id FK org_member (the business-side BDO), sort, active. `business_bdo_id` is the additive nullable M95 column and may reference only an active business person with the `bdo` role inside the domain's served-department scope. The historic `backup_owner_id` column remains without migration or reads/writes, so old IT backup-owner values are never misidentified as BDOs and existing data is preserved.
 - **business_domain_department**: unique domain_id FK business_domain + department_id FK department, plus include_children. It records which organization departments a domain serves; only active business departments may be linked, while historical links remain when a department is later disabled.
 - **provision_rule**: match_type (dept_type/department), match_value, default_roles JSONB, sort (lower matches first and stops), active. Takes effect only on first account provisioning.
 - **org_member changes**: drop the dept/team text columns (migrated to the department table / user groups); add name_en, department_id FK, mobile, external_source, external_id.

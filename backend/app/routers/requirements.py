@@ -322,7 +322,7 @@ def _assign_solution_review(db: Session, r: Requirement, fallback_assignee: str 
 def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
     """M16.5：需求流程步骤推进后的编排（由 process complete 端点回调）。
 
-    - 推进到「验收与闭环」→ 任务指派该需求业务域负责人并通知（组织业务部门验收）
+    - 推进到「验收与闭环」→ 优先指派该业务域业务 BDO（未配置则回退 BM）并通知
     - 流程全部完成 → 需求自动关闭（验收清单未全勾则改为通知负责人手动关闭）
     """
     from app.models import ProcessInstance, ProcessStep
@@ -339,11 +339,13 @@ def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
     )
     if not inst:
         return
+    domain = db.get(BusinessDomain, r.business_domain_id)
+    acceptance_owner = (domain.business_bdo_id or domain.owner_id) if domain else None
     if inst.status == "completed":
         criteria = r.acceptance_criteria or []
         if criteria and not all(c.get("checked") for c in criteria):
-            if r.owner:
-                notifier.notify(db, "requirement.acceptance_pending", "requirement", r.id, [r.owner],
+            if acceptance_owner:
+                notifier.notify(db, "requirement.acceptance_pending", "requirement", r.id, [acceptance_owner],
                                 f"流程已完成，待勾选验收标准：{r.requirement_code} {r.title}",
                                 "业务验收流程已完成，但验收标准未全部勾选；请核对后关闭需求。",
                                 link=f"/requirements/{r.id}")
@@ -357,7 +359,7 @@ def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
         if r.requester:
             ru = db.get(AuthUser, r.requester)
             requester_person = ru.person_id if ru else None
-        recipients = [p for p in {r.owner, requester_person} if p]
+        recipients = [p for p in {r.owner, requester_person, acceptance_owner} if p]
         if recipients:
             notifier.notify(db, "requirement.closed", "requirement", r.id, recipients,
                             f"需求已闭环：{r.requirement_code} {r.title}",
@@ -365,19 +367,17 @@ def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
                             link=f"/requirements/{r.id}")
         publish(db, "requirement.closed", "requirement", r.id, {})
         return
-    # 未完成：若当前步骤是「验收与闭环」→ 指派业务域负责人组织业务验收
+    # 未完成：若当前步骤是「验收与闭环」→ 优先指派业务 BDO 组织业务验收
     task = _current_process_task(db, r.id)
     if not task:
         return
     step = db.get(ProcessStep, task.step_id)
     if step and "验收" in (step.name or ""):
-        domain = db.get(BusinessDomain, r.business_domain_id)
-        owner = domain.owner_id if domain else None
-        if owner:
-            task.assignee = owner
-            notifier.notify(db, "requirement.acceptance", "requirement", r.id, [owner],
-                            f"需求业务验收：{r.requirement_code} {r.title}",
-                            f"实现交付已完成，请组织业务部门验收（业务域「{domain.name}」）；"
+        if acceptance_owner:
+            task.assignee = acceptance_owner
+            notifier.notify(db, "requirement.acceptance", "requirement", r.id, [acceptance_owner],
+                f"需求业务验收：{r.requirement_code} {r.title}",
+                f"实现交付已完成，请组织业务部门验收（业务域「{domain.name if domain else ''}」）；"
                             f"完成「验收与闭环」步骤后需求自动关闭。",
                             link=f"/requirements/{r.id}")
 

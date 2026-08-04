@@ -646,7 +646,7 @@ export interface OrgTreeData {
   sync_sources: string[];
 }
 
-/** 业务域 = 横向服务线：owner=BM 总体负责，服务团队为跟随成员（负责人是数据字段而非角色） */
+/** 业务域 = 横向服务线：IT 侧 BM 管服务，业务侧 BDO 管业务协作与验收。 */
 export interface BusinessDomain {
   id: string;
   code: string;
@@ -654,8 +654,8 @@ export interface BusinessDomain {
   description?: string | null;
   owner_id?: string | null;
   owner_name?: string | null;
-  backup_owner_id?: string | null;
-  backup_owner_name?: string | null;
+  business_bdo_id?: string | null;
+  business_bdo_name?: string | null;
   /** 服务团队成员（跟随该业务线的 BP/开发等） */
   members: { id: string; name: string }[];
   /** 从组织架构选取的服务部门；include_children 表示覆盖下级部门 */

@@ -27,10 +27,17 @@ interface DomainForm {
   name: string;
   description?: string;
   owner_id?: string | null;
-  backup_owner_id?: string | null;
+  business_bdo_id?: string | null;
   department_ids: string[];
   include_children: boolean;
   sort?: number;
+}
+
+interface BusinessBdoCandidate {
+  id: string;
+  name: string;
+  department_id: string;
+  department_name: string;
 }
 
 export default function BusinessDomains() {
@@ -39,6 +46,7 @@ export default function BusinessDomains() {
   const [loading, setLoading] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [businessBdos, setBusinessBdos] = useState<BusinessBdoCandidate[]>([]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<BusinessDomain | null>(null);
@@ -73,6 +81,7 @@ export default function BusinessDomains() {
     void Promise.all([
       api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }).then((res) => setMembers(res.items)),
       api.getList<Department>('/admin/departments').then((res) => setDepartments(res.items)),
+      api.getList<BusinessBdoCandidate>('/admin/business-domains/bdo-candidates').then((res) => setBusinessBdos(res.items)),
     ]).catch(() => undefined);
   }, []);
 
@@ -94,6 +103,37 @@ export default function BusinessDomains() {
       title: d.name,
     }));
   }, [departments]);
+  const selectedDepartmentIds = Form.useWatch('department_ids', form) ?? [];
+  const selectedIncludeChildren = Form.useWatch('include_children', form) ?? true;
+  const businessBdoOptions = useMemo(() => {
+    const roots = new Set(selectedDepartmentIds);
+    if (roots.size === 0) return [];
+    const scope = new Set(roots);
+    if (selectedIncludeChildren) {
+      const childrenByParent = new Map<string | null, string[]>();
+      departments.filter((department) => department.active && department.dept_type === 'business').forEach((department) => {
+        const children = childrenByParent.get(department.parent_id ?? null) ?? [];
+        children.push(department.id);
+        childrenByParent.set(department.parent_id ?? null, children);
+      });
+      const pending = [...roots];
+      while (pending.length > 0) {
+        const parentId = pending.pop()!;
+        (childrenByParent.get(parentId) ?? []).forEach((childId) => {
+          if (!scope.has(childId)) {
+            scope.add(childId);
+            pending.push(childId);
+          }
+        });
+      }
+    }
+    return businessBdos
+      .filter((candidate) => scope.has(candidate.department_id))
+      .map((candidate) => ({
+        value: candidate.id,
+        label: `${candidate.name}（${candidate.department_name}）`,
+      }));
+  }, [businessBdos, departments, selectedDepartmentIds, selectedIncludeChildren]);
 
   const openCreate = () => {
     setEditing(null);
@@ -108,7 +148,7 @@ export default function BusinessDomains() {
       name: record.name,
       description: record.description ?? undefined,
       owner_id: record.owner_id ?? undefined,
-      backup_owner_id: record.backup_owner_id ?? undefined,
+      business_bdo_id: record.business_bdo_id ?? undefined,
       department_ids: (record.departments ?? []).map((d) => d.id),
       include_children: (record.departments ?? []).some((d) => d.include_children) || (record.departments ?? []).length === 0,
       sort: record.sort,
@@ -122,7 +162,7 @@ export default function BusinessDomains() {
       name: values.name,
       description: values.description ?? null,
       owner_id: values.owner_id ?? null,
-      backup_owner_id: values.backup_owner_id ?? null,
+      business_bdo_id: values.business_bdo_id ?? null,
       department_ids: values.department_ids ?? [],
       include_children: values.include_children ?? true,
       sort: values.sort ?? 0,
@@ -220,8 +260,8 @@ export default function BusinessDomains() {
       render: (v: string | null | undefined) => v || '-',
     },
     {
-      title: t('admin.domains.backupOwner'),
-      dataIndex: 'backup_owner_name',
+      title: t('admin.domains.businessBdo'),
+      dataIndex: 'business_bdo_name',
       width: 120,
       render: (v: string | null | undefined) => v || '-',
     },
@@ -353,15 +393,6 @@ export default function BusinessDomains() {
               options={ownerOptions}
             />
           </Form.Item>
-          <Form.Item name="backup_owner_id" label={t('admin.domains.backupOwner')}>
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder={t('admin.domains.selectDigitalTeam')}
-              options={ownerOptions}
-            />
-          </Form.Item>
           <Form.Item name="department_ids" label={t('admin.domains.departments')}>
             <TreeSelect
               treeDataSimpleMode
@@ -377,6 +408,19 @@ export default function BusinessDomains() {
           </Form.Item>
           <Form.Item name="include_children" label={t('admin.domains.includeChildren')} valuePropName="checked">
             <Switch />
+          </Form.Item>
+          <Form.Item
+            name="business_bdo_id"
+            label={t('admin.domains.businessBdo')}
+            extra={t('admin.domains.businessBdoHint')}
+          >
+            <Select
+              allowClear
+              showSearch
+              optionFilterProp="label"
+              placeholder={t('admin.domains.selectBusinessBdo')}
+              options={businessBdoOptions}
+            />
           </Form.Item>
           <Form.Item name="description" label={t('admin.common.description')}>
             <Input.TextArea rows={2} maxLength={200} />

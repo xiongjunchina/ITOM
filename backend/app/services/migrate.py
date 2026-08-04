@@ -34,6 +34,11 @@ ENSURE_COLUMNS = {
     "org_settings": [
         ("digital_team_member_ids", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
     ],
+    "business_domain": [
+        # M95：语义不同于历史 backup_owner_id，只增列、不复制，避免把旧 IT
+        # 备份负责人误认作业务侧 BDO；历史列保留以保护既有数据。
+        ("business_bdo_id", "VARCHAR(26)"),
+    ],
     "ci": [
         ("product_manager_id", "VARCHAR(26)"),
     ],

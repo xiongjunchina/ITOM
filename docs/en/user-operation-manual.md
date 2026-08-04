@@ -17,7 +17,7 @@ The manual is organized as a search-first help center rather than one long page:
 
 ITOM brings IT services, projects, requirements, team capability, and workflow governance into one platform. It uses a matrix organization:
 
-- **Business domains** are horizontal service lines with a BM, backup owner, served departments, and service team.
+- **Business domains** are horizontal service lines with an IT-side BM, a business-side BDO, served departments, and a service team. The BM owns IT review and coordination; the BDO organizes requirement clarification, UAT, and business closure.
 - **Professional lines** are vertical resource pools represented by user groups and roles.
 - **Workflow-driven records** include service requests, incidents, changes, problems, requirements, and projects.
 - **Digital-team scope** is the default scope for all person selectors. Administrators define this scope after Feishu or another organization source is synchronized.
@@ -97,7 +97,7 @@ Shows active headcount, training, campaigns, hiring demand, workload, open task 
 
 Performance scoring uses 80% role-result contribution plus 20% team contribution. Overview reads the current matrix-role period result and shows role contributions, team contribution, adjustments, and the current total; expanding an employee shows roles, weights, system reference, manager proposals, CIO final scores, and effective scores. On an unpublished period, if a person's bound role differs from the period snapshot, the read path refreshes the role assignments; published/locked periods remain immutable. It no longer displays the legacy job-scheme default. The current model has no global default scheme: use **Scoring Rules → Add role rule** to create a reusable role rule, then assign the role and weight in the employee-period detail. Scoring Rules defines role dimensions, source/RACI mappings, and weights; Activity Points → Point Rules defines team-contribution targets and event values. Graded Review remains the detailed scoring workflow, with multiple evaluators aggregated by their configured weights.
 
-External Raw Data accepts only `external_business_satisfaction`, and its target must be a business domain. Enter a 0–100 percentage; the configured internal/external satisfaction ratio produces the derived score. It affects the domain owner, backup owner, and IT BP for that domain. IT PMO is directly reviewed by CIO, while IT PMO can perform the initial review for IT project managers. Final Results exposes only published employee results.
+External Raw Data accepts only `external_business_satisfaction`, and its target must be a business domain. Enter a 0–100 percentage; the configured internal/external satisfaction ratio produces the derived score. It affects the domain IT-side BM and IT BP, not the business BDO. IT PMO is directly reviewed by CIO, while IT PMO can perform the initial review for IT project managers. Final Results exposes only published employee results.
 
 ### Headcount, learning, points, and culture
 

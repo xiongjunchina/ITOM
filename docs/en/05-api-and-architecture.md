@@ -507,18 +507,20 @@ IDC Kubernetes:
 GET /api/admin/departments
     # Reads organization departments; the UI filters active business departments and builds the tree
 GET /api/admin/business-domains
-    # Each domain includes departments[]: id/name/parent_id/active/include_children
+    # Each domain includes departments[]: id/name/parent_id/active/include_children and business_bdo_id/business_bdo_name
+GET /api/admin/business-domains/bdo-candidates
+    # Returns only active accounts with an effective BDO role and an active business department
 PUT /api/admin/business-domains/{domain_id}/departments
     # body: { department_ids: string[], include_children: boolean }
 POST /api/admin/business-domains
-    # create body may include department_ids/include_children; owner_id/backup_owner_id must be digital-team members
+    # create body may include department_ids/include_children; owner_id must be a digital-team member; business_bdo_id is optional
 PATCH /api/admin/business-domains/{domain_id}
-    # update body may replace department_ids/include_children; owner scope is identical
+    # update body may replace department_ids/include_children; a business_bdo_id must remain in the effective served-department scope
 PUT /api/admin/business-domains/{domain_id}/members
     # every service-team member must belong to the unified digital-team scope
 ```
 
-The department write endpoint requires `admin_business_domains.edit`, deduplicates IDs, validates that every department exists, is active, and has type `business`, replaces the complete assignment, and writes the `set_departments` audit action. Create and update requests may submit the same department scope atomically. Owner, backup owner, and service team are all validated server-side through `it_member_ids`, preventing non-digital-team people from being written by bypassing the UI. `include_children=true` means the business scope includes every descendant, while persistence stores only explicitly selected roots so organization changes do not require mass relationship rewrites.
+The department write endpoint requires `admin_business_domains.edit`, deduplicates IDs, validates that every department exists, is active, and has type `business`, replaces the complete assignment, and writes the `set_departments` audit action. Create and update requests may submit the same department scope atomically. The IT-side BM and service team are validated server-side through `it_member_ids`; a business BDO must have an active account, an effective `bdo` role, and a business department in the domain's served-department scope (including descendants when `include_children=true`). Changing served departments revalidates the saved BDO, so an out-of-scope definition cannot remain. `include_children=true` means the business scope includes every descendant, while persistence stores only explicitly selected roots so organization changes do not require mass relationship rewrites. The historic `backup_owner_id` is compatibility-only and is excluded from new write contracts, routing, and performance attribution.
 
 ## 9. UI Branding API (M38)
 

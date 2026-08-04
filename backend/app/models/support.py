@@ -70,15 +70,19 @@ class OrgMember(GlidBase):
 
 
 class BusinessDomain(GlidBase):
-    """业务域/服务线：负责人是字段不是角色（ServiceNow ownership 惯例）。"""
+    """业务域/服务线：IT 侧 BM 与业务侧 BDO 分工明确的横向服务线。"""
 
     __tablename__ = "business_domain"
 
     code: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str | None] = mapped_column(Text)
-    owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="BP 负责人")
-    backup_owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="IT 侧负责人（BM）")
+    # 历史列保留，避免升级删除既有业务数据；新代码不得再读取或写入该列。
+    backup_owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="历史备份负责人（已停用）")
+    business_bdo_id: Mapped[str | None] = mapped_column(
+        ForeignKey("org_member.id"), comment="业务侧 BDO（Business Digital Owner）"
+    )
     sort: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
