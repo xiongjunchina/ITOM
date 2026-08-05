@@ -30,7 +30,7 @@ FastAPI（Kubernetes Service backend:6800，uvicorn）
    ├─ routers/   一域一文件（权限守卫 require_perm / 流程守卫）
    ├─ services/  领域逻辑（权限矩阵、流程引擎、SLA、评分、org_sync、seed、migrate）
    ├─ mcp/       Aily JWT、外部身份映射、Streamable HTTP 与工具审计
-   ├─ events/    事件总线 + 通知（站内 + Aily 机器人可靠发件箱）
+   ├─ events/    事件总线 + 通知（站内 + 通用 ITOM 飞书可靠发件箱）
    └─ lifespan   启动顺序：建表 → 增量迁移 → 幂等种子 → MCP 会话 → 调度器
    ▼
 PostgreSQL 16（StatefulSet + PVC 持久化）
@@ -190,7 +190,7 @@ FastAPI (Kubernetes Service backend:6800, uvicorn)
    ├─ routers/   one file per domain (require_perm / process guards)
    ├─ services/  domain logic (permission matrix, process engine, SLA, scoring, org_sync, seed, migrate)
    ├─ mcp/       Aily JWT, external identity, Streamable HTTP, and tool audit
-   ├─ events/    event bus + notifier (in-app + reliable Aily-bot outbox)
+   ├─ events/    event bus + notifier (in-app + generic reliable Aily-bot outbox)
    └─ lifespan   startup: create tables → migrate → seed → MCP session → scheduler
    ▼
 PostgreSQL 16 (StatefulSet + persistent PVC)

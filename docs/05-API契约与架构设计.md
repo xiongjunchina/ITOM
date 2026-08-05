@@ -208,13 +208,13 @@ Bug 创建成功后，网页可用通用附件接口依次上传零个或多个�
 
 #### 主动消息
 
-MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过飞书机器人应用发送消息。机器人凭据、消息开关、卡片回调 Verification Token 与 Encrypt Key 同时就绪后，解决/确认期限提醒发送交互卡片（已解决并关闭、仍未解决），关单发送 1–5 星评价卡片；否则发送兼容纯文本。“仍未解决”第一次点击只把原卡片更新为必填原因表单，提交后才重开。
+MCP 不能在后台状态变化时主动唤醒 Aily。进入 `notifier.notify()` 的 ITOM 通知会在原业务事务内为每个已启用通知且已映射飞书身份的收件人写入 `notification_outbox(channel=feishu_aily)` 文本记录；稳定幂等键由事件、实体和身份摘要生成，后台工作器通过飞书机器人应用发送并按失败指数退避。机器人凭据或消息开关未就绪时保留 `pending`，不消耗重试次数。服务请求首次受理、解决、重开、关闭和保存评价仍由专用订阅写入发件箱并发送交互卡片或回退文本；通用出口跳过 `ticket.resolved`，避免与解决卡片重复。“仍未解决”第一次点击只把原卡片更新为必填原因表单，提交后才重开。
 
 普通对话仍只走 Aily + MCP。卡片按钮是唯一例外：飞书开放平台向 `POST /api/integrations/feishu/card-actions` 推送新版 `card.action.trigger`，ITOM 在读取业务 JSON 前以 `X-Lark-Request-Timestamp`、`X-Lark-Request-Nonce`、Encrypt Key 和原始正文计算 SHA-256 签名，并限制 5 分钟时效；时间戳按官方 Unix 秒/毫秒格式校验，同时兼容真实 Aily 回调出现的带时区和 Go 单调时钟后缀的时间字符串，签名计算仍使用原始请求头字符串。启用加密时按 AES-256-CBC/PKCS#7 解密，再校验 Verification Token、Bot App ID、回调头与点击人中的 `tenant_key` 一致性，以及点击人的 `open_id/user_id/union_id` 显式映射。真实联调证明 Aily JWT 的 `tenant_id` 与卡片回调 `tenant_key` 属于不同标识命名空间，不能强制字符串相等：回调租户未直接命中 Aily 租户白名单时，点击人必须在允许的 Agent/Bot App 范围内唯一映射到“已授权 Aily 租户 + 活动 ITOM 账号”，未知、歧义、停用或无权限身份均拒绝；白名单为空也不允许回退授权。飞书保存 Webhook 地址时实测发送无签名头的加密 `url_verification` challenge；该只读握手仅在成功解密、类型严格为 challenge 且 Verification Token 匹配时放行，任何 `card.action.trigger` 仍必须具备完整有效签名。通过后只调用 `service_request_closure`，不直接写表；该服务继续执行 RBAC、提交人本人范围、流程状态、8–128 字符幂等键和审计。响应在飞书要求的 3 秒内返回 Toast 与更新后的卡片；立即更新使用新版固定结构 `card={"type":"raw","data":<完整卡片 JSON>}`，不能把原始卡片直接放在 `card` 下。无效签名使用 HTTP 401，业务拒绝使用错误 Toast 并保留原卡片。动作值只含公开工单号、动作、评分和幂等键，不含飞书身份、Token、密钥、ITOM 主键或内部处理字段。
 
 协议依据：飞书开放平台[处理卡片回调](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/handle-card-callbacks?lang=zh-CN)、[接收回调](https://open.feishu.cn/document/event-subscription-guide/callback-subscription/receive-and-handle-callbacks?lang=zh-CN)及[输入框组件](https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input?lang=zh-CN)。实现固定使用新版 `card.action.trigger`，不兼容已废弃的旧版卡片回调。
 
-发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。管理员通过 `GET/PUT /api/admin/integrations/aily` 只写配置两个回调秘密；响应仅返回 `has_card_callback_verification_token`、`has_card_callback_encrypt_key` 和 `interactive_cards_ready`，绝不回显秘密。存量 PostgreSQL 由启动迁移幂等补列两个密文字段，不新增业务表。
+发送使用事件/实体/收件身份级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。管理员通过既有 `GET/PUT /api/admin/integrations/aily` 配置机器人消息开关、凭据、租户白名单和 `public_base_url`，无需新增 API；响应仅返回秘密是否存在及就绪状态，绝不回显秘密。存量 PostgreSQL 无需新增字段或迁移。
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 

@@ -90,7 +90,7 @@ entity_type, entity_id, action, actor, summary JSONB (before/after values of cha
 
 ### 1.7 notification_outbox — notification outbox
 
-event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient type/ID, unique idempotency key, attempt count, next attempt, provider message ID, redacted last error, and sent time. `feishu_aily` payloads are either the legacy-compatible `{text}` form or `{message_type: interactive, card, fallback_text}`. Card callbacks carry only public ticket codes, actions, scores, and idempotency keys—never secrets, JWTs, internal primary keys, or sensitive payloads.
+event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient type/ID, unique idempotency key, attempt count, next attempt, provider message ID, redacted last error, and sent time. The unified notification outlet writes a `feishu_aily` text row in the same business transaction for each mapped recipient; the idempotency key is a stable digest of event, entity, and recipient identity. Disabled or incomplete message configuration leaves the row `pending`, while the worker sends and retries it. `feishu_aily` payloads are either the legacy-compatible `{text}` form or `{message_type: interactive, card, fallback_text}`. Card callbacks carry only public ticket codes, actions, scores, and idempotency keys—never secrets, JWTs, internal primary keys, or sensitive payloads. This change adds no fields or migration.
 
 ### 1.8 in_app_notification — in-app notification
 
