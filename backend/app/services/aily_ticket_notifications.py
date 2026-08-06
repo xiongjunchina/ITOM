@@ -4,8 +4,8 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.models import AilyIntegrationConfig, ExternalIdentity, Ticket
-from app.services.aily import queue_aily_card, queue_aily_text
+from app.models import AilyIntegrationConfig, Ticket
+from app.services.aily import queue_aily_card_for_user, queue_aily_text_for_user
 from app.services.aily_cards import build_rating_card, build_resolution_confirmation_card
 
 
@@ -24,30 +24,6 @@ def _interactive_cards_enabled(cfg: AilyIntegrationConfig | None) -> bool:
     )
 
 
-def _recipient_identity(
-    db: Session,
-    ticket: Ticket,
-    cfg: AilyIntegrationConfig | None,
-) -> ExternalIdentity | None:
-    if not ticket.submitter:
-        return None
-    query = db.query(ExternalIdentity).filter(
-        ExternalIdentity.provider == "feishu",
-        ExternalIdentity.auth_user_id == ticket.submitter,
-        ExternalIdentity.subject_type.in_(["open_id", "user_id", "union_id"]),
-        ExternalIdentity.status == "active",
-        ExternalIdentity.is_deleted.is_(False),
-    )
-    allowed_tenants = list(cfg.allowed_tenant_ids or []) if cfg else []
-    if allowed_tenants:
-        query = query.filter(ExternalIdentity.tenant_id.in_(allowed_tenants))
-    return query.order_by(
-        ExternalIdentity.last_used_at.desc(),
-        ExternalIdentity.verified_at.desc(),
-        ExternalIdentity.created_at.desc(),
-    ).first()
-
-
 def _queue(
     db: Session,
     event_type: str,
@@ -64,21 +40,21 @@ def _queue(
         .filter(AilyIntegrationConfig.is_deleted.is_(False))
         .first()
     )
-    identity = _recipient_identity(db, ticket, cfg)
-    if not identity:
+    if not cfg or not cfg.enabled:
+        return
+    if not ticket.submitter:
         return
     common = {
-        "recipient_type": identity.subject_type,
-        "recipient_id": identity.subject_id,
+        "auth_user_id": ticket.submitter,
         "idempotency_key": f"aily:ticket:{ticket.id}:{idempotency_suffix}",
         "event_type": event_type,
         "entity_type": "ticket",
         "entity_id": ticket.id,
     }
     if card:
-        queue_aily_card(db, card=card, fallback_text=text, **common)
+        queue_aily_card_for_user(db, card=card, fallback_text=text, **common)
     else:
-        queue_aily_text(db, text=text, **common)
+        queue_aily_text_for_user(db, text=text, **common)
 
 
 def _resolution_card(

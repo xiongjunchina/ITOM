@@ -205,6 +205,9 @@ def bind_my_feishu(
         raise AppError("FEISHU_ALREADY_BOUND", "该飞书身份已绑定其他账号")
     user.external_id = external_id
     user.auth_source = "feishu"
+    from app.services.aily import sync_aily_notification_identity
+
+    sync_aily_notification_identity(db, user=user, feishu_info=info)
     _audit(db, "auth_user", user.id, "bind_feishu", user, {})
     db.commit()
     return ok({"feishu_bound": True, "auth_source": "feishu"})
@@ -300,7 +303,8 @@ def _notify(db: Session, event_type: str, req: LoginRequest, title: str, content
 
 def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
                             email: str | None = None, mobile: str | None = None,
-                            avatar_url: str | None = None) -> dict:
+                            avatar_url: str | None = None,
+                            feishu_info: dict | None = None) -> dict:
     """飞书身份 → 已开通直登 / 业务用户自动开户 / 其他人员进入审批。"""
     existing = (
         db.query(AuthUser)
@@ -315,6 +319,9 @@ def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
         if not existing.is_active:
             raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
         existing.last_login_at = datetime.now()
+        from app.services.aily import sync_aily_notification_identity
+
+        sync_aily_notification_identity(db, user=existing, feishu_info=feishu_info)
         audit(db, "auth_user", existing.id, "login", existing, {"source": "feishu"})
         db.commit()
         return {"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)}
@@ -333,6 +340,9 @@ def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
         if not business_user.is_active:
             raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
         business_user.last_login_at = datetime.now()
+        from app.services.aily import sync_aily_notification_identity
+
+        sync_aily_notification_identity(db, user=business_user, feishu_info=feishu_info)
         audit(db, "auth_user", business_user.id, "auto_provision_business_login", business_user, {
             "source": "feishu", "role_initialized": "requester",
         })
@@ -425,6 +435,7 @@ def feishu_callback(body: FeishuCallbackIn, db: Session = Depends(get_db)):
         display_name=info.get("name") or info.get("en_name") or external_id,
         email=info.get("enterprise_email") or info.get("email"),
         mobile=info.get("mobile"), avatar_url=info.get("avatar_url"),
+        feishu_info=info,
     ))
 
 
@@ -463,6 +474,7 @@ def feishu_app_login(body: FeishuAppLoginIn, db: Session = Depends(get_db)):
         display_name=info.get("name") or info.get("en_name") or external_id,
         email=info.get("enterprise_email") or info.get("email"),
         mobile=info.get("mobile"), avatar_url=info.get("avatar_url"),
+        feishu_info=info,
     ))
 
 

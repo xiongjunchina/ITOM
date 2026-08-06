@@ -302,7 +302,11 @@ class NotificationOutbox(GlidBase):
     entity_id: Mapped[str | None] = mapped_column(String(26))
     payload: Mapped[dict | None] = mapped_column(JsonCol)
     channel: Mapped[str] = mapped_column(String(16), default="in_app", comment="in_app/feishu…")
-    status: Mapped[str] = mapped_column(String(16), default="pending", comment="pending/sending/sent/failed")
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="pending",
+        comment="pending/sending/sent/failed; pending may await identity mapping",
+    )
     recipient_type: Mapped[str | None] = mapped_column(String(32), comment="open_id/user_id/union_id")
     recipient_id: Mapped[str | None] = mapped_column(String(128), index=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(255))

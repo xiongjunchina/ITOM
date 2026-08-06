@@ -6,13 +6,16 @@ import logging
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.models import AilyIntegrationConfig, NotificationOutbox
+from app.models import AilyIntegrationConfig, AuthUser, ExternalIdentity, NotificationOutbox
 from app.services.feishu import FeishuClient
+from app.services.audit import audit
 from app.services.secrets_store import decrypt_secret
 
 logger = logging.getLogger("aom.aily")
 
 MAX_MESSAGE_ATTEMPTS = 8
+AILY_IDENTITY_NOT_MAPPED = "AILY_IDENTITY_NOT_MAPPED"
+AILY_IDENTITY_RETRY_SECONDS = 60
 
 
 def get_aily_config(db: Session) -> AilyIntegrationConfig:
@@ -41,6 +44,101 @@ def build_aily_bot_client(cfg: AilyIntegrationConfig) -> FeishuClient:
     if not (cfg.message_enabled and cfg.bot_app_id and secret):
         raise AppError("AILY_MESSAGE_NOT_CONFIGURED", "请先启用并配置 Aily 机器人消息", 501)
     return FeishuClient(cfg.api_base, cfg.bot_app_id, secret)
+
+
+def find_aily_identity(
+    db: Session,
+    *,
+    auth_user_id: str,
+    cfg: AilyIntegrationConfig,
+) -> ExternalIdentity | None:
+    """解析当前可用于 Aily 机器人出站的、已授权飞书身份。"""
+    query = db.query(ExternalIdentity).filter(
+        ExternalIdentity.provider == "feishu",
+        ExternalIdentity.auth_user_id == auth_user_id,
+        ExternalIdentity.subject_type.in_(["open_id", "user_id", "union_id"]),
+        ExternalIdentity.status == "active",
+        ExternalIdentity.is_deleted.is_(False),
+    )
+    allowed_tenants = list(cfg.allowed_tenant_ids or [])
+    if allowed_tenants:
+        query = query.filter(ExternalIdentity.tenant_id.in_(allowed_tenants))
+    return query.order_by(
+        ExternalIdentity.last_used_at.desc(),
+        ExternalIdentity.verified_at.desc(),
+        ExternalIdentity.created_at.desc(),
+    ).first()
+
+
+def sync_aily_notification_identity(
+    db: Session,
+    *,
+    user: AuthUser,
+    feishu_info: dict | None,
+) -> str:
+    """用已验真的飞书 OAuth 用户信息自动建立机器人通知映射。
+
+    这里只使用 Feishu OAuth 返回的 ``tenant_key + union_id``，并且要求租户
+    已在 Aily 配置白名单中。union_id 能在同一应用开发商的多个应用间关联
+    用户；不能用登录应用的 open_id 冒充 Aily 机器人应用的 open_id。
+    """
+    info = feishu_info or {}
+    tenant_id = str(info.get("tenant_key") or "").strip()
+    union_id = str(info.get("union_id") or "").strip()
+    cfg = get_aily_config(db)
+    allowed_tenants = {str(value).strip() for value in (cfg.allowed_tenant_ids or []) if str(value).strip()}
+    if not (cfg.enabled and cfg.bot_app_id and tenant_id and union_id):
+        return "skipped"
+    if tenant_id not in allowed_tenants:
+        return "tenant_not_allowed"
+
+    row = (
+        db.query(ExternalIdentity)
+        .filter(
+            ExternalIdentity.provider == "feishu",
+            ExternalIdentity.tenant_id == tenant_id,
+            ExternalIdentity.app_id == cfg.bot_app_id,
+            ExternalIdentity.subject_type == "union_id",
+            ExternalIdentity.subject_id == union_id,
+        )
+        .first()
+    )
+    if row and not row.is_deleted and row.status == "disabled":
+        # 管理员显式停用的映射不能被普通登录自动重新启用。
+        return "disabled"
+    if row and row.auth_user_id and row.auth_user_id != user.id:
+        # 同一已验证身份指向两个 ITOM 账号时保持拒绝，不能静默抢占。
+        return "conflict"
+    if not row:
+        row = ExternalIdentity(
+            provider="feishu",
+            tenant_id=tenant_id,
+            app_id=cfg.bot_app_id,
+            subject_type="union_id",
+            subject_id=union_id,
+        )
+        db.add(row)
+    row.auth_user_id = user.id
+    row.status = "active"
+    row.is_deleted = False
+    row.verified_at = datetime.now()
+    row.last_used_at = datetime.now()
+    db.flush()
+    audit(
+        db,
+        "external_identity",
+        row.id,
+        "auto_map_aily_notification_identity",
+        user,
+        {
+            "provider": "feishu",
+            "tenant_id": tenant_id,
+            "app_id": cfg.bot_app_id,
+            "subject_type": "union_id",
+            "auth_user_id": user.id,
+        },
+    )
+    return "mapped"
 
 
 def queue_aily_text(
@@ -81,6 +179,65 @@ def queue_aily_text(
         idempotency_key=idempotency_key,
         attempt_count=0,
         next_attempt_at=datetime.now(),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def queue_aily_text_for_user(
+    db: Session,
+    *,
+    auth_user_id: str,
+    text: str,
+    idempotency_key: str,
+    event_type: str = "aily.test_message",
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> NotificationOutbox:
+    """按 ITOM 账号排队文本；身份暂缺时保留待映射记录而非静默丢弃。"""
+    text = text.strip()
+    if not auth_user_id.strip() or not text or not idempotency_key.strip():
+        raise AppError("AILY_MESSAGE_INVALID", "Aily 消息缺少账号、内容或幂等键", 422)
+    existing = (
+        db.query(NotificationOutbox)
+        .filter(NotificationOutbox.idempotency_key == idempotency_key)
+        .first()
+    )
+    if existing:
+        if existing.channel == "feishu_aily" and existing.status != "sent":
+            existing.payload = {
+                **(existing.payload or {}),
+                "auth_user_id": auth_user_id,
+            }
+        return existing
+    cfg = get_aily_config(db)
+    identity = find_aily_identity(db, auth_user_id=auth_user_id, cfg=cfg)
+    if identity:
+        row = queue_aily_text(
+            db,
+            recipient_type=identity.subject_type,
+            recipient_id=identity.subject_id,
+            text=text,
+            idempotency_key=idempotency_key,
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        row.payload = {**(row.payload or {}), "auth_user_id": auth_user_id}
+        return row
+
+    row = NotificationOutbox(
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        payload={"text": text, "auth_user_id": auth_user_id},
+        channel="feishu_aily",
+        status="pending",
+        idempotency_key=idempotency_key,
+        attempt_count=0,
+        next_attempt_at=datetime.now(),
+        last_error_redacted=AILY_IDENTITY_NOT_MAPPED,
     )
     db.add(row)
     db.flush()
@@ -140,6 +297,76 @@ def queue_aily_card(
     return row
 
 
+def queue_aily_card_for_user(
+    db: Session,
+    *,
+    auth_user_id: str,
+    card: dict,
+    fallback_text: str,
+    idempotency_key: str,
+    event_type: str,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+) -> NotificationOutbox:
+    """按 ITOM 账号排队卡片；身份暂缺时等待后续安全映射。"""
+    fallback_text = fallback_text.strip()
+    if not auth_user_id.strip() or not fallback_text or not idempotency_key.strip():
+        raise AppError("AILY_CARD_INVALID", "Aily 卡片缺少账号、回退文本或幂等键", 422)
+    existing = (
+        db.query(NotificationOutbox)
+        .filter(NotificationOutbox.idempotency_key == idempotency_key)
+        .first()
+    )
+    if existing:
+        if existing.channel == "feishu_aily" and existing.status != "sent":
+            existing.payload = {
+                **(existing.payload or {}),
+                "auth_user_id": auth_user_id,
+            }
+        return existing
+    cfg = get_aily_config(db)
+    identity = find_aily_identity(db, auth_user_id=auth_user_id, cfg=cfg)
+    if identity:
+        row = queue_aily_card(
+            db,
+            recipient_type=identity.subject_type,
+            recipient_id=identity.subject_id,
+            card=card,
+            fallback_text=fallback_text,
+            idempotency_key=idempotency_key,
+            event_type=event_type,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        row.payload = {**(row.payload or {}), "auth_user_id": auth_user_id}
+        return row
+
+    if not isinstance(card, dict) or not card.get("header") or not card.get("elements"):
+        raise AppError("AILY_CARD_INVALID", "Aily 卡片结构无效", 422)
+    if len(json.dumps(card, ensure_ascii=False)) > 30000:
+        raise AppError("AILY_CARD_TOO_LARGE", "Aily 卡片内容过大", 422)
+    row = NotificationOutbox(
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        payload={
+            "message_type": "interactive",
+            "card": card,
+            "fallback_text": fallback_text,
+            "auth_user_id": auth_user_id,
+        },
+        channel="feishu_aily",
+        status="pending",
+        idempotency_key=idempotency_key,
+        attempt_count=0,
+        next_attempt_at=datetime.now(),
+        last_error_redacted=AILY_IDENTITY_NOT_MAPPED,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def _redacted_error(exc: Exception) -> str:
     if isinstance(exc, AppError):
         return f"{exc.code}: {exc.message}"[:500]
@@ -155,13 +382,24 @@ def deliver_aily_outbox_row(db: Session, row: NotificationOutbox) -> Notificatio
     if (row.attempt_count or 0) >= MAX_MESSAGE_ATTEMPTS:
         raise AppError("AILY_MESSAGE_RETRY_EXHAUSTED", "Aily 消息重试次数已耗尽", 409)
 
+    cfg = get_aily_config(db)
+    payload = row.payload or {}
+    auth_user_id = str(payload.get("auth_user_id") or "").strip()
+    if auth_user_id:
+        identity = find_aily_identity(db, auth_user_id=auth_user_id, cfg=cfg)
+        if not identity:
+            row.status = "pending"
+            row.last_error_redacted = AILY_IDENTITY_NOT_MAPPED
+            row.next_attempt_at = datetime.now() + timedelta(seconds=AILY_IDENTITY_RETRY_SECONDS)
+            return row
+        row.recipient_type = identity.subject_type
+        row.recipient_id = identity.subject_id
+
     row.status = "sending"
     row.attempt_count = (row.attempt_count or 0) + 1
     db.flush()
     try:
-        cfg = get_aily_config(db)
         client = build_aily_bot_client(cfg)
-        payload = row.payload or {}
         if payload.get("message_type") == "interactive":
             message_id = client.send_interactive_card(
                 row.recipient_id or "",

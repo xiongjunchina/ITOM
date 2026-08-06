@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from app.models import (
     AilyIntegrationConfig,
     AuthUser,
-    ExternalIdentity,
     InAppNotification,
     NotificationOutbox,
 )
@@ -35,31 +34,14 @@ def _enabled(db: Session, recipient: str, event_type: str) -> bool:
     return prefs.get(_category(event_type), True)
 
 
-def _aily_identity(db: Session, recipient: str, cfg: AilyIntegrationConfig) -> ExternalIdentity | None:
-    """按 ITOM 收件标识解析已授权的 Aily/飞书用户身份。"""
+def _recipient_user(db: Session, recipient: str) -> AuthUser | None:
+    """按人员或账号标识解析活动 ITOM 账号。"""
     user = db.query(AuthUser).filter(
         (AuthUser.person_id == recipient) | (AuthUser.id == recipient),
         AuthUser.is_deleted.is_(False),
         AuthUser.is_active.is_(True),
     ).first()
-    if not user:
-        return None
-
-    query = db.query(ExternalIdentity).filter(
-        ExternalIdentity.provider == "feishu",
-        ExternalIdentity.auth_user_id == user.id,
-        ExternalIdentity.subject_type.in_(["open_id", "user_id", "union_id"]),
-        ExternalIdentity.status == "active",
-        ExternalIdentity.is_deleted.is_(False),
-    )
-    allowed_tenants = list(cfg.allowed_tenant_ids or [])
-    if allowed_tenants:
-        query = query.filter(ExternalIdentity.tenant_id.in_(allowed_tenants))
-    return query.order_by(
-        ExternalIdentity.last_used_at.desc(),
-        ExternalIdentity.verified_at.desc(),
-        ExternalIdentity.created_at.desc(),
-    ).first()
+    return user
 
 
 def _aily_text(cfg: AilyIntegrationConfig, title: str, content: str, link: str) -> str:
@@ -74,10 +56,10 @@ def _aily_idempotency_key(
     event_type: str,
     entity_type: str,
     entity_id: str,
-    identity: ExternalIdentity,
+    auth_user_id: str,
 ) -> str:
-    """用事件、实体和收件身份摘要保证同一通知重放不重复。"""
-    raw = "|".join((event_type, entity_type or "", entity_id or "", identity.id))
+    """用事件、实体和 ITOM 账号摘要保证映射补齐后仍不重复发送。"""
+    raw = "|".join((event_type, entity_type or "", entity_id or "", auth_user_id))
     return f"aily:notification:{sha256(raw.encode('utf-8')).hexdigest()}"
 
 
@@ -99,22 +81,33 @@ def _queue_aily_notification(
     cfg = db.query(AilyIntegrationConfig).filter(
         AilyIntegrationConfig.is_deleted.is_(False),
     ).first()
-    if not cfg:
+    # Integration disabled means the administrator has not opted into outbound
+    # Feishu delivery. Do not create an unbounded pending queue in that state;
+    # an enabled integration with an unmapped identity is handled by the
+    # user-scoped queue and remains observable/retryable.
+    if not cfg or not cfg.enabled:
         return
-    identity = _aily_identity(db, recipient, cfg)
-    if not identity:
+    user = _recipient_user(db, recipient)
+    if not user:
         return
-    text = _aily_text(cfg, title, content, link)
+    # Reopen feedback is an IT handling detail. Keep it in ITOM's in-app
+    # notification, but send only a safe state-change summary to Feishu so a
+    # user's diagnostic text does not cross the proactive-message boundary.
+    outbound_title = title
+    outbound_content = content
+    if event_type == "ticket.reopened":
+        outbound_title = title.replace("用户反馈仍未解决：", "服务请求已重新打开：")
+        outbound_content = ""
+    text = _aily_text(cfg, outbound_title, outbound_content, link)
     if not text:
         return
-    from app.services.aily import queue_aily_text
+    from app.services.aily import queue_aily_text_for_user
 
-    queue_aily_text(
+    queue_aily_text_for_user(
         db,
-        recipient_type=identity.subject_type,
-        recipient_id=identity.subject_id,
+        auth_user_id=user.id,
         text=text,
-        idempotency_key=_aily_idempotency_key(event_type, entity_type, entity_id, identity),
+        idempotency_key=_aily_idempotency_key(event_type, entity_type, entity_id, user.id),
         event_type=event_type,
         entity_type=entity_type,
         entity_id=entity_id,

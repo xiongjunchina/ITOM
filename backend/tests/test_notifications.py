@@ -9,7 +9,7 @@ from app.models import (
     InAppNotification,
     NotificationOutbox,
 )
-from app.services.aily import deliver_aily_outbox_row
+from app.services.aily import deliver_aily_outbox_row, sync_aily_notification_identity
 from app.services.feishu import FeishuClient
 from app.services.secrets_store import encrypt_secret
 
@@ -174,3 +174,114 @@ def test_generic_notification_is_queued_to_feishu_and_deduplicated(client, admin
             NotificationOutbox.event_type == "ticket.resolved",
             NotificationOutbox.entity_id == "tk-generic-resolution-card",
         ).count() == 0
+
+
+def test_notification_waits_for_aily_identity_then_delivers(client, admin_headers, monkeypatch):
+    """账号尚未映射时不静默丢弃；补齐映射后由原发件箱记录发送。"""
+    user_id = None
+    tenant_id = "tenant-pending-identity"
+    subject_id = "on_pending_identity"
+    with SessionLocal() as db:
+        user = AuthUser(
+            username="pending-aily-notification-user",
+            password_hash="unused",
+            auth_source="feishu",
+            external_id="login-open-pending",
+            roles=[],
+        )
+        db.add(user)
+        db.flush()
+        user_id = user.id
+        config = db.query(AilyIntegrationConfig).filter(
+            AilyIntegrationConfig.is_deleted.is_(False)
+        ).first()
+        config.enabled = True
+        config.message_enabled = True
+        config.bot_app_id = "cli_pending_identity"
+        config.bot_app_secret_encrypted = encrypt_secret("pending-identity-secret")
+        config.allowed_tenant_ids = [tenant_id]
+        db.commit()
+
+    event = {
+        "event_type": "process.task_assigned",
+        "entity_type": "ticket",
+        "entity_id": "tk-pending-aily-identity",
+        "title": "新的待办任务",
+        "content": "请及时处理。",
+        "link": "/tickets/tk-pending-aily-identity",
+    }
+    with SessionLocal() as db:
+        notifier.notify(db, recipients=[user_id], **event)
+        db.commit()
+        row = db.query(NotificationOutbox).filter(
+            NotificationOutbox.channel == "feishu_aily",
+            NotificationOutbox.entity_id == event["entity_id"],
+        ).one()
+        row_id = row.id
+        assert row.status == "pending"
+        assert row.recipient_id is None
+        assert row.last_error_redacted == "AILY_IDENTITY_NOT_MAPPED"
+        assert row.payload["auth_user_id"] == user_id
+
+    with SessionLocal() as db:
+        row = db.get(NotificationOutbox, row_id)
+        deliver_aily_outbox_row(db, row)
+        db.commit()
+        assert row.status == "pending"
+        assert row.attempt_count == 0
+        assert row.last_error_redacted == "AILY_IDENTITY_NOT_MAPPED"
+        db.add(ExternalIdentity(
+            provider="feishu",
+            tenant_id=tenant_id,
+            app_id="aily-agent-pending",
+            subject_type="open_id",
+            subject_id=subject_id,
+            auth_user_id=user_id,
+            status="active",
+        ))
+        db.commit()
+
+    calls = []
+    monkeypatch.setattr(
+        FeishuClient,
+        "send_app_text",
+        lambda self, recipient_id, recipient_type, text: calls.append(
+            (recipient_id, recipient_type, text)
+        ) or "om_pending_identity",
+    )
+    with SessionLocal() as db:
+        row = db.get(NotificationOutbox, row_id)
+        deliver_aily_outbox_row(db, row)
+        db.commit()
+        assert row.status == "sent"
+        assert row.recipient_type == "open_id"
+        assert row.recipient_id == subject_id
+    assert calls and calls[0][0:2] == (subject_id, "open_id")
+
+
+def test_feishu_oauth_identity_auto_maps_aily_notification_union_id(client, admin_headers):
+    """已验真的 OAuth tenant_key/union_id 可建立机器人通知映射。"""
+    tenant_id = "tenant-auto-map"
+    with SessionLocal() as db:
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        config = db.query(AilyIntegrationConfig).filter(
+            AilyIntegrationConfig.is_deleted.is_(False)
+        ).first()
+        config.enabled = True
+        config.bot_app_id = "cli_auto_map"
+        config.allowed_tenant_ids = [tenant_id]
+        result = sync_aily_notification_identity(
+            db,
+            user=admin,
+            feishu_info={"tenant_key": tenant_id, "union_id": "on_auto_map"},
+        )
+        db.commit()
+        assert result == "mapped"
+        row = db.query(ExternalIdentity).filter(
+            ExternalIdentity.tenant_id == tenant_id,
+            ExternalIdentity.app_id == "cli_auto_map",
+            ExternalIdentity.subject_type == "union_id",
+            ExternalIdentity.subject_id == "on_auto_map",
+        ).one()
+        assert row.auth_user_id == admin.id
+        assert row.status == "active"
