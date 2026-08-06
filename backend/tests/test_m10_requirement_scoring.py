@@ -2,7 +2,7 @@
 import io
 
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from app.db import SessionLocal
 from app.models import Requirement
@@ -153,15 +153,14 @@ def test_template_download_and_import(client, ctx):
     tpl = client.get("/api/requirements/template", headers=ctx["admin"])
     assert tpl.status_code == 200 and "spreadsheetml" in tpl.headers["content-type"]
 
-    # 填充模板：一行已评分（进评估）、一行未评分（进登记）、一行业务域错误
+    # 新模板只包含登记阶段可填写的 8 列，不再把渠道部门、六维评分、决议和人天带给登记人。
     wb = load_workbook(io.BytesIO(tpl.content))
     ws = wb["需求登记"]
-    ws.append(["海外仓WMS", "功能", "数字化业务线", "库存效率中台", None, "供应链", "李强",
-               None, "补货精度提升", "库存周转", 5, 5, 4, 3, 2, 4, "通过", 20, 60])
-    ws.append(["达人库", "业务", "数字化业务线", "达人资源库", None, "DTC", "王磊",
-               None, None, None, None, None, None, None, None, None, None, None, None])
-    ws.append(["坏行", "功能", "不存在的业务线", "描述", None, None, None,
-               None, None, None, None, None, None, None, None, None, None, None, None])
+    assert ws.max_column == 8
+    assert all("战略对齐" not in str(cell.value) for cell in ws[1])
+    ws.append(["海外仓WMS登记", "功能", "数字化业务线", "库存效率中台", None, None, "补货精度提升", "库存周转"])
+    ws.append(["达人库", "业务", "数字化业务线", "达人资源库", None, None, None, None])
+    ws.append(["坏行", "功能", "不存在的业务线", "描述", None, None, None, None])
     buf = io.BytesIO()
     wb.save(buf)
 
@@ -173,7 +172,32 @@ def test_template_download_and_import(client, ctx):
     assert data["imported"] == 2, resp.text
     assert len(data["errors"]) == 1 and "不存在" in data["errors"][0]["error"]
 
-    # 已评分行落到评估中，且总分/象限计算正确
+    # 新版登记模板落到评估中，但评分和决议由后续流程节点填写。
+    listing = client.get("/api/requirements?q=海外仓", headers=ctx["admin"]).json()["data"]
+    registration = next(x for x in listing if x["title"] == "海外仓WMS登记")
+    assert registration["status"] == "evaluating" and registration["decision"] is None
+
+    # 旧版模板仍可导入，避免历史下载文件因模板收敛而失效。
+    legacy = Workbook()
+    legacy.remove(legacy.active)
+    legacy_ws = legacy.create_sheet("需求登记")
+    legacy_headers = [
+        "*需求名称", "*需求类型", "*所属业务域", "*需求描述", "需求来源", "渠道/部门", "提出人",
+        "期望完成时间", "期望效果", "运营价值", "战略对齐(1-5)", "业务价值(1-5)", "技术可行性(1-5)",
+        "组织就绪(1-5)", "风险等级(1-5)", "价值速度(1-5)", "最终决议", "PRD人天", "开发人天",
+    ]
+    legacy_ws.append(legacy_headers)
+    legacy_ws.append([None] * len(legacy_headers))
+    legacy_ws.append(["海外仓WMS", "功能", "数字化业务线", "历史导入", None, "数字化", "李强",
+                      None, "补货精度提升", "库存周转", 5, 5, 4, 3, 2, 4, "通过", 20, 60])
+    legacy_buf = io.BytesIO()
+    legacy.save(legacy_buf)
+    legacy_resp = client.post(
+        "/api/requirements/import",
+        files={"file": ("legacy.xlsx", legacy_buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=ctx["admin"],
+    )
+    assert legacy_resp.json()["data"]["imported"] == 1, legacy_resp.text
     listing = client.get("/api/requirements?q=海外仓", headers=ctx["admin"]).json()["data"]
     wms = next(x for x in listing if x["title"] == "海外仓WMS")
     assert wms["status"] == "evaluating" and wms["decision"] == "通过"

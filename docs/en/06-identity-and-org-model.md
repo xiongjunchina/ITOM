@@ -226,3 +226,7 @@ The final requester-confirmation task is submitter-only; even administrators can
 The digital-team population is an explicit shared department-tree scope in `org_settings`, optionally including descendants. It is authoritative for team metrics and the business-domain IT-side BM and service-team selectors; the business BDO selector instead requires an active BDO-role business account within the domain's served-department scope. The legacy `dept_type`/role heuristic is used only until an administrator configures the digital-team scope.
 
 Task 8C Round 2 leaves identity and permission rules unchanged; the browser permits `prepared` presentation only when the action expiry is explicit UTC `Z` and calendar-valid.
+### Increment: workflow facts and personal todos
+
+- Todo authorization and the current node shown by detail pages use the newest non-deleted pending task of the active process instance. `current_step_seq`, requirement stage, and historical scores are compatibility projections/evidence only. The Profile Todos tab aggregates only tasks already allowed by `can_act_on_task` and adds controlled links; it grants no permission and stores no drifting snapshot.
+- List column visibility and widths live in the current account's `preferences.table_views`; they do not change data scope or role permissions. New requirement registration no longer asks for channel department, while `Requirement.department` remains for historical compatibility.

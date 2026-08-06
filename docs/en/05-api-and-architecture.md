@@ -72,6 +72,7 @@ ITOM/
 POST /api/auth/login | GET /api/auth/me
 GET /api/auth/me/profile | PATCH /api/auth/me/preferences
 POST /api/auth/me/password | GET /api/auth/me/audit-logs
+GET /api/auth/me/todos
 GET /api/auth/me/feishu-binding/authorize-url
 POST/DELETE /api/auth/me/feishu-binding
 GET /api/auth/feishu/client-config | POST /api/auth/feishu/app-login
@@ -86,7 +87,7 @@ POST /api/attachments (multipart) | GET /api/attachments?entity=
 
 Requirement list/detail responses expose the authoritative `Requirement` score projection (`d1_strategy` … `d6_speed`, `weighted_total`, and `quadrant`) even when legacy/imported rows have no `requirement_score` history. `POST /api/requirements/{id}/score` accepts Approved only with complete scores outside Re-evaluate; On Hold and Rejected remain valid decisions, with Rejected requiring a reason of at least five characters.
 
-Profile constraints: preference PATCH updates only submitted keys; theme is `light|dark|system` and density is `default|compact`. Passwords require at least eight characters with letters and digits, and an existing deliberate password requires a valid `current_password`. Feishu unbinding requires a local password; personal audit logs return only records whose actor is the current account.
+Profile constraints: preference PATCH updates only submitted keys; theme is `light|dark|system`, density is `default|compact`, and `table_views` is bounded to stable list keys, field names, and widths of 80–800px; protected identifier/title/action columns cannot be hidden. `GET /api/auth/me/todos` returns only active tasks the current account may handle under workflow authorization and controlled entity-detail links; it does not grant permission. Passwords require at least eight characters with letters and digits, and an existing deliberate password requires a valid `current_password`. Feishu unbinding requires a local password; personal audit logs return only records whose actor is the current account.
 
 ### 4.1a Organization Sync (M35)
 
@@ -346,6 +347,7 @@ GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + mi
 
 ```text
 GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
+GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
 POST /api/requirements/{id}/to-dev       # {}; fixed scoring-rule dev_leader and an in-house-dev route snapshot
 POST /api/requirements/{id}/to-project   # {pm_id}; persists a project-route snapshot
@@ -362,6 +364,10 @@ GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue 
 POST /api/process-tasks/{id}/complete | /reassign
 POST /api/process-tasks/{id}/view       # current handler records first detail view; idempotently returns viewed_at/viewed_by
 ```
+
+Requirement template contract: `GET /requirements/template` exports registration fields only. `POST /requirements/import` detects the new registration template or the legacy scored template by headers. The new template cannot write scores, decisions, PRD/development effort, or channel department; legacy templates remain import-compatible with row-level errors.
+
+Process-detail contract: `process.current_step_seq/current_step_code/current_step_name` is derived directly from the newest pending `ProcessTask`, and each step returns its newest non-deleted task. The business stage is a forward-only compatibility projection. After implementation/acceptance, scoring returns `EVAL_STAGE_CLOSED`; an old status or historical score cannot bypass the workflow.
 
 The stable display order for process definitions is ITSM (Service Request) → ITSM (Change) → ITSM (Incident) → ITSM (Problem) → Project → Requirement → Bug Management. The backend normalizes ordering by trigger entity and the UI keeps the same grouping order as the left navigation; it must not depend on database row order.
 

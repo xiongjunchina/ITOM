@@ -70,6 +70,7 @@ ITOM/
 POST /api/auth/login | GET /api/auth/me
 GET /api/auth/me/profile | PATCH /api/auth/me/preferences
 POST /api/auth/me/password | GET /api/auth/me/audit-logs
+GET /api/auth/me/todos
 GET /api/auth/me/feishu-binding/authorize-url
 POST/DELETE /api/auth/me/feishu-binding
 GET /api/auth/feishu/client-config | POST /api/auth/feishu/app-login
@@ -82,7 +83,7 @@ GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notificat
 POST /api/attachments?entity_type=&entity_id= (multipart) | GET /api/attachments?entity_type=&entity_id= | GET /api/attachments/{id}/download
 ```
 
-个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
+个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`，`table_views` 只允许有限数量的稳定清单键、字段名、列宽（80–800px），且服务端不接受对保护列的删除授权。`GET /me/todos` 只返回当前账号按流程授权可处理的活动待办，并提供受控单据详情链接；它不改变 `can_act_on_task` 的权限判断。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
 
 ### 4.1a 组织同步（M35）
 
@@ -346,6 +347,7 @@ GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 
 ```text
 GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
+GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
 POST /api/requirements/{id}/to-dev       # {}；固定使用评分规则 dev_leader，并写入开发路径快照
 POST /api/requirements/{id}/to-project   # {pm_id}；写入项目路径快照
@@ -362,6 +364,10 @@ GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时�
 POST /api/process-tasks/{id}/complete | /reassign
 POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时记录查阅；幂等返回 viewed_at/viewed_by
 ```
+
+需求模板契约：`GET /requirements/template` 只导出登记字段；`POST /requirements/import` 根据表头识别新登记模板或历史评分模板。新模板不会写入评分、决议、PRD/开发人天或渠道部门；历史模板仍按兼容规则导入，逐行反馈错误。
+
+流程详情契约：详情中的 `process.current_step_seq/current_step_code/current_step_name` 由最新待处理 `ProcessTask` 直接计算，并返回每个步骤最新的非删除任务。业务单据阶段是向前兼容投影；评分接口在流程进入实现/验收后返回 `EVAL_STAGE_CLOSED`，不得通过旧状态或历史评分绕过流程。
 
 流程定义列表的稳定展示顺序为：ITSM（服务请求）→ ITSM（变更）→ ITSM（事件）→ ITSM（问题）→ 项目 → 需求 → Bug 管理；后端按触发实体归一排序，前端分组与左侧菜单保持一致，不能依赖数据库返回顺序。
 

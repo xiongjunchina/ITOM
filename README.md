@@ -307,6 +307,13 @@ deploy/          docker-compose, Nginx, backups
 - **Bilingual**: language is stored in `auth_user.preferences.language` (zh/en); applied on login and switchable by the user; the admin sets the default during Feishu provisioning.
 - **Feishu QR sign-in + provisioning approval**: approval generates a 12-character strong initial password and stores only encrypted recoverable ciphertext without sending it. An administrator may reveal it with the eye control or manually email it from user details; both actions are audited and the ciphertext is cleared after a change/reset.
 
+### Recent workflow/list consistency delivery
+
+- Requirement workflow detail now treats the active pending `ProcessTask` as the runtime source of truth. Historical scores remain visible as read-only evidence, but cannot make a requirement appear to be in evaluation after it has reached analysis, implementation, or acceptance; scoring is rejected outside the evaluation nodes.
+- Personal Center includes a **Todos** tab backed by `GET /api/auth/me/todos`. It aggregates only tasks the current account may act on and links to the real entity/process detail route; it does not grant workflow permission.
+- `SortableTable` supports per-user visible-column and width preferences through `PATCH /api/auth/me/preferences.table_views`; required identifiers/titles/action columns remain protected. Requirement Overview adds the requester column and keeps the left context available through horizontal scrolling.
+- New requirement registration and its Excel template contain registration fields only. The legacy `department` field and old score/analysis import columns remain readable for compatibility, while new records no longer ask for channel department or downstream evaluation data.
+
 ### Branching & collaboration
 - `main`: stable, protected — merged via Pull Request only; direct pushes are blocked by a local pre-push hook (override with `ALLOW_MAIN_PUSH=1 git push` in emergencies).
 - `develop`: day-to-day integration branch; cut `feature/<name>` branches from it and PR back.

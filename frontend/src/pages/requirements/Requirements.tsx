@@ -72,7 +72,6 @@ interface CreateFormValues {
   description: string;
   source?: string;
   // 进阶字段（默认折叠）
-  department?: string;
   expected_date?: Dayjs;
   expected_effect?: string;
   business_value_note?: string;
@@ -250,7 +249,6 @@ export default function Requirements() {
         business_domain_id: values.business_domain_id,
         description: values.description,
         source: values.source ?? null,
-        department: values.department || null,
         expected_date: values.expected_date ? values.expected_date.format('YYYY-MM-DD') : null,
         expected_effect: values.expected_effect || null,
         business_value_note: values.business_value_note || null,
@@ -285,6 +283,7 @@ export default function Requirements() {
       ),
     },
     { title: t('req.col.title'), dataIndex: 'title', width: 280, ellipsis: true, fixed: 'left' },
+    { title: t('req.requester'), dataIndex: 'requester_name', width: 110, render: (v) => v || '-' },
     { title: t('req.col.type'), dataIndex: 'req_type', width: 80, render: (v) => et.reqType(v) },
     { title: t('req.col.domain'), dataIndex: 'business_domain_name', width: 130, ellipsis: true, render: (v) => v || '-' },
     {
@@ -546,6 +545,8 @@ export default function Requirements() {
               setPageSize(ps);
             },
           }}
+          tableKey="requirements.overview"
+          requiredColumnKeys={['requirement_code', 'title', 'actions']}
         />
       )}
 
@@ -604,9 +605,6 @@ export default function Requirements() {
                 label: t('req.moreOptions'),
                 children: (
                   <>
-                    <Form.Item name="department" label={t('req.department')}>
-                      <Input maxLength={100} />
-                    </Form.Item>
                     <Form.Item name="expected_date" label={t('req.expectedDate')}>
                       <DatePicker style={{ width: '100%' }} />
                     </Form.Item>

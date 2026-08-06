@@ -220,7 +220,12 @@ function EvaluationPanel({
 
   return (
     <Card title={t('req.evaluation')} size="small">
-      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.evalGateHint')} />
+      <Alert
+        type={editable ? 'info' : 'success'}
+        showIcon
+        style={{ marginBottom: 16 }}
+        message={editable ? t('req.evalGateHint') : t('req.evalHistoricalHint')}
+      />
 
       <Typography.Text strong>{t('req.evalScore')}</Typography.Text>
       <div style={{ marginTop: 12 }}>
@@ -754,7 +759,6 @@ export default function RequirementDetail() {
       source: detail.source ?? undefined,
       description: detail.description,
       remarks: detail.remarks ?? undefined,
-      department: detail.department ?? undefined,
       expected_date: detail.expected_date ? dayjs(detail.expected_date) : undefined,
       expected_effect: detail.expected_effect ?? undefined,
       business_value_note: detail.business_value_note ?? undefined,
@@ -791,7 +795,6 @@ export default function RequirementDetail() {
         source: v.source ?? null,
         description: v.description,
         remarks: v.remarks || null,
-        department: v.department || null,
         expected_date: v.expected_date ? (v.expected_date as Dayjs).format('YYYY-MM-DD') : null,
         expected_effect: v.expected_effect || null,
         business_value_note: v.business_value_note || null,
@@ -946,11 +949,27 @@ export default function RequirementDetail() {
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
   const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
-  const reachedEvaluating =
-    !!detail.evaluating_at || ['evaluating', 'analyzing', 'implementing', 'closed'].includes(st);
-  const reachedAnalyzing = !!detail.analyzing_at || ['analyzing', 'implementing', 'closed'].includes(st);
-  const reachedImplementing = !!detail.implementing_at || ['implementing', 'closed'].includes(st);
-  const showClosure = st === 'implementing' || st === 'closed';
+  // 流程实例的当前待处理节点优先于历史阶段时间戳。旧单据可能存在
+  // Requirement.status 落后于流程任务的情况，不能再用它决定页面当前阶段。
+  const processSeq = detail.process?.current_step_seq ?? null;
+  const processCompleted = detail.process?.status === 'completed';
+  const processDriven = processSeq != null;
+  const evaluationIsCurrent = processDriven
+    ? !processCompleted && processSeq === 1
+    : st === 'registered' || st === 'evaluating';
+  const reachedEvaluating = processDriven
+    ? processSeq >= 1
+    : !!detail.evaluating_at || ['evaluating', 'analyzing', 'implementing', 'closed'].includes(st);
+  const reachedAnalyzing = processDriven
+    ? processSeq >= 2
+    : !!detail.analyzing_at || ['analyzing', 'implementing', 'closed'].includes(st);
+  const reachedImplementing = processDriven
+    ? processSeq >= 3
+    : !!detail.implementing_at || ['implementing', 'closed'].includes(st);
+  const showClosure = processDriven
+    ? processSeq >= 3
+    : st === 'implementing' || st === 'closed';
+  const analysisIsCurrent = processDriven ? !processCompleted && processSeq === 2 : st === 'analyzing';
 
   const criteria = detail.acceptance_criteria ?? [];
   const checkedCount = criteria.filter((c) => c.checked).length;
@@ -960,8 +979,10 @@ export default function RequirementDetail() {
     !isExample && !isFinal && (canManageTasks || (!!user?.person_id && user.person_id === t.assignee));
 
   // ----- 阶段进度条 -----
-  const currentStep = st === 'closed'
+  const currentStep = processCompleted || st === 'closed'
     ? 4
+    : processDriven
+      ? Math.min(4, Math.max(1, processSeq ?? 1))
     : reachedImplementing
       ? 3
       : reachedAnalyzing
@@ -1240,11 +1261,11 @@ export default function RequirementDetail() {
       />
 
       {/* 评估评分（登记/评估阶段或已有评分时显示） */}
-      {id && (st === 'registered' || st === 'evaluating' || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
+      {id && (evaluationIsCurrent || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
         <EvaluationPanel
           id={id}
           detail={detail}
-          editable={canEditNow && (st === 'registered' || st === 'evaluating')}
+          editable={canEditNow && evaluationIsCurrent}
           onSaved={() => void load()}
         />
       )}
@@ -1256,8 +1277,8 @@ export default function RequirementDetail() {
             <SolutionEvalSection
               id={id}
               detail={detail}
-              editable={canEditNow}
-              isAnalyzing={st === 'analyzing'}
+              editable={canEditNow && analysisIsCurrent}
+              isAnalyzing={analysisIsCurrent}
               canOperate={canEdit && !isExample}
               memberOptions={memberOptions}
               onPatch={patchField}
@@ -1581,9 +1602,6 @@ export default function RequirementDetail() {
             <Input.TextArea rows={4} maxLength={2000} />
           </Form.Item>
           <Space size={16} wrap style={{ width: '100%' }} align="start">
-            <Form.Item name="department" label={t('req.department')} style={{ width: 200 }}>
-              <Input maxLength={100} />
-            </Form.Item>
             <Form.Item name="expected_date" label={t('req.expectedDate')}>
               <DatePicker style={{ width: '100%' }} />
             </Form.Item>

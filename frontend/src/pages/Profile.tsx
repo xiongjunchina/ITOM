@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Avatar,
@@ -23,7 +23,7 @@ import { UserOutlined } from '@ant-design/icons';
 import Table from '../components/SortableTable';
 import dayjs from 'dayjs';
 import { api } from '../api/client';
-import type { PersonalAuditLog, ProfileData } from '../api/types';
+import type { PersonalAuditLog, PersonalTodo, ProfileData } from '../api/types';
 import { useAuthStore } from '../stores/auth';
 import { useLangStore, type Lang } from '../i18n/store';
 import { useT } from '../i18n';
@@ -71,6 +71,11 @@ export default function Profile() {
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditPage, setAuditPage] = useState(1);
   const [auditPageSize, setAuditPageSize] = useState(20);
+  const [todoRows, setTodoRows] = useState<PersonalTodo[]>([]);
+  const [todoTotal, setTodoTotal] = useState(0);
+  const [todoLoading, setTodoLoading] = useState(false);
+  const [todoPage, setTodoPage] = useState(1);
+  const [todoPageSize, setTodoPageSize] = useState(20);
 
   const load = useCallback(async () => {
     try {
@@ -173,6 +178,21 @@ export default function Profile() {
       setAuditLoading(false);
     }
   };
+
+  const loadTodos = useCallback(async (page = todoPage, pageSize = todoPageSize) => {
+    setTodoLoading(true);
+    try {
+      const res = await api.getList<PersonalTodo>('/auth/me/todos', { page, page_size: pageSize });
+      setTodoRows(res.items);
+      setTodoTotal(res.total ?? res.items.length);
+    } finally {
+      setTodoLoading(false);
+    }
+  }, [todoPage, todoPageSize]);
+
+  useEffect(() => {
+    if (params.get('tab') === 'todos') void loadTodos();
+  }, [loadTodos, params]);
 
   const startFeishuBind = async () => {
     const redirectUri = `${window.location.origin}/login/feishu-callback?mode=bind`;
@@ -392,6 +412,51 @@ export default function Profile() {
     </Card>
   );
 
+  const todoTab = (
+    <Card title={t('profile.todosTitle')}>
+      <Table<PersonalTodo>
+        rowKey="id"
+        loading={todoLoading}
+        dataSource={todoRows}
+        scroll={{ x: 'max-content' }}
+        locale={{ emptyText: t('profile.todosEmpty') }}
+        pagination={{
+          current: todoPage,
+          pageSize: todoPageSize,
+          total: todoTotal,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50, 100],
+          showTotal: (n) => t('profile.todosTotal', { n }),
+          onChange: (page, pageSize) => {
+            setTodoPage(page);
+            setTodoPageSize(pageSize);
+            void loadTodos(page, pageSize);
+          },
+        }}
+        columns={[
+          {
+            title: t('profile.todoDocument'),
+            dataIndex: 'code',
+            width: 180,
+            fixed: 'left',
+            render: (value: string | null, row) => <Link to={row.link}>{value || row.title || '-'}</Link>,
+          },
+          { title: t('profile.todoTitle'), dataIndex: 'title', width: 280, ellipsis: true },
+          { title: t('profile.todoProcess'), dataIndex: 'process_name', width: 180 },
+          { title: t('profile.todoStep'), dataIndex: 'step_name', width: 220 },
+          { title: t('profile.todoDueAt'), dataIndex: 'due_at', width: 180, render: (v: string | null) => v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '-' },
+          {
+            title: t('profile.todoAction'),
+            key: 'action',
+            width: 120,
+            fixed: 'right',
+            render: (_: unknown, row) => <Link to={row.link}>{t('profile.todoHandle')}</Link>,
+          },
+        ]}
+      />
+    </Card>
+  );
+
   const bindingTab = (
     <Card title={t('profile.feishuBinding')} style={{ maxWidth: 680 }}>
       <Descriptions column={1}>
@@ -440,9 +505,14 @@ export default function Profile() {
         onChange={(k) => {
           setParams(k === 'basic' ? {} : { tab: k }, { replace: true });
           if (k === 'audit') void loadAudit();
+          if (k === 'todos') {
+            setTodoPage(1);
+            void loadTodos(1, todoPageSize);
+          }
         }}
         items={[
           { key: 'basic', label: t('profile.tabBasic'), children: basicTab },
+          { key: 'todos', label: t('profile.tabTodos'), children: todoTab },
           { key: 'security', label: t('profile.tabSecurity'), children: securityTab },
           { key: 'notifications', label: t('profile.tabNotifications'), children: notificationTab },
           { key: 'audit', label: t('profile.tabAudit'), children: auditTab },

@@ -1,7 +1,10 @@
-import { Table } from 'antd';
-import { useMemo, useState } from 'react';
+import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
+import { SettingOutlined } from '@ant-design/icons';
+import { api } from '../api/client';
+import { useAuthStore } from '../stores/auth';
 
 type SortableTableProps<T extends object> = TableProps<T> & {
   /**
@@ -11,7 +14,76 @@ type SortableTableProps<T extends object> = TableProps<T> & {
   autoSort?: boolean;
   /** 可选的统一列表工具栏：关键字、字段过滤、当前数据导出。 */
   standardToolbar?: TableStandardOptions<T>;
+  /** 可选的稳定标识；缺省按当前路由隔离清单布局。 */
+  tableKey?: string;
+  /** 不允许用户隐藏的字段，例如编号、标题和操作列。 */
+  requiredColumnKeys?: string[];
 };
+
+type ViewConfig = { visible: string[]; widths: Record<string, number> };
+
+function routeTableKey(path: string): string {
+  const normalized = path.replace(/[^a-zA-Z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').toLowerCase();
+  return `route.${normalized || 'root'}`;
+}
+
+function columnKey<T extends object>(column: ColumnType<T>, index: string | number): string {
+  if (column.key != null) return String(column.key);
+  if (column.dataIndex != null) return Array.isArray(column.dataIndex) ? column.dataIndex.join('.') : String(column.dataIndex);
+  return `column-${index}`;
+}
+
+function leafColumns<T extends object>(columns: ColumnsType<T>, prefix = ''): Array<{ column: ColumnType<T>; key: string }> {
+  const result: Array<{ column: ColumnType<T>; key: string }> = [];
+  columns.forEach((column, index) => {
+    if ('children' in column && column.children) {
+      result.push(...leafColumns(column.children, `${prefix}${index}.`));
+    } else {
+      result.push({ column: column as ColumnType<T>, key: columnKey(column as ColumnType<T>, `${prefix}${index}`) });
+    }
+  });
+  return result;
+}
+
+function ResizableHeaderCell(props: Record<string, unknown>) {
+  const { children, onResize, onResizeEnd, width, ...rest } = props as {
+    children?: ReactNode;
+    onResize?: (width: number) => void;
+    onResizeEnd?: (width: number) => void;
+    width?: number;
+    [key: string]: unknown;
+  };
+  if (!onResize || !width) return <th {...rest}>{children}</th>;
+  const startResize = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = width;
+    let lastWidth = startWidth;
+    const move = (moveEvent: globalThis.MouseEvent) => {
+      lastWidth = Math.max(80, Math.min(800, startWidth + moveEvent.clientX - startX));
+      onResize(lastWidth);
+    };
+    const stop = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', stop);
+      onResizeEnd?.(lastWidth);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', stop);
+  };
+  return (
+    <th {...rest} style={{ ...(rest.style as CSSProperties | undefined), position: 'relative' }}>
+      {children}
+      <span
+        role="separator"
+        aria-label="resize column"
+        onMouseDown={startResize}
+        style={{ position: 'absolute', top: 0, right: -3, width: 8, height: '100%', cursor: 'col-resize', zIndex: 2 }}
+      />
+    </th>
+  );
+}
 
 function valueAt<T extends object>(record: T, dataIndex: ColumnType<T>['dataIndex']): unknown {
   if (dataIndex == null) return undefined;
@@ -60,8 +132,81 @@ function augmentColumns<T extends object>(columns: ColumnsType<T>): ColumnsType<
  * 统一表格排序入口。所有业务表只要使用此组件，表头字段即可点击排序，
  * 并且不会覆盖页面已经定义的自定义 sorter。
  */
-export default function SortableTable<T extends object>({ autoSort = true, columns, standardToolbar, dataSource, pagination, ...props }: SortableTableProps<T>) {
-  const tableColumns = autoSort && columns ? augmentColumns(columns) : columns;
+export default function SortableTable<T extends object>({ autoSort = true, columns, standardToolbar, dataSource, pagination, tableKey, requiredColumnKeys = [], ...props }: SortableTableProps<T>) {
+  const user = useAuthStore((state) => state.user);
+  const setUser = useAuthStore((state) => state.setUser);
+  const resolvedTableKey = tableKey ?? routeTableKey(window.location.pathname);
+  const leaves = useMemo(() => leafColumns(columns ?? []), [columns]);
+  const knownKeys = useMemo(() => leaves.map((item) => item.key), [leaves]);
+  const protectedKeys = useMemo(
+    () => new Set(requiredColumnKeys.concat(leaves.filter(({ column }) => column.fixed === 'left' || column.fixed === 'right' || column.key === 'action' || column.key === 'actions').map(({ key }) => key))),
+    [leaves, requiredColumnKeys],
+  );
+  const defaultConfig = useMemo<ViewConfig>(() => ({
+    visible: knownKeys,
+    widths: Object.fromEntries(leaves.filter(({ column }) => typeof column.width === 'number').map(({ column, key }) => [key, column.width as number])),
+  }), [knownKeys, leaves]);
+  const [viewConfig, setViewConfig] = useState<ViewConfig>(defaultConfig);
+  const viewConfigRef = useRef(viewConfig);
+  useEffect(() => {
+    viewConfigRef.current = viewConfig;
+  }, [viewConfig]);
+
+  useEffect(() => {
+    const saved = user?.preferences?.table_views?.[resolvedTableKey];
+    const savedVisible = saved?.visible?.filter((key) => knownKeys.includes(key)) ?? [];
+    const visible = saved ? savedVisible : knownKeys;
+    setViewConfig({
+      visible: Array.from(new Set([...visible, ...Array.from(protectedKeys).filter((key) => knownKeys.includes(key))])),
+      widths: { ...defaultConfig.widths, ...(saved?.widths ?? {}) },
+    });
+  }, [defaultConfig, knownKeys, protectedKeys, resolvedTableKey, user?.preferences?.table_views]);
+
+  const persistViewConfig = async (next: ViewConfig) => {
+    viewConfigRef.current = next;
+    setViewConfig(next);
+    if (!user) return;
+    const tableViews = { ...(user.preferences?.table_views ?? {}), [resolvedTableKey]: next };
+    try {
+      await api.patch('/auth/me/preferences', { table_views: tableViews });
+      setUser({ ...user, preferences: { ...user.preferences, table_views: tableViews } });
+    } catch {
+      // 已统一提示；本地布局仍保留，下一次加载时以后端配置为准。
+    }
+  };
+
+  const configuredColumns = useMemo(() => {
+    const transform = (sourceColumns: ColumnsType<T>, prefix = ''): ColumnsType<T> => {
+      const result: ColumnsType<T> = [];
+      sourceColumns.forEach((column, index) => {
+      if ('children' in column && column.children) {
+        const children = transform(column.children, `${prefix}${index}.`);
+        if (children.length) result.push({ ...column, children });
+        return;
+      }
+      const source = column as ColumnType<T>;
+      const key = columnKey(source, `${prefix}${index}`);
+      if (!viewConfig.visible.includes(key) && !protectedKeys.has(key)) return;
+      const width = viewConfig.widths[key] ?? source.width;
+      result.push({
+        ...source,
+        ...(width ? { width } : {}),
+        onHeaderCell: () => ({
+          width,
+          onResize: (nextWidth: number) => {
+            const next = { ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } };
+            viewConfigRef.current = next;
+            setViewConfig(next);
+          },
+          onResizeEnd: () => void persistViewConfig(viewConfigRef.current),
+        }),
+      } as ColumnType<T>);
+      });
+      return result;
+    };
+    return transform(columns ?? []);
+  }, [columns, protectedKeys, viewConfig]);
+  const tableColumnsWithView = autoSort && configuredColumns ? augmentColumns(configuredColumns) : configuredColumns;
   const rows = (dataSource ?? []) as T[];
   const [query, setQuery] = useState('');
   const [filterField, setFilterField] = useState<string>();
@@ -91,21 +236,53 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
     : pagination;
   return (
     <>
-      {standardToolbar && (
-        <TableStandardToolbar
-          options={standardToolbar}
-          columns={columns ?? []}
-          rows={rows}
-          filteredRows={filteredRows}
-          query={query}
-          onQueryChange={setQuery}
-          filterField={filterField}
-          filterValue={filterValue}
-          onFilterFieldChange={setFilterField}
-          onFilterValueChange={setFilterValue}
+      <Space direction="vertical" style={{ width: '100%' }} size={8}>
+        {standardToolbar && (
+          <TableStandardToolbar
+            options={standardToolbar}
+            columns={columns ?? []}
+            rows={rows}
+            filteredRows={filteredRows}
+            query={query}
+            onQueryChange={setQuery}
+            filterField={filterField}
+            filterValue={filterValue}
+            onFilterFieldChange={setFilterField}
+            onFilterValueChange={setFilterValue}
+          />
+        )}
+        <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+          <Dropdown
+            trigger={['click']}
+            dropdownRender={() => (
+              <Card size="small" title="显示字段" style={{ width: 260 }}>
+                <Checkbox.Group
+                  style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+                  value={viewConfig.visible}
+                  options={leaves.map(({ column, key }) => ({
+                    value: key,
+                    label: typeof column.title === 'string' ? column.title : key,
+                    disabled: protectedKeys.has(key),
+                  }))}
+                  onChange={(values) => void persistViewConfig({ ...viewConfig, visible: Array.from(new Set([...values.map(String), ...Array.from(protectedKeys)])) })}
+                />
+                <Divider style={{ margin: '12px 0' }} />
+                <Button size="small" onClick={() => void persistViewConfig(defaultConfig)}>恢复默认</Button>
+              </Card>
+            )}
+          >
+            <Tooltip title="配置显示字段和列宽"><Button icon={<SettingOutlined />}>列设置</Button></Tooltip>
+          </Dropdown>
+        </Space>
+        <Table<T>
+          {...props}
+          columns={tableColumnsWithView}
+          dataSource={standardToolbar ? filteredRows : dataSource}
+          pagination={tablePagination}
+          scroll={{ x: 'max-content', ...(props.scroll ?? {}) }}
+          components={{ ...(props.components ?? {}), header: { ...(props.components?.header ?? {}), cell: ResizableHeaderCell } }}
         />
-      )}
-      <Table<T> {...props} columns={tableColumns} dataSource={standardToolbar ? filteredRows : dataSource} pagination={tablePagination} />
+      </Space>
     </>
   );
 }

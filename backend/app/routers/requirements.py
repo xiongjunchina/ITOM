@@ -142,9 +142,9 @@ def _is_business_portal_only(db: Session, user: AuthUser) -> bool:
     return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
-def _can_manage_requirement_tasks(db: Session, user: AuthUser, requirement: Requirement) -> bool:
+def _can_manage_requirement_tasks(db: Session, user: AuthUser, requirement: Requirement, effective_status: str | None = None) -> bool:
     """任务维护权：全局任务/需求编辑者，或当前实现中需求的负责人。"""
-    if requirement.is_example or requirement.status != "implementing":
+    if requirement.is_example or (effective_status or requirement.status) != "implementing":
         return False
     if has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit"):
         return True
@@ -334,6 +334,74 @@ def _require_spawned_implementation_task(db: Session, r: Requirement):
     return task
 
 
+_PROCESS_STAGE_RANK = {
+    "registered": 0,
+    "evaluating": 1,
+    "analyzing": 2,
+    "implementing": 3,
+    "closed": 4,
+}
+
+
+def _sync_requirement_stage_from_process(db: Session, r: Requirement, instance) -> None:
+    """把流程当前任务投影回需求阶段，避免两套状态长期分叉。
+
+    流程任务是运行时事实，Requirement.status 是列表筛选、统计和兼容旧页面
+    使用的业务投影。这里仅允许向前投影，不回退、不删除历史评分，也不覆盖
+    ``closed``/``cancelled`` 等终态。
+    """
+    if not instance or r.is_deleted or r.status in ("closed", "cancelled", "on_hold"):
+        return
+    task = process_engine.current_pending_task(db, "requirement", r.id)
+    if task and task.step:
+        step_name = task.step.name or ""
+        if "需求评审" in step_name:
+            target = "evaluating"
+        elif "方案评估" in step_name:
+            target = "analyzing"
+        elif "实现交付" in step_name or "验收" in step_name:
+            target = "implementing"
+        else:
+            return
+    elif instance.status == "completed":
+        # 流程完成但验收标准尚未全部勾选时，on_process_advanced 会保留
+        # implementing，等待业务验收闭环，而不是误标为 closed。
+        target = "implementing"
+    else:
+        return
+
+    if _PROCESS_STAGE_RANK.get(target, 0) <= _PROCESS_STAGE_RANK.get(r.status, 0):
+        return
+    before = r.status
+    r.status = target
+    now = datetime.now()
+    if target == "evaluating" and not r.evaluating_at:
+        r.evaluating_at = now
+    elif target == "analyzing" and not r.analyzing_at:
+        r.analyzing_at = now
+    elif target == "implementing" and not r.implementing_at:
+        r.implementing_at = now
+    audit(db, "requirement", r.id, "process_stage_sync", None, {
+        "from": before,
+        "to": target,
+        "step": task.step.name if task and task.step else None,
+    })
+
+
+def _effective_requirement_status(r: Requirement, process_view: dict | None) -> str:
+    """读取详情时计算兼容旧数据的展示阶段，不修改数据库。"""
+    if r.status in ("closed", "cancelled", "on_hold") or not process_view:
+        return r.status
+    if process_view.get("status") == "completed":
+        criteria = r.acceptance_criteria or []
+        return "closed" if not criteria or all(c.get("checked") for c in criteria) else "implementing"
+    seq = process_view.get("current_step_seq")
+    target = {1: "evaluating", 2: "analyzing", 3: "implementing", 4: "implementing"}.get(seq)
+    if _PROCESS_STAGE_RANK.get(target or "", 0) > _PROCESS_STAGE_RANK.get(r.status, 0):
+        return target  # type: ignore[return-value]
+    return r.status
+
+
 def _assign_solution_review(db: Session, r: Requirement, fallback_assignee: str | None = None):
     """立项后进入方案评估：产品 leader 主责、开发 leader 知会。
 
@@ -368,7 +436,7 @@ def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
     from app.models import ProcessInstance, ProcessStep
 
     r = db.get(Requirement, requirement_id)
-    if not r or r.is_deleted or r.status in ("closed", "cancelled"):
+    if not r or r.is_deleted:
         return
     inst = (
         db.query(ProcessInstance)
@@ -378,6 +446,9 @@ def on_process_advanced(db: Session, requirement_id: str, actor: AuthUser):
         .first()
     )
     if not inst:
+        return
+    _sync_requirement_stage_from_process(db, r, inst)
+    if r.status in ("closed", "cancelled"):
         return
     domain = db.get(BusinessDomain, r.business_domain_id)
     acceptance_owner = (domain.business_bdo_id or domain.owner_id) if domain else None
@@ -486,7 +557,23 @@ def update_scoring_config(body: ScoringConfigIn, db: Session = Depends(get_db), 
 
 # ---------- 批量导入：模板导出 + 上传解析入库 ----------
 
-def _import_sheet() -> "Sheet":
+def _registration_sheet() -> "Sheet":
+    """新需求登记模板：只包含登记人当前真正能填写的字段。"""
+    from app.services.excel_io import Col, Sheet
+    return Sheet("需求登记", [
+        Col("title", "需求名称", required=True),
+        Col("req_type", "需求类型", required=True, enum=list(REQ_TYPES)),
+        Col("business_domain", "所属业务域", required=True, hint="按业务域名称精确匹配"),
+        Col("description", "需求描述", required=True),
+        Col("source", "需求来源"),
+        Col("expected_date", "期望完成时间", kind="date"),
+        Col("expected_effect", "期望效果"),
+        Col("business_value_note", "运营价值"),
+    ])
+
+
+def _legacy_import_sheet() -> "Sheet":
+    """兼容旧版模板导入；旧模板仍允许历史评分列，但不再作为下载模板。"""
     from app.services.excel_io import Col, Sheet
     return Sheet("需求登记", [
         Col("title", "需求名称", required=True),
@@ -511,6 +598,25 @@ def _import_sheet() -> "Sheet":
     ])
 
 
+def _import_sheet_for_file(file_bytes: bytes) -> "Sheet":
+    """根据第一行表头选择新版登记模板或旧版全字段模板。"""
+    from app.services.excel_io import _load_workbook_resilient
+
+    try:
+        wb = _load_workbook_resilient(file_bytes)
+        if "需求登记" not in wb.sheetnames:
+            return _registration_sheet()
+        headers = {
+            str(value).lstrip("*").strip()
+            for value in next(wb["需求登记"].iter_rows(min_row=1, max_row=1, values_only=True), ())
+            if value is not None
+        }
+    except Exception:
+        return _registration_sheet()
+    legacy_markers = {"战略对齐(1-5)", "最终决议", "PRD人天", "开发人天", "渠道/部门"}
+    return _legacy_import_sheet() if headers & legacy_markers else _registration_sheet()
+
+
 @router.get("/template")
 def requirement_template(db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
     from urllib.parse import quote
@@ -519,7 +625,7 @@ def requirement_template(db: Session = Depends(get_db), user: AuthUser = Depends
 
     from app.services.excel_io import build_template
     requirement_intake.ensure_registration_authorized(db, user)
-    content = build_template([_import_sheet()])
+    content = build_template([_registration_sheet()])
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -532,7 +638,8 @@ def requirement_template(db: Session = Depends(get_db), user: AuthUser = Depends
 async def import_requirements(file: UploadFile, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "create"))):
     from app.services.excel_io import parse_sheet
     requirement_intake.ensure_registration_authorized(db, user)
-    rows, errors = parse_sheet(await file.read(), _import_sheet())
+    file_bytes = await file.read()
+    rows, errors = parse_sheet(file_bytes, _import_sheet_for_file(file_bytes))
     domains = {d.name: d for d in db.query(BusinessDomain).filter(
         BusinessDomain.is_deleted.is_(False), BusinessDomain.active.is_(True))}
     person = db.get(OrgMember, user.person_id) if user.person_id else None
@@ -597,6 +704,12 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
     domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
     status_map = status_names(db, "requirement")
     detail = _row(r, db, names, domains, status_map, requirement_scoring.get_config(db))
+    process_view = process_engine.instance_view(db, "requirement", r.id)
+    effective_status = _effective_requirement_status(r, process_view)
+    # 旧数据可能只留下了落后的 Requirement.status；详情读取优先展示流程
+    # 运行时阶段，但不在 GET 请求中写回数据库，避免隐式修改历史单据。
+    detail["status"] = effective_status
+    detail["status_name"] = status_map.get(effective_status, effective_status)
     edit_access = process_engine.workflow_edit_access(db, user, "requirement", r.id, "requirements")
     delete_access = process_engine.workflow_delete_access(db, user, "requirement", r.id, "requirements")
     project = db.get(Project, r.project_id) if r.project_id else None
@@ -662,15 +775,15 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         # 手动状态按钮仅 admin（修数据口子）
         "allowed_transitions": [] if r.is_example or not _is_req_admin(db, user) else [
             {"to": code, "to_name": status_map.get(code, code)}
-            for code in allowed_targets(db, "requirement", r.status, user)
+            for code in allowed_targets(db, "requirement", effective_status, user)
         ],
-        "can_close": _can_close_requirement(db, user, r) and not r.is_example and r.status not in ("closed", "cancelled"),
-        "process": process_engine.instance_view(db, "requirement", r.id),
+        "can_close": _can_close_requirement(db, user, r) and not r.is_example and effective_status not in ("closed", "cancelled"),
+        "process": process_view,
         "can_edit": (not r.is_example) and edit_access.allowed,
         "can_delete": (not r.is_example) and delete_access.allowed,
         "workflow_edit_mode": edit_access.mode,
         "workflow_edit_locked_reason": edit_access.reason,
-        "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
+        "can_manage_tasks": _can_manage_requirement_tasks(db, user, r, effective_status),
         "can_delete_tasks": _can_delete_requirement_tasks(db, user),
     })
     return ok(detail)
@@ -850,6 +963,13 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     ensure_not_example(r)
     if r.status in ("closed", "cancelled"):
         raise AppError("REQ_FINAL", "终态需求不可评分")
+    # 有流程实例时，六维评分/评估决议只允许发生在需求评审或方案评估节点。
+    # 即使历史 status 仍为 evaluating，也不能借此绕过流程进入实现/验收后的
+    # 前置阶段操作。
+    process_task = _current_process_task(db, r.id)
+    process_step_name = _current_requirement_step_name(db, process_task)
+    if process_task and not any(x in process_step_name for x in ("需求评审", "方案评估")):
+        raise AppError("EVAL_STAGE_CLOSED", f"当前流程节点为「{process_step_name or '未知'}」，评估阶段已结束，不能修改六维评分或评估决议", 409)
     data = body.model_dump(exclude_unset=True)
     _validate_scores(data)
     if data.get("decision") and data["decision"] not in DECISIONS:
@@ -893,17 +1013,29 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
         row.comment = data["comment"]
     audit(db, "requirement", r.id, "score", user, {"decision": r.decision})
 
-    # M16：保存决议即自动流转（评审动作一步到位）
+    # M16：保存决议即自动流转（评审动作一步到位）。
+    # 当前阶段以流程待办为准：业务域负责人可能已经完成“需求评审”，
+    # 此时 Requirement.status 已投影为 analyzing，但产品负责人仍可能需要
+    # 补齐六维评分。补评分不得再次推进流程，却必须重新套用评分配置的
+    # 产品负责人，避免“节点已到方案评估、处理人却为空”的历史数据问题。
     flowed_to = None
-    if r.status == "evaluating" and r.decision:
+    current_is_review = "需求评审" in process_step_name
+    current_is_solution_review = "方案评估" in process_step_name
+    if r.decision and (r.status == "evaluating" or current_is_review or current_is_solution_review):
         now = datetime.now()
         if r.decision == "通过":
-            wf_transition(db, r, "requirement", "analyzing", {}, user)
-            if not r.analyzing_at:
+            if current_is_review:
+                wf_transition(db, r, "requirement", "analyzing", {}, user)
+            if current_is_review and not r.analyzing_at:
                 r.analyzing_at = now
-            _complete_initial_requirement_review(db, r, user, f"评审通过（象限：{quadrant}）")
-            _assign_solution_review(db, r, fallback_assignee=user.person_id)  # 产品 leader 主责、开发 leader 知会
-            flowed_to = "analyzing"
+            if current_is_review:
+                _complete_initial_requirement_review(db, r, user, f"评审通过（象限：{quadrant}）")
+                flowed_to = "analyzing"
+            # 方案评估节点的补评分只刷新其处理人和知会人，不得重复完成
+            # 节点或跳过路径决定；真正的路径推进仍由 /to-dev 或 /to-project。
+            _assign_solution_review(db, r, fallback_assignee=user.person_id)
+            if flowed_to is None:
+                flowed_to = "analyzing"
         elif r.decision == "搁置":
             wf_transition(db, r, "requirement", "on_hold", {}, user)
             if r.requester:

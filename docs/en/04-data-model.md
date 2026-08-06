@@ -37,6 +37,10 @@
 | initial_password_ciphertext | TEXT | Fernet ciphertext for the M44 provisioning password; cleared after change/reset |
 | initial_password_sent_at | TIMESTAMP | Last administrator-triggered initial-password email time |
 
+Incremental contract: `auth_user.preferences` may contain a `table_views` object keyed by a stable list key. Each value stores a `visible` field list and `widths` map; the API bounds keys, counts, and widths, while protected identifier/title/action columns are always retained. No new business table or destructive migration is required.
+
+Workflow runtime uses the newest non-deleted pending `process_task` as the current-node fact. `process_instance.current_step_seq`, `Requirement.status`, and stage timestamps are compatibility projections/read models; synchronization only moves a stage forward and never rewrites closed/cancelled/on-hold records, historical tasks, or scores. `Requirement.department` remains a legacy-compatible field, but new registration and its template do not require/export it. The import service distinguishes the new registration template from the legacy scored template by headers. Personal todos are calculated from active tasks and domain records on read rather than stored as a snapshot, so they cannot drift from workflow authorization.
+
 **M36–M37 lifecycle semantics**: account deletion uses `GlidBase.is_deleted`, disables the account, clears `person_id`, and rewrites the username to release the original value; it never deletes `org_member`. Feishu unbinding clears account `external_id` and switches the source to local without changing `person_id`.
 
 ### 1.0 department / business_domain / provision_rule (added in M3.5)

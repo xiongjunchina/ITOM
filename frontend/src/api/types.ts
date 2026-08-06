@@ -81,6 +81,11 @@ export interface UserPreferences {
   notification_preferences?: Record<'work' | 'workflow' | 'system', boolean>;
   theme?: 'light' | 'dark' | 'system';
   density?: 'default' | 'compact';
+  /** 清单列可见性与宽度，按路由/业务清单标识保存。 */
+  table_views?: Record<string, {
+    visible?: string[];
+    widths?: Record<string, number>;
+  }>;
 }
 
 /** 登录用户 */
@@ -482,6 +487,8 @@ export interface TicketProcess {
   definition_version?: number | null;
   status: string;
   current_step_seq?: number | null;
+  current_step_code?: string | null;
+  current_step_name?: string | null;
   steps: ProcessStep[];
 }
 
@@ -2372,6 +2379,24 @@ export interface PersonalAuditLog {
   action: string;
   summary: Record<string, unknown> | null;
   created_at: string;
+}
+
+/** 当前登录用户可处理的流程待办。 */
+export interface PersonalTodo {
+  id: string;
+  task_id: string;
+  entity_type: string;
+  entity_id: string;
+  code: string | null;
+  title: string | null;
+  process_name: string;
+  step_name: string;
+  step_seq: number | null;
+  assignee: string | null;
+  assignee_name: string | null;
+  due_at: string | null;
+  created_at: string;
+  link: string;
 }
 
 // ============ WA0 网页智能体 ============

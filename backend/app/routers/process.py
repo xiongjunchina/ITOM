@@ -567,10 +567,26 @@ def list_instances(
         query = query.filter(ProcessInstance.entity_type == entity_type)
     items, total = paginate(query.order_by(ProcessInstance.created_at.desc()), page, page_size)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    # The relationship collection can be stale after a node completes and the
+    # next task is spawned in the same Session.  Read the active task directly
+    # so the monitor cannot lag behind the detail page and actionable todo API.
+    pending_tasks = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id.in_([ins.id for ins in items]),
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.created_at.desc())
+        .all()
+    ) if items else []
+    pending_by_instance = {}
+    for task in pending_tasks:
+        pending_by_instance.setdefault(task.instance_id, task)
     now = datetime.now()
     rows = []
     for ins in items:
-        pending = next((t for t in ins.tasks if t.status == "待处理" and not t.is_deleted), None)
+        pending = pending_by_instance.get(ins.id)
         rows.append({
             "id": ins.id, "definition_name": ins.definition.name, "entity_type": ins.entity_type,
             "entity_id": ins.entity_id, "status": ins.status,

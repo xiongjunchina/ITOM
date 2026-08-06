@@ -875,9 +875,26 @@ def pending_steps_map(db: Session, entity_types: list[str], entity_ids: list[str
         .all()
     )
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    # Do not use ``inst.tasks`` here.  The relationship may have been loaded
+    # before the current node was spawned in the same Session, which makes
+    # list-page pending badges lag behind the actual workflow node.
+    pending_tasks = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id.in_([inst.id for inst in instances]),
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.created_at.desc())
+        .all()
+    )
+    pending_by_instance: dict[str, ProcessTask] = {}
+    for task in pending_tasks:
+        pending_by_instance.setdefault(task.instance_id, task)
+
     out: dict = {}
     for inst in instances:
-        task = next((t for t in inst.tasks if t.status == "待处理" and not t.is_deleted), None)
+        task = pending_by_instance.get(inst.id)
         if not task:
             continue
         mine = is_admin or bool(user.person_id and task.assignee == user.person_id)
@@ -1036,7 +1053,35 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
     if not instance:
         return None
     member_names = {m.id: m.name for m in db.query(OrgMember).all()}
-    tasks_by_step = {t.step_id: t for t in instance.tasks if not t.is_deleted}  # 回退作废的任务不算现状
+    # A workflow instance can have more than one task row for a step after a
+    # rewind or correction.  Always use a fresh query and keep the newest
+    # non-deleted task for the step; the relationship collection can be stale
+    # after _spawn_task() adds the next node in the same transaction.
+    tasks = (
+        db.query(ProcessTask)
+        .filter(ProcessTask.instance_id == instance.id, ProcessTask.is_deleted.is_(False))
+        .order_by(ProcessTask.created_at.asc())
+        .all()
+    )
+    tasks_by_step: dict[str, ProcessTask] = {}
+    for task in tasks:
+        tasks_by_step[task.step_id] = task
+    current_task = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.created_at.desc())
+        .first()
+    )
+    # The active pending task is the runtime source of truth.  The persisted
+    # sequence remains a compatibility fallback for completed/legacy instances
+    # that intentionally have no pending task.
+    effective_current_step_seq = (
+        current_task.step.seq if current_task and current_task.step else instance.current_step_seq
+    )
     step_rows = []
     for step in _live_steps(instance.definition):
         task = tasks_by_step.get(step.id)
@@ -1072,6 +1117,11 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
         "definition_name": instance.definition.name,
         "definition_version": instance.definition.version,
         "status": instance.status,
-        "current_step_seq": instance.current_step_seq,
+        "current_step_seq": effective_current_step_seq,
+        "current_step_code": (
+            current_task.step.step_code if current_task and current_task.step and current_task.step.step_code
+            else (f"step_{effective_current_step_seq}" if effective_current_step_seq is not None else None)
+        ),
+        "current_step_name": current_task.step.name if current_task and current_task.step else None,
         "steps": step_rows,
     }

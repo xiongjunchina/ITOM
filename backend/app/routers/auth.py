@@ -8,7 +8,7 @@ from app.core.errors import AppError
 from app.core.security import create_token, hash_password, verify_password
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import AuthUser
+from app.models import AuthUser, OrgMember, ProcessInstance, ProcessTask, Project, Problem, Requirement, Ticket
 from app.schemas.common import ok
 from app.schemas.support import LoginIn
 
@@ -67,6 +67,9 @@ class PreferencesIn(BaseModel):
     notification_preferences: dict[str, bool] | None = None
     theme: str | None = Field(default=None, pattern="^(light|dark|system)$")
     density: str | None = Field(default=None, pattern="^(default|compact)$")
+    # 每个清单的列可见性/宽度偏好；仅允许通过当前用户接口写入，服务端
+    # 对数量和宽度做边界校验，避免把任意数据写入偏好 JSON。
+    table_views: dict[str, dict] | None = None
 
 
 @router.patch("/me/preferences")
@@ -80,7 +83,33 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
         if len(body.avatar) > 400_000:  # 前端已压缩到 256px，此为兜底（约 300KB 图）
             raise AppError("BAD_AVATAR", "头像图片过大")
     prefs = dict(user.preferences or {})
-    for k, v in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    table_views = updates.get("table_views")
+    if table_views is not None:
+        if len(table_views) > 64:
+            raise AppError("TABLE_VIEW_INVALID", "清单视图配置数量不能超过 64 个", 422)
+        normalized_views: dict[str, dict] = {}
+        for table_key, view in table_views.items():
+            if not re.fullmatch(r"[a-z][a-z0-9_.-]{1,63}", table_key):
+                raise AppError("TABLE_VIEW_INVALID", "清单视图标识格式不正确", 422)
+            if not isinstance(view, dict):
+                raise AppError("TABLE_VIEW_INVALID", "清单视图配置格式不正确", 422)
+            visible = view.get("visible", [])
+            widths = view.get("widths", {})
+            if not isinstance(visible, list) or len(visible) > 128 or not all(isinstance(x, str) for x in visible):
+                raise AppError("TABLE_VIEW_INVALID", "可见字段配置格式不正确", 422)
+            if not isinstance(widths, dict) or len(widths) > 128:
+                raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+            normalized_views[table_key] = {
+                "visible": visible,
+                "widths": {
+                    str(key): max(80, min(800, int(value)))
+                    for key, value in widths.items()
+                    if isinstance(key, str) and isinstance(value, (int, float))
+                },
+            }
+        updates["table_views"] = normalized_views
+    for k, v in updates.items():
         prefs[k] = v
     user.preferences = prefs
     from app.services.audit import audit as _audit
@@ -88,6 +117,84 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
            {"keys": sorted(body.model_dump(exclude_unset=True))})
     db.commit()
     return ok({"preferences": prefs})
+
+
+@router.get("/me/todos")
+def list_my_todos(
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """当前用户可处理的流程待办，详情页负责执行具体流程动作。"""
+    from app.services import process_engine
+
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+    tasks = (
+        db.query(ProcessTask)
+        .join(ProcessInstance, ProcessTask.instance_id == ProcessInstance.id)
+        .filter(
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+            ProcessInstance.status.in_(["running", "进行中"]),
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.due_at.is_(None), ProcessTask.due_at.asc(), ProcessTask.created_at.desc())
+        .all()
+    )
+    member_names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    items = []
+    for task in tasks:
+        if not process_engine.can_act_on_task(db, user, task):
+            continue
+        instance = db.get(ProcessInstance, task.instance_id)
+        if not instance:
+            continue
+        entity = None
+        code = None
+        title = None
+        if instance.entity_type in ("ticket", "ticket_change"):
+            entity = db.get(Ticket, instance.entity_id)
+            code, title = (entity.ticket_code, entity.title) if entity else (None, None)
+        elif instance.entity_type == "requirement":
+            entity = db.get(Requirement, instance.entity_id)
+            code, title = (entity.requirement_code, entity.title) if entity else (None, None)
+        elif instance.entity_type == "project":
+            entity = db.get(Project, instance.entity_id)
+            code, title = (entity.project_code, entity.name) if entity else (None, None)
+        elif instance.entity_type == "problem":
+            entity = db.get(Problem, instance.entity_id)
+            code, title = (entity.problem_code, entity.title) if entity else (None, None)
+        elif instance.entity_type == "bug":
+            from app.models import Bug
+
+            entity = db.get(Bug, instance.entity_id)
+            code, title = (entity.bug_code, entity.title) if entity else (None, None)
+        if not entity or getattr(entity, "is_deleted", False):
+            continue
+        link_template = process_engine.ENTITY_LINKS.get(instance.entity_type)
+        if not link_template:
+            continue
+        items.append({
+            "id": task.id,
+            "task_id": task.id,
+            "entity_type": instance.entity_type,
+            "entity_id": instance.entity_id,
+            "code": code,
+            "title": title,
+            "process_name": instance.definition.name,
+            "step_name": task.step.name if task.step else "",
+            "step_seq": task.step.seq if task.step else None,
+            "assignee": task.assignee,
+            "assignee_name": member_names.get(task.assignee) if task.assignee else None,
+            "due_at": task.due_at,
+            "created_at": task.created_at,
+            "link": link_template.format(id=instance.entity_id),
+        })
+    total = len(items)
+    start = (page - 1) * page_size
+    return ok(items[start:start + page_size], total=total, page=page)
 
 
 @router.get("/me/profile")
@@ -128,6 +235,7 @@ def my_profile(user: AuthUser = Depends(get_current_user), db: Session = Depends
             "notification_preferences": prefs.get("notification_preferences", {}),
             "theme": prefs.get("theme", "light"),
             "density": prefs.get("density", "default"),
+            "table_views": prefs.get("table_views", {}),
         },
     })
 
