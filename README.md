@@ -89,7 +89,7 @@ cd deploy/k8s
 ./k8s-deploy.sh
 ```
 
-`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。发布构建通过已验证的 `mirror.gcr.io` 官方 Docker Library 缓存及固定摘要取得 Python、Node、Nginx 和 PostgreSQL 基础镜像，避免 Docker Hub 限流和可变标签漂移。前端保持两个副本，以主机名软拓扑分布（`maxSkew=1`、`ScheduleAnyway`）优先落在不同节点；节点数临时不足时仍允许在同一节点恢复服务。`k8s-deploy.sh` 保留现有 Secret/PVC/数据库/上传和飞书配置，要求 rollout 成功，并逐一核对每个前端 Endpoint 的后端代理、实际镜像、外部 `/api/health` 与 MCP `initialize`。回滚时使用上一有效标签执行 `TAG=<previous-tag> ./k8s-deploy.sh`。`ALLOW_UNTRUSTED_TLS=1` 只允许临时诊断，不得作为正式验收结果。
+`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。发布构建通过已验证的 `mirror.gcr.io` 官方 Docker Library 缓存及固定摘要取得 Python、Node、Nginx 和 PostgreSQL 基础镜像，避免 Docker Hub 限流和可变标签漂移。前端保持两个副本，当前仅允许调度到节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两副本以必需主机反亲和分布，避免节点 03 的已知运行异常；节点 01 或 02 不可用时保留另一个副本，不把两个副本静默堆叠到单节点。后端继续固定在节点 02，数据库 StatefulSet、PVC、Secret、上传和飞书配置均不属于应用重部署范围。`k8s-deploy.sh` 要求 rollout 成功，并逐一核对每个前端 Endpoint 的后端代理、实际镜像、外部 `/api/health` 与 MCP `initialize`。回滚时使用上一有效标签执行 `TAG=<previous-tag> ./k8s-deploy.sh`。`ALLOW_UNTRUSTED_TLS=1` 只允许临时诊断，不得作为正式验收结果。
 
 ### 目录结构
 ```
@@ -250,7 +250,7 @@ cd deploy/k8s
 ./k8s-deploy.sh
 ```
 
-`push-images.sh` builds and pushes images only; it does not start the application. Its default tag is `git-<first-12-commit-chars>-linux-amd64`. Release builds obtain Python, Node, Nginx, and PostgreSQL from the verified `mirror.gcr.io` Docker Library cache at pinned digests, avoiding Docker Hub rate limits and mutable-tag drift. The two frontend replicas use soft hostname topology spread (`maxSkew=1`, `ScheduleAnyway`) to prefer separate nodes while still recovering on one remaining node during a temporary capacity reduction. `k8s-deploy.sh` preserves existing Secrets, PVCs, database, uploads, and Feishu configuration; requires successful rollouts; and verifies every frontend endpoint's backend proxy, image identity, external `/api/health`, and MCP `initialize`. Roll back with `TAG=<previous-tag> ./k8s-deploy.sh`. `ALLOW_UNTRUSTED_TLS=1` is a temporary diagnostic override and never formal acceptance evidence.
+`push-images.sh` builds and pushes images only; it does not start the application. Its default tag is `git-<first-12-commit-chars>-linux-amd64`. Release builds obtain Python, Node, Nginx, and PostgreSQL from the verified `mirror.gcr.io` Docker Library cache at pinned digests, avoiding Docker Hub rate limits and mutable-tag drift. The two frontend replicas are currently eligible only for nodes 01/02: the build taint on node 02 is tolerated explicitly by ITOM frontend only, and required hostname anti-affinity keeps the replicas separate to avoid node 03's known runtime failures. If node 01 or 02 is unavailable, the remaining replica is retained rather than silently stacking both replicas on one host. The backend remains pinned to node 02; the database StatefulSet, PVCs, Secrets, uploads, and Feishu configuration are outside application redeployment scope. `k8s-deploy.sh` requires successful rollouts and verifies every frontend endpoint's backend proxy, image identity, external `/api/health`, and MCP `initialize`. Roll back with `TAG=<previous-tag> ./k8s-deploy.sh`. `ALLOW_UNTRUSTED_TLS=1` is a temporary diagnostic override and never formal acceptance evidence.
 
 ### Directory layout
 ```

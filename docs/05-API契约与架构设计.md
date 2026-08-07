@@ -488,14 +488,14 @@ Harbor:
 IDC Kubernetes:
   db:        PostgreSQL 16 + 持久卷
   backend:   uvicorn，启动时增量迁移 + 幂等 seed
-  frontend:  nginx 托管构建产物，反代 /api 与 /mcp；2 副本主机名软拓扑分布
+  frontend:  nginx 托管构建产物，反代 /api 与 /mcp；2 副本仅节点 01/02，跨主机强制分布
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
 - IDC Kubernetes 是唯一运行、联调和验收环境；默认禁止在本地启动应用栈、数据库、Compose、8180 或 ngrok。只有用户明确要求临时隔离排障时才允许例外，且结果不属于交付验收。
 - `.github/workflows/quality-gate.yml` 在 feature/develop/main 的推送和 PR 上运行完整后端回归、前端生产构建、部署文件检查及中英文文档交付守卫。测试夹具使用临时 SQLite，不连接 IDC 业务数据库。
 - 质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，使用已验证的 `mirror.gcr.io` 官方 Docker Library 缓存与固定摘要取得 Python/Node/Nginx/PostgreSQL 基础镜像，构建并校验 linux/amd64，以 `git-<commit前12位>-linux-amd64` 为默认不可变标签后推送 Harbor；镜像构建不启动本地 ITOM，也不依赖 Docker Hub 匿名限流。
-- `deploy/k8s/k8s-deploy.sh` 部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。前端以 `kubernetes.io/hostname` 软拓扑分布（`maxSkew=1`、`ScheduleAnyway`），不固定到单一节点：健康节点足够时两个副本优先分散，节点缩减时允许同节点恢复。脚本对 rollout、Ready Endpoint、实际镜像、**每个** Ready 前端 Endpoint 的集群内后端代理、外部 `/api/health` 与 MCP `initialize` 采用失败即停止；涉及数据库结构的版本在部署前必须执行批准的集群内备份/检查点。
+- `deploy/k8s/k8s-deploy.sh` 部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。当前 IDC 前端部署只允许节点 `sn-prod-k8s-01` 与 `sn-prod-k8s-02`：节点 02 的 `isa.io/build-executor=true:NoSchedule` 只由 ITOM 前端显式容忍，`requiredDuringSchedulingIgnoredDuringExecution` 主机反亲和确保两副本在两个可用节点间分布，节点 03 不再承载 ITOM 前端。后端继续固定在节点 02；数据库 StatefulSet、PVC 与备份 Job 均不在应用重部署范围。脚本对 rollout、Ready Endpoint、实际镜像、**每个** Ready 前端 Endpoint 的集群内后端代理、外部 `/api/health` 与 MCP `initialize` 采用失败即停止；涉及数据库结构的版本在部署前必须执行批准的集群内备份/检查点。
 - 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。
 - `/mcp/` 必须保留流式响应并设置合理读超时；Aily 配置使用带末尾斜杠的规范地址，密钥只放请求头，不放 URL、日志或前端构建变量。
 - 日志：结构化 JSON 到 stdout（由 Kubernetes 日志链路查询）。

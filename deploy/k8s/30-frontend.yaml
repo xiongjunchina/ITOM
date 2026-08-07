@@ -26,10 +26,33 @@ spec:
     metadata:
       labels: { app: itom-frontend }
     spec:
-      # Prefer placing the two web replicas on different Kubernetes hosts. The
-      # policy is deliberately soft: a temporarily reduced cluster must still
-      # be able to restore both replicas on one remaining node instead of
-      # leaving users without the web entry point.
+      # The current IDC exclusion policy keeps ITOM frontend workloads away
+      # from sn-prod-k8s-03. Node 02 is reserved for build workloads, so only
+      # this low-footprint frontend receives the explicit NoSchedule
+      # toleration required to run there.
+      tolerations:
+        - key: isa.io/build-executor
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - sn-prod-k8s-01
+                      - sn-prod-k8s-02
+        # Keep the two web replicas on different eligible hosts whenever both
+        # are available. This prevents a replacement from silently sharing a
+        # node with the surviving replica during recovery from node 03.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: itom-frontend }
+              topologyKey: kubernetes.io/hostname
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
