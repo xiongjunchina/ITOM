@@ -119,7 +119,7 @@ ITOM 领域事件 → 可靠通知发件箱 → Aily 机器人飞书消息 → �
 用户回复 → Aily → MCP → ITOM 确认、重开或评价
 ```
 
-IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。当前 IDC 前端仅限节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两个前端副本以必需主机反亲和分布；节点 03 不再承载 ITOM 前端。后端固定节点 02，数据库 StatefulSet/PVC 与备份 Job 不属于应用重部署范围。默认禁止在本地启动 ITOM 应用栈、数据库、Docker Compose、8180 或 ngrok；只有用户明确要求临时隔离排障时才允许例外，且不能作为交付证据。
+IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。当前 IDC 前端仅限节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两个前端副本以必需主机反亲和分布；节点 03 不再承载 ITOM 前端。后端固定节点 02，数据库 StatefulSet/PVC 与备份 Job 不属于应用重部署范围。经批准的非数据库应用恢复使用 `SKIP_DATABASE=1 ./k8s-deploy.sh`，明确跳过 PostgreSQL 清单 apply 与 StatefulSet 等待，不删除、重启或重新调度数据库 Pod/PVC；涉及结构迁移的版本不得使用该模式。默认禁止在本地启动 ITOM 应用栈、数据库、Docker Compose、8180 或 ngrok；只有用户明确要求临时隔离排障时才允许例外，且不能作为交付证据。
 
 提交先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor，`k8s-deploy.sh` 部署同一标签并严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
 

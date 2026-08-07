@@ -6,6 +6,7 @@
 #   cd deploy/k8s
 #   ./k8s-deploy.sh
 #   TAG=release-name-linux-amd64 ./k8s-deploy.sh
+#   SKIP_DATABASE=1 ./k8s-deploy.sh  # strict app-only rollout; do not apply/wait for PostgreSQL
 #
 # Prereqs: VPN up + a valid Rancher token in ~/.kube/{sn-rancher.yaml,sn-prod-ip.conf}.
 set -euo pipefail
@@ -20,10 +21,19 @@ SRC_NS=sn-cloud-production            # source of the harbor pull secret + wildc
 SERVER=https://10.60.65.1/k8s/clusters/local
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://itom.snnc.cc:30443}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+SKIP_DATABASE="${SKIP_DATABASE:-0}"
 
 case "$TAG" in
   ""|*[!A-Za-z0-9_.-]*)
     echo "!! Invalid image tag: $TAG"
+    exit 1
+    ;;
+esac
+
+case "$SKIP_DATABASE" in
+  0|1) ;;
+  *)
+    echo "!! SKIP_DATABASE must be 0 or 1, got: $SKIP_DATABASE"
     exit 1
     ;;
 esac
@@ -35,6 +45,9 @@ fi
 
 echo "==> Release commit: $COMMIT_SHA"
 echo "==> Deploy image tag: $TAG"
+if [ "$SKIP_DATABASE" = "1" ]; then
+  echo "==> Database mode: preserve PostgreSQL StatefulSet/PVC; skip database manifest apply and rollout wait"
+fi
 
 # ---- cluster auth: freshest token + IP endpoint (DNS endpoint EOFs on VPN) ----
 newest=""
@@ -79,16 +92,25 @@ else
   echo "   itom-secrets already exists — keeping current values (DB password unchanged)."
 fi
 
-echo "==> Apply Postgres, immutable app images, and ingress"
-"${KC[@]}" apply -f 10-postgres.yaml
+if [ "$SKIP_DATABASE" = "1" ]; then
+  echo "==> Preserve PostgreSQL (skip 10-postgres.yaml)"
+else
+  echo "==> Apply PostgreSQL"
+  "${KC[@]}" apply -f 10-postgres.yaml
+fi
+echo "==> Apply immutable app images and ingress"
 sed -E "s#(image:[[:space:]]*$REG/sn/itom-backend:)[^[:space:]]+#\\1$TAG#" 20-backend.yaml \
   | "${KC[@]}" apply -f -
 sed -E "s#(image:[[:space:]]*$REG/sn/itom-frontend:)[^[:space:]]+#\\1$TAG#" 30-frontend.yaml \
   | "${KC[@]}" apply -f -
 "${KC[@]}" apply -f 40-ingress.yaml
 
-echo "==> Wait for Postgres"
-"${KC[@]}" -n "$NS" rollout status statefulset/itom-db --timeout=180s
+if [ "$SKIP_DATABASE" = "1" ]; then
+  echo "==> Preserve PostgreSQL (skip StatefulSet rollout wait)"
+else
+  echo "==> Wait for PostgreSQL"
+  "${KC[@]}" -n "$NS" rollout status statefulset/itom-db --timeout=180s
+fi
 
 echo "==> Wait for backend (first boot runs schema create + seed)"
 "${KC[@]}" -n "$NS" rollout status deploy/itom-backend --timeout=240s
