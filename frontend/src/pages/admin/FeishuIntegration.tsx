@@ -12,7 +12,6 @@ import {
   Space,
   Spin,
   Switch,
-  Table,
   Tag,
   Typography,
   message,
@@ -23,6 +22,7 @@ import { api } from '../../api/client';
 import { runOrgSyncAndWait } from '../../utils/orgSync';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
+import SortableTable from '../../components/SortableTable';
 import type {
   AdminUser,
   AilyConfig,
@@ -495,7 +495,7 @@ export default function FeishuIntegration() {
           <Typography.Title level={5} style={{ margin: 0 }}>外部身份映射</Typography.Title>
           {isAdmin && <Button icon={<PlusOutlined />} onClick={() => openIdentityModal()}>新增映射</Button>}
         </Space>
-        <Table<AilyExternalIdentity>
+        <SortableTable<AilyExternalIdentity>
           rowKey="id"
           size="small"
           dataSource={identities}

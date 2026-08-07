@@ -17,7 +17,6 @@ import {
   Space,
   Statistic,
   Switch,
-  Table,
   Tabs,
   Tag,
   Typography,
@@ -46,6 +45,7 @@ import type {
 } from '../../api/types';
 import { useT } from '../../i18n';
 import { hasPermission, useAuthStore } from '../../stores/auth';
+import SortableTable from '../../components/SortableTable';
 
 const PROFILE_CODES: AiProfileDraft['code'][] = ['requester', 'bdo', 'it_staff', 'admin'];
 const TAB_KEYS = ['providers', 'profiles', 'health', 'usage', 'audits'] as const;
@@ -262,7 +262,7 @@ function ProvidersPanel() {
             {canEdit && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>{t('admin.ai.provider.new')}</Button>}
           </Empty>
         ) : (
-          <Table rowKey="id" columns={columns} dataSource={providers} pagination={false} scroll={{ x: 1050 }} />
+          <SortableTable rowKey="id" columns={columns} dataSource={providers} pagination={false} scroll={{ x: 1050 }} />
         ))}
       </DelayedSkeleton>
       <Modal
@@ -587,13 +587,13 @@ function UsagePanel() {
         <Card><Statistic title={t('admin.ai.usage.averageDuration')} value={data.average_duration_ms} suffix="ms" precision={2} /></Card>
       </div>
       <Row gutter={[16, 16]}>
-        <Col xs={24} lg={14}><Card title={t('admin.ai.usage.byProvider')}><Table rowKey="provider_code" pagination={false} dataSource={data.by_provider} columns={[
+        <Col xs={24} lg={14}><Card title={t('admin.ai.usage.byProvider')}><SortableTable rowKey="provider_code" pagination={false} dataSource={data.by_provider} columns={[
           { title: t('admin.ai.usage.provider'), dataIndex: 'provider_code' },
           { title: t('admin.ai.usage.calls'), dataIndex: 'calls' },
           { title: t('admin.ai.usage.inputTokens'), dataIndex: 'input_tokens' },
           { title: t('admin.ai.usage.outputTokens'), dataIndex: 'output_tokens' },
         ]} /></Card></Col>
-        <Col xs={24} lg={10}><Card title={t('admin.ai.usage.byResult')}><Table rowKey="result_code" pagination={false} dataSource={data.by_result_code} columns={[
+        <Col xs={24} lg={10}><Card title={t('admin.ai.usage.byResult')}><SortableTable rowKey="result_code" pagination={false} dataSource={data.by_result_code} columns={[
           { title: t('admin.ai.audit.resultCode'), dataIndex: 'result_code' },
           { title: t('admin.ai.usage.count'), dataIndex: 'count' },
         ]} /></Card></Col>
@@ -672,7 +672,7 @@ function AuditsPanel() {
     <DelayedSkeleton loading={loading}>
       {loadError ? (
         <Alert showIcon type="error" message={t('admin.ai.loadError')} action={<Button onClick={() => void load()}>{t('common.refresh')}</Button>} />
-      ) : <Table
+      ) : <SortableTable
         rowKey="id"
         columns={columns}
         dataSource={rows}

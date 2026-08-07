@@ -99,6 +99,8 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 ## 3. Global Conventions
 
+**Resizable list columns**: every visible shared-list header exposes a blue handle for mouse/touch dragging and keyboard left/right adjustment; fields without a predefined width also receive a resizable default. Column width and visibility preferences are isolated by current account, route, and column set so multiple tables on the same page cannot overwrite one another.
+
 ### 3.1 Record Codes & Primary Keys
 
 - Every entity's primary key is a 26-character GLID (system-generated).
@@ -438,7 +440,7 @@ The Requirement “solution assessment and routing” node prefers the product o
 
 **Workflow fact consistency increment**: the current node shown by a detail page, process diagram, todo, and editable panel is derived from the newest active pending `ProcessTask`. `ProcessInstance.current_step_seq` and the requirement status are compatibility projections, not a competing source of truth. Historical scores and analysis remain visible as read-only evidence; scoring is rejected after implementation or acceptance, and stage projection only moves forward without overwriting closed, cancelled, or on-hold records. Legacy instances with stale relationship collections must query the task table directly so a requirement cannot simultaneously show six-dimension scoring and acceptance/closure as its active process stage.
 
-**Personal todos and list layout**: the Profile center has a Todos tab that aggregates only workflow tasks the current account is authorized to handle and links to the corresponding detail/process page. Major lists support per-user visible-column and width preferences; identifier, title, and action context columns remain protected. The Requirement list displays the requester and keeps code/title available during horizontal scrolling. New requirement registration no longer asks for channel department; the historical field remains display/import-compatible.
+**Personal todos and list layout**: the Profile center has a Todos tab that aggregates only workflow tasks the current account is authorized to handle and links to the corresponding detail/process page. Major lists support per-user visible-column and width preferences; identifier, title, and action context columns remain protected. Column handles remain visible on every visible header, and fields without an initial width are resizable too. The Requirement list displays the requester and keeps code/title available during horizontal scrolling. New requirement registration no longer asks for channel department; the historical field remains display/import-compatible.
 - Pages: process-definition management (admin; includes enable/disable and step editing), process monitoring (instance list, stuck steps, overdue tasks).
 - The record detail page shows a process bar (current step highlighted).
 

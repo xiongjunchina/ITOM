@@ -1,5 +1,5 @@
 import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
 import { SettingOutlined } from '@ant-design/icons';
@@ -23,6 +23,8 @@ type SortableTableProps<T extends object> = TableProps<T> & {
 type ViewConfig = { visible: string[]; widths: Record<string, number> };
 
 const TABLE_VIEW_KEY_PATTERN = /^[a-z][a-z0-9_.-]{1,63}$/;
+const MIN_COLUMN_WIDTH = 80;
+const MAX_COLUMN_WIDTH = 800;
 
 function sanitizeViewConfig(value: unknown): ViewConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -32,7 +34,7 @@ function sanitizeViewConfig(value: unknown): ViewConfig | null {
   const widths = Object.fromEntries(
     Object.entries(raw.widths as Record<string, unknown>)
       .filter(([key, width]) => typeof key === 'string' && Number.isFinite(width) && typeof width === 'number')
-      .map(([key, width]) => [key, Math.max(80, Math.min(800, Math.trunc(width as number)))]),
+      .map(([key, width]) => [key, Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, Math.trunc(width as number)))]),
   );
   return { visible: raw.visible, widths };
 }
@@ -54,6 +56,19 @@ function routeTableKey(path: string): string {
   return `route.${normalized || 'root'}`;
 }
 
+/**
+ * 同一路由可能并排渲染多张字段不同的清单（例如总览的两个榜单）。
+ * 列集合哈希让它们的个人布局彼此隔离，同时避免把完整字段名拼进偏好键。
+ */
+function tableSchemaKey(columnKeys: string[]): string {
+  let hash = 2166136261;
+  for (const char of columnKeys.slice().sort().join('|')) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function columnKey<T extends object>(column: ColumnType<T>, index: string | number): string {
   if (column.key != null) return String(column.key);
   if (column.dataIndex != null) return Array.isArray(column.dataIndex) ? column.dataIndex.join('.') : String(column.dataIndex);
@@ -72,41 +87,66 @@ function leafColumns<T extends object>(columns: ColumnsType<T>, prefix = ''): Ar
   return result;
 }
 
+function defaultColumnWidth<T extends object>(column: ColumnType<T>): number {
+  if (typeof column.width === 'number' && Number.isFinite(column.width)) {
+    return Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, Math.round(column.width)));
+  }
+  // 旧页面未设置 width 时也必须可以拖拽；160px 是密集业务清单的中性起点。
+  return 160;
+}
+
 function ResizableHeaderCell(props: Record<string, unknown>) {
-  const { children, onResize, onResizeEnd, width, ...rest } = props as {
+  const { children, className, onResize, onResizeEnd, onResizeStep, width, ...rest } = props as {
     children?: ReactNode;
+    className?: string;
     onResize?: (width: number) => void;
     onResizeEnd?: (width: number) => void;
+    onResizeStep?: (delta: number) => void;
     width?: number;
     [key: string]: unknown;
   };
   if (!onResize || !width) return <th {...rest}>{children}</th>;
-  const startResize = (event: ReactMouseEvent) => {
+  const startResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (event.button !== 0 || !event.isPrimary) return;
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
     const startWidth = width;
     let lastWidth = startWidth;
-    const move = (moveEvent: globalThis.MouseEvent) => {
-      lastWidth = Math.max(80, Math.min(800, startWidth + moveEvent.clientX - startX));
+    const move = (moveEvent: PointerEvent) => {
+      lastWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX));
       onResize(lastWidth);
     };
     const stop = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', stop);
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', stop);
+      document.removeEventListener('pointercancel', stop);
       onResizeEnd?.(lastWidth);
     };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', stop);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', stop, { once: true });
+    document.addEventListener('pointercancel', stop, { once: true });
   };
   return (
-    <th {...rest} style={{ ...(rest.style as CSSProperties | undefined), position: 'relative' }}>
+    <th {...rest} className={`${className ?? ''} sortable-table__header-cell`} style={{ ...(rest.style as CSSProperties | undefined), position: 'relative' }}>
       {children}
       <span
+        className="sortable-table__column-resize-handle"
         role="separator"
-        aria-label="resize column"
-        onMouseDown={startResize}
-        style={{ position: 'absolute', top: 0, right: -3, width: 8, height: '100%', cursor: 'col-resize', zIndex: 2 }}
+        aria-label="调整列宽"
+        aria-orientation="vertical"
+        title="拖动调整列宽"
+        tabIndex={0}
+        onPointerDown={startResize}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            onResizeStep?.(-16);
+          } else if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            onResizeStep?.(16);
+          }
+        }}
       />
     </th>
   );
@@ -162,16 +202,17 @@ function augmentColumns<T extends object>(columns: ColumnsType<T>): ColumnsType<
 export default function SortableTable<T extends object>({ autoSort = true, columns, standardToolbar, dataSource, pagination, tableKey, requiredColumnKeys = [], ...props }: SortableTableProps<T>) {
   const user = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
-  const resolvedTableKey = tableKey ?? routeTableKey(window.location.pathname);
   const leaves = useMemo(() => leafColumns(columns ?? []), [columns]);
   const knownKeys = useMemo(() => leaves.map((item) => item.key), [leaves]);
+  const legacyTableKey = tableKey ?? routeTableKey(window.location.pathname);
+  const resolvedTableKey = tableKey ?? `${legacyTableKey.slice(0, 54)}.${tableSchemaKey(knownKeys)}`;
   const protectedKeys = useMemo(
     () => new Set(requiredColumnKeys.concat(leaves.filter(({ column }) => column.fixed === 'left' || column.fixed === 'right' || column.key === 'action' || column.key === 'actions').map(({ key }) => key))),
     [leaves, requiredColumnKeys],
   );
   const defaultConfig = useMemo<ViewConfig>(() => ({
     visible: knownKeys,
-    widths: Object.fromEntries(leaves.filter(({ column }) => typeof column.width === 'number').map(({ column, key }) => [key, column.width as number])),
+    widths: Object.fromEntries(leaves.map(({ column, key }) => [key, defaultColumnWidth(column)])),
   }), [knownKeys, leaves]);
   const [viewConfig, setViewConfig] = useState<ViewConfig>(defaultConfig);
   const viewConfigRef = useRef(viewConfig);
@@ -180,20 +221,24 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
   }, [viewConfig]);
 
   useEffect(() => {
-    const saved = sanitizeViewConfig(user?.preferences?.table_views?.[resolvedTableKey]);
+    const storedViews = user?.preferences?.table_views;
+    // 兼容本次修复前仅按路由保存的布局；首次再次保存时迁移到列集合隔离键。
+    const saved = sanitizeViewConfig(storedViews?.[resolvedTableKey])
+      ?? (resolvedTableKey === legacyTableKey ? null : sanitizeViewConfig(storedViews?.[legacyTableKey]));
     const savedVisible = saved?.visible.filter((key) => knownKeys.includes(key)) ?? [];
     const visible = saved ? savedVisible : knownKeys;
     setViewConfig({
       visible: Array.from(new Set([...visible, ...Array.from(protectedKeys).filter((key) => knownKeys.includes(key))])),
       widths: { ...defaultConfig.widths, ...(saved?.widths ?? {}) },
     });
-  }, [defaultConfig, knownKeys, protectedKeys, resolvedTableKey, user?.preferences?.table_views]);
+  }, [defaultConfig, knownKeys, legacyTableKey, protectedKeys, resolvedTableKey, user?.preferences?.table_views]);
 
   const persistViewConfig = async (next: ViewConfig) => {
     viewConfigRef.current = next;
     setViewConfig(next);
     if (!user) return;
     const tableViews = { ...sanitizeTableViews(user.preferences?.table_views), [resolvedTableKey]: next };
+    if (resolvedTableKey !== legacyTableKey) delete tableViews[legacyTableKey];
     try {
       await api.patch('/auth/me/preferences', { table_views: tableViews });
       setUser({ ...user, preferences: { ...user.preferences, table_views: tableViews } });
@@ -214,11 +259,12 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
       const source = column as ColumnType<T>;
       const key = columnKey(source, `${prefix}${index}`);
       if (!viewConfig.visible.includes(key) && !protectedKeys.has(key)) return;
-      const width = viewConfig.widths[key] ?? source.width;
+      const width = viewConfig.widths[key] ?? defaultColumnWidth(source);
       result.push({
         ...source,
-        ...(width ? { width } : {}),
-        onHeaderCell: () => ({
+        width,
+        onHeaderCell: (headerColumn) => ({
+          ...(source.onHeaderCell?.(headerColumn) ?? {}),
           width,
           onResize: (nextWidth: number) => {
             const next = { ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } };
@@ -226,6 +272,10 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
             setViewConfig(next);
           },
           onResizeEnd: () => void persistViewConfig(viewConfigRef.current),
+          onResizeStep: (delta: number) => {
+            const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width + delta));
+            void persistViewConfig({ ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } });
+          },
         }),
       } as ColumnType<T>);
       });
