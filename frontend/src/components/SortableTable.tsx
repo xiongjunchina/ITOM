@@ -1,5 +1,5 @@
 import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
 import { SettingOutlined } from '@ant-design/icons';
@@ -106,26 +106,27 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     [key: string]: unknown;
   };
   if (!onResize || !width) return <th {...rest}>{children}</th>;
-  const startResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
-    if (event.button !== 0 || !event.isPrimary) return;
+  const startResize = (event: ReactMouseEvent<HTMLSpanElement>) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
     const startWidth = width;
     let lastWidth = startWidth;
-    const move = (moveEvent: PointerEvent) => {
+    const previousCursor = document.body.style.cursor;
+    document.body.style.cursor = 'col-resize';
+    const move = (moveEvent: MouseEvent) => {
       lastWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX));
       onResize(lastWidth);
     };
     const stop = () => {
-      document.removeEventListener('pointermove', move);
-      document.removeEventListener('pointerup', stop);
-      document.removeEventListener('pointercancel', stop);
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', stop);
+      document.body.style.cursor = previousCursor;
       onResizeEnd?.(lastWidth);
     };
-    document.addEventListener('pointermove', move);
-    document.addEventListener('pointerup', stop, { once: true });
-    document.addEventListener('pointercancel', stop, { once: true });
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', stop, { once: true });
   };
   return (
     <th {...rest} className={`${className ?? ''} sortable-table__header-cell`} style={{ ...(rest.style as CSSProperties | undefined), position: 'relative' }}>
@@ -137,7 +138,7 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
         aria-orientation="vertical"
         title="拖动调整列宽"
         tabIndex={0}
-        onPointerDown={startResize}
+        onMouseDown={startResize}
         onKeyDown={(event) => {
           if (event.key === 'ArrowLeft') {
             event.preventDefault();
@@ -317,6 +318,9 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
   const toolbarTotal = standardToolbar?.total ?? (
     pagination && typeof pagination === 'object' ? pagination.total : undefined
   );
+  // WBS 等专用宽表已提供自己的表头组件和本地布局逻辑；不能由通用组件
+  // 再次覆盖，否则其拖拽回调会被截断。普通业务清单则使用统一表头单元格。
+  const headerCell = props.components?.header?.cell ?? ResizableHeaderCell;
   return (
     <>
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
@@ -363,7 +367,10 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
           dataSource={standardToolbar ? filteredRows : dataSource}
           pagination={tablePagination}
           scroll={{ x: 'max-content', ...(props.scroll ?? {}) }}
-          components={{ ...(props.components ?? {}), header: { ...(props.components?.header ?? {}), cell: ResizableHeaderCell } }}
+          // 明确固定布局，列宽状态变化才会同步应用到 colgroup，而不是被单元格
+          // 内容重新撑回原宽度。
+          tableLayout={props.tableLayout ?? 'fixed'}
+          components={{ ...(props.components ?? {}), header: { ...(props.components?.header ?? {}), cell: headerCell } }}
         />
       </Space>
     </>
