@@ -90,7 +90,7 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
             raise AppError("TABLE_VIEW_INVALID", "清单视图配置数量不能超过 64 个", 422)
         normalized_views: dict[str, dict] = {}
         for table_key, view in table_views.items():
-            if not re.fullmatch(r"[a-z][a-z0-9_.-]{1,63}", table_key):
+            if not _re.fullmatch(r"[a-z][a-z0-9_.-]{1,63}", table_key):
                 raise AppError("TABLE_VIEW_INVALID", "清单视图标识格式不正确", 422)
             if not isinstance(view, dict):
                 raise AppError("TABLE_VIEW_INVALID", "清单视图配置格式不正确", 422)

@@ -19,7 +19,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EditOutlined, PaperClipOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -36,6 +36,7 @@ import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type {
   AllowedTransition,
+  AttachmentItem,
   MasterDataItem,
   Member,
   ProcessStep,
@@ -80,6 +81,7 @@ export default function TicketDetail() {
   const { roleLabel } = useRoleOptions();
 
   const [detail, setDetail] = useState<TicketDetailData | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   // 状态流转 Modal
@@ -120,6 +122,10 @@ export default function TicketDetail() {
     try {
       const data = await api.get<TicketDetailData>(`/tickets/${id}`);
       setDetail(data);
+      const attachmentResult = await api
+        .getList<AttachmentItem>('/attachments', { entity_type: 'ticket', entity_id: id })
+        .catch(() => ({ items: [], total: 0 }));
+      setAttachments(attachmentResult.items);
     } catch {
       // 已统一提示
     } finally {
@@ -585,6 +591,13 @@ export default function TicketDetail() {
               {detail.description || '-'}
             </Typography.Paragraph>
           </Descriptions.Item>
+          {detail.other_info && (
+            <Descriptions.Item label={t('itsm.ticket.otherInfo')} span={2}>
+              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+                {detail.other_info}
+              </Typography.Paragraph>
+            </Descriptions.Item>
+          )}
           {detail.remarks && (
             <Descriptions.Item label={t('common.remark')} span={2}>
               {detail.remarks}
@@ -597,6 +610,26 @@ export default function TicketDetail() {
           )}
         </Descriptions>
       </Card>
+
+      {detail.ticket_type === 'service_request' && (
+        <Card title={t('itsm.ticket.attachments')} size="small">
+          {attachments.length === 0 ? (
+            <Typography.Text type="secondary">{t('itsm.ticket.noAttachments')}</Typography.Text>
+          ) : (
+            <Space wrap size={[8, 8]}>
+              {attachments.map((attachment) => (
+                <Button
+                  key={attachment.id}
+                  icon={<PaperClipOutlined />}
+                  onClick={() => void api.download(`/attachments/${attachment.id}/download`)}
+                >
+                  {attachment.filename} ({Math.max(1, Math.ceil(attachment.size / 1024))} KB)
+                </Button>
+              ))}
+            </Space>
+          )}
+        </Card>
+      )}
 
       {isChange && (
         <Card title={t('itsm.ticket.changeInfo')} size="small">

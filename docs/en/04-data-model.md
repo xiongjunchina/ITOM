@@ -102,7 +102,7 @@ recipient FK→org_member, title, content, link (front-end route), read_at. The 
 
 ### 1.9 attachment — generic attachment
 
-entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, original charter files, and Bug evidence. A Bug uses `entity_type=bug` and `entity_id=bug.id`; evidence text remains in `bug.evidence`, so no Bug-specific attachment table is introduced.
+entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, original charter files, Bug evidence, and service-request supplemental files. Bugs use `entity_type=bug`, `entity_id=bug.id`; committed service-request files use `entity_type=ticket`, `entity_id=ticket.id`; no dedicated attachment table is introduced. Before creation, a service-request draft uses `entity_type=ticket_draft`, `entity_id=auth_user.id`; only its uploader may bind it in the same creation transaction or cancel it. Unbound drafts are soft-deleted and their stored files cleaned after 24 hours and cannot be listed or downloaded through generic routes. Bug evidence text remains in `bug.evidence`.
 
 ### 1.10 external_identity [implemented in P0]
 
@@ -166,6 +166,7 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | Derived [C] | ticket_code, status, submitter, submitter_dept, service_line, submitted_at, first_response_at, resolved_at, closed_at, paused_minutes (on-hold accumulation, deducted from SLA), reopen_count, first_time_fix, sla_response_min, sla_resolution_hours, sla_response_met, sla_resolution_met | |
 | Links | problem_id FK→problem (back-written after escalation), requirement_id FK→requirement, process_instance_id | |
 | Dynamic form [P1] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
+| Supplemental attachments [M108] | generic `attachment` rows with `entity_type=ticket` | The web form supplies current-account draft attachment IDs; the domain service rechecks ownership and binds them in the same transaction as ticket creation, workflow start, and audit. No attachment metadata is stored on `ticket` |
 | Acceptance-dispatch/acceptance facts | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records the first-task acceptance rule/source/dispatch; P2 stamps actual acceptance on first entry to processing |
 | Implementation-delivery dispatch facts [M93] | implementation_assignee, implementation_rule_id, implementation_source, implementation_selected_by, implementation_selected_at | Written only when the first service-request acceptance task completes; distinguishes self, selected colleague, item/catalog/global automatic rule, manual queue, and workflow default role; never rewritten through upstream correction |
 | Confirmation | confirmation_due_at, suspected_major_impact | P2 takes the deadline from the active requester-confirmation task; broad impact remains a service-request flag |

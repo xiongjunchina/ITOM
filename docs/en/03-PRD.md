@@ -178,7 +178,8 @@ Forms are service-item-specific instead of sharing a fixed Helpdesk questionnair
 | Type | System-fixed | Normal-user creation is always `service_request`; Aily cannot change it |
 | Urgency | Per item | P1–P4; defaults and allowed values come from ITOM rules |
 | Catalog / service item | ✔ | Live catalog plus requester scope; supplies SLA, process, and dispatch |
-| Dynamic answers | Per form | P1 supports text, options, number, dates, people/departments, and boolean; attachments and asset/CI fields are later extensions |
+| Dynamic answers | Per form | P1 supports text, options, number, dates, people/departments, and boolean; asset/CI fields are later extensions defined by the form version |
+| Supplemental attachments | Optional | The web form supports button upload or pasting images/files from the clipboard. A request allows at most 10 images, PDFs, or common office documents, 50MB each. Files first belong to the current account's 24-hour draft area and bind atomically only when the service request is created; cancelled or expired drafts cannot be read. This does not change Aily/MCP dynamic-form or tool contracts |
 | Assignee | Optional | Available to IT staff/administrators under Internal Handling Information; if empty, defaults to the process assignment |
 | Linked CI | Optional | Collapsed under "More" |
 | Remarks | Optional | Collapsed under "More" |

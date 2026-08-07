@@ -81,9 +81,12 @@ GET/PUT /api/admin/workflow-config       # 状态机
 GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # 站内通知、批量已读与已读清理
 POST /api/attachments?entity_type=&entity_id= (multipart) | GET /api/attachments?entity_type=&entity_id= | GET /api/attachments/{id}/download
+POST /api/attachments/ticket-drafts (multipart) | DELETE /api/attachments/ticket-drafts/{id}   # 服务请求建单前临时附件
 ```
 
 个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`，`table_views` 只允许有限数量的稳定清单键、字段名、列宽（80–800px），且服务端不接受对保护列的删除授权。`GET /me/todos` 只返回当前账号按流程授权可处理的活动待办，并提供受控单据详情链接；它不改变 `can_act_on_task` 的权限判断。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
+
+服务请求网页在创建前可用 `POST /api/attachments/ticket-drafts` 上传 `file`（图片、PDF、常见办公文档；单个最多 50MB、每张单最多 10 个）。响应只返回安全附件元数据；浏览器将返回 ID 放入 `POST /api/tickets` 的 `attachment_ids`。领域服务只接受当前账号、未删除的临时附件，并在工单创建、流程启动和审计的同一事务改绑为 `entity_type=ticket`；任一 ID 无效时整个建单事务失败。`DELETE /api/attachments/ticket-drafts/{id}` 只允许上传人取消，未绑定草稿 24 小时后清理。`ticket_draft` 不允许通过 `GET /api/attachments` 或下载端点读取。正式工单附件的上传、读取和下载均复用该工单的功能权限、提交人数据范围及流程编辑窗口；服务端分页响应的 `total` 始终是过滤后全量记录数，前端不得用当前页 `items.length` 覆盖它。
 
 ### 4.1a 组织同步（M35）
 

@@ -229,7 +229,10 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
   const tablePagination = standardToolbar && pagination && typeof pagination === 'object'
     ? {
       ...pagination,
-      total: filteredRows.length,
+      // 服务端分页的页面已传入真实 total；不能用当前页 rows 的长度覆盖它，
+      // 否则所有使用统一工具栏的远程清单都会把“共 46 条”错误显示为“共 20 条”。
+      // 未传 total 的本地全量清单才由组件按本地筛选结果计算。
+      ...(pagination.total == null ? { total: filteredRows.length } : {}),
       // 筛选结果可能少于当前页，强制回到第一页，避免出现“有结果但当前页为空”。
       current: query.trim() || filterField || filterValue ? 1 : pagination.current,
     }

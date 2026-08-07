@@ -62,6 +62,68 @@ def test_service_request_preserves_request_form_fields(client, ctx):
     assert detail["other_info"] == "办公地点：广州；方便联系时间：工作日"
 
 
+def test_service_request_draft_attachments_bind_atomically(client, ctx, monkeypatch, tmp_path):
+    """建单前附件只属于上传人，创建成功后才与服务请求一起成为正式证据。"""
+    monkeypatch.setattr("app.core.config.settings.upload_dir", str(tmp_path))
+    upload = client.post(
+        "/api/attachments/ticket-drafts",
+        files={"file": ("现场截图.png", b"png-content", "image/png")},
+        headers=ctx["ops"],
+    )
+    assert upload.status_code == 200, upload.text
+    draft = upload.json()["data"]
+
+    # 草稿文件没有单据语义，不能通过通用附件清单或下载接口泄露。
+    hidden = client.get(
+        f"/api/attachments?entity_type=ticket_draft&entity_id={draft['id']}", headers=ctx["ops"],
+    )
+    assert hidden.status_code == 403
+    assert client.get(f"/api/attachments/{draft['id']}/download", headers=ctx["ops"]).status_code == 403
+    bypass = client.post(
+        f"/api/attachments?entity_type=ticket_draft&entity_id={draft['id']}",
+        files={"file": ("bypass.exe", b"binary", "application/octet-stream")},
+        headers=ctx["ops"],
+    )
+    assert bypass.status_code == 403
+
+    ticket = _create(
+        client,
+        ctx["ops"],
+        ctx["item"],
+        ticket_type="service_request",
+        title="带截图的服务请求",
+        attachment_ids=[draft["id"]],
+    )
+    attachments = client.get(
+        f"/api/attachments?entity_type=ticket&entity_id={ticket['id']}", headers=ctx["ops"],
+    )
+    assert attachments.status_code == 200, attachments.text
+    assert attachments.json()["total"] == 1
+    bound = attachments.json()["data"][0]
+    assert bound["id"] == draft["id"] and bound["filename"] == "现场截图.png"
+    download = client.get(f"/api/attachments/{bound['id']}/download", headers=ctx["ops"])
+    assert download.status_code == 200 and download.content == b"png-content"
+
+    unsupported = client.post(
+        "/api/attachments/ticket-drafts",
+        files={"file": ("not-allowed.exe", b"binary", "application/octet-stream")},
+        headers=ctx["ops"],
+    )
+    assert unsupported.status_code == 422
+    assert unsupported.json()["error"]["code"] == "ATTACHMENT_TYPE_UNSUPPORTED"
+
+
+def test_ticket_list_returns_real_total_beyond_page_size(client, ctx):
+    """API total 必须保持全部匹配记录数，前端据此分页，不得退化成当前页 20 条。"""
+    for index in range(22):
+        _create(client, ctx["ops"], ctx["item"], title=f"分页总数回归-{index:02d}")
+    listing = client.get("/api/tickets?page=1&page_size=20", headers=ctx["ops"])
+    assert listing.status_code == 200, listing.text
+    body = listing.json()
+    assert len(body["data"]) == 20
+    assert body["total"] >= 22
+
+
 def test_ticket_lifecycle_and_sla(client, ctx, admin_headers):
     t = _create(client, ctx["ops"], ctx["item"], priority="P1")
     tid = t["id"]

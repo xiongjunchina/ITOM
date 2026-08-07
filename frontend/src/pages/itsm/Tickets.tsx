@@ -8,6 +8,7 @@ import {
   DatePicker,
   Drawer,
   Form,
+  Image,
   Input,
   InputNumber,
   Modal,
@@ -16,11 +17,12 @@ import {
   Space,
   Switch,
   Tag,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PaperClipOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
@@ -29,7 +31,7 @@ import type { PendingStep } from '../../components/PendingStepCell';
 import { useT } from '../../i18n';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
-import type { Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
+import type { AttachmentItem, Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
 
@@ -73,6 +75,10 @@ interface TicketFormValues {
   implementation_plan?: string;
   request_data?: Record<string, unknown>;
 }
+
+type TicketDraftAttachment = AttachmentItem & { previewUrl?: string };
+
+const MAX_SERVICE_REQUEST_ATTACHMENTS = 10;
 
 /** 工单类型 → 权限模块（M17.2 按类型独立授权） */
 const TYPE_MODULE: Record<TicketType, string> = {
@@ -118,6 +124,8 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const [serviceItemsLoading, setServiceItemsLoading] = useState(false);
   const [serviceForm, setServiceForm] = useState<ServiceItemFormVersion | null>(null);
   const [serviceFormLoading, setServiceFormLoading] = useState(false);
+  const [draftAttachments, setDraftAttachments] = useState<TicketDraftAttachment[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(0);
   const [members, setMembers] = useState<Member[]>([]);
   const directCreateStarted = useRef(false);
 
@@ -246,8 +254,15 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   }, [load]);
 
   const openCreate = () => {
+    // 正常关闭会清理临时附件；这里再释放一次浏览器预览 URL，避免异常关闭
+    // 或重复触发“创建”入口时泄漏本地对象引用。
+    draftAttachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
     form.resetFields();
     setServiceForm(null);
+    setDraftAttachments([]);
+    setAttachmentUploading(0);
     setDrawerOpen(true);
     if (serviceItems.length === 0) {
       setServiceItemsLoading(true);
@@ -268,6 +283,47 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
   };
 
+  const discardDraftAttachments = async (attachments = draftAttachments) => {
+    attachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setDraftAttachments([]);
+    await Promise.allSettled(attachments.map((attachment) => api.delete(`/attachments/ticket-drafts/${attachment.id}`)));
+  };
+
+  const closeCreate = () => {
+    void discardDraftAttachments();
+    setDrawerOpen(false);
+  };
+
+  const stageTicketAttachment = async (file: File) => {
+    if (draftAttachments.length + attachmentUploading >= MAX_SERVICE_REQUEST_ATTACHMENTS) {
+      message.warning(t('itsm.ticket.attachmentLimit'));
+      return;
+    }
+    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+    setAttachmentUploading((count) => count + 1);
+    try {
+      const uploaded = await api.upload<AttachmentItem>('/attachments/ticket-drafts', file);
+      setDraftAttachments((items) => [...items, { ...uploaded, previewUrl }]);
+    } catch {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      // 已统一提示
+    } finally {
+      setAttachmentUploading((count) => Math.max(0, count - 1));
+    }
+  };
+
+  const removeDraftAttachment = async (attachment: TicketDraftAttachment) => {
+    try {
+      await api.delete(`/attachments/ticket-drafts/${attachment.id}`);
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      setDraftAttachments((items) => items.filter((item) => item.id !== attachment.id));
+    } catch {
+      // 已统一提示
+    }
+  };
+
   // create=1 直达新建表单；一次性 guard 避免 React StrictMode 重复打开。
   useEffect(() => {
     if (!createRequested || !canCreate || directCreateStarted.current) return;
@@ -278,6 +334,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   }, [fixedType, createRequested, canCreate]);
 
   const handleCreate = async () => {
+    if (attachmentUploading > 0) {
+      message.warning(t('itsm.ticket.attachmentUploading'));
+      return;
+    }
     const values = await form.validateFields();
     const payload: Record<string, unknown> = {
       title: values.title,
@@ -298,6 +358,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       if (serviceForm?.schema.properties.priority) requestData.priority = values.priority;
       payload.request_data = requestData;
       payload.request_form_version_id = serviceForm?.id;
+      payload.attachment_ids = draftAttachments.map((attachment) => attachment.id);
     }
     if (values.assignee != null) payload.assignee = values.assignee;
     if (values.remarks) payload.remarks = values.remarks;
@@ -318,6 +379,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       message.success(t('itsm.ticket.createdTyped', { type: et.ticketType(fixedType) }));
       setDrawerOpen(false);
       if (created?.id) {
+        draftAttachments.forEach((attachment) => {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        });
+        setDraftAttachments([]);
         navigate(`/itsm/tickets/${created.id}`);
       } else {
         void load();
@@ -586,11 +651,11 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         title={t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
         open={drawerOpen}
         width={560}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeCreate}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
+            <Button onClick={closeCreate}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleCreate()}>
               {t('common.submit')}
             </Button>
@@ -674,7 +739,63 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                 <Input.TextArea rows={5} maxLength={2000} placeholder={t('itsm.ticket.descPlaceholder')} />
               </Form.Item>
               <Form.Item name="other_info" label={t('itsm.ticket.otherInfo')}>
-                <Input.TextArea rows={3} maxLength={1000} placeholder={t('itsm.ticket.otherInfoPlaceholder')} />
+                <Input.TextArea
+                  rows={3}
+                  maxLength={1000}
+                  placeholder={t('itsm.ticket.otherInfoPlaceholder')}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.files);
+                    if (files.length === 0) return;
+                    event.preventDefault();
+                    files.forEach((file) => void stageTicketAttachment(file));
+                  }}
+                />
+              </Form.Item>
+              <Form.Item
+                label={t('itsm.ticket.attachments')}
+                extra={t('itsm.ticket.attachmentHint')}
+              >
+                <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                  <Upload
+                    multiple
+                    showUploadList={false}
+                    beforeUpload={(file) => {
+                      void stageTicketAttachment(file);
+                      return Upload.LIST_IGNORE;
+                    }}
+                    accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                  >
+                    <Button icon={<PaperClipOutlined />} loading={attachmentUploading > 0}>
+                      {t('itsm.ticket.uploadAttachment')}
+                    </Button>
+                  </Upload>
+                  {draftAttachments.length > 0 && (
+                    <Space wrap size={[8, 8]}>
+                      {draftAttachments.map((attachment) => (
+                        <Tag
+                          key={attachment.id}
+                          closable
+                          onClose={(event) => {
+                            event.preventDefault();
+                            void removeDraftAttachment(attachment);
+                          }}
+                          icon={<PaperClipOutlined />}
+                        >
+                          {attachment.previewUrl && (
+                            <Image
+                              preview={{ src: attachment.previewUrl }}
+                              src={attachment.previewUrl}
+                              width={28}
+                              height={28}
+                              style={{ objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }}
+                            />
+                          )}
+                          {attachment.filename}
+                        </Tag>
+                      ))}
+                    </Space>
+                  )}
+                </Space>
               </Form.Item>
               {serviceFormLoading && <Card size="small" loading style={{ marginBottom: 16 }} />}
               {serviceForm && Object.entries(serviceForm.schema.properties)

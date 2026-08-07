@@ -8,6 +8,7 @@ from app.core.errors import AppError
 from app.events import notifier
 from app.events.bus import publish
 from app.models import (
+    Attachment,
     AuthUser,
     OrgMember,
     ProcessInstance,
@@ -25,6 +26,8 @@ from app.services.workflow import transition as wf_transition
 
 CHANGE = "change"
 TICKET_TYPES = ("incident", "service_request", "change")
+TICKET_ATTACHMENT_DRAFT = "ticket_draft"
+MAX_TICKET_ATTACHMENTS = 10
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,11 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
         raise AppError("STAGE_FIELD_REQUIRED", "变更工单必须选择变更类型")
 
     data = dict(data)
+    attachment_ids = list(dict.fromkeys(data.pop("attachment_ids", []) or []))
+    if attachment_ids and data["ticket_type"] != "service_request":
+        raise AppError("ATTACHMENT_NOT_AVAILABLE", "仅服务请求支持提交前补充附件", 422)
+    if len(attachment_ids) > MAX_TICKET_ATTACHMENTS:
+        raise AppError("ATTACHMENT_LIMIT_EXCEEDED", f"单张服务请求最多上传 {MAX_TICKET_ATTACHMENTS} 个附件")
     process_definition_id = None
     force_initial_unassigned = False
     if data["ticket_type"] == "service_request":
@@ -250,6 +258,32 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
     db.add(ticket)
     db.flush()
 
+    if attachment_ids:
+        staged = (
+            db.query(Attachment)
+            .filter(
+                Attachment.id.in_(attachment_ids),
+                Attachment.entity_type == TICKET_ATTACHMENT_DRAFT,
+                Attachment.entity_id == actor.id,
+                Attachment.uploaded_by == actor.id,
+                Attachment.is_deleted.is_(False),
+            )
+            .all()
+        )
+        if len(staged) != len(attachment_ids):
+            raise AppError("ATTACHMENT_DRAFT_INVALID", "存在已失效或不属于当前账号的临时附件", 409)
+        for attachment in staged:
+            attachment.entity_type = "ticket"
+            attachment.entity_id = ticket.id
+            audit(
+                db,
+                "attachment",
+                attachment.id,
+                "bind_ticket",
+                actor,
+                {"ticket_id": ticket.id, "ticket_code": ticket.ticket_code},
+            )
+
     process_engine.start_instance(
         db,
         entity_type_of(ticket),
@@ -259,7 +293,14 @@ def create_ticket(db: Session, data: dict, actor: AuthUser, commit: bool = True)
         definition_id=process_definition_id,
         force_unassigned=force_initial_unassigned,
     )
-    audit(db, "ticket", ticket.id, "create", actor, {"code": ticket.ticket_code, "type": ticket.ticket_type})
+    audit(
+        db,
+        "ticket",
+        ticket.id,
+        "create",
+        actor,
+        {"code": ticket.ticket_code, "type": ticket.ticket_type, "attachment_count": len(attachment_ids)},
+    )
     publish(db, "ticket.created", "ticket", ticket.id, {"code": ticket.ticket_code})
 
     if ticket.assignee:

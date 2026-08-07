@@ -82,12 +82,15 @@ GET /api/admin/master-data?category=     # dictionary (read-only for all, writab
 GET/PUT /api/admin/workflow-config       # state machine
 GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # in-app notifications, bulk read, and read cleanup
-POST /api/attachments (multipart) | GET /api/attachments?entity=
+POST /api/attachments (multipart) | GET /api/attachments?entity= | GET /api/attachments/{id}/download
+POST /api/attachments/ticket-drafts (multipart) | DELETE /api/attachments/ticket-drafts/{id}   # pre-creation service-request drafts
 ```
 
 Requirement list/detail responses expose the authoritative `Requirement` score projection (`d1_strategy` … `d6_speed`, `weighted_total`, and `quadrant`) even when legacy/imported rows have no `requirement_score` history. `POST /api/requirements/{id}/score` accepts Approved only with complete scores outside Re-evaluate; On Hold and Rejected remain valid decisions, with Rejected requiring a reason of at least five characters.
 
 Profile constraints: preference PATCH updates only submitted keys; theme is `light|dark|system`, density is `default|compact`, and `table_views` is bounded to stable list keys, field names, and widths of 80–800px; protected identifier/title/action columns cannot be hidden. `GET /api/auth/me/todos` returns only active tasks the current account may handle under workflow authorization and controlled entity-detail links; it does not grant permission. Passwords require at least eight characters with letters and digits, and an existing deliberate password requires a valid `current_password`. Feishu unbinding requires a local password; personal audit logs return only records whose actor is the current account.
+
+Before submitting a service request, the web form may send `file` to `POST /api/attachments/ticket-drafts` (images, PDF, and common office files; 50MB per file and at most 10 per request). The response returns safe metadata only, and the browser sends its IDs as `attachment_ids` to `POST /api/tickets`. The domain service accepts only non-deleted drafts uploaded by the current account and rebinds them to `entity_type=ticket` in the same transaction as ticket creation, workflow start, and audit; one invalid ID fails the whole creation transaction. Only the uploader may call `DELETE /api/attachments/ticket-drafts/{id}`; unbound drafts expire after 24 hours. `ticket_draft` rows cannot be listed or downloaded through generic routes. Committed ticket files inherit the ticket's function permission, submitter data scope, and, for extra uploads, workflow edit window. The `total` of every server-paginated response remains the full filtered count; the client must never replace it with current-page `items.length`.
 
 ### 4.1a Organization Sync (M35)
 

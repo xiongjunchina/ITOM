@@ -89,6 +89,8 @@ class TicketCreate(BaseModel):
     other_info: str | None = None
     request_data: dict | None = None
     request_form_version_id: str | None = None
+    # 服务请求页面先上传到当前账号的临时附件区；建单时由领域服务同事务绑定。
+    attachment_ids: list[str] = Field(default_factory=list, max_length=10)
     # 可选
     assignee: str | None = None
     ci_id: str | None = None

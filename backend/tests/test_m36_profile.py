@@ -20,6 +20,15 @@ def test_profile_payload_and_preferences(client, admin_headers):
     res = client.get("/api/auth/me/profile", headers=admin_headers).json()["data"]
     assert res["preferences"]["bio"] == "系统管理员"
     assert res["preferences"]["avatar"].startswith("data:image/jpeg")
+    # 列设置写回会携带 table_views；此前此分支错误引用未导入的 re，
+    # 任意调整列宽都会返回 500。
+    r = client.patch(
+        "/api/auth/me/preferences",
+        json={"table_views": {"requirements": {"visible": ["code", "title"], "widths": {"title": 360}}}},
+        headers=admin_headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["preferences"]["table_views"]["requirements"]["widths"]["title"] == 360
     # 非法头像被拒
     r = client.patch("/api/auth/me/preferences", json={"avatar": "http://evil/x.png"}, headers=admin_headers)
     assert r.json()["error"]["code"] == "BAD_AVATAR"
