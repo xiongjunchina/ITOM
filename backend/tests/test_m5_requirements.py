@@ -59,6 +59,50 @@ def test_bdo_scope(client, ctx):
     assert client.get(f"/api/requirements/{other['id']}", headers=ctx["req"]).status_code == 403
 
 
+def test_requirement_draft_attachments_bind_atomically(client, ctx, monkeypatch, tmp_path):
+    """需求补充信息的附件在提交前不可读取，提交时随需求在同一事务中绑定。"""
+    monkeypatch.setattr("app.core.config.settings.upload_dir", str(tmp_path))
+    upload = client.post(
+        "/api/attachments/requirement-drafts",
+        files={"file": ("需求截图.png", b"requirement-png", "image/png")},
+        headers=ctx["req"],
+    )
+    assert upload.status_code == 200, upload.text
+    draft = upload.json()["data"]
+
+    hidden = client.get(
+        f"/api/attachments?entity_type=requirement_draft&entity_id={draft['id']}", headers=ctx["req"],
+    )
+    assert hidden.status_code == 403
+    assert client.get(f"/api/attachments/{draft['id']}/download", headers=ctx["req"]).status_code == 403
+    bypass = client.post(
+        f"/api/attachments?entity_type=requirement_draft&entity_id={draft['id']}",
+        files={"file": ("bypass.exe", b"binary", "application/octet-stream")},
+        headers=ctx["req"],
+    )
+    assert bypass.status_code == 403
+
+    requirement = _register(
+        client,
+        ctx["req"],
+        ctx["domain"],
+        title="带补充附件的需求",
+        remarks="补充上下文与影响范围",
+        attachment_ids=[draft["id"]],
+    )
+    detail = client.get(f"/api/requirements/{requirement['id']}", headers=ctx["req"]).json()["data"]
+    assert detail["remarks"] == "补充上下文与影响范围"
+    attachments = client.get(
+        f"/api/attachments?entity_type=requirement&entity_id={requirement['id']}", headers=ctx["req"],
+    )
+    assert attachments.status_code == 200, attachments.text
+    assert attachments.json()["total"] == 1
+    bound = attachments.json()["data"][0]
+    assert bound["id"] == draft["id"] and bound["filename"] == "需求截图.png"
+    download = client.get(f"/api/attachments/{bound['id']}/download", headers=ctx["req"])
+    assert download.status_code == 200 and download.content == b"requirement-png"
+
+
 def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     r = _register(client, ctx["bp"], ctx["domain"], title="全流程需求")
     rid = r["id"]

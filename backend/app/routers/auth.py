@@ -1,4 +1,5 @@
 from datetime import datetime
+import math
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -100,13 +101,22 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
                 raise AppError("TABLE_VIEW_INVALID", "可见字段配置格式不正确", 422)
             if not isinstance(widths, dict) or len(widths) > 128:
                 raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+            normalized_widths: dict[str, int] = {}
+            for key, value in widths.items():
+                # JSON 规范之外的 NaN / Infinity 或极端数值会使 int(value)
+                # 抛出异常；偏好配置必须以 4xx 返回，而不能影响整条请求。
+                if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError, OverflowError):
+                    raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+                if not math.isfinite(numeric_value):
+                    raise AppError("TABLE_VIEW_INVALID", "列宽配置必须为有限数值", 422)
+                normalized_widths[key] = max(80, min(800, int(numeric_value)))
             normalized_views[table_key] = {
                 "visible": visible,
-                "widths": {
-                    str(key): max(80, min(800, int(value)))
-                    for key, value in widths.items()
-                    if isinstance(key, str) and isinstance(value, (int, float))
-                },
+                "widths": normalized_widths,
             }
         updates["table_views"] = normalized_views
     for k, v in updates.items():

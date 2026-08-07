@@ -249,6 +249,15 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
   }, [page, pageSize, q, status, fixedType, priority, mineOnly]);
 
+  const exportAll = async () => {
+    const params = new URLSearchParams({ ticket_type: fixedType });
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    if (priority) params.set('priority', priority);
+    if (mineOnly) params.set('scope', 'mine');
+    await api.download(`/tickets/export?${params.toString()}`);
+  };
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -631,7 +640,14 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         loading={loading}
         columns={columns}
         dataSource={items}
-        standardToolbar={{ exportFileName: '工单清单', showSearch: false, showFilter: false }}
+        standardToolbar={{
+          exportFileName: '工单清单',
+          exportLabel: t('itsm.ticket.exportAll'),
+          onExport: () => exportAll(),
+          total,
+          showSearch: false,
+          showFilter: false,
+        }}
         sticky
         scroll={{ x: 1300 }}
         pagination={{

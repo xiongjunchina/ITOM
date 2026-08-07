@@ -82,11 +82,12 @@ GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # 站内通知、批量已读与已读清理
 POST /api/attachments?entity_type=&entity_id= (multipart) | GET /api/attachments?entity_type=&entity_id= | GET /api/attachments/{id}/download
 POST /api/attachments/ticket-drafts (multipart) | DELETE /api/attachments/ticket-drafts/{id}   # 服务请求建单前临时附件
+POST /api/attachments/requirement-drafts (multipart) | DELETE /api/attachments/requirement-drafts/{id}   # IT 需求登记前临时附件
 ```
 
 个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`，`table_views` 只允许有限数量的稳定清单键、字段名、列宽（80–800px），且服务端不接受对保护列的删除授权。`GET /me/todos` 只返回当前账号按流程授权可处理的活动待办，并提供受控单据详情链接；它不改变 `can_act_on_task` 的权限判断。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
 
-服务请求网页在创建前可用 `POST /api/attachments/ticket-drafts` 上传 `file`（图片、PDF、常见办公文档；单个最多 50MB、每张单最多 10 个）。响应只返回安全附件元数据；浏览器将返回 ID 放入 `POST /api/tickets` 的 `attachment_ids`。领域服务只接受当前账号、未删除的临时附件，并在工单创建、流程启动和审计的同一事务改绑为 `entity_type=ticket`；任一 ID 无效时整个建单事务失败。`DELETE /api/attachments/ticket-drafts/{id}` 只允许上传人取消，未绑定草稿 24 小时后清理。`ticket_draft` 不允许通过 `GET /api/attachments` 或下载端点读取。正式工单附件的上传、读取和下载均复用该工单的功能权限、提交人数据范围及流程编辑窗口；服务端分页响应的 `total` 始终是过滤后全量记录数，前端不得用当前页 `items.length` 覆盖它。
+服务请求和 IT 需求网页在创建前分别可用 `POST /api/attachments/ticket-drafts`、`POST /api/attachments/requirement-drafts` 上传 `file`（图片、PDF、常见办公文档；单个最多 50MB、每张单最多 10 个）。响应只返回安全附件元数据；浏览器将返回 ID 分别放入 `POST /api/tickets` 或 `POST /api/requirements` 的 `attachment_ids`，需求可同时提交 `remarks` 作为“其他补充信息”。领域服务只接受当前账号、未删除的对应临时附件，并在单据创建、流程启动和审计的同一事务改绑为 `entity_type=ticket` 或 `requirement`；任一 ID 无效时整个创建事务失败。两个草稿删除接口都只允许上传人取消，未绑定草稿 24 小时后清理；草稿类型均不允许通过 `GET /api/attachments` 或下载端点读取。正式附件的上传、读取和下载均复用对应单据的功能权限、数据范围及流程编辑窗口；服务端分页响应的 `total` 始终是过滤后全量记录数，前端不得用当前页 `items.length` 覆盖它。
 
 ### 4.1a 组织同步（M35）
 
@@ -160,7 +161,7 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-需求登记写入独立 `Requirement`，不创建 Ticket。普通业务用户不拥有需求模块权限；仅 BDO 和授权 IT 角色复用现有 `requirements.create/view`，并强制本人数据范围。领域服务还会校验 BDO/IT 角色边界，防止历史或手工追加的 `requester` 权限行绕过限制；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
+需求登记写入独立 `Requirement`，不创建 Ticket。请求可包含既有 `remarks`（“其他补充信息”）和至多 10 个当前账号的 `requirement_draft` 附件 ID；服务端在需求、流程、审计及附件绑定的同一事务再次校验归属、数量和未删除状态。普通业务用户不拥有需求模块权限；仅 BDO 和授权 IT 角色复用现有 `requirements.create/view`，并强制本人数据范围。领域服务还会校验 BDO/IT 角色边界，防止历史或手工追加的 `requester` 权限行绕过限制；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
 
 #### 需求实现任务接口
 
@@ -175,7 +176,7 @@ GET /api/requirements/tasks/active
 
 需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回仍要求不少于 5 字的理由。
 
-`POST /api/requirements/{id}/to-dev` 使用空载荷（兼容旧客户端可携带 `owner_id`，但若与评分规则 `review_assignees.dev_leader` 不一致则返回 `DEV_LEADER_FIXED`）。服务端必须存在并校验该在岗 IT 开发负责人；缺失/失效返回 `DEV_LEADER_NOT_CONFIGURED`。两个路径接口都只可处理当前「方案评估与路径判定」任务，否则返回 `PROCESS_STEP_MISMATCH`，并且只推进到「实现交付」。完成开发路径的实现交付任务前，流程引擎检查未删除的 `requirement_task` 至少一条，否则返回 `REQUIREMENT_TASK_REQUIRED`；此检查不适用于项目路径或没有 `implementation_route` 快照的既有记录。
+`POST /api/requirements/{id}/to-dev` 使用空载荷（兼容旧客户端可携带 `owner_id`，但若与需求评分规则 `review_assignees.dev_leader` 不一致则返回 `DEV_LEADER_FIXED`）。服务端必须存在并校验该在岗 IT 开发负责人；缺失/失效返回 `DEV_LEADER_NOT_CONFIGURED`。两个路径接口都只可处理当前「方案评估与路径判定」任务，否则返回 `PROCESS_STEP_MISMATCH`，并且只推进到「实现交付」。完成开发路径的实现交付任务前，流程引擎检查未删除的 `requirement_task` 至少一条，否则返回 `REQUIREMENT_TASK_REQUIRED`；此检查不适用于项目路径或没有 `implementation_route` 快照的既有记录。
 
 #### 任务管理接口（M82）
 
@@ -312,7 +313,7 @@ Round 1 收紧 live action SSE：含有效原始 `confirmation_token` 时，`con
 ### 4.2 ITSM
 
 ```text
-GET/POST /api/tickets | GET/PATCH /api/tickets/{id}
+GET/POST /api/tickets | GET /api/tickets/export | GET/PATCH /api/tickets/{id}
 POST /api/tickets/{id}/transition        # 含审批(approve/reject)、解决、关闭、挂起、重开
 POST /api/tickets/{id}/satisfaction      # requester 评价
 POST /api/tickets/{id}/escalate-problem  # 一键升级为问题
@@ -336,6 +337,8 @@ GET/POST/PATCH /api/knowledge | POST /api/knowledge/{id}/vote
 GET /api/knowledge/search?q=
 ```
 
+`GET /api/tickets/export` 接受与工单清单相同的过滤条件和数据范围，服务端导出当前授权范围内**全部**匹配行，而不是当前分页页；导出排序与清单默认排序一致。
+
 ### 4.3 项目
 
 ```text
@@ -352,7 +355,7 @@ GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
-POST /api/requirements/{id}/to-dev       # {}；固定使用评分规则 dev_leader，并写入开发路径快照
+POST /api/requirements/{id}/to-dev       # {}；固定使用需求评分规则 dev_leader，并写入开发路径快照
 POST /api/requirements/{id}/to-project   # {pm_id}；写入项目路径快照
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}

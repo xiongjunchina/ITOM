@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pytest
+from openpyxl import load_workbook
 
 
 @pytest.fixture(scope="module")
@@ -122,6 +125,27 @@ def test_ticket_list_returns_real_total_beyond_page_size(client, ctx):
     body = listing.json()
     assert len(body["data"]) == 20
     assert body["total"] >= 22
+
+
+def test_ticket_export_returns_all_matching_authorized_records(client, ctx):
+    """工具栏点击“导出全部数据”必须走服务端完整查询，不能只导出当前 20 行。"""
+    prefix = "all-export-regression"
+    for index in range(22):
+        _create(client, ctx["ops"], ctx["item"], title=f"{prefix}-{index:02d}")
+
+    listing = client.get(f"/api/tickets?q={prefix}&page=1&page_size=20", headers=ctx["ops"])
+    assert listing.status_code == 200, listing.text
+    assert len(listing.json()["data"]) == 20
+    assert listing.json()["total"] == 22
+
+    exported = client.get(f"/api/tickets/export?q={prefix}", headers=ctx["ops"])
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    sheet = load_workbook(BytesIO(exported.content), data_only=True).active
+    titles = [row[1] for row in sheet.iter_rows(values_only=True) if len(row) > 1 and isinstance(row[1], str)]
+    assert {f"{prefix}-{index:02d}" for index in range(22)}.issubset(set(titles))
 
 
 def test_ticket_lifecycle_and_sla(client, ctx, admin_headers):

@@ -119,11 +119,11 @@ const ZH_SECTIONS: ManualSection[] = [
     title: '需求管理',
     summary: '从需求登记到评审、方案评估、路由和验收形成闭环。',
     logic: [
-      '需求总览负责登记、澄清和决议；任务跟踪负责拆分任务和执行进度；评分规则负责维度和权重。',
+      '需求总览负责登记、澄清和决议；任务跟踪负责拆分任务和执行进度；需求评分规则负责维度和权重。',
       '登记前必须至少存在一个已启用的业务域；网页和 Aily MCP 只使用真实业务域列表，列表为空时先由管理员完成配置。',
       '需求可转开发、转项目、暂缓或拒绝；节点处理人和知会人由流程定义决定。',
     ],
-    steps: ['在需求总览登记需求并选择业务域。', '根据当前节点补充分析、方案和评审结论。', '在任务跟踪查看责任人、计划日期和完成情况。', '需要调整评价口径时，由管理员维护评分规则。'],
+    steps: ['在需求总览登记需求并选择业务域。', '根据当前节点补充分析、方案和评审结论。', '在任务跟踪查看责任人、计划日期和完成情况。', '需要调整评价口径时，由管理员维护需求评分规则。'],
   },
   {
     id: 'team',
@@ -213,7 +213,7 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'requirements', title: 'Requirement management', summary: 'Close the loop from registration and review through solution routing and acceptance.',
-    logic: ['Overview handles registration and decisions; Task Tracking handles execution; Scoring Rules handles dimensions and weights.', 'At least one active business domain is required; the web UI and Aily MCP use only the live domain list and report an explicit blocker when it is empty.', 'Requirements route to development, projects, deferment, or rejection through workflow.'],
+    logic: ['Overview handles registration and decisions; Task Tracking handles execution; Requirement Scoring Rules handles dimensions and weights.', 'At least one active business domain is required; the web UI and Aily MCP use only the live domain list and report an explicit blocker when it is empty.', 'Requirements route to development, projects, deferment, or rejection through workflow.'],
     steps: ['Register a requirement and select its domain.', 'Add analysis, solution, and review results at the current step.', 'Track owners, dates, and completion in Task Tracking.', 'Maintain scoring rules when the evaluation model changes.'],
   },
   {

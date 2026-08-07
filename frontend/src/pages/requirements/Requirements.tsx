@@ -8,6 +8,7 @@ import {
   DatePicker,
   Empty,
   Form,
+  Image,
   Input,
   Modal,
   Popconfirm,
@@ -19,6 +20,7 @@ import {
   Switch,
   Tag,
   Typography,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -27,6 +29,7 @@ import {
   AppstoreOutlined,
   DownloadOutlined,
   ImportOutlined,
+  PaperClipOutlined,
   PlusOutlined,
   ReloadOutlined,
   TableOutlined,
@@ -41,6 +44,7 @@ import type { PendingStep } from '../../components/PendingStepCell';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type {
   BusinessDomain,
+  AttachmentItem,
   MasterDataItem,
   Moscow,
   RequirementRow,
@@ -70,12 +74,17 @@ interface CreateFormValues {
   req_type: string;
   business_domain_id: string;
   description: string;
+  other_info?: string;
   source?: string;
   // 进阶字段（默认折叠）
   expected_date?: Dayjs;
   expected_effect?: string;
   business_value_note?: string;
 }
+
+type RequirementDraftAttachment = AttachmentItem & { previewUrl?: string };
+
+const MAX_REQUIREMENT_ATTACHMENTS = 10;
 
 // ---------------- 看板卡片 ----------------
 
@@ -164,6 +173,8 @@ export default function Requirements() {
   const [form] = Form.useForm<CreateFormValues>();
   const [sources, setSources] = useState<MasterDataItem[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [draftAttachments, setDraftAttachments] = useState<RequirementDraftAttachment[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(0);
   const directCreateStarted = useRef(false);
 
   const load = useCallback(async () => {
@@ -216,7 +227,12 @@ export default function Requirements() {
   }, [items]);
 
   const openCreate = () => {
+    draftAttachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
     form.resetFields();
+    setDraftAttachments([]);
+    setAttachmentUploading(0);
     setCreateOpen(true);
     if (sources.length === 0) {
       api
@@ -239,7 +255,52 @@ export default function Requirements() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createRequested, canCreate]);
 
+  const discardDraftAttachments = async (attachments = draftAttachments) => {
+    attachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setDraftAttachments([]);
+    await Promise.allSettled(attachments.map((attachment) => api.delete(`/attachments/requirement-drafts/${attachment.id}`)));
+  };
+
+  const closeCreate = () => {
+    void discardDraftAttachments();
+    setCreateOpen(false);
+  };
+
+  const stageRequirementAttachment = async (file: File) => {
+    if (draftAttachments.length + attachmentUploading >= MAX_REQUIREMENT_ATTACHMENTS) {
+      message.warning(t('req.attachmentLimit'));
+      return;
+    }
+    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+    setAttachmentUploading((count) => count + 1);
+    try {
+      const uploaded = await api.upload<AttachmentItem>('/attachments/requirement-drafts', file);
+      setDraftAttachments((items) => [...items, { ...uploaded, previewUrl }]);
+    } catch {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      // 已统一提示
+    } finally {
+      setAttachmentUploading((count) => Math.max(0, count - 1));
+    }
+  };
+
+  const removeDraftAttachment = async (attachment: RequirementDraftAttachment) => {
+    try {
+      await api.delete(`/attachments/requirement-drafts/${attachment.id}`);
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      setDraftAttachments((items) => items.filter((item) => item.id !== attachment.id));
+    } catch {
+      // 已统一提示
+    }
+  };
+
   const submitCreate = async () => {
+    if (attachmentUploading > 0) {
+      message.warning(t('req.attachmentUploading'));
+      return;
+    }
     const values = await form.validateFields();
     setSaving(true);
     try {
@@ -248,13 +309,19 @@ export default function Requirements() {
         req_type: values.req_type,
         business_domain_id: values.business_domain_id,
         description: values.description,
+        remarks: values.other_info || null,
         source: values.source ?? null,
         expected_date: values.expected_date ? values.expected_date.format('YYYY-MM-DD') : null,
         expected_effect: values.expected_effect || null,
         business_value_note: values.business_value_note || null,
+        attachment_ids: draftAttachments.map((attachment) => attachment.id),
       });
       message.success(t('req.created', { code: created.requirement_code ?? '' }));
       setCreateOpen(false);
+      draftAttachments.forEach((attachment) => {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      });
+      setDraftAttachments([]);
       if (created?.id) {
         navigate(`/requirements/${created.id}`);
       } else {
@@ -557,7 +624,7 @@ export default function Requirements() {
         width={560}
         onOk={() => void submitCreate()}
         confirmLoading={saving}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={closeCreate}
         destroyOnClose
       >
         <DocumentTypeHint documentType="requirement" />
@@ -589,6 +656,62 @@ export default function Requirements() {
           </Form.Item>
           <Form.Item name="description" label={t('req.reqDesc')} rules={[{ required: true, message: t('req.reqDescRequired') }]}>
             <Input.TextArea rows={4} maxLength={2000} placeholder={t('req.descPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="other_info" label={t('req.otherInfo')}>
+            <Input.TextArea
+              rows={3}
+              maxLength={1000}
+              placeholder={t('req.otherInfoPlaceholder')}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                files.forEach((file) => void stageRequirementAttachment(file));
+              }}
+            />
+          </Form.Item>
+          <Form.Item label={t('req.attachments')} extra={t('req.attachmentHint')}>
+            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+              <Upload
+                multiple
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void stageRequirementAttachment(file);
+                  return Upload.LIST_IGNORE;
+                }}
+                accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+              >
+                <Button icon={<PaperClipOutlined />} loading={attachmentUploading > 0}>
+                  {t('req.uploadAttachment')}
+                </Button>
+              </Upload>
+              {draftAttachments.length > 0 && (
+                <Space wrap size={[8, 8]}>
+                  {draftAttachments.map((attachment) => (
+                    <Tag
+                      key={attachment.id}
+                      closable
+                      onClose={(event) => {
+                        event.preventDefault();
+                        void removeDraftAttachment(attachment);
+                      }}
+                      icon={<PaperClipOutlined />}
+                    >
+                      {attachment.previewUrl && (
+                        <Image
+                          preview={{ src: attachment.previewUrl }}
+                          src={attachment.previewUrl}
+                          width={28}
+                          height={28}
+                          style={{ objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }}
+                        />
+                      )}
+                      {attachment.filename}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
+            </Space>
           </Form.Item>
           <Form.Item name="source" label={t('req.source')}>
             <Select

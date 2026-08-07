@@ -1,5 +1,6 @@
 """工单路由（PRD §5.1）。"""
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -56,6 +57,37 @@ def _is_requester_only(db: Session, user: AuthUser) -> bool:
     return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
+def _ticket_query(
+    db: Session,
+    user: AuthUser,
+    *,
+    q: str = "",
+    status: str = "",
+    ticket_type: str = "",
+    priority: str = "",
+    assignee: str = "",
+    scope: str = "",
+):
+    """列表与导出共用同一权限、数据范围和筛选语义。"""
+    allowed_types = _allowed_view_types(db, user)
+    if not allowed_types:
+        raise AppError("FORBIDDEN", "当前角色无任何工单类型的查看权限", 403)
+    query = db.query(Ticket).filter(Ticket.is_deleted.is_(False), Ticket.ticket_type.in_(allowed_types))
+    if _is_requester_only(db, user) or scope == "mine":
+        query = query.filter(or_(Ticket.submitter == user.id, Ticket.assignee == (user.person_id or "-")))
+    if q:
+        query = query.filter(or_(Ticket.title.ilike(f"%{q}%"), Ticket.ticket_code.ilike(f"%{q}%")))
+    if status:
+        query = query.filter(Ticket.status == status)
+    if ticket_type:
+        query = query.filter(Ticket.ticket_type == ticket_type)
+    if priority:
+        query = query.filter(Ticket.priority == priority)
+    if assignee:
+        query = query.filter(Ticket.assignee == assignee)
+    return query
+
+
 def _row(t: Ticket, db: Session, names: dict) -> dict:
     assignee = db.get(OrgMember, t.assignee) if t.assignee else None
     implementation_assignee = db.get(OrgMember, t.implementation_assignee) if t.implementation_assignee else None
@@ -93,22 +125,10 @@ def list_tickets(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    allowed_types = _allowed_view_types(db, user)
-    if not allowed_types:
-        raise AppError("FORBIDDEN", "当前角色无任何工单类型的查看权限", 403)
-    query = db.query(Ticket).filter(Ticket.is_deleted.is_(False), Ticket.ticket_type.in_(allowed_types))
-    if _is_requester_only(db, user) or scope == "mine":
-        query = query.filter(or_(Ticket.submitter == user.id, Ticket.assignee == (user.person_id or "-")))
-    if q:
-        query = query.filter(or_(Ticket.title.ilike(f"%{q}%"), Ticket.ticket_code.ilike(f"%{q}%")))
-    if status:
-        query = query.filter(Ticket.status == status)
-    if ticket_type:
-        query = query.filter(Ticket.ticket_type == ticket_type)
-    if priority:
-        query = query.filter(Ticket.priority == priority)
-    if assignee:
-        query = query.filter(Ticket.assignee == assignee)
+    query = _ticket_query(
+        db, user, q=q, status=status, ticket_type=ticket_type,
+        priority=priority, assignee=assignee, scope=scope,
+    )
     items, total = paginate(query.order_by(Ticket.is_example.desc(), Ticket.submitted_at.desc()), page, page_size)
     names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
     pend = process_engine.pending_steps_map(db, ["ticket", "ticket_change"], [t.id for t in items], user)
@@ -126,6 +146,61 @@ def list_tickets(
             "workflow_edit_locked_reason": edit_access.reason,
         })
     return ok(rows, total=total, page=page)
+
+
+def _ticket_export_response(content: bytes, filename: str) -> Response:
+    from urllib.parse import quote
+
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=tickets.xlsx; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.get("/export")
+def export_tickets(
+    q: str = "",
+    status: str = "",
+    ticket_type: str = "",
+    priority: str = "",
+    assignee: str = "",
+    scope: str = "",
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """导出当前筛选条件下的全部有权工单，而不是前端当前页。"""
+    from app.services.excel_io import Col, Sheet, build_export
+
+    query = _ticket_query(
+        db, user, q=q, status=status, ticket_type=ticket_type,
+        priority=priority, assignee=assignee, scope=scope,
+    )
+    names = {**status_names(db, "ticket"), **status_names(db, "ticket_change")}
+    type_names = {"service_request": "服务请求", "incident": "事件", "change": "变更"}
+    rows = []
+    for ticket in query.order_by(Ticket.is_example.desc(), Ticket.submitted_at.desc()).all():
+        row = _row(ticket, db, names)
+        rows.append({
+            "ticket_code": row["ticket_code"],
+            "title": row["title"],
+            "ticket_type": type_names.get(row["ticket_type"], row["ticket_type"]),
+            "priority": row["priority"],
+            "status": row["status_name"],
+            "service_item": row["service_item_name"],
+            "service_category": row["service_category"],
+            "assignee": row["assignee_name"],
+            "submitter": row["submitter_name"],
+            "submitted_at": row["submitted_at"],
+            "sla_hours": row["sla_resolution_hours"],
+        })
+    sheet = Sheet("工单清单", [
+        Col("ticket_code", "工单编号"), Col("title", "标题"), Col("ticket_type", "单据类型"),
+        Col("priority", "优先级"), Col("status", "状态"), Col("service_item", "服务项"),
+        Col("service_category", "服务类别"), Col("assignee", "受理人"), Col("submitter", "提交人"),
+        Col("submitted_at", "提交时间"), Col("sla_hours", "SLA（小时）", kind="float"),
+    ])
+    return _ticket_export_response(build_export(sheet, rows), "工单清单.xlsx")
 
 
 @router.post("")

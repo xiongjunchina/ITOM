@@ -62,6 +62,10 @@ class RequirementCreate(BaseModel):
     expected_date: str | None = None
     expected_effect: str | None = None
     business_value_note: str | None = None
+    # 网页登记的“其他补充信息”：复用既有 remarks 持久字段，不引入重复列。
+    remarks: str | None = Field(default=None, max_length=1000)
+    # 网页登记的“其他补充信息”附件：仅接受本人临时草稿 ID，领域服务在同一事务中绑定。
+    attachment_ids: list[str] = Field(default_factory=list, max_length=10)
 
 
 class RequirementUpdate(BaseModel):

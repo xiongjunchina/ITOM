@@ -84,13 +84,14 @@ GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # in-app notifications, bulk read, and read cleanup
 POST /api/attachments (multipart) | GET /api/attachments?entity= | GET /api/attachments/{id}/download
 POST /api/attachments/ticket-drafts (multipart) | DELETE /api/attachments/ticket-drafts/{id}   # pre-creation service-request drafts
+POST /api/attachments/requirement-drafts (multipart) | DELETE /api/attachments/requirement-drafts/{id}   # pre-registration IT-requirement drafts
 ```
 
 Requirement list/detail responses expose the authoritative `Requirement` score projection (`d1_strategy` … `d6_speed`, `weighted_total`, and `quadrant`) even when legacy/imported rows have no `requirement_score` history. `POST /api/requirements/{id}/score` accepts Approved only with complete scores outside Re-evaluate; On Hold and Rejected remain valid decisions, with Rejected requiring a reason of at least five characters.
 
 Profile constraints: preference PATCH updates only submitted keys; theme is `light|dark|system`, density is `default|compact`, and `table_views` is bounded to stable list keys, field names, and widths of 80–800px; protected identifier/title/action columns cannot be hidden. `GET /api/auth/me/todos` returns only active tasks the current account may handle under workflow authorization and controlled entity-detail links; it does not grant permission. Passwords require at least eight characters with letters and digits, and an existing deliberate password requires a valid `current_password`. Feishu unbinding requires a local password; personal audit logs return only records whose actor is the current account.
 
-Before submitting a service request, the web form may send `file` to `POST /api/attachments/ticket-drafts` (images, PDF, and common office files; 50MB per file and at most 10 per request). The response returns safe metadata only, and the browser sends its IDs as `attachment_ids` to `POST /api/tickets`. The domain service accepts only non-deleted drafts uploaded by the current account and rebinds them to `entity_type=ticket` in the same transaction as ticket creation, workflow start, and audit; one invalid ID fails the whole creation transaction. Only the uploader may call `DELETE /api/attachments/ticket-drafts/{id}`; unbound drafts expire after 24 hours. `ticket_draft` rows cannot be listed or downloaded through generic routes. Committed ticket files inherit the ticket's function permission, submitter data scope, and, for extra uploads, workflow edit window. The `total` of every server-paginated response remains the full filtered count; the client must never replace it with current-page `items.length`.
+Before submitting a service request or IT requirement, the web form may send `file` to `POST /api/attachments/ticket-drafts` or `POST /api/attachments/requirement-drafts` (images, PDF, and common office files; 50MB per file and at most 10 per record). The response returns safe metadata only, and the browser sends its IDs as `attachment_ids` to `POST /api/tickets` or `POST /api/requirements`; a requirement may also submit `remarks` as Other supplemental information. The domain service accepts only non-deleted matching drafts uploaded by the current account and rebinds them to `entity_type=ticket` or `requirement` in the same transaction as record creation, workflow start, and audit; one invalid ID fails the whole creation transaction. Only the uploader may delete a draft; unbound drafts expire after 24 hours and neither draft type can be listed or downloaded through generic routes. Committed files inherit the relevant record's function permission, data scope, and, for extra uploads, workflow edit window. The `total` of every server-paginated response remains the full filtered count; the client must never replace it with current-page `items.length`.
 
 ### 4.1a Organization Sync (M35)
 
@@ -164,7 +165,7 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-Registration creates a separate `Requirement`, never a Ticket. Normal business users have no Requirement-module permission; only BDOs and authorized IT roles reuse `requirements.create/view` with enforced own-record scope. The domain service also checks the BDO/IT role boundary, so a historical or manually added requester permission row cannot bypass it; review, scoring, project conversion, and closure retain existing edit/process permissions.
+Registration creates a separate `Requirement`, never a Ticket. The request may include existing `remarks` as Other supplemental information and up to 10 current-account `requirement_draft` attachment IDs; the service rechecks ownership, count, and non-deleted state while binding attachments in the same transaction as the requirement, workflow, and audit. Normal business users have no Requirement-module permission; only BDOs and authorized IT roles reuse `requirements.create/view` with enforced own-record scope. The domain service also checks the BDO/IT role boundary, so a historical or manually added requester permission row cannot bypass it; review, scoring, project conversion, and closure retain existing edit/process permissions.
 
 #### Requirement implementation-task APIs
 
@@ -177,7 +178,7 @@ GET /api/requirements/tasks/active
 
 The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. Existing tasks remain readable under their original IDs and soft-delete state; this change only adds a nullable route-snapshot column through the idempotent startup migration and never backfills or rewrites historical requirements or tasks.
 
-`POST /api/requirements/{id}/to-dev` uses an empty payload (legacy clients may send `owner_id`, but a value that differs from scoring-rule `review_assignees.dev_leader` returns `DEV_LEADER_FIXED`). The configured active IT development lead must exist; a missing or invalid setting returns `DEV_LEADER_NOT_CONFIGURED`. Both route endpoints may handle only the current “Solution assessment & routing” task, otherwise return `PROCESS_STEP_MISMATCH`, and advance only to “Delivery”. Before an in-house-dev Delivery task can complete, the process engine requires at least one non-deleted `requirement_task`; it does not apply that check to project routes or legacy records without an `implementation_route` snapshot.
+`POST /api/requirements/{id}/to-dev` uses an empty payload (legacy clients may send `owner_id`, but a value that differs from Requirement Scoring Rules `review_assignees.dev_leader` returns `DEV_LEADER_FIXED`). The configured active IT development lead must exist; a missing or invalid setting returns `DEV_LEADER_NOT_CONFIGURED`. Both route endpoints may handle only the current “Solution assessment & routing” task, otherwise return `PROCESS_STEP_MISMATCH`, and advance only to “Delivery”. Before an in-house-dev Delivery task can complete, the process engine requires at least one non-deleted `requirement_task`; it does not apply that check to project routes or legacy records without an `implementation_route` snapshot.
 
 #### Task-management APIs (M82)
 
@@ -312,7 +313,7 @@ Round 1 tightens a live action SSE: when it carries a valid raw `confirmation_to
 ### 4.2 ITSM
 
 ```text
-GET/POST /api/tickets | GET/PATCH /api/tickets/{id}
+GET/POST /api/tickets | GET /api/tickets/export | GET/PATCH /api/tickets/{id}
 POST /api/tickets/{id}/transition        # includes approval (approve/reject), resolve, close, hold, reopen
 POST /api/tickets/{id}/satisfaction      # requester rating
 POST /api/tickets/{id}/escalate-problem  # one-click escalation to a problem
@@ -336,6 +337,8 @@ GET/POST/PATCH /api/knowledge | POST /api/knowledge/{id}/vote
 GET /api/knowledge/search?q=
 ```
 
+`GET /api/tickets/export` accepts the same filters and data scope as the ticket list and exports **all** matching records in the current authorized scope, not just the current page. Its default sort matches the list.
+
 ### 4.3 Project
 
 ```text
@@ -352,7 +355,7 @@ GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + mi
 GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
 GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
-POST /api/requirements/{id}/to-dev       # {}; fixed scoring-rule dev_leader and an in-house-dev route snapshot
+POST /api/requirements/{id}/to-dev       # {}; fixed Requirement Scoring Rules dev_leader and an in-house-dev route snapshot
 POST /api/requirements/{id}/to-project   # {pm_id}; persists a project-route snapshot
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}

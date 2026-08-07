@@ -22,6 +22,33 @@ type SortableTableProps<T extends object> = TableProps<T> & {
 
 type ViewConfig = { visible: string[]; widths: Record<string, number> };
 
+const TABLE_VIEW_KEY_PATTERN = /^[a-z][a-z0-9_.-]{1,63}$/;
+
+function sanitizeViewConfig(value: unknown): ViewConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as { visible?: unknown; widths?: unknown };
+  if (!Array.isArray(raw.visible) || !raw.visible.every((key) => typeof key === 'string')) return null;
+  if (!raw.widths || typeof raw.widths !== 'object' || Array.isArray(raw.widths)) return null;
+  const widths = Object.fromEntries(
+    Object.entries(raw.widths as Record<string, unknown>)
+      .filter(([key, width]) => typeof key === 'string' && Number.isFinite(width) && typeof width === 'number')
+      .map(([key, width]) => [key, Math.max(80, Math.min(800, Math.trunc(width as number)))]),
+  );
+  return { visible: raw.visible, widths };
+}
+
+function sanitizeTableViews(value: unknown): Record<string, ViewConfig> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => TABLE_VIEW_KEY_PATTERN.test(key))
+      .flatMap(([key, config]) => {
+        const normalized = sanitizeViewConfig(config);
+        return normalized ? [[key, normalized]] : [];
+      }),
+  );
+}
+
 function routeTableKey(path: string): string {
   const normalized = path.replace(/[^a-zA-Z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').toLowerCase();
   return `route.${normalized || 'root'}`;
@@ -153,8 +180,8 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
   }, [viewConfig]);
 
   useEffect(() => {
-    const saved = user?.preferences?.table_views?.[resolvedTableKey];
-    const savedVisible = saved?.visible?.filter((key) => knownKeys.includes(key)) ?? [];
+    const saved = sanitizeViewConfig(user?.preferences?.table_views?.[resolvedTableKey]);
+    const savedVisible = saved?.visible.filter((key) => knownKeys.includes(key)) ?? [];
     const visible = saved ? savedVisible : knownKeys;
     setViewConfig({
       visible: Array.from(new Set([...visible, ...Array.from(protectedKeys).filter((key) => knownKeys.includes(key))])),
@@ -166,7 +193,7 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
     viewConfigRef.current = next;
     setViewConfig(next);
     if (!user) return;
-    const tableViews = { ...(user.preferences?.table_views ?? {}), [resolvedTableKey]: next };
+    const tableViews = { ...sanitizeTableViews(user.preferences?.table_views), [resolvedTableKey]: next };
     try {
       await api.patch('/auth/me/preferences', { table_views: tableViews });
       setUser({ ...user, preferences: { ...user.preferences, table_views: tableViews } });
@@ -237,12 +264,15 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
       current: query.trim() || filterField || filterValue ? 1 : pagination.current,
     }
     : pagination;
+  const toolbarTotal = standardToolbar?.total ?? (
+    pagination && typeof pagination === 'object' ? pagination.total : undefined
+  );
   return (
     <>
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
         {standardToolbar && (
           <TableStandardToolbar
-            options={standardToolbar}
+            options={{ ...standardToolbar, total: toolbarTotal }}
             columns={columns ?? []}
             rows={rows}
             filteredRows={filteredRows}

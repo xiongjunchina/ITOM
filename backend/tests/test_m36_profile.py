@@ -1,6 +1,5 @@
 """M36.2 个人中心：资料载荷 / 偏好（头像、个人说明）/ 自助改密（首设免验规则）。"""
 
-
 def _login(client, username, password):
     r = client.post("/api/auth/login", json={"username": username, "password": password})
     return r
@@ -29,6 +28,14 @@ def test_profile_payload_and_preferences(client, admin_headers):
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["preferences"]["table_views"]["requirements"]["widths"]["title"] == 360
+    # 任何无效列宽都必须作为参数错误返回，不能导致列设置调整时出现 500。
+    r = client.patch(
+        "/api/auth/me/preferences",
+        content='{"table_views":{"requirements":{"visible":["code"],"widths":{"title":NaN}}}}',
+        headers={**admin_headers, "Content-Type": "application/json"},
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "TABLE_VIEW_INVALID"
     # 非法头像被拒
     r = client.patch("/api/auth/me/preferences", json={"avatar": "http://evil/x.png"}, headers=admin_headers)
     assert r.json()["error"]["code"] == "BAD_AVATAR"

@@ -33,6 +33,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   ExportOutlined,
+  PaperClipOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
@@ -54,6 +55,7 @@ import CompleteStepModal from '../../components/CompleteStepModal';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
   AcceptanceCriterion,
+  AttachmentItem,
   AllowedTransition,
   BusinessDomain,
   MasterDataItem,
@@ -225,6 +227,11 @@ function EvaluationPanel({
         showIcon
         style={{ marginBottom: 16 }}
         message={editable ? t('req.evalGateHint') : t('req.evalHistoricalHint')}
+        description={(
+          <span>
+            {t('req.evalScoringRulesHint')} <Link to="/requirements/scoring">{t('req.tab.scoring')}</Link>
+          </span>
+        )}
       />
 
       <Typography.Text strong>{t('req.evalScore')}</Typography.Text>
@@ -631,6 +638,7 @@ export default function RequirementDetail() {
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [detail, setDetail] = useState<RequirementDetailData | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [members, setMembers] = useState<Member[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -640,6 +648,10 @@ export default function RequirementDetail() {
     if (!id) return;
     try {
       setDetail(await api.get<RequirementDetailData>(`/requirements/${id}`));
+      const attachmentResult = await api
+        .getList<AttachmentItem>('/attachments', { entity_type: 'requirement', entity_id: id })
+        .catch(() => ({ items: [], total: 0 }));
+      setAttachments(attachmentResult.items);
     } catch {
       // 已统一提示
     }
@@ -1244,13 +1256,31 @@ export default function RequirementDetail() {
             </Typography.Paragraph>
           </Descriptions.Item>
           {detail.remarks && (
-            <Descriptions.Item label={t('common.remark')} span={2}>
+            <Descriptions.Item label={t('req.otherInfo')} span={2}>
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {detail.remarks}
               </Typography.Paragraph>
             </Descriptions.Item>
           )}
         </Descriptions>
+      </Card>
+
+      <Card title={t('req.attachments')} size="small">
+        {attachments.length === 0 ? (
+          <Typography.Text type="secondary">{t('req.noAttachments')}</Typography.Text>
+        ) : (
+          <Space wrap size={[8, 8]}>
+            {attachments.map((attachment) => (
+              <Button
+                key={attachment.id}
+                icon={<PaperClipOutlined />}
+                onClick={() => void api.download(`/attachments/${attachment.id}/download`)}
+              >
+                {attachment.filename} ({Math.max(1, Math.ceil(attachment.size / 1024))} KB)
+              </Button>
+            ))}
+          </Space>
+        )}
       </Card>
 
       <RecordRelationsPanel

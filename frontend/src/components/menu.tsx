@@ -70,7 +70,7 @@ export const MENU_TREE: MenuNode[] = [
     icon: <FileTextOutlined />,
     children: [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
-      { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'req_scoring' },
+      { key: '/requirements/scoring', path: '/requirements/scoring', label: '需求评分规则', module: 'req_scoring' },
     ],
   },
   {
