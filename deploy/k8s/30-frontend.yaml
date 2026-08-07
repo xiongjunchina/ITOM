@@ -20,6 +20,14 @@ metadata:
   labels: { app: itom-frontend }
 spec:
   replicas: 2
+  # Required host anti-affinity leaves exactly two eligible hosts. The default
+  # surge rollout would need a third host while an old replica still occupies
+  # one of them, so replace one eligible-host replica at a time instead.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels: { app: itom-frontend }
   template:
