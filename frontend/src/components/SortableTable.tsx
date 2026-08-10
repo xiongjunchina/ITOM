@@ -1,5 +1,5 @@
 import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
 import { SettingOutlined } from '@ant-design/icons';
@@ -106,27 +106,43 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     [key: string]: unknown;
   };
   if (!onResize || !width) return <th {...rest}>{children}</th>;
-  const startResize = (event: ReactMouseEvent<HTMLSpanElement>) => {
-    if (event.button !== 0) return;
+  // 不能把拖拽状态放在闭包局部变量中：拖动时 setViewConfig 会触发表格重渲染，
+  // 局部变量会被重置，视觉上就会表现为“拖不动”。指针捕获可确保越过表头边界后
+  // 仍能继续收到移动与松开事件，也不会被相邻列或排序点击抢走。
+  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number; lastWidth: number } | null>(null);
+  const priorCursorRef = useRef('');
+  const restoreCursor = () => {
+    document.body.style.cursor = priorCursorRef.current;
+  };
+  const startResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (event.button !== 0 || !event.isPrimary) return;
     event.preventDefault();
     event.stopPropagation();
-    const startX = event.clientX;
-    const startWidth = width;
-    let lastWidth = startWidth;
-    const previousCursor = document.body.style.cursor;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: width,
+      lastWidth: width,
+    };
+    priorCursorRef.current = document.body.style.cursor;
     document.body.style.cursor = 'col-resize';
-    const move = (moveEvent: MouseEvent) => {
-      lastWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, startWidth + moveEvent.clientX - startX));
-      onResize(lastWidth);
-    };
-    const stop = () => {
-      document.removeEventListener('mousemove', move);
-      document.removeEventListener('mouseup', stop);
-      document.body.style.cursor = previousCursor;
-      onResizeEnd?.(lastWidth);
-    };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', stop, { once: true });
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const resize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, drag.startWidth + event.clientX - drag.startX));
+    drag.lastWidth = nextWidth;
+    onResize(nextWidth);
+  };
+  const stopResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    dragRef.current = null;
+    restoreCursor();
+    onResizeEnd?.(drag.lastWidth);
   };
   return (
     <th {...rest} className={`${className ?? ''} sortable-table__header-cell`} style={{ ...(rest.style as CSSProperties | undefined), position: 'relative' }}>
@@ -138,7 +154,15 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
         aria-orientation="vertical"
         title="拖动调整列宽"
         tabIndex={0}
-        onMouseDown={startResize}
+        onPointerDown={startResize}
+        onPointerMove={resize}
+        onPointerUp={stopResize}
+        onPointerCancel={stopResize}
+        onLostPointerCapture={stopResize}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowLeft') {
             event.preventDefault();
