@@ -1,5 +1,5 @@
 import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
 import { SettingOutlined } from '@ant-design/icons';
@@ -105,45 +105,95 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     width?: number;
     [key: string]: unknown;
   };
-  if (!onResize || !width) return <th {...rest}>{children}</th>;
   // 不能把拖拽状态放在闭包局部变量中：拖动时 setViewConfig 会触发表格重渲染，
-  // 局部变量会被重置，视觉上就会表现为“拖不动”。指针捕获可确保越过表头边界后
-  // 仍能继续收到移动与松开事件，也不会被相邻列或排序点击抢走。
-  const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number; lastWidth: number } | null>(null);
+  // 局部变量会被重置，视觉上就会表现为“拖不动”。保留 Pointer Events 以支持触控，
+  // 同时保留 Mouse Events 回退，兼容部分浏览器、嵌入式环境和自动化工具只派发鼠标事件的情形。
+  const dragRef = useRef<{
+    kind: 'pointer' | 'mouse';
+    pointerId?: number;
+    startX: number;
+    startWidth: number;
+    lastWidth: number;
+  } | null>(null);
   const priorCursorRef = useRef('');
+  const mouseListenersRef = useRef<{ move: (event: MouseEvent) => void; up: () => void } | null>(null);
   const restoreCursor = () => {
     document.body.style.cursor = priorCursorRef.current;
   };
-  const startResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
-    if (event.button !== 0 || !event.isPrimary) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startWidth: width,
-      lastWidth: width,
-    };
-    priorCursorRef.current = document.body.style.cursor;
-    document.body.style.cursor = 'col-resize';
-    event.currentTarget.setPointerCapture(event.pointerId);
+  const clearMouseListeners = () => {
+    const listeners = mouseListenersRef.current;
+    if (!listeners) return;
+    document.removeEventListener('mousemove', listeners.move);
+    document.removeEventListener('mouseup', listeners.up);
+    mouseListenersRef.current = null;
   };
-  const resize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+  const finishResize = () => {
     const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, drag.startWidth + event.clientX - drag.startX));
-    drag.lastWidth = nextWidth;
-    onResize(nextWidth);
-  };
-  const stopResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    event.preventDefault();
+    if (!drag) return;
+    clearMouseListeners();
     dragRef.current = null;
     restoreCursor();
     onResizeEnd?.(drag.lastWidth);
   };
+  useEffect(() => () => {
+    if (!dragRef.current) return;
+    clearMouseListeners();
+    dragRef.current = null;
+    restoreCursor();
+  }, []);
+  const beginResize = (kind: 'pointer' | 'mouse', startX: number, startWidth: number, pointerId?: number) => {
+    if (dragRef.current) return false;
+    dragRef.current = { kind, pointerId, startX, startWidth, lastWidth: startWidth };
+    priorCursorRef.current = document.body.style.cursor;
+    document.body.style.cursor = 'col-resize';
+    return true;
+  };
+  const applyResize = (clientX: number) => {
+    const drag = dragRef.current;
+    if (!drag || !onResize) return;
+    const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, drag.startWidth + clientX - drag.startX));
+    drag.lastWidth = nextWidth;
+    onResize(nextWidth);
+  };
+  const startPointerResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!beginResize('pointer', event.clientX, width ?? MIN_COLUMN_WIDTH, event.pointerId)) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const resizePointer = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.kind !== 'pointer' || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    applyResize(event.clientX);
+  };
+  const stopPointerResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.kind !== 'pointer' || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    finishResize();
+  };
+  const startMouseResize = (event: ReactMouseEvent<HTMLSpanElement>) => {
+    if (event.button !== 0 || !onResize || !width) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Chrome 会在部分 Pointer Events 序列后继续派发兼容 mousedown。此时不要
+    // 覆盖已有的 pointer 状态，但要补挂 document 级 mousemove/mouseup，避免
+    // 指针按下已送达、移动事件却只以 mousemove 形式到达时仍然“拖不动”。
+    if (!dragRef.current && !beginResize('mouse', event.clientX, width)) return;
+    if (mouseListenersRef.current) return;
+    const move = (moveEvent: MouseEvent) => {
+      if (!dragRef.current) return;
+      moveEvent.preventDefault();
+      applyResize(moveEvent.clientX);
+    };
+    const up = () => finishResize();
+    mouseListenersRef.current = { move, up };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up, { once: true });
+  };
+  if (!onResize || !width) return <th {...rest}>{children}</th>;
   return (
     <th {...rest} className={`${className ?? ''} sortable-table__header-cell`} style={{ ...(rest.style as CSSProperties | undefined), position: 'relative' }}>
       {children}
@@ -154,11 +204,12 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
         aria-orientation="vertical"
         title="拖动调整列宽"
         tabIndex={0}
-        onPointerDown={startResize}
-        onPointerMove={resize}
-        onPointerUp={stopResize}
-        onPointerCancel={stopResize}
-        onLostPointerCapture={stopResize}
+        onPointerDown={startPointerResize}
+        onPointerMove={resizePointer}
+        onPointerUp={stopPointerResize}
+        onPointerCancel={stopPointerResize}
+        onLostPointerCapture={stopPointerResize}
+        onMouseDown={startMouseResize}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
