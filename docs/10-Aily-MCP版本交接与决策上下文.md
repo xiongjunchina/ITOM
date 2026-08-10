@@ -323,6 +323,8 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 2026-08-10 IDC 公网可信 TLS：将 `*.snnc.cc` 的公开 CA 完整证书链和匹配私钥作为 `itom/itom-snnc-cc-tls`（`kubernetes.io/tls`）创建，Ingress 为 `itom.snnc.cc` 绑定精确 TLS host；FortiGate 保持 `183.60.58.58:30443 → 10.60.65.220:443` TLS 直通，DNS 与 `public_base_url=https://itom.snnc.cc:30443` 均未改变。公网 `curl`、`openssl s_client -verify_return_error -verify_hostname` 和浏览器现有登录会话均不跳过证书校验地通过；服务器发送 3 张 DigiCert 链证书，SAN 覆盖 `*.snnc.cc`。外部 `/mcp/` `initialize` 返回协议与 `serverInfo`。飞书开放平台已显示相同 HTTPS 回调地址、已订阅新版 `card.action.trigger` 且应用已发布；重新保存未改变的地址未报错，但未产生新的 challenge 访问日志。为避免变更生产业务单据，本轮未创建新工单或点击签名卡片；当前 IDC 的真实角色卡片点击仍须作为独立业务 UAT 完成，不能由历史卡片证据替代。
 
+2026-08-10 IDC 前端调度收口：三节点均 Ready、可调度且没有压力/污点；node02 是正常生产候选节点，不再按历史 build-executor 角色排除。`itom-frontend` 的目标模板显式声明空 `nodeName`，以清除人工恢复留下的 node01 固定绑定，并通过节点 01/02 选择器和硬主机反亲和使两个副本跨节点。后端保持无节点硬绑定的单副本 `Recreate`，数据库 StatefulSet、PVC、Secret 与业务数据不在本次应用发布范围。该策略不改变业务、身份、数据或 TLS 契约。
+
 验收：以业务用户、IT 人员完成“诉求 → 建单 → 派单 → 受理 → 解决 → 通知 → 确认/重开 → 关闭 → 评价”真实闭环，多张待确认单据不串单，内部信息不外发。
 
 ### 阶段 3：飞书审批（暂缓）与发布加固
