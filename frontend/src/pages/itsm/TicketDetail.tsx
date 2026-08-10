@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -83,6 +84,7 @@ export default function TicketDetail() {
   const [detail, setDetail] = useState<TicketDetailData | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // 状态流转 Modal
   const [transition, setTransition] = useState<AllowedTransition | null>(null);
@@ -119,6 +121,7 @@ export default function TicketDetail() {
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await api.get<TicketDetailData>(`/tickets/${id}`);
       setDetail(data);
@@ -126,8 +129,15 @@ export default function TicketDetail() {
         .getList<AttachmentItem>('/attachments', { entity_type: 'ticket', entity_id: id })
         .catch(() => ({ items: [], total: 0 }));
       setAttachments(attachmentResult.items);
-    } catch {
-      // 已统一提示
+    } catch (error) {
+      // 客户端已弹出统一提示；详情卡片仍保留后端的业务错误，避免将已撤回
+      // 单据误显示为从未存在或无权查看。
+      if (isAxiosError(error)) {
+        const body = error.response?.data as { error?: { message?: string } } | undefined;
+        setLoadError(body?.error?.message || t('itsm.ticket.notFound'));
+      } else {
+        setLoadError(t('itsm.ticket.notFound'));
+      }
     } finally {
       setLoading(false);
     }
@@ -306,7 +316,7 @@ export default function TicketDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">{t('itsm.ticket.notFound')}</Typography.Text>
+        <Alert type="warning" showIcon message={loadError || t('itsm.ticket.notFound')} />
       </Card>
     );
   }
