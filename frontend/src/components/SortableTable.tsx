@@ -114,6 +114,7 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     startX: number;
     startWidth: number;
     lastWidth: number;
+    columnElements: HTMLTableColElement[];
   } | null>(null);
   const priorCursorRef = useRef('');
   const mouseListenersRef = useRef<{ move: (event: MouseEvent) => void; up: () => void } | null>(null);
@@ -133,7 +134,13 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     clearMouseListeners();
     dragRef.current = null;
     restoreCursor();
-    onResizeEnd?.(drag.lastWidth);
+    // 连续拖动期间不能每个 mousemove 都 setState：固定列、展开列或 sticky
+    // 表头在 Ant Design 重建时会卸载当前 header cell，进而取消本次拖动。松开时
+    // 一次性把最终宽度交给 React 和偏好保存，直接 DOM 更新只负责拖动中的视觉反馈。
+    if (drag.lastWidth !== drag.startWidth) {
+      onResize?.(drag.lastWidth);
+      onResizeEnd?.(drag.lastWidth);
+    }
   };
   useEffect(() => () => {
     if (!dragRef.current) return;
@@ -141,25 +148,53 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     dragRef.current = null;
     restoreCursor();
   }, []);
-  const beginResize = (kind: 'pointer' | 'mouse', startX: number, startWidth: number, pointerId?: number) => {
+  const columnElementsFor = (handle: HTMLSpanElement): HTMLTableColElement[] => {
+    const headerCell = handle.closest('th');
+    if (!headerCell) return [];
+    const columnIndex = headerCell.cellIndex;
+    const tableRoot = headerCell.closest('.ant-table-container') ?? headerCell.closest('.ant-table') ?? headerCell.closest('table');
+    const tables = tableRoot instanceof HTMLTableElement
+      ? [tableRoot]
+      : Array.from(tableRoot?.querySelectorAll('table') ?? []);
+    return tables.flatMap((table) => {
+      const column = table.querySelectorAll<HTMLTableColElement>('colgroup col')[columnIndex];
+      return column ? [column] : [];
+    });
+  };
+  const beginResize = (
+    kind: 'pointer' | 'mouse',
+    startX: number,
+    startWidth: number,
+    handle: HTMLSpanElement,
+    pointerId?: number,
+  ) => {
     if (dragRef.current) return false;
-    dragRef.current = { kind, pointerId, startX, startWidth, lastWidth: startWidth };
+    dragRef.current = {
+      kind,
+      pointerId,
+      startX,
+      startWidth,
+      lastWidth: startWidth,
+      columnElements: columnElementsFor(handle),
+    };
     priorCursorRef.current = document.body.style.cursor;
     document.body.style.cursor = 'col-resize';
     return true;
   };
   const applyResize = (clientX: number) => {
     const drag = dragRef.current;
-    if (!drag || !onResize) return;
+    if (!drag) return;
     const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, drag.startWidth + clientX - drag.startX));
     drag.lastWidth = nextWidth;
-    onResize(nextWidth);
+    drag.columnElements.forEach((column) => {
+      column.style.width = `${nextWidth}px`;
+    });
   };
   const startPointerResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
     if (event.button !== 0 || !event.isPrimary) return;
     event.preventDefault();
     event.stopPropagation();
-    if (!beginResize('pointer', event.clientX, width ?? MIN_COLUMN_WIDTH, event.pointerId)) return;
+    if (!beginResize('pointer', event.clientX, width ?? MIN_COLUMN_WIDTH, event.currentTarget, event.pointerId)) return;
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const resizePointer = (event: ReactPointerEvent<HTMLSpanElement>) => {
@@ -181,7 +216,7 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     // Chrome 会在部分 Pointer Events 序列后继续派发兼容 mousedown。此时不要
     // 覆盖已有的 pointer 状态，但要补挂 document 级 mousemove/mouseup，避免
     // 指针按下已送达、移动事件却只以 mousemove 形式到达时仍然“拖不动”。
-    if (!dragRef.current && !beginResize('mouse', event.clientX, width)) return;
+    if (!dragRef.current && !beginResize('mouse', event.clientX, width, event.currentTarget)) return;
     if (mouseListenersRef.current) return;
     const move = (moveEvent: MouseEvent) => {
       if (!dragRef.current) return;

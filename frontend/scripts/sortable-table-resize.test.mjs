@@ -14,6 +14,10 @@ test('generic lists retain both pointer and mouse resize interactions across Rea
   assert.match(source, /document\.addEventListener\('mousemove', move\)/);
   assert.match(source, /document\.addEventListener\('mouseup', up, \{ once: true \}\)/);
   assert.match(source, /kind: 'pointer' \| 'mouse';/);
+  assert.match(source, /columnElements: HTMLTableColElement\[\];/);
+  assert.match(source, /querySelectorAll<HTMLTableColElement>\('colgroup col'\)\[columnIndex\]/);
+  assert.match(source, /column\.style\.width = `\$\{nextWidth\}px`;/);
+  assert.match(source, /if \(drag\.lastWidth !== drag\.startWidth\) \{/);
   assert.match(source, /onClick=\{\(event\) => \{/);
   assert.match(source, /tableLayout=\{props\.tableLayout \?\? 'fixed'\}/);
   assert.match(source, /const headerCell = props\.components\?\.header\?\.cell \?\? ResizableHeaderCell/);
