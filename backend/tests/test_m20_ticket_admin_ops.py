@@ -64,13 +64,28 @@ def test_requester_closes_own_sr(client, ctx):
 
 
 def test_delete_only_with_delete_perm(client, ctx):
-    """删除按矩阵 delete（默认仅 admin）：it_ops 403；admin 软删并级联流程实例。"""
+    """删除按矩阵 delete：流程与待办先收敛为终态，再保留软删审计。"""
     t = _sr(client, ctx, "待删除的测试单")
     assert client.delete(f"/api/tickets/{t['id']}", headers=ctx["ops_h"]).status_code == 403
 
     r = client.delete(f"/api/tickets/{t['id']}", headers=ctx["admin"])
     assert r.json()["success"], r.text
     assert r.json()["data"]["process_instances"] >= 1  # 流程实例级联软删
-    assert client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"]).status_code == 404
+    deleted_detail = client.get(f"/api/tickets/{t['id']}", headers=ctx["admin"])
+    assert deleted_detail.status_code == 404
+    assert deleted_detail.json()["error"]["code"] == "TICKET_DELETED"
+    assert "已撤回或删除" in deleted_detail.json()["error"]["message"]
+    from app.db import SessionLocal
+    from app.models import ProcessInstance, ProcessTask
+    with SessionLocal() as db:
+        instance = db.query(ProcessInstance).filter(
+            ProcessInstance.entity_type == "ticket", ProcessInstance.entity_id == t["id"]
+        ).one()
+        assert instance.is_deleted is True
+        assert instance.status == "completed"
+        assert instance.completed_at is not None
+        tasks = db.query(ProcessTask).filter(ProcessTask.instance_id == instance.id).all()
+        assert tasks and all(task.is_deleted for task in tasks)
+        assert all(task.status == "已完成" and task.completed_at is not None for task in tasks)
     rows = client.get("/api/tickets?page_size=100", headers=ctx["admin"]).json()["data"]
     assert all(x["id"] != t["id"] for x in rows)

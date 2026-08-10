@@ -969,6 +969,41 @@ def filter_targets_by_flow(db: Session, user: AuthUser, entity_type: str, entity
     return kept
 
 
+def archive_instances(db: Session, entity_type: str, entity_id: str, note: str) -> int:
+    """终止并软删除单据的流程实例与任务，避免删除后仍留下运行中待办。
+
+    已投递到外部通道的历史消息无法撤回，但其关联流程不得继续显示为
+    ``running`` 或 ``待处理``。保留完成时间和删除标记，可使审计同时看清
+    原流程已被单据删除终止。
+    """
+    instances = (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type == entity_type,
+            ProcessInstance.entity_id == entity_id,
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .all()
+    )
+    if not instances:
+        return 0
+    now = datetime.now()
+    for instance in instances:
+        for task in instance.tasks:
+            if task.is_deleted:
+                continue
+            if task.status == "待处理":
+                task.status = "已完成"
+                task.completed_at = now
+                task.comment = note
+            task.is_deleted = True
+        instance.status = "completed"
+        instance.completed_at = now
+        instance.is_deleted = True
+    logger.info("process %s/%s archived: %s", entity_type, entity_id, note)
+    return len(instances)
+
+
 def finalize_instance(db: Session, entity_type: str, entity_id: str, note: str) -> ProcessInstance | None:
     """单据到达终态时收尾流程实例（M24）：未处理任务作废式完成（留痕），实例标记完成。
 

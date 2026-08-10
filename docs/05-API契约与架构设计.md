@@ -223,6 +223,8 @@ MCP 不能在后台状态变化时主动唤醒 Aily。进入 `notifier.notify()`
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
 
+`DELETE /api/tickets/{id}` 在现有记录级删除授权后，先把该实体的所有活动流程实例与未完成任务完成收尾并软删除，再软删除工单并写入审计。后续 `GET /api/tickets/{id}` 对从前存在但已软删除的工单返回 HTTP 404、错误码 `TICKET_DELETED` 与“工单已撤回或删除，无法查看详情”；从未存在的 ID 仍返回 `NOT_FOUND`。该差异不返回任何已删除字段，专为站内或飞书/Aily 历史通知链接提供准确提示；已经投递的外部消息不可撤回。
+
 ### 4.1c IT 员工分流与跨单据关联（阶段 A/B/C 已实现）
 
 以下契约只服务 IT 员工网页，不增加 Aily/MCP 工具。分流、说明、受范围约束的关联读取和创建目标并关联接口均已上线：

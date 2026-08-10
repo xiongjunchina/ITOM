@@ -225,24 +225,15 @@ def update_bug(db: Session, bug: Bug, data: dict, actor: AuthUser) -> Bug:
 def delete_bug(db: Session, bug: Bug, actor: AuthUser):
     """Soft-delete an unreviewed Bug registration and its dependent work safely."""
     access = process_engine.require_workflow_delete(db, actor, "bug", bug.id, "task_bug")
-    from app.models import BugFixTask, ProcessInstance, ProcessTask
+    from app.models import BugFixTask
 
     stats = {"fix_tasks": 0, "process_instances": 0}
     for task in db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)):
         task.is_deleted = True
         stats["fix_tasks"] += 1
-    for instance in db.query(ProcessInstance).filter(
-        ProcessInstance.entity_type == "bug",
-        ProcessInstance.entity_id == bug.id,
-        ProcessInstance.is_deleted.is_(False),
-    ):
-        instance.is_deleted = True
-        stats["process_instances"] += 1
-        for task in db.query(ProcessTask).filter(
-            ProcessTask.instance_id == instance.id,
-            ProcessTask.is_deleted.is_(False),
-        ):
-            task.is_deleted = True
+    stats["process_instances"] = process_engine.archive_instances(
+        db, "bug", bug.id, "[单据删除] Bug 已撤回或删除"
+    )
     bug.is_deleted = True
     audit(db, "bug", bug.id, "delete", actor, {
         "code": bug.bug_code, **stats, "workflow_delete_mode": access.mode,

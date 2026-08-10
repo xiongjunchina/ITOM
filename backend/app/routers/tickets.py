@@ -219,8 +219,12 @@ def create_ticket(body: TicketCreate, db: Session = Depends(get_db), user: AuthU
 
 def _get_ticket(db: Session, ticket_id: str, user: AuthUser) -> Ticket:
     t = db.get(Ticket, ticket_id)
-    if not t or t.is_deleted:
+    if not t:
         raise AppError("NOT_FOUND", "工单不存在", 404)
+    if t.is_deleted:
+        # Aily/站内历史通知可在业务单据被撤回后仍保留原详情链接。保留与
+        # 不存在记录相同的 HTTP 语义，避免泄漏已删除数据，但给出可操作原因。
+        raise AppError("TICKET_DELETED", "工单已撤回或删除，无法查看详情", 404)
     if _is_requester_only(db, user) and t.submitter != user.id:
         raise AppError("FORBIDDEN", "无权查看他人工单", 403)
     if t.submitter != user.id:  # 提交人恒可见自己的单；他人单按类型模块鉴权
@@ -415,24 +419,14 @@ def close_ticket(ticket_id: str, body: TicketCloseIn, db: Session = Depends(get_
 
 @router.delete("/{ticket_id}")
 def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    """删除工单（M20，软删）：按类型模块 delete 权限（默认仅 admin）；级联软删流程实例与任务。"""
+    """删除工单：终止流程待办后软删，已发送的外部历史消息保留审计。"""
     t = _get_ticket(db, ticket_id, user)
     ensure_example_delete_allowed(t, db, user)
     access = process_engine.require_workflow_delete(db, user, svc.entity_type_of(t), t.id, _ticket_module(t.ticket_type))
-    from app.models import ProcessInstance, ProcessTask
 
-    t.is_deleted = True
     etype = svc.entity_type_of(t)
-    instances = 0
-    for inst in db.query(ProcessInstance).filter(
-        ProcessInstance.entity_type == etype,
-        ProcessInstance.entity_id == t.id,
-        ProcessInstance.is_deleted.is_(False),
-    ):
-        inst.is_deleted = True
-        instances += 1
-        for task in db.query(ProcessTask).filter(ProcessTask.instance_id == inst.id, ProcessTask.is_deleted.is_(False)):
-            task.is_deleted = True
+    instances = process_engine.archive_instances(db, etype, t.id, "[单据删除] 工单已撤回或删除")
+    t.is_deleted = True
     audit(db, "ticket", t.id, "delete", user, {
         "code": t.ticket_code, "process_instances": instances, "workflow_delete_mode": access.mode,
     })
