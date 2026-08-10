@@ -502,7 +502,8 @@ IDC Kubernetes:
 - `.github/workflows/quality-gate.yml` 在 feature/develop/main 的推送和 PR 上运行完整后端回归、前端生产构建、部署文件检查及中英文文档交付守卫。测试夹具使用临时 SQLite，不连接 IDC 业务数据库。
 - 质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，使用已验证的 `mirror.gcr.io` 官方 Docker Library 缓存与固定摘要取得 Python/Node/Nginx/PostgreSQL 基础镜像，构建并校验 linux/amd64，以 `git-<commit前12位>-linux-amd64` 为默认不可变标签后推送 Harbor；镜像构建不启动本地 ITOM，也不依赖 Docker Hub 匿名限流。
 - `deploy/k8s/k8s-deploy.sh` 部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。已批准的非数据库应用恢复可使用 `SKIP_DATABASE=1 ./k8s-deploy.sh`：脚本跳过 `10-postgres.yaml` 的 apply 和 PostgreSQL StatefulSet 的 rollout 等待，绝不删除、重启或重新调度数据库 Pod/PVC；该模式禁止用于涉及数据库结构的版本，后者仍须先执行批准的集群内备份/检查点。当前 IDC 前端部署只允许节点 `sn-prod-k8s-01` 与 `sn-prod-k8s-02`：节点 02 的 `isa.io/build-executor=true:NoSchedule` 只由 ITOM 前端显式容忍，`requiredDuringSchedulingIgnoredDuringExecution` 主机反亲和确保两副本在两个可用节点间分布，节点 03 不再承载 ITOM 前端。前端滚动更新固定 `maxSurge: 0`、`maxUnavailable: 1`，在仅有两个合格节点时先释放一个旧副本的节点容量再创建替换副本，避免强制反亲和与默认超额副本相互阻塞。后端继续固定在节点 02；数据库 StatefulSet、PVC 与备份 Job 均不在应用重部署范围。脚本对 rollout、Ready Endpoint、实际镜像、**每个** Ready 前端 Endpoint 的集群内后端代理、外部 `/api/health` 与 MCP `initialize` 采用失败即停止。
-- 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。
+- 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。FortiGate 保持 `183.60.58.58:30443` 到 Ingress VIP `10.60.65.220:443` 的 TLS 直通，不在防火墙卸载 TLS。
+- `itom` 命名空间的 Ingress 对 `itom.prod.sn.local` 和 `itom.snnc.cc` 分别绑定精确 TLS host。公网域名固定引用 `kubernetes.io/tls` 类型的 `itom-snnc-cc-tls`，其中 `tls.crt` 必须是以叶证书开头的完整公开 CA 链，并且 SAN 覆盖 `itom.snnc.cc`；`tls.key` 只可通过受控的集群 Secret 创建，绝不提交、记录或回显。部署脚本会在 apply 前确认该 Secret 存在且类型正确；IDC 正式验证不得使用 `ALLOW_UNTRUSTED_TLS`、`curl -k` 或其他跳过证书校验的方法。
 - `/mcp/` 必须保留流式响应并设置合理读超时；Aily 配置使用带末尾斜杠的规范地址，密钥只放请求头，不放 URL、日志或前端构建变量。
 - 日志：结构化 JSON 到 stdout（由 Kubernetes 日志链路查询）。
 

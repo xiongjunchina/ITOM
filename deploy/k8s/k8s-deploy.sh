@@ -21,6 +21,7 @@ SRC_NS=sn-cloud-production            # source of the harbor pull secret + wildc
 SERVER=https://10.60.65.1/k8s/clusters/local
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://itom.snnc.cc:30443}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
+PUBLIC_TLS_SECRET="${PUBLIC_TLS_SECRET:-itom-snnc-cc-tls}"
 SKIP_DATABASE="${SKIP_DATABASE:-0}"
 
 case "$TAG" in
@@ -72,6 +73,13 @@ copy_secret() {  # $1 = secret name
 }
 copy_secret harbor-isa
 copy_secret wildcard-prod-sn-local-tls
+
+echo "==> Verify public TLS Secret in $NS"
+public_tls_type="$("${KC[@]}" -n "$NS" get secret "$PUBLIC_TLS_SECRET" -o jsonpath='{.type}' 2>/dev/null || true)"
+[ "$public_tls_type" = "kubernetes.io/tls" ] || {
+  echo "!! Required public TLS Secret $NS/$PUBLIC_TLS_SECRET is missing or is not type kubernetes.io/tls"
+  exit 1
+}
 
 echo "==> App secret (generated once; kept on re-run so the DB password is stable)"
 if ! "${KC[@]}" -n "$NS" get secret itom-secrets >/dev/null 2>&1; then
@@ -175,8 +183,8 @@ done
 echo "==> Verify external health and MCP initialize"
 curl_args=(--fail --silent --show-error --max-time 20)
 if [ "${ALLOW_UNTRUSTED_TLS:-0}" = "1" ]; then
-  curl_args+=(--insecure)
-  echo "   warning: TLS verification explicitly disabled for this run"
+  echo "!! ALLOW_UNTRUSTED_TLS is not permitted for IDC release verification"
+  exit 1
 fi
 curl "${curl_args[@]}" \
   "$PUBLIC_BASE_URL/api/health" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' || {

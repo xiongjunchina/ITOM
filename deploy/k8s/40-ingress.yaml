@@ -1,9 +1,10 @@
 # Expose ITOM at https://itom.prod.sn.local via ingress-nginx.
-# The public alias itom.snnc.cc is routed to the same frontend below. It needs
-# a separate publicly trusted TLS secret before browsers will trust HTTPS.
-# TLS reuses the internal-CA wildcard secret (copied into the itom namespace by
-# k8s-deploy.sh). external-dns target pins the A record to the ingress VIP
-# (10.60.65.220); node-IP status records don't serve :443.
+# The public alias itom.snnc.cc is routed to the same frontend below and uses
+# its own publicly trusted TLS Secret. The private key is intentionally kept
+# outside this repository and is provisioned only in the itom namespace.
+# TLS for the internal name reuses the internal-CA wildcard secret copied by
+# k8s-deploy.sh. external-dns pins the A record to the ingress VIP (10.60.65.220);
+# node-IP status records do not serve :443.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -19,6 +20,9 @@ spec:
     - hosts:
         - itom.prod.sn.local
       secretName: wildcard-prod-sn-local-tls
+    - hosts:
+        - itom.snnc.cc
+      secretName: itom-snnc-cc-tls
   rules:
     - host: itom.prod.sn.local
       http:
