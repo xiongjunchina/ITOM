@@ -32,7 +32,7 @@ const STATIC_PAGES: Array<readonly [path: string, pageType: string, tabs?: reado
   ['/projects/portfolios', 'portfolio_list'],
   ['/requirements/overview', 'requirement_list'],
   ['/requirements/scoring', 'requirement_scoring'],
-  ['/task-management/development', 'development_tasks', ['requirement', 'bug']],
+  ['/task-management/development', 'development_tasks', ['requirement', 'bug', 'project']],
   ['/task-management/delegated', 'delegated_tasks'],
   ['/process/definitions', 'process_definitions'],
   ['/process/monitor', 'process_monitor'],

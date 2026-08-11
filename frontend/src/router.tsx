@@ -137,7 +137,7 @@ export const router = createBrowserRouter([
       { path: 'requirements/scoring', element: <RequirementScoring /> },
       { path: 'requirements/:id', element: <RequirementDetail /> },
 
-      // 任务管理（M82）：开发任务分为需求开发/Bug 修复，委派任务覆盖轻量化 IT 工作。
+      // 任务管理（M82）：开发任务分为需求开发/Bug 修复/项目开发，委派任务覆盖轻量化 IT 工作。
       { path: 'task-management/development', element: <DevelopmentTasksPage /> },
       { path: 'task-management/delegated', element: <DelegatedTasksPage /> },
 
