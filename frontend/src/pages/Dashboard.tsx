@@ -405,6 +405,7 @@ export default function Dashboard() {
             <SubStat label={t('dash.task.bugFixes')} value={task?.open_bug_fix_tasks ?? 0} />
             <SubStat label={t('dash.task.delegated')} value={task?.open_delegated_tasks ?? 0} />
             <SubStat label={t('dash.task.requirements')} value={task?.open_requirement_tasks ?? 0} />
+            <SubStat label={t('dash.task.projects')} value={task?.open_project_tasks ?? 0} />
           </div>
         </BlockCard>
       </Col>

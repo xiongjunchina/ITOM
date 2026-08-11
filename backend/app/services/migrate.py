@@ -104,6 +104,7 @@ ENSURE_COLUMNS = {
         ("description", "TEXT"),
         ("plan_effort", "DOUBLE PRECISION"),
         ("actual_effort", "DOUBLE PRECISION"),
+        ("registrar", "VARCHAR(26)"),
     ],
     "auth_user": [
         ("preferences", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
@@ -1088,6 +1089,12 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    # M97：需求开发任务允许先登记、后关联需求。仅放宽约束，不删除、不改写
+    # 任何既有任务及其关联关系。
+    db.execute(text("ALTER TABLE requirement_task ALTER COLUMN requirement_id DROP NOT NULL"))
+    # M97：系统管理员可能是未绑定组织人员的内置账号。任务登记人允许为空，
+    # 审计日志仍保留 AuthUser 身份；普通 IT 账号仍由服务层强制要求人员绑定。
+    db.execute(text("ALTER TABLE work_task ALTER COLUMN registrar DROP NOT NULL"))
     ensure_aily_indexes(db)
     ensure_assistant_schema(db)
     ensure_record_relation_schema(db)

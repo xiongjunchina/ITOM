@@ -26,7 +26,8 @@ def test_bug_reference_comes_from_cmdb_and_dashboard_exposes_tasks(client, admin
     dashboard = client.get("/api/dashboard", headers=admin_headers)
     assert dashboard.status_code == 200, dashboard.text
     assert set(dashboard.json()["data"]["task"]) == {
-        "open_total", "open_bugs", "open_bug_fix_tasks", "open_delegated_tasks", "open_requirement_tasks",
+        "open_total", "open_bugs", "open_bug_fix_tasks", "open_delegated_tasks",
+        "open_requirement_tasks", "open_project_tasks",
     }
 
 

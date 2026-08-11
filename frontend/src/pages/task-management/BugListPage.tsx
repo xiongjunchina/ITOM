@@ -190,8 +190,10 @@ export default function BugListPage() {
   };
 
   const openEdit = (bug: BugRow) => {
+    void loadReferences();
     bugForm.setFieldsValue({
       title: bug.title,
+      ci_id: bug.ci_id,
       description: bug.description,
       priority: bug.priority,
       reproduction: bug.reproduction ?? undefined,
@@ -210,6 +212,7 @@ export default function BugListPage() {
     try {
       await api.patch(`/task-management/bugs/${editingBug.id}`, {
         title: values.title,
+        ci_id: values.ci_id,
         description: values.description,
         priority: values.priority,
         reproduction: values.reproduction || null,
@@ -296,8 +299,22 @@ export default function BugListPage() {
     }
   };
 
+  const removeBug = (row: BugRow) => {
+    Modal.confirm({
+      title: t('common.confirmDelete'),
+      content: t('common.confirmDelete'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await api.delete(`/task-management/bugs/${row.id}`);
+        message.success(t('common.deleted'));
+        if (detail?.id === row.id) setDetail(null);
+        await load();
+      },
+    });
+  };
+
   const columns: ColumnsType<BugRow> = useMemo(() => [
-    { title: t('task.bug.code'), dataIndex: 'bug_code', width: 140, fixed: 'left' },
+    { title: t('task.bug.code'), dataIndex: 'bug_code', width: 140, fixed: 'left', render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void refreshDetail(row.id)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 260, ellipsis: true },
     { title: t('task.bug.system'), dataIndex: 'ci_name', width: 170, render: (v) => v || '-' },
     {
@@ -311,8 +328,12 @@ export default function BugListPage() {
     { title: t('task.bug.productManager'), dataIndex: 'product_manager_name', width: 110, render: (v) => v || '-' },
     { title: t('task.bug.devLeader'), dataIndex: 'dev_leader_name', width: 110, render: (v) => v || '-' },
     {
-      title: t('common.actions'), key: 'actions', width: 100, fixed: 'right',
-      render: (_: unknown, row: BugRow) => <Button type="link" size="small" onClick={() => void refreshDetail(row.id)}>{t('common.detail')}</Button>,
+      title: t('common.actions'), key: 'actions', width: 180, fixed: 'right',
+      render: (_: unknown, row: BugRow) => <Space size={0}>
+        <Button type="link" size="small" onClick={() => void refreshDetail(row.id)}>{t('common.detail')}</Button>
+        {row.capabilities.edit && <Button type="link" size="small" onClick={() => openEdit(row)}>{t('common.edit')}</Button>}
+        {row.capabilities.delete && <Button type="link" size="small" danger onClick={() => removeBug(row)}>{t('common.delete')}</Button>}
+      </Space>,
     },
   ], [t]);
 
@@ -372,7 +393,7 @@ export default function BugListPage() {
             {detail.status === 'registered' && detail.capabilities.confirm && <Button type="primary" onClick={() => void (async () => { await api.post(`/task-management/bugs/${detail.id}/confirm`, { comment: '' }); message.success(t('task.bug.actionDone')); await refreshDetail(detail.id); })()}>{t('task.bug.confirm')}</Button>}
             {detail.status === 'registered' && detail.capabilities.confirm && <Button danger onClick={() => openAction('reject')}>{t('task.bug.reject')}</Button>}
             {detail.capabilities.edit && <Button onClick={() => openEdit(detail)}>{t('common.edit')}</Button>}
-            {detail.capabilities.delete && <Button danger onClick={() => Modal.confirm({ title: t('common.confirmDelete'), content: t('common.confirmDelete'), onOk: async () => { await api.delete(`/task-management/bugs/${detail.id}`); message.success(t('common.deleted')); setDetail(null); await load(); } })}>{t('common.delete')}</Button>}
+            {detail.capabilities.delete && <Button danger onClick={() => removeBug(detail)}>{t('common.delete')}</Button>}
             {detail.status === 'confirmed' && detail.capabilities.generate_fix_tasks && <Button type="primary" onClick={openGenerate}>{t('task.bug.generate')}</Button>}
             {detail.status === 'resolved' && detail.capabilities.verify && <><Button type="primary" onClick={() => openAction('verify-close')}>{t('task.bug.verifyClose')}</Button><Button onClick={() => openAction('verify-fail')}>{t('task.bug.verifyFail')}</Button></>}
             {['rejected', 'resolved', 'closed'].includes(detail.status) && detail.capabilities.reopen && <Button onClick={() => openAction('reopen')}>{t('task.bug.reopen')}</Button>}
@@ -443,6 +464,9 @@ export default function BugListPage() {
       >
         <Form form={bugForm} layout="vertical" preserve={false}>
           <Form.Item name="title" label={t('task.title')} rules={[{ required: true, message: t('task.titleRequired') }]}><Input maxLength={200} /></Form.Item>
+          <Form.Item name="ci_id" label={t('task.bug.system')} extra={t('task.bug.systemHint')} rules={[{ required: true, message: t('task.bug.systemRequired') }]}>
+            <Select showSearch optionFilterProp="label" options={cis.map((ci) => ({ value: ci.id, label: `${ci.name}${ci.product_manager_name ? `（PM：${ci.product_manager_name}）` : ''}` }))} />
+          </Form.Item>
           <Space wrap size={16}>
             <Form.Item name="priority" label={t('task.priority')} rules={[{ required: true }]}><Select style={{ width: 120 }} options={['P1', 'P2', 'P3', 'P4'].map((v) => ({ value: v, label: v }))} /></Form.Item>
             <Form.Item name="environment" label={t('task.bug.environment')}><Input style={{ width: 220 }} /></Form.Item>

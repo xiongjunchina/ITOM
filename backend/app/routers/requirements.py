@@ -8,6 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
+from app.core.glid import new_glid
 from app.core.rbac import ADMIN, BDO, IT_PDM, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
@@ -118,6 +119,7 @@ class TransitionIn(BaseModel):
 
 
 class TaskIn(BaseModel):
+    requirement_id: str | None = None
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
     assignee: str
@@ -126,6 +128,7 @@ class TaskIn(BaseModel):
 
 
 class TaskUpdate(BaseModel):
+    requirement_id: str | None = None
     name: str | None = None
     description: str | None = None
     assignee: str | None = None
@@ -710,7 +713,7 @@ def _development_task_sheet() -> "Sheet":
     from app.services.excel_io import Col, Sheet
 
     return Sheet("开发任务", [
-        Col("requirement_code", "关联需求编号", required=True, hint="填写实现中的需求编号，例如 RQ-202608-0001", max_length=32),
+        Col("requirement_code", "关联需求编号", hint="可留空，后续在开发任务页面补充；填写时须为实现中的需求编号", max_length=32),
         Col("name", "任务名称", required=True, max_length=200),
         Col("description", "任务描述", max_length=1000),
         Col("assignee_name", "处理人", required=True, hint="按数字化团队在岗人员姓名精确匹配", max_length=64),
@@ -749,6 +752,8 @@ async def import_development_tasks(
     """按行导入实现中需求的开发任务；有效行入库，失败行返回给前端修正。"""
     from app.services.excel_io import parse_sheet
 
+    if not user.person_id and not _is_req_admin(db, user):
+        raise AppError("PERSON_REQUIRED", "当前账号未绑定人员，不能导入开发任务", 403)
     content = await file.read()
     if len(content) > 5 * 1024 * 1024:
         raise AppError("FILE_TOO_LARGE", "导入文件不能超过 5MB")
@@ -768,12 +773,12 @@ async def import_development_tasks(
     created = 0
     for row in rows:
         rownum = row["_row"]
-        requirement_code = row["requirement_code"]
-        requirement = requirements.get(requirement_code)
-        if not requirement:
+        requirement_code = (row.get("requirement_code") or "").strip()
+        requirement = requirements.get(requirement_code) if requirement_code else None
+        if requirement_code and not requirement:
             errors.append({"row": rownum, "error": f"关联需求编号「{requirement_code}」不存在"})
             continue
-        if requirement.is_example or requirement.project_id or requirement.status != "implementing":
+        if requirement and (requirement.is_example or requirement.project_id or requirement.status != "implementing"):
             errors.append({"row": rownum, "error": "关联需求必须是未转项目、非示例且处于「实现中」状态"})
             continue
         assignees = members_by_name.get(row["assignee_name"], [])
@@ -793,7 +798,8 @@ async def import_development_tasks(
             errors.append({"row": rownum, "error": exc.message})
             continue
         task = RequirementTask(
-            requirement_id=requirement.id,
+            requirement_id=requirement.id if requirement else None,
+            registrar=user.person_id,
             name=row["name"],
             description=row.get("description"),
             assignee=assignee.id,
@@ -806,11 +812,18 @@ async def import_development_tasks(
             task.done_at = datetime.now()
         db.add(task)
         db.flush()
-        audit(db, "requirement_task", task.id, "import", user, {"name": task.name, "requirement": requirement.requirement_code})
+        audit(db, "requirement_task", task.id, "import", user, {
+            "name": task.name,
+            "requirement": requirement.requirement_code if requirement else None,
+        })
         if task.assignee != user.person_id:
-            notifier.notify(db, "requirement.task_assigned", "requirement", requirement.id, [task.assignee],
-                            f"需求任务指派：{requirement.title} / {task.name}", link=f"/requirements/{requirement.id}")
-        if task.status == "已完成":
+            notifier.notify(
+                db, "requirement.task_assigned", "requirement_task", task.id, [task.assignee],
+                f"开发任务指派：{task.name}",
+                f"关联需求：{requirement.title if requirement else '暂未关联'}",
+                link=f"/requirements/{requirement.id}" if requirement else "/task-management/development",
+            )
+        if task.status == "已完成" and requirement:
             publish(db, "requirement.task_completed", "requirement", requirement.id, {"task_id": task.id})
         created += 1
     db.commit()
@@ -1302,10 +1315,16 @@ def active_tasks(
         raise AppError("FORBIDDEN", "无开发任务查看权限", 403)
     q = (
         db.query(RequirementTask, Requirement)
-        .join(Requirement, RequirementTask.requirement_id == Requirement.id)
+        .outerjoin(Requirement, RequirementTask.requirement_id == Requirement.id)
         .filter(
-            RequirementTask.is_deleted.is_(False), Requirement.is_deleted.is_(False),
-            Requirement.status.in_(("analyzing", "implementing")),
+            RequirementTask.is_deleted.is_(False),
+            or_(
+                RequirementTask.requirement_id.is_(None),
+                (
+                    Requirement.is_deleted.is_(False)
+                    & Requirement.status.in_(("analyzing", "implementing"))
+                ),
+            ),
         )
     )
     if scope == "mine" and user.person_id:
@@ -1322,7 +1341,7 @@ def active_tasks(
     def _prio(pair):
         t, r = pair
         total = requirement_scoring.compute_weighted_total(
-            requirement_scoring.requirement_scores(r), cfg.weights)
+            requirement_scoring.requirement_scores(r), cfg.weights) if r else None
         return (-(total if total is not None else -1), t.plan_date is None, t.plan_date or _date.max, t.status)
 
     rows = sorted(rows, key=_prio)
@@ -1332,18 +1351,20 @@ def active_tasks(
             "assignee": t.assignee, "assignee_name": names.get(t.assignee),
             "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
             "status": t.status, "done_at": t.done_at,
-            "requirement_id": r.id, "requirement_code": r.requirement_code,
-            "requirement_title": r.title, "requirement_status": r.status,
-            "requirement_status_name": status_map.get(r.status, r.status),
-            "requirement_owner_name": names.get(r.owner),
-            "business_domain_name": domains.get(r.business_domain_id),
-            "moscow": r.moscow,
+            "requirement_id": r.id if r else None,
+            "requirement_code": r.requirement_code if r else None,
+            "requirement_title": r.title if r else None,
+            "requirement_status": r.status if r else None,
+            "requirement_status_name": status_map.get(r.status, r.status) if r else None,
+            "requirement_owner_name": names.get(r.owner) if r else None,
+            "business_domain_name": domains.get(r.business_domain_id) if r else None,
+            "moscow": r.moscow if r else None,
             "weighted_total": requirement_scoring.compute_weighted_total(
-                requirement_scoring.requirement_scores(r), cfg.weights),
+                requirement_scoring.requirement_scores(r), cfg.weights) if r else None,
             "quadrant": requirement_scoring.compute_quadrant(
-                requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights),
-            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
-            "can_edit": _can_manage_requirement_tasks(db, user, r),
+                requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights) if r else None,
+            "can_manage_tasks": _can_manage_requirement_tasks(db, user, r) if r else _has_development_task_edit(db, user),
+            "can_edit": _can_manage_requirement_tasks(db, user, r) if r else _has_development_task_edit(db, user),
             "can_delete": _can_delete_requirement_task(db, user, t),
         }
         for t, r in rows
@@ -1354,8 +1375,64 @@ def active_tasks(
 
 def _require_task_perm(db: Session, user: AuthUser, requirement: Requirement | None = None):
     """任务维护权限：实现中需求上的 IT 类角色或兼容的历史需求负责人。"""
+    if requirement and _can_manage_requirement_tasks(db, user, requirement):
+        return
+    if requirement is None and _has_development_task_edit(db, user):
+        return
     if not requirement or not _can_manage_requirement_tasks(db, user, requirement):
         raise AppError("FORBIDDEN", "无开发任务维护权限（需开发任务编辑权限且需求处于实现中）", 403)
+
+
+def _task_requirement(db: Session, requirement_id: str | None, user: AuthUser) -> Requirement | None:
+    if not requirement_id:
+        return None
+    requirement = _get_requirement(db, requirement_id, user)
+    ensure_not_example(requirement)
+    _require_task_perm(db, user, requirement)
+    return requirement
+
+
+def _create_requirement_task(
+    db: Session, body: TaskIn, user: AuthUser, requirement: Requirement | None,
+) -> RequirementTask:
+    from datetime import date as _date
+
+    if not user.person_id and not _is_req_admin(db, user):
+        raise AppError("PERSON_REQUIRED", "当前账号未绑定人员，不能登记开发任务", 403)
+    require_it_member_if_configured(db, body.assignee, "需求任务负责人")
+    task = RequirementTask(
+        requirement_id=requirement.id if requirement else None,
+        registrar=user.person_id,
+        name=body.name,
+        description=body.description,
+        assignee=body.assignee,
+        plan_date=_date.fromisoformat(body.plan_date) if body.plan_date else None,
+        plan_effort=body.plan_effort,
+    )
+    db.add(task)
+    db.flush()
+    audit(db, "requirement_task", task.id, "create", user, {
+        "name": body.name, "requirement_id": task.requirement_id,
+    })
+    if task.assignee != user.person_id:
+        notifier.notify(
+            db, "requirement.task_assigned", "requirement_task", task.id, [task.assignee],
+            f"开发任务指派：{task.name}",
+            f"关联需求：{requirement.title if requirement else '暂未关联'}",
+            link=f"/requirements/{requirement.id}" if requirement else "/task-management/development",
+        )
+    return task
+
+
+@router.post("/tasks")
+def create_standalone_task(
+    body: TaskIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    _require_task_perm(db, user)
+    requirement = _task_requirement(db, body.requirement_id, user)
+    task = _create_requirement_task(db, body, user, requirement)
+    db.commit()
+    return ok({"id": task.id})
 
 
 @router.post("/{requirement_id}/tasks")
@@ -1363,19 +1440,7 @@ def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db)
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
     _require_task_perm(db, user, r)
-    from datetime import date as _date
-
-    task = RequirementTask(
-        requirement_id=r.id, name=body.name, description=body.description, assignee=body.assignee,
-        plan_date=_date.fromisoformat(body.plan_date) if body.plan_date else None,
-        plan_effort=body.plan_effort,
-    )
-    db.add(task)
-    db.flush()
-    audit(db, "requirement_task", task.id, "create", user, {"name": body.name})
-    if task.assignee != user.person_id:
-        notifier.notify(db, "requirement.task_assigned", "requirement", r.id, [task.assignee],
-                        f"需求任务指派：{r.title} / {task.name}", link=f"/requirements/{r.id}")
+    task = _create_requirement_task(db, body, user, r)
     db.commit()
     return ok({"id": task.id})
 
@@ -1385,13 +1450,14 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    requirement = db.get(Requirement, task.requirement_id)
-    ensure_not_example(requirement)
+    requirement = db.get(Requirement, task.requirement_id) if task.requirement_id else None
+    if requirement:
+        ensure_not_example(requirement)
     data = body.model_dump(exclude_unset=True)
     if data.get("assignee"):
         require_it_member_if_configured(db, data["assignee"], "需求任务负责人")
     is_assignee = user.person_id and task.assignee == user.person_id
-    can_manage = _can_manage_requirement_tasks(db, user, requirement)
+    can_manage = _can_manage_requirement_tasks(db, user, requirement) if requirement else _has_development_task_edit(db, user)
     if not can_manage and not (is_assignee and set(data) <= {"status", "actual_effort"}):
         raise AppError("FORBIDDEN", "仅需求负责人可维护任务；任务负责人只能更新自己的状态和实际工时", 403)
     if data.get("status") and data["status"] not in ("待处理", "进行中", "已完成"):
@@ -1400,11 +1466,37 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
         from datetime import date as _date
 
         data["plan_date"] = _date.fromisoformat(str(data["plan_date"]))
+    if "requirement_id" in data:
+        next_requirement = _task_requirement(db, data["requirement_id"], user)
+        data["requirement_id"] = next_requirement.id if next_requirement else None
+        requirement = next_requirement
+    old_assignee = task.assignee
     for k, v in data.items():
         setattr(task, k, v)
     if data.get("status") == "已完成" and not task.done_at:
         task.done_at = datetime.now()
-        publish(db, "requirement.task_completed", "requirement", task.requirement_id, {"task_id": task.id})
+        if task.requirement_id:
+            publish(db, "requirement.task_completed", "requirement", task.requirement_id, {"task_id": task.id})
+    if task.assignee != old_assignee and task.assignee:
+        notifier.notify(
+            db, "requirement.task_assigned", "requirement_task", task.id, [task.assignee],
+            f"开发任务已重新指派：{task.name}",
+            f"关联需求：{requirement.title if requirement else '暂未关联'}",
+            link=f"/requirements/{requirement.id}" if requirement else "/task-management/development",
+        )
+    if task.registrar and user.person_id != task.registrar and (
+        "status" in data or "actual_effort" in data
+    ):
+        notifier.notify(
+            db,
+            "requirement.task_progressed",
+            "requirement_task_update",
+            new_glid(),
+            [task.registrar],
+            f"需求开发任务进度更新：{task.name}",
+            f"状态：{task.status}；实际人天：{task.actual_effort if task.actual_effort is not None else '-'}。",
+            link=f"/requirements/{requirement.id}" if requirement else "/task-management/development",
+        )
     audit(db, "requirement_task", task.id, "update", user, {"fields": list(data.keys())})
     db.commit()
     return ok({"id": task.id})
@@ -1415,8 +1507,9 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = De
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    requirement = db.get(Requirement, task.requirement_id)
-    ensure_example_delete_allowed(requirement, db, user)
+    requirement = db.get(Requirement, task.requirement_id) if task.requirement_id else None
+    if requirement:
+        ensure_example_delete_allowed(requirement, db, user)
     if not _can_delete_requirement_task(db, user, task):
         if task.status == "进行中":
             raise AppError("FORBIDDEN", "进行中的开发任务仅系统管理员可删除", 403)

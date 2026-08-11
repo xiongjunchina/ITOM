@@ -10,9 +10,23 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
+from app.core.glid import new_glid
 from app.core.rbac import ADMIN
+from app.events import notifier
 from app.events.bus import publish
-from app.models import AuthUser, Bug, BugFixTask, Ci, OrgMember, ProcessTask, WorkTask
+from app.models import (
+    AuthUser,
+    Bug,
+    BugFixTask,
+    Ci,
+    OrgMember,
+    ProcessTask,
+    Project,
+    ProjectDevelopmentTask,
+    TaskProgressEntry,
+    WbsTask,
+    WorkTask,
+)
 from app.services import process_engine
 from app.services.audit import audit
 from app.services.codes import gen_code
@@ -23,6 +37,7 @@ from app.services.team_scope import require_it_member_if_configured
 BUG_STATUSES = ("registered", "confirmed", "fixing", "resolved", "closed", "rejected")
 FIX_TASK_STATUSES = ("登记", "排期", "执行", "暂停", "关闭")
 WORK_TASK_STATUSES = ("登记", "排期", "执行", "暂停", "关闭", "中止")
+PROJECT_TASK_STATUSES = ("待处理", "进行中", "已完成")
 # 只有明确属于团队贡献的类别，才允许把委派任务计入固定 20% 团队贡献；
 # 其他委派工作默认归入岗位结果，避免普通工作被错误计入团队贡献。
 TEAM_CONTRIBUTION_TASK_RULES = {
@@ -54,9 +69,80 @@ def _require_person(user: AuthUser) -> str:
     return user.person_id
 
 
+def _registrar_for_create(db: Session, user: AuthUser) -> str | None:
+    """Return the registrar person while preserving the administrator override.
+
+    Ordinary IT accounts must be mapped to an organisation member so task
+    ownership and notifications remain attributable.  The built-in system
+    administrator is deliberately allowed to create configuration/test records
+    without a person binding; audit fields still retain the AuthUser identity.
+    """
+    if user.person_id:
+        return user.person_id
+    if _is_admin(db, user):
+        return None
+    raise AppError("PERSON_REQUIRED", "当前账号未绑定人员，不能登记或处理任务", 403)
+
+
 def _member_name(db: Session, person_id: str | None) -> str | None:
     member = db.get(OrgMember, person_id) if person_id else None
     return member.name if member else None
+
+
+def _progress_rows(db: Session, task_kind: str, task_id: str) -> list[dict]:
+    rows = (
+        db.query(TaskProgressEntry)
+        .filter(
+            TaskProgressEntry.task_kind == task_kind,
+            TaskProgressEntry.task_id == task_id,
+            TaskProgressEntry.is_deleted.is_(False),
+        )
+        # created_at may only have second-level precision on SQLite and some
+        # production schemas.  The GLID is time-sortable, so use it as the
+        # deterministic tie-breaker to keep the newest appended entry first.
+        .order_by(TaskProgressEntry.created_at.desc(), TaskProgressEntry.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "author_id": row.author_id,
+            "author_name": row.author_name,
+            "progress_percent": row.progress_percent,
+            "status_snapshot": row.status_snapshot,
+            "comment": row.comment,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]
+
+
+def _append_progress(
+    db: Session,
+    *,
+    task_kind: str,
+    task_id: str,
+    status: str,
+    actor: AuthUser,
+    comment: str,
+    progress_percent: int | None = None,
+) -> TaskProgressEntry:
+    if progress_percent is not None and not 0 <= progress_percent <= 100:
+        raise AppError("INVALID_PROGRESS", "完成度必须在 0 到 100 之间")
+    if not comment.strip():
+        raise AppError("COMMENT_REQUIRED", "进度说明不能为空")
+    row = TaskProgressEntry(
+        task_kind=task_kind,
+        task_id=task_id,
+        author_id=actor.person_id,
+        author_name=_member_name(db, actor.person_id) or actor.username,
+        progress_percent=progress_percent,
+        status_snapshot=status,
+        comment=comment.strip(),
+    )
+    db.add(row)
+    db.flush()
+    return row
 
 
 def _current_bug_task(db: Session, bug_id: str) -> ProcessTask | None:
@@ -211,8 +297,16 @@ def create_bug(db: Session, data: dict, actor: AuthUser) -> Bug:
 def update_bug(db: Session, bug: Bug, data: dict, actor: AuthUser) -> Bug:
     access = process_engine.require_workflow_edit(db, actor, "bug", bug.id, "task_bug")
     allowed = {
-        "title", "description", "priority", "reproduction", "expected_result", "actual_result", "environment", "evidence",
+        "title", "description", "priority", "ci_id", "reproduction", "expected_result", "actual_result", "environment", "evidence",
     }
+    if "ci_id" in data and data["ci_id"] != bug.ci_id:
+        ci = db.get(Ci, data["ci_id"])
+        if not ci or ci.is_deleted:
+            raise AppError("NOT_FOUND", "所属系统不存在", 404)
+        if not ci.product_manager_id:
+            raise AppError("PRODUCT_MANAGER_REQUIRED", "所属系统尚未配置产品经理，不能保存 Bug")
+        bug.product_manager_id = ci.product_manager_id
+        _assign_current_bug_task(db, bug.id, ci.product_manager_id)
     for key, value in data.items():
         if key in allowed:
             setattr(bug, key, value)
@@ -297,6 +391,17 @@ def create_fix_tasks(db: Session, bug: Bug, rows: list[dict], actor: AuthUser) -
         db.add(item)
         result.append(item)
     db.flush()
+    for item in result:
+        notifier.notify(
+            db,
+            "bug_fix_task.assigned",
+            "bug_fix_task",
+            item.id,
+            [item.assignee],
+            f"Bug 修复任务已分配：{item.name}",
+            f"Bug {bug.bug_code} 已分配给您处理。",
+            "/task-management/development",
+        )
     bug.status = "fixing"
     process_engine.complete_task(db, task.id, actor, f"已生成 {len(result)} 条修复任务")
     audit(db, "bug", bug.id, "generate_fix_tasks", actor, {"count": len(result)})
@@ -327,6 +432,7 @@ def update_fix_task(db: Session, task: BugFixTask, data: dict, actor: AuthUser) 
         if status != task.status and status not in allowed.get(task.status, set()) and not is_admin:
             raise AppError("INVALID_TRANSITION", f"不允许从「{task.status}」流转到「{status}」")
     old_status = task.status
+    old_assignee = task.assignee
     for key, value in data.items():
         if key in {"name", "task_type", "description", "assignee", "plan_start", "plan_date", "plan_effort", "actual_effort", "status", "completion_note"}:
             setattr(task, key, value)
@@ -335,6 +441,21 @@ def update_fix_task(db: Session, task: BugFixTask, data: dict, actor: AuthUser) 
         if old_status != "关闭":
             publish(db, "bug_fix_task.completed", "bug_fix_task", task.id, {"task_id": task.id, "bug_id": bug.id})
     audit(db, "bug_fix_task", task.id, "update", actor, {"fields": list(data)})
+    if task.assignee and task.assignee != old_assignee:
+        notifier.notify(
+            db, "bug_fix_task.assigned", "bug_fix_task", task.id, [task.assignee],
+            f"Bug 修复任务已分配：{task.name}", f"请处理 Bug {bug.bug_code} 的修复任务。",
+            "/task-management/development",
+        )
+    if bug.dev_leader_id and actor.person_id != bug.dev_leader_id and (
+        task.status != old_status or "completion_note" in data or "actual_effort" in data
+    ):
+        notifier.notify(
+            db, "bug_fix_task.progressed", "bug_fix_task_update", new_glid(), [bug.dev_leader_id],
+            f"Bug 修复任务进度更新：{task.name}",
+            f"状态：{task.status}；处理人：{_member_name(db, task.assignee) or '-'}。",
+            "/task-management/development",
+        )
     db.flush()
     live_tasks = db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)).all()
     if live_tasks and all(item.status == "关闭" for item in live_tasks) and bug.status == "fixing":
@@ -411,6 +532,7 @@ def _work_row(db: Session, task: WorkTask, user: AuthUser | None = None) -> dict
         bool(person_id and task.registrar == person_id and task.assignee is None and task.status == "登记")
     )
     can_transition = is_admin or bool(person_id and (task.assignee == person_id or task.registrar == person_id))
+    progress_rows = _progress_rows(db, "work_task", task.id)
     return {
         "id": task.id,
         "task_code": task.task_code,
@@ -434,7 +556,14 @@ def _work_row(db: Session, task: WorkTask, user: AuthUser | None = None) -> dict
         "abort_reason": task.abort_reason,
         "completion_note": task.completion_note,
         "closed_at": task.closed_at,
-        "capabilities": {"edit": can_edit or is_admin, "delete": can_delete, "transition": can_transition},
+        "progress_entries": progress_rows,
+        "latest_progress": progress_rows[0] if progress_rows else None,
+        "capabilities": {
+            "edit": can_edit or is_admin,
+            "delete": can_delete,
+            "transition": can_transition,
+            "progress": can_transition and task.status not in {"关闭", "中止"},
+        },
     }
 
 
@@ -453,7 +582,7 @@ def list_work_tasks(db: Session, user: AuthUser, q: str = "", status: str = "", 
 
 def create_work_task(db: Session, data: dict, actor: AuthUser) -> WorkTask:
     _require_module(db, actor, "task_delegated", "create")
-    registrar = _require_person(actor)
+    registrar = _registrar_for_create(db, actor)
     _validate_performance_bucket(data.get("task_type") or "其他", data.get("performance_bucket") or "role_result")
     if data.get("assignee"):
         require_it_member_if_configured(db, data["assignee"], "委派任务负责人")
@@ -476,6 +605,12 @@ def create_work_task(db: Session, data: dict, actor: AuthUser) -> WorkTask:
     db.flush()
     audit(db, "work_task", task.id, "create", actor, {"code": task.task_code, "source_type": task.source_type})
     publish(db, "work_task.created", "work_task", task.id, {"task_code": task.task_code})
+    if task.assignee:
+        notifier.notify(
+            db, "work_task.assigned", "work_task", task.id, [task.assignee],
+            f"委派任务已分配：{task.title}", f"任务编号：{task.task_code}",
+            "/task-management/delegated",
+        )
     return task
 
 
@@ -491,10 +626,17 @@ def update_work_task(db: Session, task: WorkTask, data: dict, actor: AuthUser) -
     )
     if "assignee" in data and data["assignee"]:
         require_it_member_if_configured(db, data["assignee"], "委派任务负责人")
+    old_assignee = task.assignee
     for key, value in data.items():
         if hasattr(task, key) and key not in {"task_code", "registrar", "is_deleted"}:
             setattr(task, key, value)
     audit(db, "work_task", task.id, "update", actor, {"fields": list(data)})
+    if task.assignee and task.assignee != old_assignee:
+        notifier.notify(
+            db, "work_task.assigned", "work_task", task.id, [task.assignee],
+            f"委派任务已分配：{task.title}", f"任务编号：{task.task_code}",
+            "/task-management/delegated",
+        )
     return task
 
 
@@ -525,9 +667,49 @@ def transition_work_task(db: Session, task: WorkTask, to: str, reason: str, acto
         task.completion_note = reason.strip() or task.completion_note
         task.closed_at = datetime.now()
     task.status = to
+    progress = _append_progress(
+        db,
+        task_kind="work_task",
+        task_id=task.id,
+        status=task.status,
+        actor=actor,
+        comment=reason.strip() or f"状态从「{old}」更新为「{to}」",
+        progress_percent=100 if to == "关闭" else None,
+    )
     if to == "关闭" and old != "关闭":
         publish(db, "work_task.closed", "work_task", task.id, {"task_code": task.task_code})
     audit(db, "work_task", task.id, "transition", actor, {"from": old, "to": to, "reason": reason})
+    if task.registrar and actor.person_id != task.registrar:
+        notifier.notify(
+            db, "work_task.progressed", "task_progress_entry", progress.id, [task.registrar],
+            f"委派任务进度更新：{task.title}", progress.comment,
+            "/task-management/delegated",
+        )
+    return task
+
+
+def add_work_task_progress(
+    db: Session, task: WorkTask, progress_percent: int | None, comment: str, actor: AuthUser,
+) -> WorkTask:
+    _require_module(db, actor, "task_delegated", "edit")
+    is_participant = bool(actor.person_id and actor.person_id in {task.assignee, task.registrar})
+    if not _is_admin(db, actor) and not is_participant:
+        raise AppError("FORBIDDEN", "仅任务登记人、负责人或管理员可以更新进度", 403)
+    if task.status in {"关闭", "中止"}:
+        raise AppError("TASK_CLOSED", "已关闭或中止的任务不能继续更新进度")
+    entry = _append_progress(
+        db, task_kind="work_task", task_id=task.id, status=task.status,
+        actor=actor, comment=comment, progress_percent=progress_percent,
+    )
+    audit(db, "work_task", task.id, "progress", actor, {
+        "progress_percent": progress_percent, "progress_entry_id": entry.id,
+    })
+    if task.registrar and actor.person_id != task.registrar:
+        notifier.notify(
+            db, "work_task.progressed", "task_progress_entry", entry.id, [task.registrar],
+            f"委派任务进度更新：{task.title}", entry.comment,
+            "/task-management/delegated",
+        )
     return task
 
 
@@ -543,3 +725,182 @@ def delete_work_task(db: Session, task: WorkTask, actor: AuthUser):
         raise AppError("FORBIDDEN", "任务分配后仅管理员可以删除，登记未分配任务仅登记人可以删除", 403)
     task.is_deleted = True
     audit(db, "work_task", task.id, "delete", actor, {"code": task.task_code})
+
+
+def _project_task_row(db: Session, task: ProjectDevelopmentTask, user: AuthUser | None = None) -> dict:
+    project = db.get(Project, task.project_id)
+    wbs = db.get(WbsTask, task.wbs_task_id) if task.wbs_task_id else None
+    can_edit = bool(user and has_perm(db, user, "task_development", "edit"))
+    is_admin = bool(user and _is_admin(db, user))
+    person_id = user.person_id if user else None
+    progress_rows = _progress_rows(db, "project_development_task", task.id)
+    return {
+        "id": task.id,
+        "task_code": task.task_code,
+        "project_id": task.project_id,
+        "project_code": project.project_code if project else None,
+        "project_name": project.name if project else None,
+        "wbs_task_id": task.wbs_task_id,
+        "wbs_code": wbs.wbs_code if wbs else None,
+        "wbs_name": wbs.name if wbs else None,
+        "title": task.title,
+        "description": task.description,
+        "acceptance_criteria": task.acceptance_criteria,
+        "task_type": task.task_type,
+        "registrar": task.registrar,
+        "registrar_name": _member_name(db, task.registrar),
+        "assignee": task.assignee,
+        "assignee_name": _member_name(db, task.assignee),
+        "priority": task.priority,
+        "environment": task.environment,
+        "version": task.version,
+        "plan_start": task.plan_start,
+        "plan_date": task.plan_date,
+        "plan_effort": task.plan_effort,
+        "actual_effort": task.actual_effort,
+        "status": task.status,
+        "completion_note": task.completion_note,
+        "done_at": task.done_at,
+        "progress_entries": progress_rows,
+        "latest_progress": progress_rows[0] if progress_rows else None,
+        "capabilities": {
+            "edit": can_edit,
+            "delete": is_admin or bool(can_edit and task.status == "待处理"),
+            "progress": task.status != "已完成" and bool(is_admin or person_id in {task.registrar, task.assignee}),
+        },
+    }
+
+
+def _validate_project_wbs(db: Session, project_id: str, wbs_task_id: str | None):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "所属项目不存在", 404)
+    if wbs_task_id:
+        wbs = db.get(WbsTask, wbs_task_id)
+        if not wbs or wbs.is_deleted or wbs.project_id != project_id:
+            raise AppError("INVALID_WBS", "WBS 工作包不属于所选项目")
+    return project
+
+
+def list_project_tasks(db: Session, user: AuthUser, q: str = "", status: str = "", scope: str = "") -> tuple[list[dict], int]:
+    _require_module(db, user, "task_development", "view")
+    query = db.query(ProjectDevelopmentTask).filter(ProjectDevelopmentTask.is_deleted.is_(False))
+    if q:
+        query = query.filter(or_(
+            ProjectDevelopmentTask.title.ilike(f"%{q}%"),
+            ProjectDevelopmentTask.task_code.ilike(f"%{q}%"),
+        ))
+    if status:
+        query = query.filter(ProjectDevelopmentTask.status == status)
+    if scope == "mine" and user.person_id:
+        query = query.filter(or_(
+            ProjectDevelopmentTask.registrar == user.person_id,
+            ProjectDevelopmentTask.assignee == user.person_id,
+        ))
+    rows = query.order_by(ProjectDevelopmentTask.created_at.desc()).all()
+    return [_project_task_row(db, task, user) for task in rows], len(rows)
+
+
+def create_project_task(db: Session, data: dict, actor: AuthUser) -> ProjectDevelopmentTask:
+    _require_module(db, actor, "task_development", "create")
+    registrar = _registrar_for_create(db, actor)
+    _validate_project_wbs(db, data["project_id"], data.get("wbs_task_id"))
+    if data.get("assignee"):
+        require_it_member_if_configured(db, data["assignee"], "项目开发任务负责人")
+    task = ProjectDevelopmentTask(
+        task_code=gen_code(db, ProjectDevelopmentTask, "task_code", "PT"),
+        registrar=registrar,
+        **data,
+    )
+    db.add(task)
+    db.flush()
+    audit(db, "project_development_task", task.id, "create", actor, {"code": task.task_code})
+    if task.assignee:
+        notifier.notify(
+            db, "project_task.assigned", "project_development_task", task.id, [task.assignee],
+            f"项目开发任务已分配：{task.title}", f"任务编号：{task.task_code}",
+            "/task-management/development",
+        )
+    return task
+
+
+def update_project_task(db: Session, task: ProjectDevelopmentTask, data: dict, actor: AuthUser) -> ProjectDevelopmentTask:
+    _require_module(db, actor, "task_development", "edit")
+    project_id = data.get("project_id", task.project_id)
+    wbs_task_id = data.get("wbs_task_id", task.wbs_task_id)
+    _validate_project_wbs(db, project_id, wbs_task_id)
+    if data.get("assignee"):
+        require_it_member_if_configured(db, data["assignee"], "项目开发任务负责人")
+    status = data.get("status", task.status)
+    if status not in PROJECT_TASK_STATUSES:
+        raise AppError("INVALID_STATUS", "项目开发任务状态必须为 待处理/进行中/已完成")
+    old_assignee = task.assignee
+    old_status = task.status
+    for key, value in data.items():
+        if hasattr(task, key) and key not in {"task_code", "registrar", "is_deleted"}:
+            setattr(task, key, value)
+    if task.status == "已完成":
+        task.done_at = task.done_at or datetime.now()
+    elif old_status == "已完成":
+        task.done_at = None
+    audit(db, "project_development_task", task.id, "update", actor, {"fields": list(data)})
+    if task.assignee and task.assignee != old_assignee:
+        notifier.notify(
+            db, "project_task.assigned", "project_development_task", task.id, [task.assignee],
+            f"项目开发任务已分配：{task.title}", f"任务编号：{task.task_code}",
+            "/task-management/development",
+        )
+    if task.registrar and actor.person_id != task.registrar and (
+        task.status != old_status or "actual_effort" in data or "completion_note" in data
+    ):
+        entry = _append_progress(
+            db,
+            task_kind="project_development_task",
+            task_id=task.id,
+            status=task.status,
+            actor=actor,
+            comment=(data.get("completion_note") or "").strip()
+            or (
+                f"状态从「{old_status}」更新为「{task.status}」"
+                if task.status != old_status
+                else "已更新实际工时或任务进展"
+            ),
+            progress_percent=100 if task.status == "已完成" else None,
+        )
+        notifier.notify(
+            db, "project_task.progressed", "task_progress_entry", entry.id, [task.registrar],
+            f"项目开发任务进度更新：{task.title}", entry.comment,
+            "/task-management/development",
+        )
+    return task
+
+
+def add_project_task_progress(
+    db: Session, task: ProjectDevelopmentTask, progress_percent: int | None, comment: str, actor: AuthUser,
+) -> ProjectDevelopmentTask:
+    _require_module(db, actor, "task_development", "edit")
+    is_participant = bool(actor.person_id and actor.person_id in {task.assignee, task.registrar})
+    if not _is_admin(db, actor) and not is_participant:
+        raise AppError("FORBIDDEN", "仅任务登记人、负责人或管理员可以更新进度", 403)
+    entry = _append_progress(
+        db, task_kind="project_development_task", task_id=task.id,
+        status=task.status, actor=actor, comment=comment, progress_percent=progress_percent,
+    )
+    audit(db, "project_development_task", task.id, "progress", actor, {
+        "progress_percent": progress_percent, "progress_entry_id": entry.id,
+    })
+    if task.registrar and actor.person_id != task.registrar:
+        notifier.notify(
+            db, "project_task.progressed", "task_progress_entry", entry.id, [task.registrar],
+            f"项目开发任务进度更新：{task.title}", entry.comment,
+            "/task-management/development",
+        )
+    return task
+
+
+def delete_project_task(db: Session, task: ProjectDevelopmentTask, actor: AuthUser):
+    _require_module(db, actor, "task_development", "edit")
+    if not _is_admin(db, actor) and task.status != "待处理":
+        raise AppError("FORBIDDEN", "进行中或已完成的项目开发任务仅管理员可删除", 403)
+    task.is_deleted = True
+    audit(db, "project_development_task", task.id, "delete", actor, {"code": task.task_code})

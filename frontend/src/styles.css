@@ -890,3 +890,13 @@ html[data-theme='dark'] .app-content .ant-card { border-color: #2b3038; box-shad
   .service-portal__actions, .service-portal__catalogs, .service-portal__items { grid-template-columns: 1fr; }
   .service-portal__hero { padding: 24px; }
 }
+.task-register-hitbox {
+  position: relative !important;
+  z-index: 20 !important;
+  pointer-events: auto !important;
+  isolation: isolate;
+}
+
+.task-register-hitbox > * {
+  pointer-events: none !important;
+}

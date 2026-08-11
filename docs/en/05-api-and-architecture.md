@@ -171,18 +171,19 @@ Registration creates a separate `Requirement`, never a Ticket. The request may i
 
 ```text
 POST /api/requirements/{requirement_id}/tasks
+POST /api/requirements/tasks                       # standalone development task
 PATCH /api/requirements/tasks/{task_id}
 DELETE /api/requirements/tasks/{task_id}
 GET /api/requirements/tasks/active
 ```
 
-The same implementing requirement may call `POST` repeatedly to register multiple task rows. The requirement owner or an account with `requirements.edit` / `req_tasks.edit` may maintain all task fields; without global edit permission, a task assignee may update only `status` and `actual_effort` on their own task. Deletion remains restricted to the global Requirement/Task Tracking edit permissions; being the requirement owner does not grant deletion. List/detail responses expose `can_manage_tasks` and `can_delete_tasks` capability flags, but the server never relies on UI buttons and rechecks stage, assignee scope, example protection, and authorization on every write. Existing tasks remain readable under their original IDs and soft-delete state; this change only adds a nullable route-snapshot column through the idempotent startup migration and never backfills or rewrites historical requirements or tasks.
+The path-scoped `POST` may register multiple rows for an implementing requirement. `POST /api/requirements/tasks` creates a standalone row with `requirement_id=null`; `PATCH` may later add or change the relationship. A supplied requirement must be in Implementation, non-example, and not project-converted. Full-field maintenance, own-assignee update restrictions, state-aware deletion, and server-side authorization remain in force; existing IDs and soft-deleted rows are preserved.
 
 `POST /api/requirements/{id}/to-dev` uses an empty payload (legacy clients may send `owner_id`, but a value that differs from Requirement Scoring Rules `review_assignees.dev_leader` returns `DEV_LEADER_FIXED`). The configured active IT development lead must exist; a missing or invalid setting returns `DEV_LEADER_NOT_CONFIGURED`. Both route endpoints may handle only the current “Solution assessment & routing” task, otherwise return `PROCESS_STEP_MISMATCH`, and advance only to “Delivery”. Before an in-house-dev Delivery task can complete, the process engine requires at least one non-deleted `requirement_task`; it does not apply that check to project routes or legacy records without an `implementation_route` snapshot.
 
 #### Task-management APIs (M82)
 
-The frontend routes are `/task-management/development` and `/task-management/delegated`; `tab=requirement|bug` only selects the Development Tasks view and does not change backend resources. Historical requirement-task routes redirect to the Requirement Development tab so existing bookmarks and data remain compatible.
+The frontend routes are `/task-management/development` and `/task-management/delegated`; `tab=requirement|bug|project` selects the Development Tasks view without changing backend resources. Historical requirement-task routes still redirect to Requirement Development.
 
 ```text
 GET /api/requirements/tasks/template
@@ -200,15 +201,25 @@ POST /api/task-management/bugs/{id}/reopen
 
 GET/POST/PATCH /api/task-management/work-tasks
 GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/progress
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
+
+GET /api/task-management/reference/projects
+GET /api/task-management/reference/projects/{project_id}/wbs
+GET/POST/PATCH /api/task-management/project-tasks
+GET /api/task-management/project-tasks/{id}
+POST /api/task-management/project-tasks/{id}/progress
+DELETE /api/task-management/project-tasks/{id}
 ```
 
 The same requirement in Implementation may repeatedly call `POST` to register multiple task rows. Every built-in IT role receives `view/create/edit` on `task_development` and may therefore maintain full development-task fields on an implementing requirement. The requirement owner retains compatible record-scope maintenance; an assignee without maintenance may update only their own `status` and `actual_effort`. Deletion is a server-side status rule rather than a matrix `delete` grant: an IT user with development-task maintenance may soft-delete a task that is not In Progress, while an In Progress task is deletable by the system administrator only. List responses return `can_manage_tasks`, `can_edit`, and `can_delete`; detail task rows return `can_delete`. The server never relies on a front-end button and rechecks requirement stage, owner scope, example-data protection, and permission for every write.
 
-`GET /api/requirements/tasks/template` returns the Development Tasks worksheet. `POST /api/requirements/tasks/import` accepts multipart field `file` with a `.xlsx` file no larger than 5MB. The caller must have `task_development.create`; each row exactly matches the requirement code and an active IT member name. The requirement must be non-example, not project-converted, and in Implementation. Valid rows create tasks and write audit/assignee notifications; failed rows return `{row, error}`. The response is `{created, failed}`: bulk import appends only, performs no update or de-duplication, and leaves historical requirement/task records unchanged.
+`GET /api/requirements/tasks/template` returns a Development Tasks worksheet whose requirement-code column is optional. `POST /api/requirements/tasks/import` accepts multipart `file` up to 5MB: a blank code creates a standalone task, while a supplied code is validated as a real, non-example, non-project-converted requirement in Implementation. Active IT assignees are exact-name matched. Valid rows write audit and assignment notifications; `{created, failed}` remains append-only and never updates or de-duplicates existing rows.
 
-Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. After a Bug is created, the browser may upload zero or more files through `POST /api/attachments?entity_type=bug&entity_id={bug_id}` using the multipart field `file` (50MB maximum per file). Creation and upload are separate transactions: one failed attachment never rolls back the Bug and may be retried from detail. Bug attachment reads require `task_bug.view`; uploads require the same record-level workflow edit/correction authorization as editing the Bug. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
+Bug APIs snapshot `ci.product_manager_id`; clients cannot choose an approver. During the shared upstream correction window, `PATCH` may change `ci_id` and refresh the validated product-manager snapshot. `DELETE /bugs/{id}` follows workflow-record deletion rules: the creator is allowed only before the next node is viewed/handled, while administrators remain allowed; active workflow tasks are finalized and soft-deleted with the record. Bug codes and Detail buttons both open `GET /bugs/{id}`. Delegated and Project Development progress is append-only. A project is mandatory and WBS is optional but, when supplied, must belong to that project. Capability flags remain advisory and every write is reauthorized server-side.
+
+Task notification events use `notifier.notify()`: initial assignment or reassignment targets the assignee; progress/status/actual-effort/completion updates by someone other than the registrar target the registrar. The same business transaction creates the in-app notification and `notification_outbox(channel=feishu_aily)` row. Outbox identity/tenant/Bot controls remain authoritative and an unmapped identity stays pending rather than sending to an unknown recipient. Each progress-entry ID is the idempotency source, so consecutive updates remain distinct.
 
 `GET /api/task-management/reference/cis` returns only non-deleted, non-retired CMDB configuration items and readable product-manager information for the Bug form's “Affected system” field. It does not create a second system dictionary or grant CMDB write access. CMDB `owner` is the required technical owner for every CI; only an Application's `product_manager_id` is its Bug-confirmation and verification product manager. They may be the same person but are not duplicate fields. The backend rejects creating or editing an Application without a product manager. A legacy Application missing the value returns `PRODUCT_MANAGER_REQUIRED` on Bug registration; configure it and retry, then the registration snapshots that person.
 

@@ -288,7 +288,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.2 requirement_task — requirement task
 
-`requirement_id` FK, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C]. A requirement may have multiple task rows. Tasks continue to use `GlidBase.is_deleted` soft deletion. Development-task template import maps each row only to these existing fields; it adds no import-batch table, updates no existing task, and does not rebuild or migrate historical records.
+`requirement_id` FK (nullable for register-before-link), `registrar` FK (nullable for compatibility with administrator accounts without a person), `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), and `done_at` [C]. A standalone task can be linked later. Startup migration only drops PostgreSQL's NOT NULL constraint on `requirement_id`; it never backfills, deletes, or rebuilds existing rows. Import adds no batch table and overwrites no existing task.
 
 ### 4.3 bug — defect record
 
@@ -303,6 +303,14 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 `task_code` [C], `title`, `description`, `task_type`, `source_type/source_id`, `registrar` FK, `assignee` FK, `priority`, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed / Aborted), `performance_bucket`, pause/abort reasons, completion note, and close time. Sources may be tickets, problems, incidents, Bugs, manual technical research, or other IT work.
 
 Only the registrar may delete an unassigned task still in Registered status. After assignment and before closure, deletion is administrator-only. Deletion is soft and audited; administrators can edit, pause, abort, and close from the list.
+
+### 4.6 project_development_task — project development task
+
+`task_code` [C], required `project_id` FK, optional `wbs_task_id` FK, `title`, `description`, `acceptance_criteria`, `task_type`, `registrar` FK, `assignee` FK, `priority`, `environment`, `version`, planned dates, planned/actual effort, `status` (Pending / In Progress / Done), `completion_note`, and `done_at`. The server validates that a selected WBS row belongs to the project. Non-administrators may delete only Pending rows; administrators retain audited deletion authority.
+
+### 4.7 task_progress_entry — append-only task progress
+
+`task_kind`, `task_id`, nullable `author_id` FK, `author_name` snapshot, optional `progress_percent` (0–100), `status_snapshot`, `comment`, and `created_at`. It currently records delegated and project-development progress. There is no update/overwrite endpoint. Results use creation time plus the time-sortable GLID as a deterministic newest-first order, and each entry ID is the notification idempotency source so consecutive updates remain distinct.
 
 > No separate table is needed for closure hand-off: `problem.source_requirement_id` and `knowledge_article.source_requirement_id` are queryable both ways.
 

@@ -35,7 +35,7 @@ from app.models.requirement import (
     RequirementScoringConfig,
     RequirementTask,
 )
-from app.models.tasks import Bug, BugFixTask, WorkTask
+from app.models.tasks import Bug, BugFixTask, ProjectDevelopmentTask, TaskProgressEntry, WorkTask
 from app.models.team import (
     ActivityCampaign,
     CampaignTask,
@@ -162,6 +162,8 @@ __all__ = [
     "RequirementTask",
     "Bug",
     "BugFixTask",
+    "ProjectDevelopmentTask",
+    "TaskProgressEntry",
     "WorkTask",
     "ProcessDefinition",
     "ProcessInstance",

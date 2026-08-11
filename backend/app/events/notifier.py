@@ -20,7 +20,10 @@ def _category(event_type: str) -> str:
     prefix = event_type.split(".", 1)[0]
     if prefix in {"ticket", "incident", "change", "problem", "sla"}:
         return "work"
-    if prefix in {"process", "task", "requirement", "project", "wbs", "milestone"}:
+    if prefix in {
+        "process", "task", "requirement", "project", "wbs", "milestone",
+        "work_task", "project_task", "bug_fix_task",
+    }:
         return "workflow"
     return "system"
 

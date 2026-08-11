@@ -167,12 +167,13 @@ list_my_it_requirements
 
 ```text
 POST /api/requirements/{requirement_id}/tasks
+POST /api/requirements/tasks                       # 可不关联需求的独立开发任务
 PATCH /api/requirements/tasks/{task_id}
 DELETE /api/requirements/tasks/{task_id}
 GET /api/requirements/tasks/active
 ```
 
-同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。既有任务按原主键和软删除状态继续可读；本次仅通过启动期幂等补列新增可空的路径快照字段，不回填或改写历史需求/任务。
+同一实现中需求可重复调用带 `requirement_id` 的 `POST` 登记多行任务；不带路径 ID 的 `POST /api/requirements/tasks` 可创建 `requirement_id=null` 的独立开发任务，并在 `PATCH` 时补充或调整关联。填写关联时目标必须处于实现中且非示例、未转项目。需求负责人或拥有任务维护权的账号可维护完整字段；任务负责人在无全局编辑权限时只能更新自己的 `status` 和 `actual_effort`。所有写接口重新校验权限、关联需求状态、负责人范围和示例保护；既有任务保持原主键及软删除状态。
 
 需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回仍要求不少于 5 字的理由。
 
@@ -180,7 +181,7 @@ GET /api/requirements/tasks/active
 
 #### 任务管理接口（M82）
 
-前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
+前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug|project` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
 
 ```text
 GET /api/requirements/tasks/template
@@ -198,15 +199,25 @@ POST /api/task-management/bugs/{id}/reopen
 
 GET/POST/PATCH /api/task-management/work-tasks
 GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/progress
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
+
+GET /api/task-management/reference/projects
+GET /api/task-management/reference/projects/{project_id}/wbs
+GET/POST/PATCH /api/task-management/project-tasks
+GET /api/task-management/project-tasks/{id}
+POST /api/task-management/project-tasks/{id}/progress
+DELETE /api/task-management/project-tasks/{id}
 ```
 
 同一实现中需求可重复调用 `POST` 登记多行任务。所有内置 IT 类角色的 `task_development` 均授予 `view/create/edit`，因此可维护实现中需求上的完整任务字段；需求负责人保留兼容的数据范围维护，未获得维护权的任务负责人只能更新自己任务的 `status` 和 `actual_effort`。删除采用服务端状态规则而不是矩阵 `delete`：非“进行中”任务可由具备开发任务维护权的 IT 人员软删除，“进行中”任务仅系统管理员可删除。列表返回 `can_manage_tasks`、`can_edit`、`can_delete`，详情任务行返回 `can_delete`；服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。
 
-`GET /api/requirements/tasks/template` 返回“开发任务”工作表；`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`。导入调用人须有 `task_development.create`，每行按需求编号和在岗 IT 成员姓名精确匹配；关联需求必须为未转项目、非示例、实现中记录。有效行创建并写审计/指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，批量导入只追加、不做更新或去重。既有任务按原主键和软删除状态继续可读，不回填或改写历史需求/任务。
+`GET /api/requirements/tasks/template` 返回“开发任务”工作表；A 列关联需求编号为可选。`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`；空编号创建独立任务，填写编号时才校验未转项目、非示例和实现中。处理人按在岗 IT 成员姓名精确匹配。有效行写审计及指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，只追加、不更新或去重。
 
-Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+Bug 接口固定使用 `ci.product_manager_id` 快照，不接受客户端指定审批人；在通用上游回改窗口内，`PATCH` 可变更 `ci_id` 并重新校验、快照目标产品经理。`DELETE /bugs/{id}` 复用流程单据删除窗口：创建人仅在下一节点未查阅处理时允许，管理员始终允许；删除同时终止并软删除活动流程任务。Bug 编号和详情按钮均调用 `GET /bugs/{id}`。委派任务进度接口只追加 `task_progress_entry`，不覆盖历史；项目开发要求项目、WBS 可选且必须属于该项目。所有列表响应返回 `capabilities`，后端仍按当前用户、状态、负责人和管理员身份重新校验。
+
+任务通知统一调用 `notifier.notify()`：首次指派或改派写给负责人；非登记人更新状态、实际工时、完成说明或显式进度时写给登记人。通知与业务写入同事务产生站内记录和 `notification_outbox(channel=feishu_aily)`，Outbox 继续按身份映射、租户和 Bot 配置异步投递；没有映射时保持待处理，不向未知收件人发送。每条进度记录 ID 作为幂等来源，连续更新不会被合并。
 
 Bug 创建成功后，网页可用通用附件接口依次上传零个或多个文件：`POST /api/attachments?entity_type=bug&entity_id={bug_id}`，multipart 字段固定为 `file`，单个文件上限 50MB。创建与附件上传不是同一事务：Bug 创建成功后单个附件失败不得删除或回滚该 Bug；详情继续通过 `GET /api/attachments?entity_type=bug&entity_id={bug_id}` 列出并允许补传/下载。附件接口不绕过 `task_bug`、身份认证或记录级工作流校验。
 

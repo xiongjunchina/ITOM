@@ -69,20 +69,24 @@ export default function ActiveTaskList() {
   const [reqOptions, setReqOptions] = useState<{ value: string; label: string }[]>([]);
   const [memberOptions, setMemberOptions] = useState<{ value: string; label: string }[]>([]);
 
+  const loadTaskOptions = async () => {
+    const [reqs, members] = await Promise.all([
+      api.getList<RequirementRow>('/requirements', { status: 'implementing', page: 1, page_size: 200 }),
+      api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }),
+    ]);
+    setReqOptions(
+      reqs.items
+        .filter((r) => !r.is_example && !r.project_id && r.can_manage_tasks === true)
+        .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
+    );
+    setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+  };
+
   const openAdd = async () => {
     addForm.resetFields();
     setAddOpen(true);
     try {
-      const [reqs, members] = await Promise.all([
-        api.getList<RequirementRow>('/requirements', { status: 'implementing', page: 1, page_size: 200 }),
-        api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }),
-      ]);
-      setReqOptions(
-        reqs.items
-          .filter((r) => !r.is_example && !r.project_id && r.can_manage_tasks === true)  // 转项目的需求由项目侧交付，不在此录任务
-          .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
-      );
-      setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+      await loadTaskOptions();
     } catch {
       // 已统一提示
     }
@@ -92,7 +96,8 @@ export default function ActiveTaskList() {
     const v = await addForm.validateFields();
     setAddSaving(true);
     try {
-      await api.post(`/requirements/${v.requirement_id}/tasks`, {
+      await api.post('/requirements/tasks', {
+        requirement_id: v.requirement_id || null,
         name: v.name,
         description: v.description || undefined,
         assignee: v.assignee,
@@ -135,15 +140,15 @@ export default function ActiveTaskList() {
 
   const openEdit = async (row: ActiveTaskRow) => {
     setEditing(row);
-    if (memberOptions.length === 0) {
+    if (memberOptions.length === 0 || reqOptions.length === 0) {
       try {
-        const members = await api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' });
-        setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+        await loadTaskOptions();
       } catch {
         // 已统一提示
       }
     }
     editForm.setFieldsValue({
+      requirement_id: row.requirement_id ?? undefined,
       name: row.name,
       description: row.description ?? undefined,
       assignee: row.assignee,
@@ -160,6 +165,7 @@ export default function ActiveTaskList() {
     setEditSaving(true);
     try {
       await api.patch(`/requirements/tasks/${editing.id}`, {
+        requirement_id: v.requirement_id || null,
         name: v.name,
         description: v.description || null,
         assignee: v.assignee,
@@ -225,7 +231,7 @@ export default function ActiveTaskList() {
       title: t('req.activeTask.col.relReq'),
       key: 'req',
       width: 240,
-      render: (_, r) => (
+      render: (_, r) => r.requirement_id ? (
         <Link to={`/requirements/${r.requirement_id}`}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {r.requirement_code}
@@ -236,7 +242,7 @@ export default function ActiveTaskList() {
             </Typography.Text>
           </div>
         </Link>
-      ),
+      ) : <Typography.Text type="secondary">{t('req.activeTask.unlinked')}</Typography.Text>,
     },
     {
       // M16：清单已按所属需求加权总分降序返回，列标题 Tooltip 说明排序依据
@@ -254,7 +260,9 @@ export default function ActiveTaskList() {
       title: t('req.activeTask.col.reqStage'),
       key: 'reqStage',
       width: 110,
-      render: (_, r) => <ReqStatusBadge status={r.requirement_status} name={r.requirement_status_name} />,
+      render: (_, r) => r.requirement_status
+        ? <ReqStatusBadge status={r.requirement_status} name={r.requirement_status_name || r.requirement_status} />
+        : '-',
     },
     {
       title: t('req.activeTask.col.quadrant'),
@@ -351,10 +359,9 @@ export default function ActiveTaskList() {
           <Form.Item
             name="requirement_id"
             label={t('req.activeTask.pickReq')}
-            rules={[{ required: true, message: t('req.activeTask.pickReqRequired') }]}
             extra={t('req.activeTask.pickReqHint')}
           >
-            <Select showSearch optionFilterProp="label" options={reqOptions} placeholder={t('req.activeTask.pickReq')} />
+            <Select allowClear showSearch optionFilterProp="label" options={reqOptions} placeholder={t('req.activeTask.pickReqOptional')} />
           </Form.Item>
           <Form.Item name="name" label={t('req.activeTask.col.name')} rules={[{ required: true, message: t('req.activeTask.nameRequired') }]}>
             <Input maxLength={200} />
@@ -385,10 +392,10 @@ export default function ActiveTaskList() {
         destroyOnClose
         width={560}
       >
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          {editing ? `${editing.requirement_code} ${editing.requirement_title}` : ''}
-        </Typography.Paragraph>
         <Form form={editForm} layout="vertical" preserve={false}>
+          <Form.Item name="requirement_id" label={t('req.activeTask.pickReq')} extra={t('req.activeTask.pickReqHint')}>
+            <Select allowClear showSearch optionFilterProp="label" options={reqOptions} placeholder={t('req.activeTask.pickReqOptional')} />
+          </Form.Item>
           <Form.Item name="name" label={t('req.activeTask.col.name')} rules={[{ required: true, message: t('req.activeTask.nameRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>

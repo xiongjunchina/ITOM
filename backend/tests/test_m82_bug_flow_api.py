@@ -141,6 +141,56 @@ def test_bug_supports_evidence_attachment_upload_and_download(client, actors, tm
     assert forbidden_upload.status_code == 403
 
 
+def test_bug_ci_can_be_corrected_before_review_and_delete_respects_view_window(client, actors):
+    replacement_ci = client.post(
+        "/api/cis",
+        json={
+            "name": "供应链管理系统-M82-替代",
+            "category": "app",
+            "owner": actors["dev_id"],
+            "product_manager_id": actors["pm_id"],
+        },
+        headers=actors["admin"],
+    )
+    assert replacement_ci.status_code == 200, replacement_ci.text
+
+    editable = _register_bug(client, actors, "登记后更正所属系统")
+    changed = client.patch(
+        f"/api/task-management/bugs/{editable['id']}",
+        json={"ci_id": replacement_ci.json()["data"]["id"]},
+        headers=actors["dev"],
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["data"]["ci_id"] == replacement_ci.json()["data"]["id"]
+
+    deletable = _register_bug(client, actors, "下游查阅前允许登记人删除")
+    assert client.delete(
+        f"/api/task-management/bugs/{deletable['id']}", headers=actors["dev"],
+    ).status_code == 200
+
+    locked = _register_bug(client, actors, "下游查阅后锁定登记人删除")
+    with SessionLocal() as db:
+        instance = db.query(ProcessInstance).filter(
+            ProcessInstance.entity_type == "bug",
+            ProcessInstance.entity_id == locked["id"],
+            ProcessInstance.is_deleted.is_(False),
+        ).one()
+        current = db.query(ProcessTask).filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        ).one()
+        current_task_id = current.id
+    viewed = client.post(f"/api/process-tasks/{current_task_id}/view", headers=actors["pm"])
+    assert viewed.status_code == 200, viewed.text
+    assert client.delete(
+        f"/api/task-management/bugs/{locked['id']}", headers=actors["dev"],
+    ).status_code == 403
+    assert client.delete(
+        f"/api/task-management/bugs/{locked['id']}", headers=actors["admin"],
+    ).status_code == 200
+
+
 def test_bug_registration_confirmation_multi_tasks_and_verification_close(client, actors):
     bug = _register_bug(client, actors)
     assert bug["status"] == "registered"

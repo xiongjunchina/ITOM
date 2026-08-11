@@ -7,10 +7,13 @@ import {
   Input,
   InputNumber,
   Modal,
+  Progress,
   Select,
   Space,
   Switch,
   Tag,
+  Timeline,
+  Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -51,9 +54,12 @@ export default function DelegatedTasksPage() {
   const [mineOnly, setMineOnly] = useState(false);
   const [editing, setEditing] = useState<WorkTaskRow | null>(null);
   const [transitioning, setTransitioning] = useState<{ row: WorkTaskRow; to: WorkTaskStatus } | null>(null);
+  const [detail, setDetail] = useState<WorkTaskRow | null>(null);
+  const [progressOpen, setProgressOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<TaskFormValues>();
   const [transitionForm] = Form.useForm<{ reason: string }>();
+  const [progressForm] = Form.useForm<{ progress_percent?: number; comment: string }>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -163,8 +169,29 @@ export default function DelegatedTasksPage() {
     });
   };
 
+  const openDetail = async (row: WorkTaskRow) => {
+    const current = await api.get<WorkTaskRow>(`/task-management/work-tasks/${row.id}`);
+    setDetail(current);
+  };
+
+  const submitProgress = async () => {
+    if (!detail) return;
+    const values = await progressForm.validateFields();
+    setSaving(true);
+    try {
+      const current = await api.post<WorkTaskRow>(`/task-management/work-tasks/${detail.id}/progress`, values);
+      message.success(t('task.progress.saved'));
+      setDetail(current);
+      setProgressOpen(false);
+      progressForm.resetFields();
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const columns: ColumnsType<WorkTaskRow> = [
-    { title: t('task.code'), dataIndex: 'task_code', width: 140 },
+    { title: t('task.code'), dataIndex: 'task_code', width: 140, render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openDetail(row)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 260, ellipsis: true },
     { title: t('task.taskType'), dataIndex: 'task_type', width: 110 },
     { title: t('task.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
@@ -172,9 +199,11 @@ export default function DelegatedTasksPage() {
     { title: t('task.priority'), dataIndex: 'priority', width: 90, render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag> },
     { title: t('common.status'), dataIndex: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
     { title: t('task.planDate'), dataIndex: 'plan_date', width: 120, render: (v) => v || '-' },
+    { title: t('task.progress.latest'), dataIndex: 'latest_progress', width: 220, ellipsis: true, render: (v: WorkTaskRow['latest_progress']) => v?.comment || '-' },
     {
       title: t('common.actions'), key: 'actions', width: 240, fixed: 'right',
       render: (_: unknown, row: WorkTaskRow) => <Space size={0} wrap>
+        <Button type="link" size="small" onClick={() => void openDetail(row)}>{t('common.detail')}</Button>
         {row.capabilities.edit && <Button type="link" size="small" onClick={() => openEdit(row)}>{t('common.edit')}</Button>}
         {row.capabilities.transition && NEXT[row.status].map((next) => <Button key={next} type="link" size="small" onClick={() => openTransition(row, next)}>{next}</Button>)}
         {row.capabilities.delete && <Button type="link" size="small" danger onClick={() => remove(row)}>{t('common.delete')}</Button>}
@@ -188,7 +217,7 @@ export default function DelegatedTasksPage() {
         <Select allowClear style={{ width: 140 }} placeholder={t('task.filter.status')} value={status} onChange={setStatus} options={STATUSES.map((v) => ({ value: v, label: v }))} />
         <span>{t('task.filter.onlyMine')} <Switch checked={mineOnly} onChange={setMineOnly} /></span>
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.register')}</Button>
+        <Button className="task-register-hitbox" type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.register')}</Button>
       </Space>
       <Table<WorkTaskRow>
         rowKey="id" loading={loading} columns={columns} dataSource={rows}
@@ -219,6 +248,40 @@ export default function DelegatedTasksPage() {
 
       <Modal title={`${t('task.transition')}${transitioning ? `：${transitioning.to}` : ''}`} open={!!transitioning} onOk={() => void submitTransition()} confirmLoading={saving} onCancel={() => setTransitioning(null)} destroyOnClose>
         <Form form={transitionForm} layout="vertical"><Form.Item name="reason" label={transitioning && ['暂停', '中止', '关闭'].includes(transitioning.to) ? t('task.reason') : t('common.remark')} rules={transitioning && ['暂停', '中止'].includes(transitioning.to) ? [{ required: true, min: 2, message: t('task.reasonRequired') }] : []}><Input.TextArea rows={3} /></Form.Item></Form>
+      </Modal>
+
+      <Modal title={detail ? `${detail.task_code} · ${detail.title}` : t('common.detail')} open={!!detail} footer={null} onCancel={() => setDetail(null)} width={760} destroyOnClose>
+        {detail && <>
+          <Space wrap style={{ marginBottom: 12 }}>
+            <Tag>{detail.status}</Tag>
+            <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
+            {detail.capabilities.progress && <Button type="primary" onClick={() => { progressForm.resetFields(); setProgressOpen(true); }}>{t('task.progress.add')}</Button>}
+          </Space>
+          <Typography.Paragraph>{detail.description}</Typography.Paragraph>
+          <Typography.Text strong>{t('task.progress.timeline')}</Typography.Text>
+          <Timeline
+            style={{ marginTop: 18 }}
+            items={detail.progress_entries.map((entry) => ({
+              children: <div>
+                <Space wrap>
+                  <Typography.Text strong>{entry.author_name || '-'}</Typography.Text>
+                  <Tag>{entry.status_snapshot}</Tag>
+                  {entry.progress_percent != null && <Progress percent={entry.progress_percent} size="small" style={{ width: 160 }} />}
+                  <Typography.Text type="secondary">{dayjs(entry.created_at).format('YYYY-MM-DD HH:mm')}</Typography.Text>
+                </Space>
+                <div>{entry.comment}</div>
+              </div>,
+            }))}
+          />
+          {detail.progress_entries.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.progress.empty')} />}
+        </>}
+      </Modal>
+
+      <Modal title={t('task.progress.add')} open={progressOpen} onOk={() => void submitProgress()} confirmLoading={saving} onCancel={() => setProgressOpen(false)} destroyOnClose>
+        <Form form={progressForm} layout="vertical">
+          <Form.Item name="progress_percent" label={t('task.progress.percent')}><InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: 180 }} /></Form.Item>
+          <Form.Item name="comment" label={t('task.progress.comment')} rules={[{ required: true, message: t('task.progress.commentRequired') }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
+        </Form>
       </Modal>
     </div>
   );

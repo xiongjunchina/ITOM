@@ -109,7 +109,8 @@ class RequirementScoringConfig(GlidBase):
 class RequirementTask(GlidBase):
     __tablename__ = "requirement_task"
 
-    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirement.id"), index=True)
+    requirement_id: Mapped[str | None] = mapped_column(ForeignKey("requirement.id"), index=True)
+    registrar: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text, comment="任务描述")
     assignee: Mapped[str] = mapped_column(ForeignKey("org_member.id"))

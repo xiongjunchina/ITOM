@@ -189,6 +189,7 @@ def test_development_task_template_and_import(client, ctx, admin_headers):
     assert template.status_code == 200
     workbook = load_workbook(BytesIO(template.content))
     sheet = workbook["开发任务"]
+    sheet.append(["", "暂未关联需求的任务", "后续再关联", "开发小陈", "2026-08-11", 1, 0, "待处理"])
     sheet.append([requirement["requirement_code"], "批量导入任务", "模板导入", "开发小陈", "2026-08-11", 2, 1, "待处理"])
     sheet.append(["RQ-NOT-FOUND", "无效关联", "", "开发小陈", "2026-08-11", 1, 0, "待处理"])
     content = BytesIO()
@@ -200,13 +201,15 @@ def test_development_task_template_and_import(client, ctx, admin_headers):
     )
     assert result.status_code == 200, result.text
     data = result.json()["data"]
-    assert data["created"] == 1
-    assert data["failed"] and data["failed"][0]["row"] == 4
+    assert data["created"] == 2
+    assert data["failed"] and data["failed"][0]["row"] == 5
     assert "不存在" in data["failed"][0]["error"]
 
     active = client.get("/api/requirements/tasks/active", headers=ctx["dev"])
     imported = next(row for row in active.json()["data"] if row["name"] == "批量导入任务")
     assert imported["can_edit"] is True and imported["can_delete"] is True
+    unlinked = next(row for row in active.json()["data"] if row["name"] == "暂未关联需求的任务")
+    assert unlinked["requirement_id"] is None
     assert client.get("/api/requirements/tasks/template", headers=ctx["req"]).status_code == 403
 
 

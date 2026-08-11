@@ -385,6 +385,7 @@ export interface DashboardData {
     open_bug_fix_tasks: number;
     open_delegated_tasks: number;
     open_requirement_tasks: number;
+    open_project_tasks: number;
   };
   alerts: { type: string; title: string; link?: string | null }[];
 }
@@ -983,6 +984,17 @@ export interface TaskCapabilities {
   generate_fix_tasks?: boolean;
   verify?: boolean;
   reopen?: boolean;
+  progress?: boolean;
+}
+
+export interface TaskProgressEntry {
+  id: string;
+  author_id: string | null;
+  author_name: string | null;
+  progress_percent: number | null;
+  status_snapshot: string;
+  comment: string;
+  created_at: string;
 }
 
 export interface BugFixTaskRow {
@@ -1057,6 +1069,42 @@ export interface WorkTaskRow {
   abort_reason: string | null;
   completion_note: string | null;
   closed_at: string | null;
+  progress_entries: TaskProgressEntry[];
+  latest_progress: TaskProgressEntry | null;
+  capabilities: TaskCapabilities;
+}
+
+export type ProjectDevelopmentTaskStatus = '待处理' | '进行中' | '已完成';
+
+export interface ProjectDevelopmentTaskRow {
+  id: string;
+  task_code: string;
+  project_id: string;
+  project_code: string | null;
+  project_name: string | null;
+  wbs_task_id: string | null;
+  wbs_code: string | null;
+  wbs_name: string | null;
+  title: string;
+  description: string;
+  acceptance_criteria: string | null;
+  task_type: string;
+  registrar: string;
+  registrar_name: string | null;
+  assignee: string | null;
+  assignee_name: string | null;
+  priority: TicketPriority;
+  environment: string | null;
+  version: string | null;
+  plan_start: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: ProjectDevelopmentTaskStatus;
+  completion_note: string | null;
+  done_at: string | null;
+  progress_entries: TaskProgressEntry[];
+  latest_progress: TaskProgressEntry | null;
   capabilities: TaskCapabilities;
 }
 
@@ -1627,12 +1675,12 @@ export interface ActiveTaskRow {
   actual_effort: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
-  requirement_id: string;
-  requirement_code: string;
-  requirement_title: string;
+  requirement_id: string | null;
+  requirement_code: string | null;
+  requirement_title: string | null;
   /** 所属需求状态 code（analyzing/implementing） */
-  requirement_status: RequirementStatus | string;
-  requirement_status_name: string;
+  requirement_status: RequirementStatus | string | null;
+  requirement_status_name: string | null;
   requirement_owner_name: string | null;
   business_domain_name: string | null;
   /** MoSCoW 优先级 */
