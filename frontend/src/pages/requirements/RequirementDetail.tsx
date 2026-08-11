@@ -666,7 +666,6 @@ export default function RequirementDetail() {
   // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
   const canEdit = detail?.can_edit ?? false;
   const canManageTasks = detail?.can_manage_tasks ?? canEdit;
-  const canDeleteTasks = detail?.can_delete_tasks ?? canEdit;
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   // M28 主动关闭（登记人/admin）
   const [closeOpen, setCloseOpen] = useState(false);
@@ -1077,19 +1076,19 @@ export default function RequirementDetail() {
         ),
     },
     { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => fmtDt(v) ?? '-' },
-    ...(canDeleteTasks
+    ...(detail.tasks.some((task) => task.can_delete)
       ? [
           {
             title: t('common.actions'),
             key: 'action',
             width: 80,
-            render: (_: unknown, r: RequirementTask) => (
+            render: (_: unknown, r: RequirementTask) => r.can_delete ? (
               <Popconfirm title={t('req.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
                 <Button type="link" size="small" danger>
                   {t('common.delete')}
                 </Button>
               </Popconfirm>
-            ),
+            ) : '-',
           } as ColumnsType<RequirementTask>[number],
         ]
       : []),

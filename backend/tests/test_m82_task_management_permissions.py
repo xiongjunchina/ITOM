@@ -17,8 +17,15 @@ def test_task_management_modules_are_registered_for_business_navigation():
 def test_task_management_default_permissions_match_team_workflow():
     assert "task_bug" not in DEFAULT_MATRIX["requester"]
     assert "task_development" not in DEFAULT_MATRIX["requester"]
+    # 开发任务登记和修改开放给所有内置 IT 类角色；删除仍由业务服务按任务状态
+    # 和管理员身份决定，不能仅由权限矩阵直接放开。
+    it_role_codes = [
+        code for code in DEFAULT_MATRIX
+        if code == "cio" or code == "is_mgr" or code.startswith("it_")
+    ]
+    assert all("c" in DEFAULT_MATRIX[code]["task_development"] for code in it_role_codes)
+    assert all("e" in DEFAULT_MATRIX[code]["task_development"] for code in it_role_codes)
     assert "c" in DEFAULT_MATRIX["it_dev"]["task_bug"]
     assert "c" in DEFAULT_MATRIX["it_dev"]["task_delegated"]
-    assert "e" in DEFAULT_MATRIX["it_dev_leader"]["task_development"]
     assert "e" in DEFAULT_MATRIX["it_dev_leader"]["task_bug"]
     assert "e" in DEFAULT_MATRIX["it_pdm"]["task_bug"]

@@ -185,6 +185,9 @@ The same implementing requirement may call `POST` repeatedly to register multipl
 The frontend routes are `/task-management/development` and `/task-management/delegated`; `tab=requirement|bug` only selects the Development Tasks view and does not change backend resources. Historical requirement-task routes redirect to the Requirement Development tab so existing bookmarks and data remain compatible.
 
 ```text
+GET /api/requirements/tasks/template
+POST /api/requirements/tasks/import
+
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
 GET /api/task-management/reference/cis              # read-only CMDB system candidates for Bug registration
@@ -200,6 +203,10 @@ GET /api/task-management/work-tasks/{id}
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
 ```
+
+The same requirement in Implementation may repeatedly call `POST` to register multiple task rows. Every built-in IT role receives `view/create/edit` on `task_development` and may therefore maintain full development-task fields on an implementing requirement. The requirement owner retains compatible record-scope maintenance; an assignee without maintenance may update only their own `status` and `actual_effort`. Deletion is a server-side status rule rather than a matrix `delete` grant: an IT user with development-task maintenance may soft-delete a task that is not In Progress, while an In Progress task is deletable by the system administrator only. List responses return `can_manage_tasks`, `can_edit`, and `can_delete`; detail task rows return `can_delete`. The server never relies on a front-end button and rechecks requirement stage, owner scope, example-data protection, and permission for every write.
+
+`GET /api/requirements/tasks/template` returns the Development Tasks worksheet. `POST /api/requirements/tasks/import` accepts multipart field `file` with a `.xlsx` file no larger than 5MB. The caller must have `task_development.create`; each row exactly matches the requirement code and an active IT member name. The requirement must be non-example, not project-converted, and in Implementation. Valid rows create tasks and write audit/assignee notifications; failed rows return `{row, error}`. The response is `{created, failed}`: bulk import appends only, performs no update or de-duplication, and leaves historical requirement/task records unchanged.
 
 Bug APIs always use the registration-time snapshot of `ci.product_manager_id`; the client cannot choose the approver. Registration starts `bug_flow` and automatically completes its registration node. Confirmation, multi-row fix-task generation, and verification after all child tasks close are handled by the corresponding process actors. Verification rejection and reopening require a reason and remain audited. After a Bug is created, the browser may upload zero or more files through `POST /api/attachments?entity_type=bug&entity_id={bug_id}` using the multipart field `file` (50MB maximum per file). Creation and upload are separate transactions: one failed attachment never rolls back the Bug and may be retried from detail. Bug attachment reads require `task_bug.view`; uploads require the same record-level workflow edit/correction authorization as editing the Bug. Delegated tasks use `Register → Schedule → Execute → Close`, with `Pause/Abort` as additional states. The registrar may soft-delete an unassigned registered task; once assigned, deletion before closure is administrator-only. Every list response includes `capabilities`, but the backend rechecks the current user, state, assignee, and administrator scope on every write.
 

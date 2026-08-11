@@ -146,18 +146,29 @@ def _is_business_portal_only(db: Session, user: AuthUser) -> bool:
     return bool(roles) and roles.issubset({REQUESTER, BDO})
 
 
+def _has_development_task_edit(db: Session, user: AuthUser) -> bool:
+    """以任务管理域为权威入口，并兼容历史需求任务授权。"""
+    return (
+        has_perm(db, user, "task_development", "edit")
+        or has_perm(db, user, "requirements", "edit")
+        or has_perm(db, user, "req_tasks", "edit")
+    )
+
+
 def _can_manage_requirement_tasks(db: Session, user: AuthUser, requirement: Requirement, effective_status: str | None = None) -> bool:
-    """任务维护权：全局任务/需求编辑者，或当前实现中需求的负责人。"""
+    """开发任务维护权：实现中需求上的所有 IT 类角色，兼容历史需求负责人。"""
     if requirement.is_example or (effective_status or requirement.status) != "implementing":
         return False
-    if has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit"):
+    if _has_development_task_edit(db, user):
         return True
     return bool(user.person_id and requirement.owner == user.person_id)
 
 
-def _can_delete_requirement_tasks(db: Session, user: AuthUser) -> bool:
-    """删除仍保持原有管理权限，不因需求负责人身份自动扩大。"""
-    return has_perm(db, user, "requirements", "edit") or has_perm(db, user, "req_tasks", "edit")
+def _can_delete_requirement_task(db: Session, user: AuthUser, task: RequirementTask) -> bool:
+    """进行中的开发任务只允许管理员删除；其他状态由有维护权的 IT 角色删除。"""
+    if _is_req_admin(db, user):
+        return True
+    return task.status != "进行中" and _has_development_task_edit(db, user)
 
 
 def _task_progress(db: Session, requirement_id: str) -> dict:
@@ -692,6 +703,120 @@ async def import_requirements(file: UploadFile, db: Session = Depends(get_db), u
     return ok({"imported": imported, "errors": errors})
 
 
+# ---------- 开发任务：模板导出 + 批量导入 ----------
+
+def _development_task_sheet() -> "Sheet":
+    """需求开发任务导入模板；关联需求与处理人均使用显示编号/姓名精确匹配。"""
+    from app.services.excel_io import Col, Sheet
+
+    return Sheet("开发任务", [
+        Col("requirement_code", "关联需求编号", required=True, hint="填写实现中的需求编号，例如 RQ-202608-0001", max_length=32),
+        Col("name", "任务名称", required=True, max_length=200),
+        Col("description", "任务描述", max_length=1000),
+        Col("assignee_name", "处理人", required=True, hint="按数字化团队在岗人员姓名精确匹配", max_length=64),
+        Col("plan_date", "计划完成日期", kind="date"),
+        Col("plan_effort", "计划人天", kind="float"),
+        Col("actual_effort", "实际人天", kind="float"),
+        Col("status", "任务状态", enum=["待处理", "进行中", "已完成"], hint="留空默认为待处理"),
+    ])
+
+
+def _xlsx_response(content: bytes, filename: str) -> "Response":
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=template.xlsx; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.get("/tasks/template")
+def development_task_template(_: AuthUser = Depends(require_perm("task_development", "create"))):
+    from app.services.excel_io import build_template
+
+    return _xlsx_response(build_template([_development_task_sheet()]), "开发任务导入模板.xlsx")
+
+
+@router.post("/tasks/import")
+async def import_development_tasks(
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_perm("task_development", "create")),
+):
+    """按行导入实现中需求的开发任务；有效行入库，失败行返回给前端修正。"""
+    from app.services.excel_io import parse_sheet
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise AppError("FILE_TOO_LARGE", "导入文件不能超过 5MB")
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise AppError("INVALID_FORMAT", "请上传 .xlsx 文件（使用系统导出的模板）")
+    rows, errors = parse_sheet(content, _development_task_sheet())
+    requirements = {
+        requirement.requirement_code: requirement
+        for requirement in db.query(Requirement).filter(Requirement.is_deleted.is_(False)).all()
+    }
+    members_by_name: dict[str, list[OrgMember]] = {}
+    for member in db.query(OrgMember).filter(
+        OrgMember.is_deleted.is_(False), OrgMember.status == "在岗"
+    ).all():
+        members_by_name.setdefault(member.name, []).append(member)
+
+    created = 0
+    for row in rows:
+        rownum = row["_row"]
+        requirement_code = row["requirement_code"]
+        requirement = requirements.get(requirement_code)
+        if not requirement:
+            errors.append({"row": rownum, "error": f"关联需求编号「{requirement_code}」不存在"})
+            continue
+        if requirement.is_example or requirement.project_id or requirement.status != "implementing":
+            errors.append({"row": rownum, "error": "关联需求必须是未转项目、非示例且处于「实现中」状态"})
+            continue
+        assignees = members_by_name.get(row["assignee_name"], [])
+        if not assignees:
+            errors.append({"row": rownum, "error": f"处理人「{row['assignee_name']}」不是在岗人员"})
+            continue
+        if len(assignees) > 1:
+            errors.append({"row": rownum, "error": f"处理人「{row['assignee_name']}」存在重名，请由管理员先维护唯一姓名"})
+            continue
+        if any((row.get(key) is not None and row[key] < 0) for key in ("plan_effort", "actual_effort")):
+            errors.append({"row": rownum, "error": "计划人天和实际人天不能小于 0"})
+            continue
+        assignee = assignees[0]
+        try:
+            require_it_member_if_configured(db, assignee.id, "开发任务处理人")
+        except AppError as exc:
+            errors.append({"row": rownum, "error": exc.message})
+            continue
+        task = RequirementTask(
+            requirement_id=requirement.id,
+            name=row["name"],
+            description=row.get("description"),
+            assignee=assignee.id,
+            plan_date=row.get("plan_date"),
+            plan_effort=row.get("plan_effort"),
+            actual_effort=row.get("actual_effort"),
+            status=row.get("status") or "待处理",
+        )
+        if task.status == "已完成":
+            task.done_at = datetime.now()
+        db.add(task)
+        db.flush()
+        audit(db, "requirement_task", task.id, "import", user, {"name": task.name, "requirement": requirement.requirement_code})
+        if task.assignee != user.person_id:
+            notifier.notify(db, "requirement.task_assigned", "requirement", requirement.id, [task.assignee],
+                            f"需求任务指派：{requirement.title} / {task.name}", link=f"/requirements/{requirement.id}")
+        if task.status == "已完成":
+            publish(db, "requirement.task_completed", "requirement", requirement.id, {"task_id": task.id})
+        created += 1
+    db.commit()
+    return ok({"created": created, "failed": errors})
+
+
 def _get_requirement(db: Session, requirement_id: str, user: AuthUser) -> Requirement:
     r = db.get(Requirement, requirement_id)
     if not r or r.is_deleted:
@@ -768,7 +893,8 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             {"id": t.id, "name": t.name, "description": t.description,
              "assignee": t.assignee, "assignee_name": names.get(t.assignee),
              "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
-             "status": t.status, "done_at": t.done_at}
+             "status": t.status, "done_at": t.done_at,
+             "can_delete": _can_delete_requirement_task(db, user, t)}
             for t in tasks
         ],
         "handover": {
@@ -788,7 +914,7 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         "workflow_edit_mode": edit_access.mode,
         "workflow_edit_locked_reason": edit_access.reason,
         "can_manage_tasks": _can_manage_requirement_tasks(db, user, r, effective_status),
-        "can_delete_tasks": _can_delete_requirement_tasks(db, user),
+        "can_delete_tasks": any(_can_delete_requirement_task(db, user, task) for task in tasks),
     })
     return ok(detail)
 
@@ -1169,9 +1295,11 @@ def route_to_dev(requirement_id: str, body: ToDevIn, db: Session = Depends(get_d
 @router.get("/tasks/active")
 def active_tasks(
     scope: str = "", status: str = "",
-    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("req_tasks", "view")),
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
 ):
-    """任务跟踪清单（M17.2 独立授权：业务用户不可见）：任务/处理人/关联需求/进度。"""
+    """开发任务清单：仅具有开发任务或历史任务查看权的账号可访问。"""
+    if not (has_perm(db, user, "task_development", "view") or has_perm(db, user, "req_tasks", "view")):
+        raise AppError("FORBIDDEN", "无开发任务查看权限", 403)
     q = (
         db.query(RequirementTask, Requirement)
         .join(Requirement, RequirementTask.requirement_id == Requirement.id)
@@ -1215,6 +1343,8 @@ def active_tasks(
             "quadrant": requirement_scoring.compute_quadrant(
                 requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights),
             "can_manage_tasks": _can_manage_requirement_tasks(db, user, r),
+            "can_edit": _can_manage_requirement_tasks(db, user, r),
+            "can_delete": _can_delete_requirement_task(db, user, t),
         }
         for t, r in rows
     ])
@@ -1223,9 +1353,9 @@ def active_tasks(
 # ---------- 实现阶段：任务分解 ----------
 
 def _require_task_perm(db: Session, user: AuthUser, requirement: Requirement | None = None):
-    """任务维护权限：全局编辑者或实现中需求负责人。"""
+    """任务维护权限：实现中需求上的 IT 类角色或兼容的历史需求负责人。"""
     if not requirement or not _can_manage_requirement_tasks(db, user, requirement):
-        raise AppError("FORBIDDEN", "无任务维护权限（需需求/任务编辑权限，或为实现中需求负责人）", 403)
+        raise AppError("FORBIDDEN", "无开发任务维护权限（需开发任务编辑权限且需求处于实现中）", 403)
 
 
 @router.post("/{requirement_id}/tasks")
@@ -1282,12 +1412,15 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
 
 @router.delete("/tasks/{task_id}")
 def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    if not _can_delete_requirement_tasks(db, user):
-        raise AppError("FORBIDDEN", "无任务删除权限（需 需求管理编辑 或 任务跟踪编辑）", 403)
     task = db.get(RequirementTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    ensure_example_delete_allowed(db.get(Requirement, task.requirement_id), db, user)
+    requirement = db.get(Requirement, task.requirement_id)
+    ensure_example_delete_allowed(requirement, db, user)
+    if not _can_delete_requirement_task(db, user, task):
+        if task.status == "进行中":
+            raise AppError("FORBIDDEN", "进行中的开发任务仅系统管理员可删除", 403)
+        raise AppError("FORBIDDEN", "无开发任务删除权限", 403)
     task.is_deleted = True
     audit(db, "requirement_task", task.id, "delete", user, {"name": task.name})
     db.commit()

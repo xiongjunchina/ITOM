@@ -183,6 +183,9 @@ GET /api/requirements/tasks/active
 前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
 
 ```text
+GET /api/requirements/tasks/template
+POST /api/requirements/tasks/import
+
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
 GET /api/task-management/reference/cis              # Bug 所属系统候选；只读 CMDB 配置项
@@ -198,6 +201,10 @@ GET /api/task-management/work-tasks/{id}
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
 ```
+
+同一实现中需求可重复调用 `POST` 登记多行任务。所有内置 IT 类角色的 `task_development` 均授予 `view/create/edit`，因此可维护实现中需求上的完整任务字段；需求负责人保留兼容的数据范围维护，未获得维护权的任务负责人只能更新自己任务的 `status` 和 `actual_effort`。删除采用服务端状态规则而不是矩阵 `delete`：非“进行中”任务可由具备开发任务维护权的 IT 人员软删除，“进行中”任务仅系统管理员可删除。列表返回 `can_manage_tasks`、`can_edit`、`can_delete`，详情任务行返回 `can_delete`；服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。
+
+`GET /api/requirements/tasks/template` 返回“开发任务”工作表；`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`。导入调用人须有 `task_development.create`，每行按需求编号和在岗 IT 成员姓名精确匹配；关联需求必须为未转项目、非示例、实现中记录。有效行创建并写审计/指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，批量导入只追加、不做更新或去重。既有任务按原主键和软删除状态继续可读，不回填或改写历史需求/任务。
 
 Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
 

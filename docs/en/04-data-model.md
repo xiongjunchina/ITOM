@@ -288,7 +288,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.2 requirement_task — requirement task
 
-`requirement_id` FK, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C]. A requirement may have multiple task rows. Tasks continue to use `GlidBase.is_deleted` soft deletion; this permission fix does not rebuild, overwrite, or migrate existing records.
+`requirement_id` FK, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C]. A requirement may have multiple task rows. Tasks continue to use `GlidBase.is_deleted` soft deletion. Development-task template import maps each row only to these existing fields; it adds no import-batch table, updates no existing task, and does not rebuild or migrate historical records.
 
 ### 4.3 bug — defect record
 

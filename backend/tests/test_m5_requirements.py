@@ -1,5 +1,8 @@
 """M5：需求四阶段/阶段门/任务分解/验收清单/转出闭环。"""
+from io import BytesIO
+
 import pytest
+from openpyxl import load_workbook
 
 
 @pytest.fixture(scope="module")
@@ -125,7 +128,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 
-    # 任务分解 + 负责人自更新状态/实际工时
+    # 任务分解 + IT 开发人员可维护实现中需求上的所有开发任务
     t1 = client.post(f"/api/requirements/{rid}/tasks", json={"name": "建模", "assignee": ctx["dev_p"]}, headers=ctx["pdm"]).json()["data"]
     client.post(f"/api/requirements/{rid}/tasks", json={"name": "报表开发", "assignee": ctx["dev_p"]}, headers=ctx["pdm"])
     r1 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"status": "已完成"}, headers=ctx["dev"])
@@ -133,7 +136,22 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     r_effort = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"actual_effort": 1.5}, headers=ctx["dev"])
     assert r_effort.json()["success"], r_effort.text
     r2 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"name": "改名"}, headers=ctx["dev"])
-    assert r2.status_code == 403  # 负责人只能改状态
+    assert r2.status_code == 200, r2.text
+
+    # 进行中的开发任务仅系统管理员可删除；其他状态由有开发任务维护权的 IT 人员删除。
+    running = client.post(
+        f"/api/requirements/{rid}/tasks", json={"name": "进行中任务", "assignee": ctx["dev_p"]}, headers=ctx["pdm"],
+    ).json()["data"]
+    assert client.patch(
+        f"/api/requirements/tasks/{running['id']}", json={"status": "进行中"}, headers=ctx["dev"],
+    ).status_code == 200
+    assert client.delete(f"/api/requirements/tasks/{running['id']}", headers=ctx["dev"]).status_code == 403
+    assert client.delete(f"/api/requirements/tasks/{running['id']}", headers=admin_headers).status_code == 200
+
+    deletable = client.post(
+        f"/api/requirements/{rid}/tasks", json={"name": "待删除任务", "assignee": ctx["dev_p"]}, headers=ctx["pdm"],
+    ).json()["data"]
+    assert client.delete(f"/api/requirements/tasks/{deletable['id']}", headers=ctx["dev"]).status_code == 200
 
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
     assert detail["task_total"] == 2 and detail["task_done"] == 1 and detail["progress"] == 50.0
@@ -150,6 +168,46 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     assert resp.json()["data"]["status"] == "closed"
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
     assert detail["lead_days"] is not None
+
+
+def test_development_task_template_and_import(client, ctx, admin_headers):
+    """开发任务模板可由 IT 成员下载；导入按行校验并保留失败明细。"""
+    requirement = _register(client, ctx["bp"], ctx["domain"], title="批量导入开发任务")
+    rid = requirement["id"]
+    client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
+        "decision": "通过",
+    }, headers=ctx["pdm"])
+    client.patch(f"/api/requirements/{rid}", json={
+        "moscow": "M", "owner": ctx["pdm_p"], "solution": "批量任务导入方案",
+    }, headers=ctx["pdm"])
+    assert client.post(
+        f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers,
+    ).status_code == 200
+
+    template = client.get("/api/requirements/tasks/template", headers=ctx["dev"])
+    assert template.status_code == 200
+    workbook = load_workbook(BytesIO(template.content))
+    sheet = workbook["开发任务"]
+    sheet.append([requirement["requirement_code"], "批量导入任务", "模板导入", "开发小陈", "2026-08-11", 2, 1, "待处理"])
+    sheet.append(["RQ-NOT-FOUND", "无效关联", "", "开发小陈", "2026-08-11", 1, 0, "待处理"])
+    content = BytesIO()
+    workbook.save(content)
+    result = client.post(
+        "/api/requirements/tasks/import",
+        files={"file": ("development-tasks.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=ctx["dev"],
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert data["created"] == 1
+    assert data["failed"] and data["failed"][0]["row"] == 4
+    assert "不存在" in data["failed"][0]["error"]
+
+    active = client.get("/api/requirements/tasks/active", headers=ctx["dev"])
+    imported = next(row for row in active.json()["data"] if row["name"] == "批量导入任务")
+    assert imported["can_edit"] is True and imported["can_delete"] is True
+    assert client.get("/api/requirements/tasks/template", headers=ctx["req"]).status_code == 403
 
 
 def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers):

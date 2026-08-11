@@ -18,6 +18,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
+import ImportButtons from '../../components/ImportButtons';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -48,33 +49,25 @@ export default function ActiveTaskList() {
   const et = useEnums();
 
   const user = useAuthStore((st) => st.user);
-  const canEdit = user?.permissions
-    ? hasPermission(user, 'requirements', 'edit') || hasPermission(user, 'req_tasks', 'edit')
-    : true;
-  const [canAddTasks, setCanAddTasks] = useState(canEdit);
+  // 后端 task_development 是最终授权依据；角色回退仅覆盖旧会话未刷新 permissions 的短暂窗口。
+  const canMaintainDevelopmentTasks = Boolean(
+    user && (
+      hasPermission(user, 'task_development', 'create')
+      || user.roles.some((role) => role === 'cio' || role === 'is_mgr' || role.startsWith('it_'))
+    ),
+  );
 
   const [rows, setRows] = useState<ActiveTaskRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<RequirementTaskStatus | undefined>();
   const [mineOnly, setMineOnly] = useState(false);
 
-  // 登记任务（M16.2）：开发 leader 在本页直接给实现中的需求录任务清单
+  // 登记任务：内置 IT 类角色可在本页为实现中的需求维护任务清单。
   const [addOpen, setAddOpen] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
   const [addForm] = Form.useForm();
   const [reqOptions, setReqOptions] = useState<{ value: string; label: string }[]>([]);
   const [memberOptions, setMemberOptions] = useState<{ value: string; label: string }[]>([]);
-
-  useEffect(() => {
-    if (canEdit || !user?.person_id) {
-      setCanAddTasks(canEdit);
-      return;
-    }
-    api
-      .getList<RequirementRow>('/requirements', { status: 'implementing', scope: 'mine', page: 1, page_size: 200 })
-      .then((res) => setCanAddTasks(res.items.some((r) => r.can_manage_tasks === true && !r.project_id)))
-      .catch(() => setCanAddTasks(false));
-  }, [canEdit, user?.person_id]);
 
   const openAdd = async () => {
     addForm.resetFields();
@@ -86,7 +79,7 @@ export default function ActiveTaskList() {
       ]);
       setReqOptions(
         reqs.items
-          .filter((r) => !r.is_example && !r.project_id && (canEdit || r.can_manage_tasks === true))  // 转项目的需求由项目侧交付，不在此录任务
+          .filter((r) => !r.is_example && !r.project_id && r.can_manage_tasks === true)  // 转项目的需求由项目侧交付，不在此录任务
           .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
       );
       setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
@@ -135,7 +128,7 @@ export default function ActiveTaskList() {
     void load();
   }, [load]);
 
-  // 编辑/删除（M16.3：开发 leader 与管理员维护任务清单；权限=requirements.edit）
+  // 逐行编辑/删除能力由服务端根据角色、需求阶段和任务状态返回。
   const [editing, setEditing] = useState<ActiveTaskRow | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editForm] = Form.useForm();
@@ -288,7 +281,7 @@ export default function ActiveTaskList() {
       width: 100,
       render: (v: RequirementTaskStatus) => <Tag color={REQ_TASK_STATUS_COLORS[v]}>{et.reqTaskStatus(v)}</Tag>,
     },
-    ...(canEdit || rows.some((row) => row.can_manage_tasks)
+    ...(rows.some((row) => row.can_edit || row.can_delete)
       ? [
           {
             title: t('common.actions'),
@@ -297,12 +290,12 @@ export default function ActiveTaskList() {
             fixed: 'right' as const,
             render: (_: unknown, row: ActiveTaskRow) => (
               <span style={{ whiteSpace: 'nowrap' }}>
-                {(canEdit || row.can_manage_tasks) && (
+                {row.can_edit && (
                   <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => void openEdit(row)}>
                     {t('common.edit')}
                   </Button>
                 )}
-                {canEdit && (
+                {row.can_delete && (
                   <Button type="link" size="small" danger style={{ paddingInline: 4 }} onClick={() => removeTask(row)}>
                     {t('common.delete')}
                   </Button>
@@ -331,10 +324,17 @@ export default function ActiveTaskList() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
-        {canAddTasks && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => void openAdd()}>
-            {t('req.activeTask.add')}
-          </Button>
+        {canMaintainDevelopmentTasks && (
+          <>
+            <ImportButtons
+              templateUrl="/requirements/tasks/template"
+              importUrl="/requirements/tasks/import"
+              onDone={() => void load()}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => void openAdd()}>
+              {t('req.activeTask.add')}
+            </Button>
+          </>
         )}
       </Space>
 

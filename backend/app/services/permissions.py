@@ -104,8 +104,8 @@ def _staff_base() -> dict[str, str]:
     matrix.update({"ticket_sr": "vce", "ticket_incident": "vce", "ticket_change": "vce",
                    "knowledge": "vce", "requirements": "vc", "performance_result": "v",
     "activities": "vc", "learning_growth": "vced", "ideas": "vc",
-    # IT 团队成员均可登记 Bug/委派任务；具体编辑、分派和删除仍由业务服务按数据范围控制。
-    "task_bug": "vce", "task_delegated": "vce"})
+    # IT 团队成员均可维护开发/Bug/委派任务；具体编辑、分派和删除仍由业务服务按数据范围控制。
+    "task_development": "vce", "task_bug": "vce", "task_delegated": "vce"})
     return matrix
 
 
@@ -168,9 +168,10 @@ def flags_to_actions(flags: str) -> list[str]:
 def seed_permissions(db: Session):
     """按角色写入默认矩阵并收敛受限内置角色的历史越权。
 
-    一般情况下仅补种缺失模块，管理员已调整的矩阵不受影响。唯一例外是
-    ``requester → requirements``：这是已废止的业务用户需求登记入口，必须在
-    启动时幂等移除，避免历史权限行绕过 BDO 边界；不会影响任何既有需求数据。
+    一般情况下仅补种缺失模块，管理员已调整的矩阵不受影响。例外包括：
+    ``requester → requirements`` 是已废止的业务用户需求登记入口，必须在启动时
+    幂等移除；以及历史内置 IT 角色的 ``task_development`` 只有查看权限，需
+    补齐为登记/修改所需的 ``view/create/edit``。两者均不修改业务数据。
     """
     removed = (
         db.query(RolePermission)
@@ -188,6 +189,24 @@ def seed_permissions(db: Session):
         for module, flags in modules.items():
             if module not in existing:
                 db.add(RolePermission(role_code=role_code, module=module, actions=flags_to_actions(flags)))
+    # M104：已发布环境中的内置 IT 角色早已存在，单纯补种无法提升其已有
+    # task_development 行。仅收敛这些内置 IT 角色的该模块，管理员角色仍为
+    # 隐式全权，业务角色与自定义角色不受影响。
+    it_role_codes = [
+        role_code
+        for role_code in DEFAULT_MATRIX
+        if role_code == "cio" or role_code == "is_mgr" or role_code.startswith("it_")
+    ]
+    for permission in (
+        db.query(RolePermission)
+        .filter(
+            RolePermission.role_code.in_(it_role_codes),
+            RolePermission.module == "task_development",
+            RolePermission.is_deleted.is_(False),
+        )
+        .all()
+    ):
+        permission.actions = flags_to_actions("vce")
     db.commit()
 
 

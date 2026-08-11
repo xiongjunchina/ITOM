@@ -1610,6 +1610,8 @@ export interface RequirementTask {
   actual_effort?: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
+  /** 当前用户是否可删除此任务（进行中任务仅管理员可删） */
+  can_delete?: boolean;
 }
 
 /** 排期/实现中的需求任务行（GET /requirements/tasks/active）：跨需求聚合的任务清单 */
@@ -1641,6 +1643,10 @@ export interface ActiveTaskRow {
   weighted_total: number | null;
   /** 当前用户是否可维护该实现中需求的任务 */
   can_manage_tasks?: boolean;
+  /** 当前用户是否可编辑此任务 */
+  can_edit?: boolean;
+  /** 当前用户是否可删除此任务（进行中任务仅管理员可删） */
+  can_delete?: boolean;
 }
 
 /** 需求列表行 */
