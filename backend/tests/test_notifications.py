@@ -6,8 +6,10 @@ from app.models import (
     AilyIntegrationConfig,
     AuthUser,
     ExternalIdentity,
+    FeishuConfig,
     InAppNotification,
     NotificationOutbox,
+    OrgMember,
 )
 from app.services.aily import (
     deliver_aily_outbox_row,
@@ -375,3 +377,116 @@ def test_feishu_oauth_auto_map_does_not_bypass_disabled_bot_identity(
             ExternalIdentity.subject_type == "user_id",
             ExternalIdentity.subject_id == "u_disabled_auto_map",
         ).count() == 0
+
+
+def test_pending_notification_auto_maps_from_synced_org_after_verified_oauth_anchor(
+    client,
+    admin_headers,
+    monkeypatch,
+):
+    """一个可信 OAuth 租户锚点建立后，其他同步员工无需逐人登录或手工绑定。"""
+    tenant_id = "oauth-tenant-org-reconcile"
+    bot_app_id = "cli_org_reconcile_bot"
+    login_open_id = "ou_login_app_target"
+    target_user_id = "u_org_reconcile_target"
+    with SessionLocal() as db:
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        config = db.query(AilyIntegrationConfig).filter(
+            AilyIntegrationConfig.is_deleted.is_(False)
+        ).first()
+        config.enabled = True
+        config.message_enabled = True
+        config.bot_app_id = bot_app_id
+        config.bot_app_secret_encrypted = encrypt_secret("org-reconcile-bot-secret")
+        config.allowed_tenant_ids = ["unrelated-aily-jwt-tenant"]
+        assert sync_aily_notification_identity(
+            db,
+            user=admin,
+            feishu_info={
+                "tenant_key": tenant_id,
+                "user_id": "u_verified_anchor",
+                "union_id": "on_verified_anchor",
+            },
+        ) == "mapped"
+
+        feishu_config = db.query(FeishuConfig).filter(FeishuConfig.is_deleted.is_(False)).first()
+        if not feishu_config:
+            feishu_config = FeishuConfig()
+            db.add(feishu_config)
+        feishu_config.enabled = True
+        feishu_config.app_id = "cli_login_org_app"
+        feishu_config.app_secret = "login-org-secret"
+
+        member = OrgMember(
+            name="自动映射目标员工",
+            status="在岗",
+            external_source="feishu",
+            external_id=login_open_id,
+        )
+        db.add(member)
+        db.flush()
+        target = AuthUser(
+            username="org-reconcile-notification-user",
+            password_hash="unused",
+            auth_source="feishu",
+            external_id=login_open_id,
+            person_id=member.id,
+            roles=[],
+        )
+        db.add(target)
+        db.flush()
+        row = NotificationOutbox(
+            event_type="work_task.assigned",
+            entity_type="work_task",
+            entity_id="wt-org-reconcile",
+            payload={"text": "您有新的委派任务", "auth_user_id": target.id},
+            channel="feishu_aily",
+            status="pending",
+            idempotency_key="work-task-org-reconcile-target",
+            attempt_count=0,
+            last_error_redacted="AILY_IDENTITY_NOT_MAPPED",
+        )
+        db.add(row)
+        db.commit()
+        row_id = row.id
+        target_auth_user_id = target.id
+
+    lookups = []
+    deliveries = []
+    monkeypatch.setattr(FeishuClient, "tenant_access_token", lambda self: "tenant-token")
+    monkeypatch.setattr(
+        FeishuClient,
+        "get_user",
+        lambda self, token, subject, user_id_type="open_id": lookups.append(
+            (token, subject, user_id_type)
+        ) or {
+            "user_id": target_user_id,
+            "union_id": "on_org_reconcile_target",
+        },
+    )
+    monkeypatch.setattr(
+        FeishuClient,
+        "send_app_text",
+        lambda self, recipient_id, recipient_type, text: deliveries.append(
+            (recipient_id, recipient_type, text)
+        ) or "om_org_reconcile",
+    )
+
+    with SessionLocal() as db:
+        row = db.get(NotificationOutbox, row_id)
+        deliver_aily_outbox_row(db, row)
+        db.commit()
+        assert row.status == "sent"
+        assert row.recipient_type == "user_id"
+        assert row.recipient_id == target_user_id
+        identity = db.query(ExternalIdentity).filter(
+            ExternalIdentity.tenant_id == tenant_id,
+            ExternalIdentity.app_id == bot_app_id,
+            ExternalIdentity.subject_type == "user_id",
+            ExternalIdentity.subject_id == target_user_id,
+        ).one()
+        assert identity.auth_user_id == target_auth_user_id
+        assert identity.status == "active"
+
+    assert lookups == [("tenant-token", login_open_id, "open_id")]
+    assert deliveries and deliveries[0][0:2] == (target_user_id, "user_id")

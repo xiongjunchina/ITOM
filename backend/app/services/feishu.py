@@ -9,6 +9,7 @@
 import logging
 import json
 from datetime import datetime
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy.orm import Session
@@ -121,6 +122,20 @@ class FeishuClient:
             if not payload.get("has_more"):
                 return items
             page_token = payload.get("page_token") or ""
+
+    def get_user(self, token: str, user_id: str, *, user_id_type: str = "open_id") -> dict:
+        """读取单个通讯录用户；调用方必须明确传入标识类型。"""
+        if user_id_type not in {"open_id", "user_id", "union_id"}:
+            raise AppError("FEISHU_USER_ID_TYPE_INVALID", "飞书用户标识类型无效", 422)
+        data = self._get(
+            f"/open-apis/contact/v3/users/{quote(user_id, safe='')}",
+            {
+                "user_id_type": user_id_type,
+                "department_id_type": "open_department_id",
+            },
+            token,
+        )
+        return (data.get("data") or {}).get("user") or {}
 
     # ---------- OAuth 扫码登录 ----------
 

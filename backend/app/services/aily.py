@@ -3,11 +3,18 @@ from datetime import datetime, timedelta
 import json
 import logging
 
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
-from app.models import AilyIntegrationConfig, AuthUser, ExternalIdentity, NotificationOutbox
-from app.services.feishu import FeishuClient
+from app.models import (
+    AilyIntegrationConfig,
+    AuditLog,
+    AuthUser,
+    ExternalIdentity,
+    NotificationOutbox,
+)
+from app.services.feishu import FeishuClient, build_client, get_config as get_feishu_config
 from app.services.audit import audit
 from app.services.secrets_store import decrypt_secret
 
@@ -16,6 +23,10 @@ logger = logging.getLogger("aom.aily")
 MAX_MESSAGE_ATTEMPTS = 8
 AILY_IDENTITY_NOT_MAPPED = "AILY_IDENTITY_NOT_MAPPED"
 AILY_IDENTITY_RETRY_SECONDS = 60
+TRUSTED_AUTO_MAP_ACTIONS = (
+    "auto_map_aily_notification_identity",
+    "auto_map_aily_notification_identity_from_org",
+)
 
 
 def get_aily_config(db: Session) -> AilyIntegrationConfig:
@@ -87,29 +98,26 @@ def find_aily_identity(
     return base_query.order_by(*ordering).first()
 
 
-def sync_aily_notification_identity(
+def _upsert_aily_notification_identity(
     db: Session,
     *,
     user: AuthUser,
-    feishu_info: dict | None,
+    tenant_id: str,
+    subject_type: str,
+    subject_id: str,
+    cfg: AilyIntegrationConfig,
+    audit_action: str,
 ) -> str:
-    """用已验真的飞书 OAuth 用户信息自动建立机器人通知映射。
-
-    该函数只由已通过 ITOM 飞书 OAuth/绑定校验的路径调用。优先使用同租户
-    跨应用稳定的 ``user_id``，权限不足未返回时回退 ``union_id``；不能用
-    登录应用的 ``open_id`` 冒充机器人应用的 ``open_id``。
-
-    OAuth 返回的 ``tenant_key`` 与 Aily MCP JWT 的 ``tenant_id`` 属于不同
-    契约，不使用 MCP 入站租户白名单阻断出站通知身份自动映射。
-    """
-    info = feishu_info or {}
-    tenant_id = str(info.get("tenant_key") or "").strip()
-    user_id = str(info.get("user_id") or "").strip()
-    union_id = str(info.get("union_id") or "").strip()
-    subject_type = "user_id" if user_id else "union_id"
-    subject_id = user_id or union_id
-    cfg = get_aily_config(db)
-    if not (cfg.enabled and cfg.bot_app_id and tenant_id and subject_id):
+    """保存一个已由受信路径证明的机器人出站身份。"""
+    tenant_id = tenant_id.strip()
+    subject_id = subject_id.strip()
+    if not (
+        cfg.enabled
+        and cfg.bot_app_id
+        and tenant_id
+        and subject_type in {"user_id", "union_id"}
+        and subject_id
+    ):
         return "skipped"
 
     disabled_for_account = (
@@ -165,7 +173,7 @@ def sync_aily_notification_identity(
         db,
         "external_identity",
         row.id,
-        "auto_map_aily_notification_identity",
+        audit_action,
         user,
         {
             "provider": "feishu",
@@ -176,6 +184,119 @@ def sync_aily_notification_identity(
         },
     )
     return "mapped"
+
+
+def sync_aily_notification_identity(
+    db: Session,
+    *,
+    user: AuthUser,
+    feishu_info: dict | None,
+) -> str:
+    """用已验真的飞书 OAuth 用户信息自动建立机器人通知映射。
+
+    该函数只由已通过 ITOM 飞书 OAuth/绑定校验的路径调用。优先使用同租户
+    跨应用稳定的 ``user_id``，权限不足未返回时回退 ``union_id``；不能用
+    登录应用的 ``open_id`` 冒充机器人应用的 ``open_id``。
+
+    OAuth 返回的 ``tenant_key`` 与 Aily MCP JWT 的 ``tenant_id`` 属于不同
+    契约，不使用 MCP 入站租户白名单阻断出站通知身份自动映射。
+    """
+    info = feishu_info or {}
+    tenant_id = str(info.get("tenant_key") or "").strip()
+    user_id = str(info.get("user_id") or "").strip()
+    union_id = str(info.get("union_id") or "").strip()
+    subject_type = "user_id" if user_id else "union_id"
+    subject_id = user_id or union_id
+    return _upsert_aily_notification_identity(
+        db,
+        user=user,
+        tenant_id=tenant_id,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        cfg=get_aily_config(db),
+        audit_action="auto_map_aily_notification_identity",
+    )
+
+
+def _trusted_bot_tenant_id(
+    db: Session,
+    *,
+    cfg: AilyIntegrationConfig,
+) -> str | None:
+    """取得由 OAuth 自动映射审计证明的唯一机器人租户锚点。"""
+    bot_app_id = str(cfg.bot_app_id or "").strip()
+    if not bot_app_id:
+        return None
+    rows = (
+        db.query(ExternalIdentity.tenant_id)
+        .join(
+            AuditLog,
+            and_(
+                AuditLog.entity_type == "external_identity",
+                AuditLog.entity_id == ExternalIdentity.id,
+                AuditLog.action.in_(TRUSTED_AUTO_MAP_ACTIONS),
+            ),
+        )
+        .filter(
+            ExternalIdentity.provider == "feishu",
+            ExternalIdentity.app_id == bot_app_id,
+            ExternalIdentity.status == "active",
+            ExternalIdentity.is_deleted.is_(False),
+        )
+        .distinct()
+        .all()
+    )
+    tenants = {str(row[0]).strip() for row in rows if row[0]}
+    return next(iter(tenants)) if len(tenants) == 1 else None
+
+
+def reconcile_aily_notification_identity_from_org(
+    db: Session,
+    *,
+    user: AuthUser,
+    cfg: AilyIntegrationConfig,
+) -> str:
+    """按已同步飞书人员自动补齐机器人通知身份。
+
+    仅在当前机器人应用已存在一个由正常 OAuth 登录建立并经审计证明的唯一
+    ``tenant_key`` 锚点时执行。通讯录 ``open_id`` 只用于登录应用查询，最终
+    出站映射使用租户级 ``user_id``（缺失时回退 ``union_id``），因此不会
+    把不同应用的 ``open_id`` 混用。
+    """
+    if not (cfg.enabled and cfg.bot_app_id and user.is_active and not user.is_deleted):
+        return "skipped"
+    person = user.person
+    if not (
+        person
+        and not person.is_deleted
+        and person.status == "在岗"
+        and person.external_source == "feishu"
+        and person.external_id
+    ):
+        return "skipped"
+    tenant_id = _trusted_bot_tenant_id(db, cfg=cfg)
+    if not tenant_id:
+        return "skipped"
+    feishu_cfg = get_feishu_config(db)
+    if not (feishu_cfg.enabled and feishu_cfg.app_id and feishu_cfg.app_secret):
+        return "skipped"
+    client = build_client(feishu_cfg)
+    info = client.get_user(
+        client.tenant_access_token(),
+        person.external_id,
+        user_id_type="open_id",
+    )
+    user_id = str(info.get("user_id") or "").strip()
+    union_id = str(info.get("union_id") or "").strip()
+    return _upsert_aily_notification_identity(
+        db,
+        user=user,
+        tenant_id=tenant_id,
+        subject_type="user_id" if user_id else "union_id",
+        subject_id=user_id or union_id,
+        cfg=cfg,
+        audit_action="auto_map_aily_notification_identity_from_org",
+    )
 
 
 def queue_aily_text(
@@ -424,6 +545,21 @@ def deliver_aily_outbox_row(db: Session, row: NotificationOutbox) -> Notificatio
     auth_user_id = str(payload.get("auth_user_id") or "").strip()
     if auth_user_id:
         identity = find_aily_identity(db, auth_user_id=auth_user_id, cfg=cfg)
+        if not identity:
+            user = db.get(AuthUser, auth_user_id)
+            if user:
+                try:
+                    # 自动补齐涉及通讯录查询、唯一身份约束和审计写入。使用
+                    # SAVEPOINT 隔离潜在冲突，确保单个账号映射失败时不会把
+                    # 当前发件箱消费事务置为不可继续查询/提交的失败状态。
+                    with db.begin_nested():
+                        reconcile_aily_notification_identity_from_org(db, user=user, cfg=cfg)
+                except Exception:  # noqa: BLE001 - 身份查询失败不能消耗消息重试次数
+                    logger.exception(
+                        "Aily notification identity reconciliation failed: auth_user=%s",
+                        auth_user_id,
+                    )
+                identity = find_aily_identity(db, auth_user_id=auth_user_id, cfg=cfg)
         if not identity:
             row.status = "pending"
             row.last_error_redacted = AILY_IDENTITY_NOT_MAPPED
