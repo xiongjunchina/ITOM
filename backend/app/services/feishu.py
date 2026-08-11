@@ -131,7 +131,7 @@ class FeishuClient:
                 f"?app_id={self.app_id}&redirect_uri={quote(redirect_uri, safe='')}&state={quote(state, safe='')}")
 
     def oauth_user_info(self, code: str) -> dict:
-        """code → 用户身份：{open_id, union_id, name, en_name, email, mobile, avatar_url}。"""
+        """code → 飞书验真用户信息（含 tenant_key 与可用的用户标识）。"""
         app_token = self.app_access_token()
         data = self._post("/open-apis/authen/v1/oidc/access_token",
                           {"grant_type": "authorization_code", "code": code}, token=app_token)

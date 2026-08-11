@@ -52,22 +52,39 @@ def find_aily_identity(
     auth_user_id: str,
     cfg: AilyIntegrationConfig,
 ) -> ExternalIdentity | None:
-    """解析当前可用于 Aily 机器人出站的、已授权飞书身份。"""
-    query = db.query(ExternalIdentity).filter(
+    """解析当前可用于 Aily 机器人出站的、已授权飞书身份。
+
+    经飞书 OAuth 验真后为当前机器人应用自动建立的身份，以 ``app_id``
+    作为出站信任边界；Aily JWT 的租户白名单只约束 MCP 入站调用。历史
+    人工/Aily 映射仍按原租户白名单筛选，避免放宽既有入站授权。
+    """
+    base_query = db.query(ExternalIdentity).filter(
         ExternalIdentity.provider == "feishu",
         ExternalIdentity.auth_user_id == auth_user_id,
         ExternalIdentity.subject_type.in_(["open_id", "user_id", "union_id"]),
         ExternalIdentity.status == "active",
         ExternalIdentity.is_deleted.is_(False),
     )
-    allowed_tenants = list(cfg.allowed_tenant_ids or [])
-    if allowed_tenants:
-        query = query.filter(ExternalIdentity.tenant_id.in_(allowed_tenants))
-    return query.order_by(
+    ordering = (
         ExternalIdentity.last_used_at.desc(),
         ExternalIdentity.verified_at.desc(),
         ExternalIdentity.created_at.desc(),
-    ).first()
+    )
+
+    bot_app_id = str(cfg.bot_app_id or "").strip()
+    if bot_app_id:
+        trusted_bot_identity = (
+            base_query.filter(ExternalIdentity.app_id == bot_app_id)
+            .order_by(*ordering)
+            .first()
+        )
+        if trusted_bot_identity:
+            return trusted_bot_identity
+
+    allowed_tenants = list(cfg.allowed_tenant_ids or [])
+    if allowed_tenants:
+        base_query = base_query.filter(ExternalIdentity.tenant_id.in_(allowed_tenants))
+    return base_query.order_by(*ordering).first()
 
 
 def sync_aily_notification_identity(
@@ -78,19 +95,39 @@ def sync_aily_notification_identity(
 ) -> str:
     """用已验真的飞书 OAuth 用户信息自动建立机器人通知映射。
 
-    这里只使用 Feishu OAuth 返回的 ``tenant_key + union_id``，并且要求租户
-    已在 Aily 配置白名单中。union_id 能在同一应用开发商的多个应用间关联
-    用户；不能用登录应用的 open_id 冒充 Aily 机器人应用的 open_id。
+    该函数只由已通过 ITOM 飞书 OAuth/绑定校验的路径调用。优先使用同租户
+    跨应用稳定的 ``user_id``，权限不足未返回时回退 ``union_id``；不能用
+    登录应用的 ``open_id`` 冒充机器人应用的 ``open_id``。
+
+    OAuth 返回的 ``tenant_key`` 与 Aily MCP JWT 的 ``tenant_id`` 属于不同
+    契约，不使用 MCP 入站租户白名单阻断出站通知身份自动映射。
     """
     info = feishu_info or {}
     tenant_id = str(info.get("tenant_key") or "").strip()
+    user_id = str(info.get("user_id") or "").strip()
     union_id = str(info.get("union_id") or "").strip()
+    subject_type = "user_id" if user_id else "union_id"
+    subject_id = user_id or union_id
     cfg = get_aily_config(db)
-    allowed_tenants = {str(value).strip() for value in (cfg.allowed_tenant_ids or []) if str(value).strip()}
-    if not (cfg.enabled and cfg.bot_app_id and tenant_id and union_id):
+    if not (cfg.enabled and cfg.bot_app_id and tenant_id and subject_id):
         return "skipped"
-    if tenant_id not in allowed_tenants:
-        return "tenant_not_allowed"
+
+    disabled_for_account = (
+        db.query(ExternalIdentity)
+        .filter(
+            ExternalIdentity.provider == "feishu",
+            ExternalIdentity.tenant_id == tenant_id,
+            ExternalIdentity.app_id == cfg.bot_app_id,
+            ExternalIdentity.auth_user_id == user.id,
+            ExternalIdentity.status == "disabled",
+            ExternalIdentity.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if disabled_for_account:
+        # 标识从 union_id 升级到 user_id 时，也不能绕过管理员对该账号在
+        # 当前机器人应用下的显式停用决定。
+        return "disabled"
 
     row = (
         db.query(ExternalIdentity)
@@ -98,8 +135,8 @@ def sync_aily_notification_identity(
             ExternalIdentity.provider == "feishu",
             ExternalIdentity.tenant_id == tenant_id,
             ExternalIdentity.app_id == cfg.bot_app_id,
-            ExternalIdentity.subject_type == "union_id",
-            ExternalIdentity.subject_id == union_id,
+            ExternalIdentity.subject_type == subject_type,
+            ExternalIdentity.subject_id == subject_id,
         )
         .first()
     )
@@ -114,8 +151,8 @@ def sync_aily_notification_identity(
             provider="feishu",
             tenant_id=tenant_id,
             app_id=cfg.bot_app_id,
-            subject_type="union_id",
-            subject_id=union_id,
+            subject_type=subject_type,
+            subject_id=subject_id,
         )
         db.add(row)
     row.auth_user_id = user.id
@@ -134,7 +171,7 @@ def sync_aily_notification_identity(
             "provider": "feishu",
             "tenant_id": tenant_id,
             "app_id": cfg.bot_app_id,
-            "subject_type": "union_id",
+            "subject_type": subject_type,
             "auth_user_id": user.id,
         },
     )

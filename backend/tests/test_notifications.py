@@ -9,7 +9,11 @@ from app.models import (
     InAppNotification,
     NotificationOutbox,
 )
-from app.services.aily import deliver_aily_outbox_row, sync_aily_notification_identity
+from app.services.aily import (
+    deliver_aily_outbox_row,
+    find_aily_identity,
+    sync_aily_notification_identity,
+)
 from app.services.feishu import FeishuClient
 from app.services.secrets_store import encrypt_secret
 
@@ -259,9 +263,12 @@ def test_notification_waits_for_aily_identity_then_delivers(client, admin_header
     assert calls and calls[0][0:2] == (subject_id, "open_id")
 
 
-def test_feishu_oauth_identity_auto_maps_aily_notification_union_id(client, admin_headers):
-    """已验真的 OAuth tenant_key/union_id 可建立机器人通知映射。"""
-    tenant_id = "tenant-auto-map"
+def test_feishu_oauth_identity_auto_maps_notification_user_id_without_mcp_tenant_match(
+    client,
+    admin_headers,
+):
+    """OAuth 租户标识不与 MCP 入站白名单混用，优先保存跨应用 user_id。"""
+    oauth_tenant_id = "oauth-tenant-auto-map"
     with SessionLocal() as db:
         admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
         config = db.query(AilyIntegrationConfig).filter(
@@ -269,19 +276,102 @@ def test_feishu_oauth_identity_auto_maps_aily_notification_union_id(client, admi
         ).first()
         config.enabled = True
         config.bot_app_id = "cli_auto_map"
-        config.allowed_tenant_ids = [tenant_id]
+        config.allowed_tenant_ids = ["aily-jwt-tenant-not-oauth-tenant"]
         result = sync_aily_notification_identity(
             db,
             user=admin,
-            feishu_info={"tenant_key": tenant_id, "union_id": "on_auto_map"},
+            feishu_info={
+                "tenant_key": oauth_tenant_id,
+                "user_id": "u_auto_map",
+                "union_id": "on_auto_map",
+            },
         )
         db.commit()
         assert result == "mapped"
         row = db.query(ExternalIdentity).filter(
-            ExternalIdentity.tenant_id == tenant_id,
+            ExternalIdentity.tenant_id == oauth_tenant_id,
             ExternalIdentity.app_id == "cli_auto_map",
-            ExternalIdentity.subject_type == "union_id",
-            ExternalIdentity.subject_id == "on_auto_map",
+            ExternalIdentity.subject_type == "user_id",
+            ExternalIdentity.subject_id == "u_auto_map",
         ).one()
         assert row.auth_user_id == admin.id
         assert row.status == "active"
+        resolved = find_aily_identity(db, auth_user_id=admin.id, cfg=config)
+        assert resolved is not None
+        assert resolved.id == row.id
+
+
+def test_feishu_oauth_identity_auto_maps_union_id_when_user_id_is_unavailable(
+    client,
+    admin_headers,
+):
+    """缺少 user_id 时仍可使用同开发商应用间稳定的 union_id。"""
+    with SessionLocal() as db:
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        config = db.query(AilyIntegrationConfig).filter(
+            AilyIntegrationConfig.is_deleted.is_(False)
+        ).first()
+        config.enabled = True
+        config.bot_app_id = "cli_auto_map_union_fallback"
+        config.allowed_tenant_ids = ["aily-jwt-tenant-unrelated"]
+        result = sync_aily_notification_identity(
+            db,
+            user=admin,
+            feishu_info={
+                "tenant_key": "oauth-tenant-union-fallback",
+                "union_id": "on_auto_map_fallback",
+            },
+        )
+        db.commit()
+        assert result == "mapped"
+        row = db.query(ExternalIdentity).filter(
+            ExternalIdentity.app_id == "cli_auto_map_union_fallback",
+            ExternalIdentity.subject_type == "union_id",
+            ExternalIdentity.subject_id == "on_auto_map_fallback",
+        ).one()
+        assert row.auth_user_id == admin.id
+        resolved = find_aily_identity(db, auth_user_id=admin.id, cfg=config)
+        assert resolved is not None
+        assert resolved.id == row.id
+
+
+def test_feishu_oauth_auto_map_does_not_bypass_disabled_bot_identity(
+    client,
+    admin_headers,
+):
+    """管理员停用同租户/机器人映射后，标识类型变化也不能自动绕过。"""
+    with SessionLocal() as db:
+        admin = db.query(AuthUser).filter(AuthUser.username == "admin").one()
+        config = db.query(AilyIntegrationConfig).filter(
+            AilyIntegrationConfig.is_deleted.is_(False)
+        ).first()
+        config.enabled = True
+        config.bot_app_id = "cli_disabled_auto_map"
+        config.allowed_tenant_ids = ["aily-jwt-tenant-unrelated-disabled"]
+        db.add(ExternalIdentity(
+            provider="feishu",
+            tenant_id="oauth-tenant-disabled",
+            app_id=config.bot_app_id,
+            subject_type="union_id",
+            subject_id="on_disabled_auto_map",
+            auth_user_id=admin.id,
+            status="disabled",
+        ))
+        db.flush()
+
+        result = sync_aily_notification_identity(
+            db,
+            user=admin,
+            feishu_info={
+                "tenant_key": "oauth-tenant-disabled",
+                "user_id": "u_disabled_auto_map",
+                "union_id": "on_disabled_auto_map",
+            },
+        )
+        db.commit()
+        assert result == "disabled"
+        assert db.query(ExternalIdentity).filter(
+            ExternalIdentity.app_id == config.bot_app_id,
+            ExternalIdentity.subject_type == "user_id",
+            ExternalIdentity.subject_id == "u_disabled_auto_map",
+        ).count() == 0

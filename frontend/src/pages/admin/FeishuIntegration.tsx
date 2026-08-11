@@ -431,8 +431,11 @@ export default function FeishuIntegration() {
           <Space><Switch checked={ailyEnabled} disabled={disabled} onChange={setAilyEnabled} /><Typography.Text>启用 Aily MCP</Typography.Text></Space>
           <Typography.Text>x-aily-jwt HS256 Secret</Typography.Text>
           <Input.Password value={jwtSecret} disabled={disabled} placeholder={ailyConfig?.has_mcp_jwt_secret ? '已配置，留空表示不修改' : '至少 16 个字符'} onChange={(event) => setJwtSecret(event.target.value)} autoComplete="new-password" />
-          <Typography.Text>允许的飞书租户 ID（每行一个）</Typography.Text>
+          <Typography.Text>允许的 Aily MCP 租户 ID（每行一个）</Typography.Text>
           <Input.TextArea value={tenantIds} disabled={disabled} rows={3} onChange={(event) => setTenantIds(event.target.value)} />
+          <Typography.Text type="secondary">
+            仅用于校验 Aily 调用 MCP 时 JWT 中的 tenant_id。ITOM 用户通过已配置的飞书 OAuth 正常登录后，会自动建立主动消息身份映射，无需把每个人逐一加入此处。
+          </Typography.Text>
           <Typography.Text>允许的 Aily Agent ID（每行一个）</Typography.Text>
           <Input.TextArea value={agentIds} disabled={disabled} rows={3} onChange={(event) => setAgentIds(event.target.value)} />
           <Typography.Text>允许的 Origin（每行一个，仅协议与主机）</Typography.Text>
@@ -495,6 +498,9 @@ export default function FeishuIntegration() {
           <Typography.Title level={5} style={{ margin: 0 }}>外部身份映射</Typography.Title>
           {isAdmin && <Button icon={<PlusOutlined />} onClick={() => openIdentityModal()}>新增映射</Button>}
         </Space>
+        <Typography.Paragraph type="secondary">
+          已验真的飞书登录会自动映射到 ITOM 账号；本表用于状态核对、审计和异常修复。只有历史数据或自动映射失败时才需要管理员手工处理。
+        </Typography.Paragraph>
         <SortableTable<AilyExternalIdentity>
           rowKey="id"
           size="small"
