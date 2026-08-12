@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.core.glid import new_glid
-from app.core.rbac import ADMIN, BDO, IT_PDM, REQUESTER
+from app.core.rbac import ADMIN, IT_PDM
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events import notifier
@@ -29,6 +29,11 @@ from app.models import (
 )
 from app.schemas.common import ok, paginate
 from app.services import process_engine, requirement_intake, requirement_scoring
+from app.services.requirement_access import (
+    business_portal_requirement_filter,
+    can_view_requirement,
+    is_business_portal_only,
+)
 from app.services.audit import audit
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
@@ -144,12 +149,6 @@ class ToProblemIn(BaseModel):
     description: str = Field(min_length=1)
 
 
-def _is_business_portal_only(db: Session, user: AuthUser) -> bool:
-    """业务门户账号仅可查看本人需求；BDO 也不因登记权限获得全局查看权。"""
-    roles = effective_roles(db, user)
-    return bool(roles) and roles.issubset({REQUESTER, BDO})
-
-
 def _has_development_task_edit(db: Session, user: AuthUser) -> bool:
     """以任务管理域为权威入口，并兼容历史需求任务授权。"""
     return (
@@ -225,11 +224,14 @@ def list_requirements(
     db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view")),
 ):
     query = db.query(Requirement).filter(Requirement.is_deleted.is_(False))
-    if _is_business_portal_only(db, user):
-        query = query.filter(Requirement.requester == user.id)
-    elif scope == "mine":
-        query = query.filter(or_(Requirement.requester == user.id,
-                                 Requirement.owner == (user.person_id or "-")))
+    if scope == "mine":
+        if is_business_portal_only(db, user):
+            query = query.filter(Requirement.requester == user.id)
+        else:
+            query = query.filter(or_(Requirement.requester == user.id,
+                                     Requirement.owner == (user.person_id or "-")))
+    elif is_business_portal_only(db, user):
+        query = query.filter(business_portal_requirement_filter(db, user))
     if q:
         query = query.filter(or_(Requirement.title.ilike(f"%{q}%"), Requirement.requirement_code.ilike(f"%{q}%")))
     if status:
@@ -835,7 +837,7 @@ def _get_requirement(db: Session, requirement_id: str, user: AuthUser) -> Requir
     r = db.get(Requirement, requirement_id)
     if not r or r.is_deleted:
         raise AppError("NOT_FOUND", "需求不存在", 404)
-    if _is_business_portal_only(db, user) and r.requester != user.id:
+    if not can_view_requirement(db, user, r):
         raise AppError("FORBIDDEN", "无权查看他人需求", 403)
     return r
 
@@ -1385,6 +1387,7 @@ def active_tasks(
     return ok([
         {
             "id": t.id, "name": t.name, "description": t.description,
+            "registrar": t.registrar, "registrar_name": names.get(t.registrar),
             "assignee": t.assignee, "assignee_name": names.get(t.assignee),
             "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
             "status": t.status, "done_at": t.done_at,
@@ -1431,6 +1434,7 @@ def _task_requirement(db: Session, requirement_id: str | None, user: AuthUser) -
 
 def _create_requirement_task(
     db: Session, body: TaskIn, user: AuthUser, requirement: Requirement | None,
+    *, registrar_id: str | None = None, inherit_actor_registrar: bool = True,
 ) -> RequirementTask:
     from datetime import date as _date
 
@@ -1439,7 +1443,9 @@ def _create_requirement_task(
     require_it_member_if_configured(db, body.assignee, "需求任务负责人")
     task = RequirementTask(
         requirement_id=requirement.id if requirement else None,
-        registrar=user.person_id,
+        # 页面直接登记取当前操作人；从需求转入时即使历史登记账号没有
+        # 绑定人员，也不能错误地把执行转化的 IT 人员记为登记人。
+        registrar=user.person_id if inherit_actor_registrar else registrar_id,
         name=body.name,
         description=body.description,
         assignee=body.assignee,
@@ -1477,7 +1483,15 @@ def create_task(requirement_id: str, body: TaskIn, db: Session = Depends(get_db)
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
     _require_task_perm(db, user, r)
-    task = _create_requirement_task(db, body, user, r)
+    requester = db.get(AuthUser, r.requester)
+    task = _create_requirement_task(
+        db,
+        body,
+        user,
+        r,
+        registrar_id=requester.person_id if requester and requester.person_id else None,
+        inherit_actor_registrar=False,
+    )
     db.commit()
     return ok({"id": task.id})
 

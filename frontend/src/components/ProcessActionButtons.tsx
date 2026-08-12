@@ -5,10 +5,10 @@ import { api } from '../api/client';
 import { canHandleTask, useAuthStore } from '../stores/auth';
 import { useT } from '../i18n';
 import type { FlowDiagramStep } from './FlowDiagram';
+import ProcessReassignButton from './ProcessReassignButton';
 
 /**
- * 审批节点右上角动作：同意理由可选，驳回理由必填。
- * 处理节点不显示这些按钮，统一使用流程图中的「完成此步骤」。
+ * 当前流程节点动作：所有节点均可转派；审批节点额外显示同意与驳回。
  */
 export default function ProcessActionButtons({
   step,
@@ -34,11 +34,12 @@ export default function ProcessActionButtons({
     disabled ||
     !step?.task_id ||
     step.task_status !== '待处理' ||
-    step.node_type !== 'approval' ||
     !canHandleTask(user, step)
   ) {
     return null;
   }
+
+  const isApproval = step.node_type === 'approval';
 
   const approve = async () => {
     setSaving(true);
@@ -81,19 +82,24 @@ export default function ProcessActionButtons({
   return (
     <>
       <Space wrap>
-        <Button type="primary" icon={<CheckOutlined />} onClick={() => setApprovalOpen(true)}>
-          {t('comp.flow.approve')}
-        </Button>
-        <Button
-          danger
-          icon={<CloseOutlined />}
-          onClick={() => {
-            setReturnTarget(returnTargets[0]?.seq);
-            setRejectOpen(true);
-          }}
-        >
-          {t('comp.flow.reject')}
-        </Button>
+        {isApproval && (
+          <>
+            <Button type="primary" icon={<CheckOutlined />} onClick={() => setApprovalOpen(true)}>
+              {t('comp.flow.approve')}
+            </Button>
+            <Button
+              danger
+              icon={<CloseOutlined />}
+              onClick={() => {
+                setReturnTarget(returnTargets[0]?.seq);
+                setRejectOpen(true);
+              }}
+            >
+              {t('comp.flow.reject')}
+            </Button>
+          </>
+        )}
+        <ProcessReassignButton step={step} onDone={onDone} />
       </Space>
       <Modal
         title={t('comp.flow.approveTitle')}

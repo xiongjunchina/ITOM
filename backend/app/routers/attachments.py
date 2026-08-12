@@ -14,6 +14,7 @@ from app.models import Attachment, AuthUser, Bug, Requirement, Ticket
 from app.schemas.common import ok
 from app.services import process_engine
 from app.services.permissions import has_perm
+from app.services.requirement_access import can_view_requirement
 
 router = APIRouter(prefix="/api/attachments", tags=["support"])
 
@@ -75,16 +76,12 @@ def _require_requirement_attachment_access(
     db: Session, user: AuthUser, requirement_id: str, *, mutate: bool
 ) -> Requirement:
     """需求附件沿用需求单本身的查看范围和流程回改窗口。"""
-    from app.core.rbac import BDO, REQUESTER
-    from app.services.rbac import effective_roles
-
     requirement = db.get(Requirement, requirement_id)
     if not requirement or requirement.is_deleted:
         raise AppError("NOT_FOUND", "需求不存在", 404)
     if not has_perm(db, user, "requirements", "view"):
         raise AppError("FORBIDDEN", "没有查看该需求附件的权限", 403)
-    roles = effective_roles(db, user)
-    if roles and roles.issubset({REQUESTER, BDO}) and requirement.requester != user.id:
+    if not can_view_requirement(db, user, requirement):
         raise AppError("FORBIDDEN", "没有查看该需求附件的权限", 403)
     if mutate:
         process_engine.require_workflow_edit(db, user, "requirement", requirement.id, "requirements")

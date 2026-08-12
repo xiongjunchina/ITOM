@@ -578,6 +578,13 @@ html[data-theme='dark'] .table-standard-toolbar__count,
   top: var(--responsive-table-sticky-offset, 0px) !important;
   z-index: 6;
 }
+/* antd sticky-scroll 与系统统一悬浮滚动条功能重复，且前者在部分页面不可操作。 */
+.responsive-table--enhanced .ant-table-sticky-scroll {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  pointer-events: none !important;
+}
 html[data-theme='dark'] .responsive-table__bottom-scroll,
 .workbench-c--dark .responsive-table__bottom-scroll { background: #171b21; border-color: #343b46; scrollbar-color: #596779 #252b34; }
 html[data-theme='dark'] .responsive-table__bottom-scroll::-webkit-scrollbar-track,

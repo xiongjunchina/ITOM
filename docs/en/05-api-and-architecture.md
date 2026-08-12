@@ -383,7 +383,7 @@ POST /api/requirements/{id}/to-dev       # {}; fixed Requirement Scoring Rules d
 POST /api/requirements/{id}/to-project   # {pm_id}; persists a project-route snapshot
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
-# P1: only BDO/authorized IT roles use requirements.create/view plus enforced own-record scope; no second requirement entity
+# P1: Aily/MCP keeps BDO requirement scope owner-only; the authenticated ITOM web module additionally permits requirements in domains where the person is configured as business BDO; no second requirement entity
 ```
 
 ### 4.5 Process
@@ -391,7 +391,9 @@ POST /api/requirements/{id}/close        # validate all acceptance criteria chec
 ```text
 GET/POST/PATCH /api/admin/process-definitions (nested steps with stable step_code; a used version may maintain only cc_roles in place for future node activations, while node/RACI/SLA changes require a new version)
 GET /api/process-instances?entity= | GET /api/process-monitor   # stuck/overdue aggregation
-POST /api/process-tasks/{id}/complete | /reassign
+POST /api/process-tasks/{id}/complete
+GET /api/process-tasks/{id}/reassign-candidates
+POST /api/process-tasks/{id}/reassign       # {assignee, reason?}
 POST /api/process-tasks/{id}/view       # current handler records first detail view; idempotently returns viewed_at/viewed_by
 ```
 
@@ -402,6 +404,10 @@ Process-detail contract: `process.current_step_seq/current_step_code/current_ste
 The stable display order for process definitions is ITSM (Service Request) → ITSM (Change) → ITSM (Incident) → ITSM (Problem) → Project → Requirement → Bug Management. The backend normalizes ordering by trigger entity and the UI keeps the same grouping order as the left navigation; it must not depend on database row order.
 
 Workflow-record detail and list rows return `can_edit`, `can_delete`, `workflow_edit_mode`, and `workflow_edit_locked_reason` only as UI capability hints; `PATCH/DELETE` re-run domain workflow authorization. The current handler's first view is persisted by `POST /api/process-tasks/{id}/view`, complete, approve, or reject; list/notification reads do not call this endpoint. An administrator's passive detail inspection and administrator reassignment create no view fact; reassignment only changes `assignee`. Before downstream first view, the first-node creator may edit/delete and a later node's actual previous completer may edit only. A correction carrying routing fields returns `WORKFLOW_CORRECTION_FIELD_FORBIDDEN`; an unavailable window returns `WORKFLOW_EDIT_LOCKED` or `WORKFLOW_DELETE_LOCKED`. New tasks enable the window by default, while pending tasks that existed before the database upgrade remain disabled so no historical permission is broadened retroactively.
+
+Current-task reassignment is a generic workflow capability rather than a record-type transition. The current pending handler or administrator may first read candidates and then select another active, in-position organization member with an active, non-deleted ITOM account. The server rechecks task status, operator, and target at write time. A successful reassignment preserves node, business state, due time, RACI snapshot, and history, audits old/new handler plus the optional reason, and notifies the new handler through the existing notification/outbox path.
+
+Requirement list/detail/attachment/relation reads share one web data-scope policy: business users see own records; a BDO additionally sees every requirement whose business domain points to that person's `business_bdo_id`; IT-authorized roles retain their existing scope. `scope=mine` always narrows to the requester. This web policy never expands Aily/MCP owner-only requirement tools. Requirement Development, Project Development, and Bug list responses also return a readable registrar name derived from the stored registrar, project manager, or Bug reporter according to the creation source.
 
 ### 4.6 Team
 

@@ -64,6 +64,14 @@ export const zh: Dict = {
   'comp.flow.rejectReasonRequired': '请填写驳回理由（至少 5 个字）',
   'comp.flow.approved': '已同意，流程推进到下一节点',
   'comp.flow.rejected': '已退回选定位置',
+  'comp.flow.reassign': '转派',
+  'comp.flow.reassignTitle': '转派当前流程任务',
+  'comp.flow.reassignAssignee': '新处理人',
+  'comp.flow.reassignAssigneeRequired': '请选择新处理人',
+  'comp.flow.reassignPlaceholder': '请选择在岗人员',
+  'comp.flow.reassignReason': '转派说明（可选）',
+  'comp.flow.reassignReasonPlaceholder': '说明转派原因，便于后续审计与协作',
+  'comp.flow.reassigned': '已转派给新处理人',
 
   // 示例数据徽标 / 提示
   'comp.example.tip': '示例数据：字段内容即填写指引，仅供学习参考，不可编辑',
@@ -187,6 +195,14 @@ export const en: Dict = {
   'comp.flow.rejectReasonRequired': 'Please enter a rejection reason (at least 5 characters)',
   'comp.flow.approved': 'Approved; the process advanced to the next step',
   'comp.flow.rejected': 'Returned to the selected position',
+  'comp.flow.reassign': 'Reassign',
+  'comp.flow.reassignTitle': 'Reassign Current Workflow Task',
+  'comp.flow.reassignAssignee': 'New Assignee',
+  'comp.flow.reassignAssigneeRequired': 'Select a new assignee',
+  'comp.flow.reassignPlaceholder': 'Select an active employee',
+  'comp.flow.reassignReason': 'Reason (optional)',
+  'comp.flow.reassignReasonPlaceholder': 'Explain the reassignment for audit and collaboration',
+  'comp.flow.reassigned': 'The task has been reassigned',
 
   // Example-data badge / notice
   'comp.example.tip': 'Example data: field content is the filling guidance, for reference only, not editable',

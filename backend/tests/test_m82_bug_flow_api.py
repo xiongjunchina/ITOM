@@ -63,6 +63,11 @@ def _register_bug(client, actors, title="供应链接口异常"):
     return response.json()["data"]
 
 
+def test_bug_list_exposes_registrar(client, actors):
+    bug = _register_bug(client, actors, "Bug 登记人展示")
+    assert bug["reporter_name"] == "Bug 登记开发"
+
+
 def test_cmdb_requires_product_manager_for_new_app_and_legacy_ci_can_be_repaired(client, actors):
     """新应用 CI 强制配置产品经理；历史空值仍能在 CMDB 补配后进入 Bug 流程。"""
     missing_on_create = client.post(

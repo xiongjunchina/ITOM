@@ -67,6 +67,8 @@ def test_requirement_task_can_start_unlinked_and_notify_progress(client, task_us
     task = next(row for row in rows if row["id"] == task_id)
     assert task["requirement_id"] is None
     assert task["requirement_code"] is None
+    assert task["registrar"] == task_users["registrar_id"]
+    assert task["registrar_name"] == "M84任务登记人"
 
     progressed = client.patch(
         f"/api/requirements/tasks/{task_id}",
@@ -165,6 +167,8 @@ def test_project_development_task_requires_project_but_not_wbs(client, task_user
     task_id = row["id"]
     assert row["project_id"] == project_id
     assert row["wbs_task_id"] is None
+    assert row["registrar"] == task_users["registrar_id"]
+    assert row["registrar_name"] == "M84任务登记人"
 
     admin_created = client.post(
         "/api/task-management/project-tasks",

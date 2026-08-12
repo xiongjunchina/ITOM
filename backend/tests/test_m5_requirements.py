@@ -20,7 +20,7 @@ def ctx(client, admin_headers):
     bp_p, bp = member_and_user("BP小美", "bp10", ["it_bp"])
     pdm_p, pdm = member_and_user("产品老王", "pdm10", ["it_pdm"])
     dev_p, dev = member_and_user("开发小陈", "dev10", ["it_dev"])
-    _, req = member_and_user("业务数字化经理小赵", "req10", ["bdo"])
+    req_p, req = member_and_user("业务数字化经理小赵", "req10", ["bdo"])
 
     domain = client.post(
         "/api/admin/business-domains",
@@ -28,7 +28,7 @@ def ctx(client, admin_headers):
         headers=admin_headers,
     ).json()["data"]
     return {"bp_p": bp_p, "bp": bp, "pdm_p": pdm_p, "pdm": pdm, "dev_p": dev_p, "dev": dev,
-            "req": req, "domain": domain["id"]}
+            "req_p": req_p, "req": req, "domain": domain["id"]}
 
 
 def _register(client, headers, domain, **kw):
@@ -131,6 +131,10 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     # 任务分解 + IT 开发人员可维护实现中需求上的所有开发任务
     t1 = client.post(f"/api/requirements/{rid}/tasks", json={"name": "建模", "assignee": ctx["dev_p"]}, headers=ctx["pdm"]).json()["data"]
     client.post(f"/api/requirements/{rid}/tasks", json={"name": "报表开发", "assignee": ctx["dev_p"]}, headers=ctx["pdm"])
+    active_tasks = client.get("/api/requirements/tasks/active", headers=ctx["pdm"]).json()["data"]
+    registered = next(task for task in active_tasks if task["id"] == t1["id"])
+    assert registered["registrar"] == ctx["bp_p"]
+    assert registered["registrar_name"] == "BP小美"
     r1 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"status": "已完成"}, headers=ctx["dev"])
     assert r1.json()["success"], r1.text
     r_effort = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"actual_effort": 1.5}, headers=ctx["dev"])

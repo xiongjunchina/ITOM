@@ -189,6 +189,7 @@ def _bug_process_start(db: Session, bug: Bug, actor: AuthUser):
 
 def _bug_row(db: Session, bug: Bug, user: AuthUser | None = None) -> dict:
     ci = db.get(Ci, bug.ci_id) if bug.ci_id else None
+    reporter = db.get(AuthUser, bug.reporter_id) if bug.reporter_id else None
     tasks = db.query(BugFixTask).filter(BugFixTask.bug_id == bug.id, BugFixTask.is_deleted.is_(False)).all()
     is_admin = bool(user and _is_admin(db, user))
     person_id = user.person_id if user else None
@@ -218,6 +219,10 @@ def _bug_row(db: Session, bug: Bug, user: AuthUser | None = None) -> dict:
         "dev_leader_id": bug.dev_leader_id,
         "dev_leader_name": _member_name(db, bug.dev_leader_id),
         "reporter_id": bug.reporter_id,
+        "reporter_name": (
+            _member_name(db, reporter.person_id) or reporter.username
+            if reporter else None
+        ),
         "reproduction": bug.reproduction,
         "expected_result": bug.expected_result,
         "actual_result": bug.actual_result,

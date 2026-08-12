@@ -137,6 +137,87 @@ def test_task_assignment_notifies_assignee(client, ctx):
         assert any("实施交付" in n["title"] for n in notes)
 
 
+def test_current_handler_can_reassign_with_valid_target_and_audit(client, ctx):
+    """当前处理人可转派给可登录在岗人员；候选人与审计均由服务端约束。"""
+    from app.db import SessionLocal
+    from app.models import AuditLog
+
+    _, proc = _submit_sr(client, ctx, "当前处理人转派审计验证")
+    current = _current(proc)
+    assigned = client.post(
+        f"/api/process-tasks/{current['task_id']}/reassign",
+        json={"assignee": ctx["ops_pid"], "reason": "管理员先指定验证处理人"},
+        headers=ctx["admin"],
+    )
+    assert assigned.status_code == 200, assigned.text
+
+    no_account = client.post(
+        "/api/members",
+        json={"name": "无账号候选人M18"},
+        headers=ctx["admin"],
+    ).json()["data"]
+    candidates = client.get(
+        f"/api/process-tasks/{current['task_id']}/reassign-candidates",
+        headers=ctx["ops_h"],
+    )
+    assert candidates.status_code == 200, candidates.text
+    candidate_ids = {row["id"] for row in candidates.json()["data"]}
+    assert ctx["req_pid"] in candidate_ids
+    assert no_account["id"] not in candidate_ids
+
+    unavailable = client.post(
+        f"/api/process-tasks/{current['task_id']}/reassign",
+        json={"assignee": no_account["id"], "reason": "无账号人员不应接收流程"},
+        headers=ctx["ops_h"],
+    )
+    assert unavailable.status_code == 400
+    assert unavailable.json()["error"]["code"] == "PROCESS_ASSIGNEE_INVALID"
+
+    invalid = client.post(
+        f"/api/process-tasks/{current['task_id']}/reassign",
+        json={"assignee": "01INVALIDASSIGNEE000000000", "reason": "无效人员不应生效"},
+        headers=ctx["ops_h"],
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["error"]["code"] == "PROCESS_ASSIGNEE_INVALID"
+
+    moved = client.post(
+        f"/api/process-tasks/{current['task_id']}/reassign",
+        json={"assignee": ctx["req_pid"], "reason": "转交业务人员协同处理"},
+        headers=ctx["ops_h"],
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["data"]["assignee"] == ctx["req_pid"]
+
+    db = SessionLocal()
+    try:
+        logs = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "process_task",
+                AuditLog.entity_id == current["task_id"],
+                AuditLog.action == "reassign",
+            )
+            .all()
+        )
+        log = next(
+            (
+                row for row in logs
+                if (row.summary or {}).get("to_assignee") == ctx["req_pid"]
+                and (row.summary or {}).get("reason") == "转交业务人员协同处理"
+            ),
+            None,
+        )
+        assert log is not None
+        assert log.summary == {
+            "from_assignee": ctx["ops_pid"],
+            "to_assignee": ctx["req_pid"],
+            "reason": "转交业务人员协同处理",
+        }
+    finally:
+        db.close()
+
+
 def test_ticket_detail_reassign_updates_live_process_task(client, ctx, admin_headers):
     """详情页改派必须同时切换流程节点权限、工单展示人和通知对象。"""
     other = client.post("/api/members", json={"name": "改派目标M18"}, headers=admin_headers).json()["data"]

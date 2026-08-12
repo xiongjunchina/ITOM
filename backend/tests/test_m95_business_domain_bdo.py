@@ -1,7 +1,7 @@
 """M95：业务域以业务 BDO 代替历史备份负责人。"""
 
 from app.db import SessionLocal
-from app.models import BusinessDomain
+from app.models import AuthUser, BusinessDomain
 from app.services.perf_bplus import _domain_scope
 
 
@@ -30,6 +30,114 @@ def _user(client, headers, username, person_id, roles):
         headers=headers,
     )
     assert response.status_code == 200, response.text
+    token = client.post(
+        "/api/auth/login", json={"username": username, "password": "pass123"},
+    )
+    assert token.status_code == 200, token.text
+    return {"Authorization": f"Bearer {token.json()['data']['token']}"}
+
+
+def test_business_bdo_can_view_all_requirements_in_owned_domains(client, admin_headers):
+    """BDO 能查看其负责服务域内全部需求，但不得越权访问其他服务域。"""
+    it_department = _department(client, admin_headers, "m95d_it", "M95D 数字化团队", dept_type="it")
+    finance = _department(client, admin_headers, "m95d_fin", "M95D 财务中心")
+    sales = _department(client, admin_headers, "m95d_sales", "M95D 销售中心")
+    bm_id = _member(client, admin_headers, "M95D IT BM", it_department)
+    bdo_id = _member(client, admin_headers, "M95D 财务 BDO", finance)
+    bdo_headers = _user(client, admin_headers, "m95d_bdo", bdo_id, ["bdo"])
+
+    owned_domain = client.post(
+        "/api/admin/business-domains",
+        json={
+            "code": "m95d_finance", "name": "M95D 财务服务域", "owner_id": bm_id,
+            "business_bdo_id": bdo_id, "department_ids": [finance], "include_children": True,
+        },
+        headers=admin_headers,
+    )
+    assert owned_domain.status_code == 200, owned_domain.text
+    owned_domain_id = owned_domain.json()["data"]["id"]
+    other_domain = client.post(
+        "/api/admin/business-domains",
+        json={
+            "code": "m95d_sales", "name": "M95D 销售服务域", "owner_id": bm_id,
+            "department_ids": [sales], "include_children": True,
+        },
+        headers=admin_headers,
+    )
+    assert other_domain.status_code == 200, other_domain.text
+    other_domain_id = other_domain.json()["data"]["id"]
+
+    owned_requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "M95D 同域他人登记需求", "req_type": "功能",
+            "business_domain_id": owned_domain_id, "description": "由管理员代业务登记",
+        },
+        headers=admin_headers,
+    )
+    assert owned_requirement.status_code == 200, owned_requirement.text
+    owned_requirement_id = owned_requirement.json()["data"]["id"]
+    other_requirement = client.post(
+        "/api/requirements",
+        json={
+            "title": "M95D 其他服务域需求", "req_type": "功能",
+            "business_domain_id": other_domain_id, "description": "不可被财务 BDO 查看",
+        },
+        headers=admin_headers,
+    )
+    assert other_requirement.status_code == 200, other_requirement.text
+    other_requirement_id = other_requirement.json()["data"]["id"]
+
+    visible = client.get("/api/requirements?page=1&page_size=200", headers=bdo_headers)
+    assert visible.status_code == 200, visible.text
+    visible_ids = {row["id"] for row in visible.json()["data"]}
+    assert owned_requirement_id in visible_ids
+    assert other_requirement_id not in visible_ids
+
+    mine = client.get("/api/requirements?scope=mine&page=1&page_size=200", headers=bdo_headers)
+    assert mine.status_code == 200, mine.text
+    assert owned_requirement_id not in {row["id"] for row in mine.json()["data"]}
+
+    assert client.get(
+        f"/api/requirements/{owned_requirement_id}", headers=bdo_headers,
+    ).status_code == 200
+    assert client.get(
+        f"/api/requirements/{other_requirement_id}", headers=bdo_headers,
+    ).status_code == 403
+
+    # 附件即使为空也必须执行记录级授权，避免清单可见而附件区域不可访问。
+    assert client.get(
+        "/api/attachments",
+        params={"entity_type": "requirement", "entity_id": owned_requirement_id},
+        headers=bdo_headers,
+    ).status_code == 200
+    assert client.get(
+        "/api/attachments",
+        params={"entity_type": "requirement", "entity_id": other_requirement_id},
+        headers=bdo_headers,
+    ).status_code == 403
+
+    # 自定义 BDO 角色会同时展开为 {自定义角色码, bdo}，仍必须保持同一数据范围。
+    # 通过正式管理接口创建，以复制 BDO 的功能权限矩阵。
+    custom_role = client.post(
+        "/api/admin/roles",
+        json={
+            "code": "m95d_custom_bdo", "name": "M95D 自定义 BDO",
+            "base_role": "bdo", "description": "验证自定义 BDO 数据范围",
+        },
+        headers=admin_headers,
+    )
+    assert custom_role.status_code == 200, custom_role.text
+    with SessionLocal() as db:
+        bdo_user = db.query(AuthUser).filter(AuthUser.username == "m95d_bdo").one()
+        bdo_user.roles = ["m95d_custom_bdo"]
+        db.commit()
+
+    custom_visible = client.get("/api/requirements?page=1&page_size=200", headers=bdo_headers)
+    assert custom_visible.status_code == 200, custom_visible.text
+    custom_ids = {row["id"] for row in custom_visible.json()["data"]}
+    assert owned_requirement_id in custom_ids
+    assert other_requirement_id not in custom_ids
 
 
 def test_business_domain_uses_scoped_bdo_and_preserves_legacy_backup_data(client, admin_headers):

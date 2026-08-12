@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import AuthUser, ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
+from app.models import AuthUser, OrgMember, ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.schemas.common import ok
 from app.services import process_engine
 from app.services.audit import audit
@@ -56,6 +56,7 @@ class RejectIn(BaseModel):
 
 class ReassignIn(BaseModel):
     assignee: str
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class StepIn(BaseModel):
@@ -308,6 +309,42 @@ def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: Au
     })
 
 
+@router.get("/api/process-tasks/{task_id}/reassign-candidates")
+def reassign_candidates(
+    task_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Return active people who can actually sign in to receive this task.
+
+    Opening the selector is not a business read/handling action, so it must not
+    set the workflow task's ``viewed_at`` marker.  The POST endpoint repeats
+    the same account check to keep authorization server-side.
+    """
+    _require_task_operator(db, user, task_id, mark_view=False)
+    members = (
+        db.query(OrgMember)
+        .join(AuthUser, AuthUser.person_id == OrgMember.id)
+        .filter(
+            OrgMember.is_deleted.is_(False),
+            OrgMember.status == "在岗",
+            AuthUser.is_deleted.is_(False),
+            AuthUser.is_active.is_(True),
+        )
+        .distinct()
+        .order_by(OrgMember.name.asc())
+        .all()
+    )
+    return ok([
+        {
+            "id": member.id,
+            "name": member.name,
+            "department_name": member.department.name if member.department else None,
+        }
+        for member in members
+    ], total=len(members))
+
+
 @router.post("/api/process-tasks/{task_id}/reassign")
 def reassign(task_id: str, body: ReassignIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     # 仅管理员的路由调整不应伪造为“下游已查阅”；当前处理人自行改派仍视为已处理。
@@ -318,8 +355,28 @@ def reassign(task_id: str, body: ReassignIn, db: Session = Depends(get_db), user
         mark_view=not _is_process_admin(db, user),
         handling_action=True,
     )
+    target = (
+        db.query(OrgMember)
+        .join(AuthUser, AuthUser.person_id == OrgMember.id)
+        .filter(
+            OrgMember.id == body.assignee,
+            OrgMember.is_deleted.is_(False),
+            OrgMember.status == "在岗",
+            AuthUser.is_deleted.is_(False),
+            AuthUser.is_active.is_(True),
+        )
+        .first()
+    )
+    if not target:
+        raise AppError("PROCESS_ASSIGNEE_INVALID", "转派对象必须是在岗且已启用系统账号的人员", 400)
+    current = db.get(ProcessTask, task_id)
+    previous_assignee = current.assignee if current else None
     task = process_engine.reassign_task(db, task_id, body.assignee)
-    audit(db, "process_task", task_id, "reassign", user, {"assignee": body.assignee})
+    audit(db, "process_task", task_id, "reassign", user, {
+        "from_assignee": previous_assignee,
+        "to_assignee": body.assignee,
+        "reason": body.reason,
+    })
     db.commit()
     return ok({"id": task.id, "assignee": task.assignee})
 

@@ -381,7 +381,7 @@ POST /api/requirements/{id}/to-dev       # {}；固定使用需求评分规则 d
 POST /api/requirements/{id}/to-project   # {pm_id}；写入项目路径快照
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
-# P1：仅 BDO/授权 IT 角色复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
+# P1：仅 BDO/授权 IT 角色复用 requirements.create/view；Aily/MCP 强制本人范围，网页 BDO 范围为本人需求及其被配置为业务 BDO 的服务域需求；不新增第二套需求实体
 ```
 
 ### 4.5 流程
@@ -389,7 +389,8 @@ POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {
 ```text
 GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code；已有实例的版本仅 cc_roles 可原地维护且只影响后续节点激活，节点/RACI/SLA 改动需另存新版本)
 GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时聚合
-POST /api/process-tasks/{id}/complete | /reassign
+GET  /api/process-tasks/{id}/reassign-candidates  # 当前处理人/管理员可选；仅在岗且具有有效系统账号的人员，不写 viewed_at
+POST /api/process-tasks/{id}/complete | /reassign # reassign={assignee, reason?}；不推进节点/状态，写审计并通知目标
 POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时记录查阅；幂等返回 viewed_at/viewed_by
 ```
 
@@ -400,6 +401,12 @@ POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时�
 流程定义列表的稳定展示顺序为：ITSM（服务请求）→ ITSM（变更）→ ITSM（事件）→ ITSM（问题）→ 项目 → 需求 → Bug 管理；后端按触发实体归一排序，前端分组与左侧菜单保持一致，不能依赖数据库返回顺序。
 
 流程单据的 `GET` 详情与清单行均返回 `can_edit`、`can_delete`、`workflow_edit_mode` 和 `workflow_edit_locked_reason`，但这些仅用于界面呈现；`PATCH/DELETE` 必须重新执行领域级流程授权。当前节点处理人以 `POST /api/process-tasks/{id}/view`、完成、同意或驳回形成首次查阅事实；清单/通知读取不调用该接口。管理员仅查看详情不会写查阅事实；管理员改派任务只改变 `assignee`，也不写查阅事实。若待办尚未被下游处理人查阅，首节点创建人可编辑/删除，后续节点的上一实际完成者只可编辑；回改请求若携带会改变路由的字段返回 `WORKFLOW_CORRECTION_FIELD_FORBIDDEN`，不满足窗口返回 `WORKFLOW_EDIT_LOCKED` 或 `WORKFLOW_DELETE_LOCKED`。新任务窗口默认启用，数据库升级前的待处理任务保持关闭，避免追溯扩大既有权限。
+
+流程转派契约：当前待办处理人或管理员才可读取候选并执行转派；候选必须是未删除、在岗且至少关联一个已启用系统账号的人员。服务端在写入时重复校验，不信任前端候选。转派只更新当前 `process_task.assignee`，不推进步骤、不改业务状态、不重写 `raci_snapshot`，审计记录 `from_assignee/to_assignee/reason` 并复用可靠通知链路通知新处理人。当前处理人自行转派属于处理动作并形成查阅事实；管理员代转派不形成下游查阅事实。
+
+需求清单与详情的数据范围契约：普通 requester 无需求模块权限；仅持业务门户角色的 BDO 在网页端可读取本人登记需求，以及 `business_domain.business_bdo_id == current.person_id` 的服务域全部未删除需求。`scope=mine` 始终收窄为本人需求。附件和通用关联关系使用相同可见性判断。Aily/MCP 工具继续按 `requester == current auth_user.id` 强制本人范围，不复用网页扩展范围。
+
+开发任务列表统一返回登记人显示字段：需求开发为 `registrar/registrar_name`，项目开发沿用 `registrar_id/registrar_name`，Bug 修复为 `reporter_id/reporter_name`。页面直接登记取当前账号关联人员；需求转化取原需求登记账号关联人员；项目/WBS 转化取项目经理；Bug 取登记 Bug 的账号/人员。历史数据或无人员映射管理员允许为空，账号审计保持可追溯。
 
 ### 4.6 团队
 

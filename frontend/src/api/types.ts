@@ -1041,6 +1041,7 @@ export interface BugRow {
   dev_leader_id: string | null;
   dev_leader_name: string | null;
   reporter_id: string;
+  reporter_name: string | null;
   reproduction: string | null;
   expected_result: string | null;
   actual_result: string | null;
@@ -1682,6 +1683,9 @@ export interface ActiveTaskRow {
   id: string;
   name: string;
   description: string | null;
+  /** 登记人（人员主数据 id）；需求转化任务继承需求登记人。 */
+  registrar: string | null;
+  registrar_name: string | null;
   /** 处理人（人员主数据 id） */
   assignee: string | null;
   assignee_name: string | null;

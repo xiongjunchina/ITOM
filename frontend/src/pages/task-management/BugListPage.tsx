@@ -31,6 +31,7 @@ import { PRIORITY_COLORS } from '../../api/types';
 import { useT } from '../../i18n';
 import { useAuthStore } from '../../stores/auth';
 import { useProcessTaskView } from '../../utils/processTaskView';
+import ProcessReassignButton from '../../components/ProcessReassignButton';
 
 const BUG_STATUS: Record<string, { label: string; color: string }> = {
   registered: { label: '待确认', color: 'gold' },
@@ -157,6 +158,9 @@ export default function BugListPage() {
   };
 
   useProcessTaskView(detail?.process, user, detail ? () => { void refreshDetail(detail.id); } : undefined);
+  const currentProcessStep = detail?.process?.steps?.find(
+    (step) => step.seq === detail.process?.current_step_seq,
+  );
 
   const openCreate = () => {
     bugForm.resetFields();
@@ -316,6 +320,7 @@ export default function BugListPage() {
   const columns: ColumnsType<BugRow> = useMemo(() => [
     { title: t('task.bug.code'), dataIndex: 'bug_code', width: 140, fixed: 'left', render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void refreshDetail(row.id)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 260, ellipsis: true },
+    { title: t('task.registrar'), dataIndex: 'reporter_name', width: 110, render: (v) => v || '-' },
     { title: t('task.bug.system'), dataIndex: 'ci_name', width: 170, render: (v) => v || '-' },
     {
       title: t('task.priority'), dataIndex: 'priority', width: 90,
@@ -390,6 +395,10 @@ export default function BugListPage() {
           <Space wrap style={{ marginBottom: 12 }}>
             <Tag color={BUG_STATUS[detail.status]?.color}>{BUG_STATUS[detail.status]?.label}</Tag>
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
+            <ProcessReassignButton
+              step={currentProcessStep}
+              onDone={() => void refreshDetail(detail.id)}
+            />
             {detail.status === 'registered' && detail.capabilities.confirm && <Button type="primary" onClick={() => void (async () => { await api.post(`/task-management/bugs/${detail.id}/confirm`, { comment: '' }); message.success(t('task.bug.actionDone')); await refreshDetail(detail.id); })()}>{t('task.bug.confirm')}</Button>}
             {detail.status === 'registered' && detail.capabilities.confirm && <Button danger onClick={() => openAction('reject')}>{t('task.bug.reject')}</Button>}
             {detail.capabilities.edit && <Button onClick={() => openEdit(detail)}>{t('common.edit')}</Button>}

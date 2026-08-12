@@ -197,6 +197,7 @@ export default function ProjectDevelopmentTasksPage() {
   const columns: ColumnsType<ProjectDevelopmentTaskRow> = useMemo(() => [
     { title: t('task.code'), dataIndex: 'task_code', width: 140, render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openDetail(row)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 240, ellipsis: true },
+    { title: t('task.registrar'), dataIndex: 'registrar_name', width: 110, render: (value) => value || '-' },
     { title: t('task.project.project'), key: 'project', width: 220, render: (_, row) => `${row.project_code || ''} ${row.project_name || ''}`.trim() || '-' },
     { title: t('task.project.wbs'), key: 'wbs', width: 200, render: (_, row) => row.wbs_task_id ? `${row.wbs_code || ''} ${row.wbs_name || ''}`.trim() : '-' },
     { title: t('task.assignee'), dataIndex: 'assignee_name', width: 110, render: (value) => value || '-' },

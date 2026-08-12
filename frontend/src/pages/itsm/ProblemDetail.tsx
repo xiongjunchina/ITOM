@@ -325,7 +325,7 @@ export default function ProblemDetail() {
           <Space wrap>
             <ProcessActionButtons
               step={currentProcessStep}
-              disabled={isExample || !!detail.can_confirm}
+              disabled={isExample}
               onDone={() => void load()}
             />
             {detail.can_confirm && (

@@ -222,6 +222,12 @@ export default function ActiveTaskList() {
         ),
     },
     {
+      title: t('task.registrar'),
+      dataIndex: 'registrar_name',
+      width: 110,
+      render: (v: string | null) => v || '-',
+    },
+    {
       title: t('req.activeTask.col.owner'),
       dataIndex: 'assignee_name',
       width: 110,
