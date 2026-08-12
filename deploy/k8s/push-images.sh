@@ -42,6 +42,12 @@ command -v skopeo >/dev/null || { echo "!! skopeo not found (brew install skopeo
 getent hosts "$REG" >/dev/null 2>&1 || grep -q "$REG" /etc/hosts 2>/dev/null || \
   ping -c1 -t1 "$REG" >/dev/null 2>&1 || { echo "!! $REG does not resolve — add: echo '10.60.65.10 $REG' | sudo tee -a /etc/hosts"; exit 1; }
 
+# `skopeo docker-daemon:` does not honor Docker CLI contexts automatically.
+# Resolve the active context explicitly so OrbStack/Colima/Rancher Desktop and
+# the default /var/run/docker.sock daemon all use the same release path.
+DOCKER_DAEMON_HOST="${DOCKER_DAEMON_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)}"
+[ -n "$DOCKER_DAEMON_HOST" ] || { echo "!! Could not resolve the active Docker daemon host"; exit 1; }
+
 echo "==> Release commit: $COMMIT_SHA"
 echo "==> Immutable image tag: $TAG"
 echo "==> Build backend + frontend for linux/amd64 from pinned base digests (no local app startup)"
@@ -89,11 +95,11 @@ skopeo inspect --tls-verify=false --creds "$CREDS" docker://$REG/sn/aom-gateway:
   || { echo "!! cred/connectivity check failed — NOT pushing (avoids admin lockout)"; exit 1; }
 
 echo "==> Push backend"
-skopeo copy --all --dest-tls-verify=false --dest-creds "$CREDS" \
+skopeo copy --all --src-daemon-host "$DOCKER_DAEMON_HOST" --dest-tls-verify=false --dest-creds "$CREDS" \
   docker-daemon:$REG/sn/itom-backend:$TAG docker://$REG/sn/itom-backend:$TAG
 
 echo "==> Push frontend"
-skopeo copy --all --dest-tls-verify=false --dest-creds "$CREDS" \
+skopeo copy --all --src-daemon-host "$DOCKER_DAEMON_HOST" --dest-tls-verify=false --dest-creds "$CREDS" \
   docker-daemon:$REG/sn/itom-frontend:$TAG docker://$REG/sn/itom-frontend:$TAG
 
 echo "==> Mirror pinned postgres:16-alpine (amd64) so air-gapped nodes can pull it"
