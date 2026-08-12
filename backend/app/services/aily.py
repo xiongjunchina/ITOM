@@ -23,9 +23,11 @@ logger = logging.getLogger("aom.aily")
 MAX_MESSAGE_ATTEMPTS = 8
 AILY_IDENTITY_NOT_MAPPED = "AILY_IDENTITY_NOT_MAPPED"
 AILY_IDENTITY_RETRY_SECONDS = 60
+AUDIT_ACTION_AUTO_MAP_IDENTITY = "auto_map_aily_identity"
+AUDIT_ACTION_AUTO_MAP_IDENTITY_FROM_ORG = "auto_map_aily_identity_org"
 TRUSTED_AUTO_MAP_ACTIONS = (
-    "auto_map_aily_notification_identity",
-    "auto_map_aily_notification_identity_from_org",
+    AUDIT_ACTION_AUTO_MAP_IDENTITY,
+    AUDIT_ACTION_AUTO_MAP_IDENTITY_FROM_ORG,
 )
 
 
@@ -214,7 +216,7 @@ def sync_aily_notification_identity(
         subject_type=subject_type,
         subject_id=subject_id,
         cfg=get_aily_config(db),
-        audit_action="auto_map_aily_notification_identity",
+        audit_action=AUDIT_ACTION_AUTO_MAP_IDENTITY,
     )
 
 
@@ -295,7 +297,7 @@ def reconcile_aily_notification_identity_from_org(
         subject_type="user_id" if user_id else "union_id",
         subject_id=user_id or union_id,
         cfg=cfg,
-        audit_action="auto_map_aily_notification_identity_from_org",
+        audit_action=AUDIT_ACTION_AUTO_MAP_IDENTITY_FROM_ORG,
     )
 
 

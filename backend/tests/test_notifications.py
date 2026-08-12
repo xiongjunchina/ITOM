@@ -4,6 +4,7 @@ from app.db import SessionLocal
 from app.events import notifier
 from app.models import (
     AilyIntegrationConfig,
+    AuditLog,
     AuthUser,
     ExternalIdentity,
     FeishuConfig,
@@ -12,12 +13,26 @@ from app.models import (
     OrgMember,
 )
 from app.services.aily import (
+    AUDIT_ACTION_AUTO_MAP_IDENTITY,
+    AUDIT_ACTION_AUTO_MAP_IDENTITY_FROM_ORG,
+    TRUSTED_AUTO_MAP_ACTIONS,
     deliver_aily_outbox_row,
     find_aily_identity,
     sync_aily_notification_identity,
 )
 from app.services.feishu import FeishuClient
 from app.services.secrets_store import encrypt_secret
+
+
+def test_aily_identity_audit_actions_fit_persisted_schema():
+    """自动映射动作编码必须满足 PostgreSQL audit_log.action 的真实长度约束。"""
+    action_limit = AuditLog.__table__.c.action.type.length
+    assert action_limit == 32
+    assert TRUSTED_AUTO_MAP_ACTIONS == (
+        AUDIT_ACTION_AUTO_MAP_IDENTITY,
+        AUDIT_ACTION_AUTO_MAP_IDENTITY_FROM_ORG,
+    )
+    assert all(len(action) <= action_limit for action in TRUSTED_AUTO_MAP_ACTIONS)
 
 
 def test_mark_all_notifications_read_is_scoped_to_current_user(client, admin_headers):

@@ -90,7 +90,7 @@ category (business line / closure code / requirement source / CI category extens
 
 ### 1.6 audit_log — audit log (append-only)
 
-entity_type, entity_id, action, actor, summary JSONB (before/after values of changed fields), created_at.
+entity_type, entity_id, action (`VARCHAR(32)`), actor, summary JSONB (before/after values of changed fields), created_at. Service action codes must be constants covered by a pre-persistence length test. Aily notification identity mapping uses `auto_map_aily_identity` for verified OAuth mapping and `auto_map_aily_identity_org` for organization-assisted reconciliation, preventing an audit insert failure from rolling back an otherwise verified Feishu sign-in transaction.
 
 ### 1.7 notification_outbox — notification outbox
 

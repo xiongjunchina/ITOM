@@ -325,6 +325,8 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 2026-08-11 飞书主动通知批量自动补齐：只读核查证明现有通讯录 `find_by_department` 已返回 `open_id`、`user_id` 与 `union_id`，但登录应用和机器人应用均未开通 `tenant:tenant:readonly`，不能依赖“获取企业信息”接口直接启动历史批量回填。实现采用最小权限路径：首个修复部署后正常 OAuth 登录建立并审计当前机器人应用的唯一 `tenant_key` 锚点；后台发送其他未映射账号的待发消息时，只对“活动账号 + 在岗飞书同步人员”使用其登录应用 `open_id` 查询单个通讯录用户，并把返回的租户级 `user_id`（缺失时 `union_id`）保存为当前机器人应用身份后投递。其他员工无需逐人重新登录或管理员逐项绑定。锚点缺失/歧义、离职/未关联人员、显式停用、冲突身份和通讯录查询失败均保持 `pending`；查询失败不消耗消息发送重试次数，且登录应用 `open_id` 从不直接发送给机器人应用。
 
+2026-08-12 飞书 OAuth 登录回归修复：IDC 实时日志证明授权地址、应用令牌、OIDC 令牌和用户信息接口均成功，失败发生在 ITOM 把已验真的登录身份与通知映射审计同事务提交时。原动作名超过 `audit_log.action VARCHAR(32)`，PostgreSQL 拒绝插入并回滚整个登录事务；SQLite 回归未执行该长度约束。现将 OAuth 自动映射和组织补齐动作编码固定为 `auto_map_aily_identity`、`auto_map_aily_identity_org`，可信锚点查询复用同一组常量，并增加直接读取 SQLAlchemy 列长度的边界测试。本修复不迁移数据库、不改变身份信任边界，也不触碰已有账号、映射、通知发件箱或业务数据。
+
 2026-08-10 IDC 公网可信 TLS：将 `*.snnc.cc` 的公开 CA 完整证书链和匹配私钥作为 `itom/itom-snnc-cc-tls`（`kubernetes.io/tls`）创建，Ingress 为 `itom.snnc.cc` 绑定精确 TLS host；FortiGate 保持 `183.60.58.58:30443 → 10.60.65.220:443` TLS 直通，DNS 与 `public_base_url=https://itom.snnc.cc:30443` 均未改变。公网 `curl`、`openssl s_client -verify_return_error -verify_hostname` 和浏览器现有登录会话均不跳过证书校验地通过；服务器发送 3 张 DigiCert 链证书，SAN 覆盖 `*.snnc.cc`。外部 `/mcp/` `initialize` 返回协议与 `serverInfo`。飞书开放平台已显示相同 HTTPS 回调地址、已订阅新版 `card.action.trigger` 且应用已发布；重新保存未改变的地址未报错，但未产生新的 challenge 访问日志。为避免变更生产业务单据，本轮未创建新工单或点击签名卡片；当前 IDC 的真实角色卡片点击仍须作为独立业务 UAT 完成，不能由历史卡片证据替代。
 
 2026-08-10 IDC 前端调度收口：三节点均 Ready、可调度且没有压力/污点；node02 是正常生产候选节点，不再按历史 build-executor 角色排除。`itom-frontend` 的目标模板显式声明空 `nodeName`，以清除人工恢复留下的 node01 固定绑定，并通过节点 01/02 选择器和硬主机反亲和使两个副本跨节点。后端保持无节点硬绑定的单副本 `Recreate`，数据库 StatefulSet、PVC、Secret 与业务数据不在本次应用发布范围。该策略不改变业务、身份、数据或 TLS 契约。
