@@ -1119,6 +1119,13 @@ def migrate_m35_org(db: Session):
     rebuild_problem_flow_m29(db)
     fix_process_node_types_m75(db)
     fix_bug_flow_assignment_m83(db)
+    # M108：旧版把需求“驳回”误作流程终止。恢复为默认退回上一节点；
+    # 首审批节点则回到登记人补充。函数按 instance.status 幂等执行。
+    from app.services.requirement_returns import repair_rejected_instances
+
+    repaired_requirement_returns = repair_rejected_instances(db)
+    if repaired_requirement_returns:
+        logger.info("repaired %d rejected requirement process instances", repaired_requirement_returns)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 

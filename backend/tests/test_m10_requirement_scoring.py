@@ -53,7 +53,7 @@ def test_score_weighted_total_and_quadrant(client, ctx):
 
 
 def test_detail_exposes_persisted_scores_without_history_and_rejects_with_reason(client, ctx):
-    """历史/导入需求即使缺评分历史行，也必须能回填六维评分并选择驳回。"""
+    """历史/导入需求可回填评分；首审批节点驳回后由登记人补充。"""
     r = _register(client, ctx["pdm"], ctx["domain"], title="历史主表评分需求")
     rid = r["id"]
     with SessionLocal() as db:
@@ -77,7 +77,12 @@ def test_detail_exposes_persisted_scores_without_history_and_rejects_with_reason
         headers=ctx["admin"],
     )
     assert rejected.status_code == 200, rejected.text
-    assert rejected.json()["data"]["status"] == "cancelled"
+    assert rejected.json()["data"]["status"] == "supplementing"
+    returned = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
+    assert returned["process"]["status"] == "returned"
+    assert returned["can_resubmit"] is True
+    assert returned["process"]["return_info"]["reason"] == "当前业务优先级已调整，停止投入实施"
+    assert all(step["task_status"] != "待处理" for step in returned["process"]["steps"])
 
 
 def test_eval_gate_quadrant_and_auto_flow(client, ctx):
@@ -115,17 +120,38 @@ def test_eval_gate_quadrant_and_auto_flow(client, ctx):
     assert data["status"] == "analyzing" and data["flowed_to"] == "analyzing"
 
 
-def test_reject_closes_with_reason(client, ctx):
-    """M16：重评象限驳回（带理由）→ 需求关闭并记录理由。"""
+def test_reject_returns_to_requester_and_resubmits_same_instance(client, ctx):
+    """M108：首审批节点驳回→登记人补充→原需求、原流程实例重新提交。"""
     r = _register(client, ctx["pdm"], ctx["domain"], title="被驳回需求")
     rid = r["id"]
+    before = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
+    instance_id = before["process"]["id"]
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 1, "d2_value": 2, "d3_tech": 3, "d4_org": 3, "d5_risk": 4, "d6_speed": 2,
         "decision": "驳回", "comment": "与年度战略无关且价值不可量化",
     }, headers=ctx["admin"])
-    assert resp.json()["data"]["status"] == "cancelled", resp.text
+    assert resp.json()["data"]["status"] == "supplementing", resp.text
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
-    assert "评审驳回" in detail["closure_note"] and "价值不可量化" in detail["closure_note"]
+    assert detail["closure_note"] is None
+    assert detail["decision"] is None
+    assert detail["weighted_total"] is None
+    assert detail["process"]["id"] == instance_id
+
+    patched = client.patch(
+        f"/api/requirements/{rid}",
+        json={"description": "已补充业务价值测算和附件说明"},
+        headers=ctx["pdm"],
+    )
+    assert patched.status_code == 200, patched.text
+    resubmitted = client.post(f"/api/requirements/{rid}/resubmit", json={}, headers=ctx["pdm"])
+    assert resubmitted.status_code == 200, resubmitted.text
+    assert resubmitted.json()["data"]["instance_id"] == instance_id
+    after = client.get(f"/api/requirements/{rid}", headers=ctx["admin"]).json()["data"]
+    assert after["status"] == "evaluating"
+    assert after["process"]["status"] == "running"
+    assert after["process"]["current_step_seq"] == 1
+    current = next(step for step in after["process"]["steps"] if step["seq"] == 1)
+    assert current["task_status"] == "待处理"
 
 
 def test_scoring_config_admin_only(client, ctx):

@@ -58,7 +58,7 @@ import DocumentTypeHint from '../../components/DocumentTypeHint';
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
 /** 看板五列：登记→评估→分析→实现→关闭；on_hold / cancelled 不入看板（表格视图可见） */
-const BOARD_COLS: RequirementStatus[] = ['registered', 'evaluating', 'analyzing', 'implementing', 'closed'];
+const BOARD_COLS: RequirementStatus[] = ['registered', 'supplementing', 'evaluating', 'analyzing', 'implementing', 'closed'];
 
 /** 加权总分展示：保留 1 位小数，空显示 - */
 const fmtScore = (v?: number | null): string => (v == null ? '-' : v.toFixed(1));

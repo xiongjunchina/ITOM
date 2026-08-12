@@ -113,7 +113,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["bp"])
     assert resp.json()["data"]["status"] == "analyzing", resp.text
 
     # 未完成分析（缺 owner）不能进实现
@@ -124,7 +124,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
         "moscow": "M", "owner": ctx["pdm_p"], "solution": "BI 报表方案",
         "acceptance_criteria": [{"text": "报表口径与财务一致", "checked": False},
                                 {"text": "T+1 出数", "checked": False}],
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 
@@ -163,7 +163,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     client.patch(f"/api/requirements/{rid}", json={
         "acceptance_criteria": [{"text": "报表口径与财务一致", "checked": True},
                                 {"text": "T+1 出数", "checked": True}],
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "closed", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "closed"
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
@@ -177,10 +177,10 @@ def test_development_task_template_and_import(client, ctx, admin_headers):
     client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["bp"])
     client.patch(f"/api/requirements/{rid}", json={
         "moscow": "M", "owner": ctx["pdm_p"], "solution": "批量任务导入方案",
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     assert client.post(
         f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers,
     ).status_code == 200
@@ -220,11 +220,11 @@ def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers)
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["bp"])
     assert resp.json()["data"]["status"] == "analyzing"
     client.patch(f"/api/requirements/{rid}", json={
         "moscow": "M", "owner": ctx["dev_p"], "solution": "开发实现方案",
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 

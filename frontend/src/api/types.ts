@@ -491,6 +491,19 @@ export interface TicketProcess {
   current_step_code?: string | null;
   current_step_name?: string | null;
   steps: ProcessStep[];
+  /** 需求审批驳回时可选择的已到达前序位置；seq=0 表示退回登记人补充。 */
+  return_targets?: {
+    seq: number;
+    name: string;
+    kind: 'process_step' | 'requester_supplement';
+  }[];
+  /** 最近一次退回事实，用于向登记人和处理人解释当前状态。 */
+  return_info?: {
+    reason?: string | null;
+    returned_at?: string | null;
+    returned_by?: string | null;
+    returned_by_name?: string | null;
+  } | null;
 }
 
 /** 工单详情 */
@@ -1554,6 +1567,7 @@ export interface AttachmentItem {
 /** 需求状态 */
 export type RequirementStatus =
   | 'registered'
+  | 'supplementing'
   | 'evaluating'
   | 'analyzing'
   | 'implementing'
@@ -1567,6 +1581,7 @@ export const REQ_STATUS: Record<
   { label: string; badge: 'default' | 'processing' | 'success' | 'warning'; color?: string }
 > = {
   registered: { label: '已登记', badge: 'default', color: 'blue' },
+  supplementing: { label: '待登记人补充', badge: 'warning', color: 'orange' },
   evaluating: { label: '评估中', badge: 'processing', color: 'cyan' },
   analyzing: { label: '分析中', badge: 'processing' },
   implementing: { label: '实现中', badge: 'processing', color: 'purple' },
@@ -1854,6 +1869,8 @@ export interface RequirementDetail extends RequirementRow {
   process: TicketProcess | null;
   /** 当前用户是否有 requirements.edit 权限 */
   can_edit: boolean;
+  /** 首个审批节点退回登记人后，当前用户可否补充并重新提交。 */
+  can_resubmit?: boolean;
   can_delete?: boolean;
   workflow_edit_mode?: string | null;
   workflow_edit_locked_reason?: string | null;

@@ -1,5 +1,6 @@
 """流程引擎最小版（PRD §8）：单据触发实例，任务按步骤推进，默认角色指派。"""
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -228,7 +229,8 @@ def _spawn_task(
     preferred: str | None,
     *,
     force_unassigned: bool = False,
-):
+    notify: bool = True,
+) -> ProcessTask:
     now = datetime.now()
     # 项目流程中的 IT PM 节点必须跟随项目主数据指定的项目经理，不能从所有
     # it_pm 角色持有人中任取一人。这样章程导入/手工创建、后续推进与流程回退
@@ -247,8 +249,7 @@ def _spawn_task(
         assignee = _requester_person(db, instance.entity_type, instance.entity_id) or _resolve_assignee(db, step, preferred)
     else:
         assignee = _resolve_assignee(db, step, preferred)
-    db.add(
-        ProcessTask(
+    task = ProcessTask(
             instance_id=instance.id,
             step_id=step.id,
             definition_version=instance.definition.version,
@@ -268,7 +269,8 @@ def _spawn_task(
             upstream_correction_enabled=True,
             due_at=now + timedelta(hours=step.sla_hours) if step.sla_hours else None,
         )
-    )
+    db.add(task)
+    db.flush()
     # 流程任务才是“系统分派”的权威来源。工单创建时 Ticket.assignee 可能为空，
     # 但服务请求的首个节点仍会按默认角色解析出实际处理人；领域事件供站内通知
     # 和后续可靠机器人发件箱消费，不改变流程与派单事实。
@@ -286,8 +288,10 @@ def _spawn_task(
                 "step_name": step.name,
             },
         )
-    _notify_assignee(db, instance, step, assignee)
-    _notify_cc(db, instance, step, assignee)
+    if notify:
+        _notify_assignee(db, instance, step, assignee)
+        _notify_cc(db, instance, step, assignee)
+    return task
 
 
 def _live_steps(definition: ProcessDefinition) -> list[ProcessStep]:
@@ -481,6 +485,7 @@ def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> Proc
         task.viewed_by = actor.person_id
     task.status = "已驳回"
     task.completed_at = now
+    task.completed_by = actor.person_id
     task.comment = f"[驳回] {reason.strip()}"
     # 变更单已有明确的「已拒绝」终态；其他实体保留业务状态，由流程实例状态表达驳回结果。
     if instance.entity_type == "ticket_change":
@@ -505,6 +510,177 @@ def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> Proc
             content=f"驳回理由：{reason.strip()}", link=link,
         )
     return instance
+
+
+def requirement_return_targets(
+    db: Session,
+    instance: ProcessInstance,
+    current_step: ProcessStep,
+) -> list[dict]:
+    """需求审批可退回的历史节点；0 表示登记人补充后重新提交。"""
+    if instance.entity_type != "requirement":
+        return []
+    reached_step_ids = {
+        row[0]
+        for row in (
+            db.query(ProcessTask.step_id)
+            .filter(
+                ProcessTask.instance_id == instance.id,
+                ProcessTask.is_deleted.is_(False),
+            )
+            .distinct()
+            .all()
+        )
+    }
+    previous = [
+        step
+        for step in _live_steps(instance.definition)
+        if step.seq < current_step.seq and step.id in reached_step_ids
+    ]
+    targets = [
+        {"seq": step.seq, "name": step.name, "kind": "process_step"}
+        for step in sorted(previous, key=lambda item: item.seq, reverse=True)
+    ]
+    targets.append({"seq": 0, "name": "登记人补充", "kind": "requester_supplement"})
+    return targets
+
+
+def _previous_task_assignee(db: Session, instance: ProcessInstance, target: ProcessStep) -> str | None:
+    """回到历史节点时优先交还该节点上次的实际处理人。"""
+    previous = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.step_id == target.id,
+            ProcessTask.status.in_(["已完成", "已驳回"]),
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.completed_at.desc(), ProcessTask.created_at.desc())
+        .first()
+    )
+    return (previous.completed_by or previous.assignee) if previous else None
+
+
+def _activate_requirement_return(
+    db: Session,
+    instance: ProcessInstance,
+    current_step: ProcessStep,
+    target_seq: int | None,
+    *,
+    notify: bool = True,
+) -> tuple[int, ProcessTask | None]:
+    targets = requirement_return_targets(db, instance, current_step)
+    valid = {int(item["seq"]): item for item in targets}
+    if not valid:
+        raise AppError("RETURN_TARGET_UNAVAILABLE", "当前节点没有可退回位置", 409)
+    selected = target_seq if target_seq is not None else int(targets[0]["seq"])
+    if selected not in valid:
+        raise AppError("INVALID_RETURN_TARGET", "只能退回已到达的历史节点", 400)
+
+    instance.status = "returned" if selected == 0 else "running"
+    instance.completed_at = None
+    if selected == 0:
+        # 登记并非流程定义中的审批节点；不创建伪任务，由需求登记人补充并重新提交。
+        instance.current_step_seq = _live_steps(instance.definition)[0].seq
+        return selected, None
+
+    target = next(step for step in _live_steps(instance.definition) if step.seq == selected)
+    instance.current_step_seq = target.seq
+    preferred = _previous_task_assignee(db, instance, target)
+    return selected, _spawn_task(db, instance, target, preferred, notify=notify)
+
+
+def return_requirement_task(
+    db: Session,
+    task_id: str,
+    actor: AuthUser,
+    reason: str,
+    target_seq: int | None = None,
+) -> tuple[ProcessInstance, int]:
+    """驳回需求审批：保留当前任务历史，并激活选定的历史节点。"""
+    task = db.get(ProcessTask, task_id)
+    if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    if task.status != "待处理":
+        raise AppError("TASK_DONE", "该任务已处理")
+    if not task.step or task.step.node_type != "approval":
+        raise AppError("NOT_APPROVAL_STEP", "当前节点不是审批节点")
+    if len(reason.strip()) < 5:
+        raise AppError("REASON_REQUIRED", "驳回理由至少 5 个字")
+    instance = db.get(ProcessInstance, task.instance_id)
+    if not instance or instance.entity_type != "requirement":
+        raise AppError("RETURN_NOT_SUPPORTED", "当前单据不支持选择历史节点退回", 409)
+
+    now = datetime.now()
+    if task.viewed_at is None:
+        task.viewed_at = now
+        task.viewed_by = actor.person_id
+    selected, _ = _activate_requirement_return(db, instance, task.step, target_seq)
+    target_name = next(
+        item["name"]
+        for item in requirement_return_targets(db, instance, task.step)
+        if item["seq"] == selected
+    )
+    task.status = "已驳回"
+    task.completed_at = now
+    task.completed_by = actor.person_id
+    task.comment = f"[驳回→{target_name}] {reason.strip()}"
+
+    if selected == 0:
+        requester = _requester_person(db, instance.entity_type, instance.entity_id)
+        if requester:
+            from app.events import notifier
+
+            notifier.notify(
+                db,
+                "requirement.returned_to_requester",
+                "requirement",
+                instance.entity_id,
+                [requester],
+                f"需求已退回补充：{instance.definition.name}",
+                content=f"驳回理由：{reason.strip()}。请补充后重新提交。",
+                link=ENTITY_LINKS["requirement"].format(id=instance.entity_id),
+            )
+    return instance, selected
+
+
+def resubmit_returned_requirement(
+    db: Session,
+    instance: ProcessInstance,
+    preferred_assignee: str | None = None,
+) -> ProcessTask:
+    """登记人补充完成后，在同一实例重新生成首个审批任务。"""
+    if instance.entity_type != "requirement" or instance.status != "returned":
+        raise AppError("REQUIREMENT_NOT_RETURNED", "当前需求不在待补充状态", 409)
+    first = _live_steps(instance.definition)[0]
+    instance.status = "running"
+    instance.current_step_seq = first.seq
+    instance.completed_at = None
+    return _spawn_task(db, instance, first, preferred_assignee)
+
+
+def restore_rejected_requirement_instance(
+    db: Session,
+    instance: ProcessInstance,
+    target_seq: int | None = None,
+) -> int | None:
+    """幂等恢复旧版误终止的需求实例，默认退回驳回节点的上一位置。"""
+    if instance.entity_type != "requirement" or instance.status != "rejected":
+        return None
+    rejected = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "已驳回",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.completed_at.desc(), ProcessTask.created_at.desc())
+        .first()
+    )
+    if not rejected or not rejected.step:
+        return None
+    selected, _ = _activate_requirement_return(db, instance, rejected.step, target_seq, notify=False)
+    return selected
 
 
 def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: int,
@@ -700,6 +876,19 @@ def workflow_edit_access(
         return WorkflowEditAccess(True, mode="admin")
     task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
     if not task:
+        if entity_type == "requirement":
+            instance = (
+                db.query(ProcessInstance)
+                .filter(
+                    ProcessInstance.entity_type == entity_type,
+                    ProcessInstance.entity_id == entity_id,
+                    ProcessInstance.is_deleted.is_(False),
+                )
+                .order_by(ProcessInstance.created_at.desc())
+                .first()
+            )
+            if instance and instance.status == "returned" and entity_creator_user_id(db, entity_type, entity_id) == user.id:
+                return WorkflowEditAccess(True, mode="returned_requester")
         return WorkflowEditAccess(
             has_perm(db, user, module, "edit"),
             mode="module_permission" if has_perm(db, user, module, "edit") else None,
@@ -729,7 +918,7 @@ def require_workflow_edit(
 
 def require_safe_correction_fields(access: WorkflowEditAccess, data: dict, forbidden: set[str]) -> None:
     """Upstream correction never changes the task routing or current assignee."""
-    if access.mode not in {"upstream_creator", "upstream_handler"}:
+    if access.mode not in {"upstream_creator", "upstream_handler", "returned_requester"}:
         return
     unsafe = sorted(set(data) & forbidden)
     if unsafe:
@@ -1147,6 +1336,19 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
             "completed_at": task.completed_at if task else None,
             "raci_snapshot": task.raci_snapshot if task else None,
         })
+    return_targets = (
+        requirement_return_targets(db, instance, current_task.step)
+        if current_task and current_task.step and current_task.step.node_type == "approval"
+        else []
+    )
+    latest_rejection = next((task for task in reversed(tasks) if task.status == "已驳回"), None)
+    latest_rejection_reason = None
+    if latest_rejection and latest_rejection.comment:
+        latest_rejection_reason = re.sub(
+            r"^\[驳回(?:→[^\]]+)?\]\s*",
+            "",
+            latest_rejection.comment,
+        )
     return {
         "id": instance.id,
         "definition_name": instance.definition.name,
@@ -1159,4 +1361,11 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
         ),
         "current_step_name": current_task.step.name if current_task and current_task.step else None,
         "steps": step_rows,
+        "return_targets": return_targets,
+        "return_info": {
+            "reason": latest_rejection_reason,
+            "returned_at": latest_rejection.completed_at,
+            "returned_by": latest_rejection.completed_by,
+            "returned_by_name": member_names.get(latest_rejection.completed_by),
+        } if latest_rejection else None,
     }

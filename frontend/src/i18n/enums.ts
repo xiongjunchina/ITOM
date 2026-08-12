@@ -68,8 +68,8 @@ const MEMBER_STATUS_EN: M = { 在岗: 'Active', 离职: 'Left' };
 // 项目/需求状态（按 code，与后端 STATUS_EN 一致；用于筛选下拉，列表徽标已由后端 status_name 本地化）
 const PROJECT_STATUS_ZH: M = { planning: '规划中', active: '进行中', paused: '已暂停', completed: '已完成', closed: '已关闭', cancelled: '已取消' };
 const PROJECT_STATUS_EN: M = { planning: 'Planning', active: 'In progress', paused: 'Paused', completed: 'Completed', closed: 'Closed', cancelled: 'Cancelled' };
-const REQUIREMENT_STATUS_ZH: M = { registered: '已登记', evaluating: '评估中', analyzing: '分析中', implementing: '实现中', closed: '已关闭', on_hold: '已搁置', cancelled: '已取消' };
-const REQUIREMENT_STATUS_EN: M = { registered: 'Registered', evaluating: 'Evaluating', analyzing: 'Analyzing', implementing: 'Implementing', closed: 'Closed', on_hold: 'On hold', cancelled: 'Cancelled' };
+const REQUIREMENT_STATUS_ZH: M = { registered: '已登记', supplementing: '待登记人补充', evaluating: '评估中', analyzing: '分析中', implementing: '实现中', closed: '已关闭', on_hold: '已搁置', cancelled: '已取消' };
+const REQUIREMENT_STATUS_EN: M = { registered: 'Registered', supplementing: 'Awaiting requester update', evaluating: 'Evaluating', analyzing: 'Analyzing', implementing: 'Implementing', closed: 'Closed', on_hold: 'On hold', cancelled: 'Cancelled' };
 // 四象限 / 评估决议（value 键：中文规范值，en 查表回退原值）
 const QUADRANT_EN: M = { 战略下注: 'Strategic Bet', 速赢项目: 'Quick Win', 低优先级: 'Low Priority', 重新评估: 'Re-evaluate' };
 const REQ_DECISION_EN: M = { 通过: 'Approved', 搁置: 'On hold', 驳回: 'Rejected' };

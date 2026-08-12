@@ -175,7 +175,9 @@ GET /api/requirements/tasks/active
 
 同一实现中需求可重复调用带 `requirement_id` 的 `POST` 登记多行任务；不带路径 ID 的 `POST /api/requirements/tasks` 可创建 `requirement_id=null` 的独立开发任务，并在 `PATCH` 时补充或调整关联。填写关联时目标必须处于实现中且非示例、未转项目。需求负责人或拥有任务维护权的账号可维护完整字段；任务负责人在无全局编辑权限时只能更新自己的 `status` 和 `actual_effort`。所有写接口重新校验权限、关联需求状态、负责人范围和示例保护；既有任务保持原主键及软删除状态。
 
-需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回仍要求不少于 5 字的理由。
+需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回要求不少于 5 字的理由，可携带 `return_to_seq` 选择详情 `process.return_targets` 中某个已实际到达的前序节点或 `0`（登记人补充）。省略时默认最近前序节点；首审批节点没有流程前序时默认 `0`。服务端必须在同一事务完成当前任务驳回审计、流程实例回退和需求状态投影，不能把驳回写成关闭/取消。
+
+需求详情的 `process.return_targets` 只在当前待办为审批节点时返回，元素为 `{seq,name,kind}`；`process.return_info` 返回最近一次驳回的理由、时间和实际操作人。退回流程节点时实例保持 `running` 并在目标节点追加待办；选择 `seq=0` 时实例为 `returned`、需求为 `supplementing`，详情仅允许原登记人或管理员补充安全字段和附件，并返回 `can_resubmit=true`。`POST /api/requirements/{id}/resubmit` 不接受客户端指定目标或处理人，只在同一流程实例重新激活首个评审任务并把需求恢复为 `evaluating`。未来节点、未到达节点、非当前审批处理人、理由不足、非待补充状态和非登记人提交均失败关闭。
 
 `POST /api/requirements/{id}/to-dev` 使用空载荷（兼容旧客户端可携带 `owner_id`，但若与需求评分规则 `review_assignees.dev_leader` 不一致则返回 `DEV_LEADER_FIXED`）。服务端必须存在并校验该在岗 IT 开发负责人；缺失/失效返回 `DEV_LEADER_NOT_CONFIGURED`。两个路径接口都只可处理当前「方案评估与路径判定」任务，否则返回 `PROCESS_STEP_MISMATCH`，并且只推进到「实现交付」。完成开发路径的实现交付任务前，流程引擎检查未删除的 `requirement_task` 至少一条，否则返回 `REQUIREMENT_TASK_REQUIRED`；此检查不适用于项目路径或没有 `implementation_route` 快照的既有记录。
 
@@ -489,7 +491,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 
 1. **状态机**：`services/workflow.py` 统一入口 `transition(entity, to, fields, actor)` —— 查 workflow_transition 校验角色与合法性 → 校验该转换的必填阶段字段 → 更新 + 打点 → 发事件 → 写审计。所有单据共用。
 2. **积分引擎幂等**：point_entry 建 UNIQUE(event_type, source_entity_type, source_entity_id, person)，同一单据同一事件不重复计分（重开再解决不二次得分）。
-3. **计算列维护**：wbs_task/cost_entry/milestone 写操作后，service 层重算所属 project 的 progress_pct/actual_cost/health_status 写回（同事务）。WBS `progress` 接受 0-100 的整数百分比；流程步骤通过 `node_type=processing|approval` 区分处理/审批语义。审批任务可调用 `POST /api/process-tasks/{id}/approve`（理由可选）或 `POST /api/process-tasks/{id}/reject`（理由必填），完成入口仍支持流程图中的“完成此步骤”。
+3. **计算列维护**：wbs_task/cost_entry/milestone 写操作后，service 层重算所属 project 的 progress_pct/actual_cost/health_status 写回（同事务）。WBS `progress` 接受 0-100 的整数百分比；流程步骤通过 `node_type=processing|approval` 区分处理/审批语义。审批任务可调用 `POST /api/process-tasks/{id}/approve`（理由可选）或 `POST /api/process-tasks/{id}/reject`（理由必填）；需求审批还可提交 `target_seq`，其值必须来自当前实例详情返回的已到达前序节点，省略时退回最近前序节点，`0` 表示登记人补充。非需求实体继续使用既有终止或专项回退语义。完成入口仍支持流程图中的“完成此步骤”。
 4. **章程导入两步**：解析接口只返回草稿 JSON + warnings（不落库）；前端展示确认页，用户修正后调创建接口落库。解析失败回退手工表单。
 5. **SLA 计时**：挂起时累计 paused_minutes，达成判定 = (resolved_at − submitted_at − paused) ≤ 目标。
 6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。

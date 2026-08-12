@@ -102,6 +102,7 @@ class ScoreIn(BaseModel):
     d6_speed: int | None = None
     decision: str | None = None
     comment: str | None = None
+    return_to_seq: int | None = Field(default=None, ge=0)
 
 
 class ScoringConfigIn(BaseModel):
@@ -408,7 +409,7 @@ def _sync_requirement_stage_from_process(db: Session, r: Requirement, instance) 
 
 def _effective_requirement_status(r: Requirement, process_view: dict | None) -> str:
     """读取详情时计算兼容旧数据的展示阶段，不修改数据库。"""
-    if r.status in ("closed", "cancelled", "on_hold") or not process_view:
+    if r.status in ("closed", "cancelled", "on_hold", "supplementing") or not process_view:
         return r.status
     if process_view.get("status") == "completed":
         criteria = r.acceptance_criteria or []
@@ -923,6 +924,11 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
         "can_close": _can_close_requirement(db, user, r) and not r.is_example and effective_status not in ("closed", "cancelled"),
         "process": process_view,
         "can_edit": (not r.is_example) and edit_access.allowed,
+        "can_resubmit": (
+            (not r.is_example)
+            and effective_status == "supplementing"
+            and (r.requester == user.id or _is_req_admin(db, user))
+        ),
         "can_delete": (not r.is_example) and delete_access.allowed,
         "workflow_edit_mode": edit_access.mode,
         "workflow_edit_locked_reason": edit_access.reason,
@@ -1113,6 +1119,10 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     process_step_name = _current_requirement_step_name(db, process_task)
     if process_task and not any(x in process_step_name for x in ("需求评审", "方案评估")):
         raise AppError("EVAL_STAGE_CLOSED", f"当前流程节点为「{process_step_name or '未知'}」，评估阶段已结束，不能修改六维评分或评估决议", 409)
+    if process_task:
+        # 评分和决议是当前流程节点的实际处理动作，不能只凭模块 edit
+        # 权限绕过任务指派。同时记录首次查阅，关闭上游回改窗口。
+        process_engine.mark_task_viewed(db, user, process_task.id, handling_action=True)
     data = body.model_dump(exclude_unset=True)
     _validate_scores(data)
     if data.get("decision") and data["decision"] not in DECISIONS:
@@ -1126,7 +1136,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     if "decision" in data:
         r.decision = data["decision"]
     # M16 评估门：决议按象限约束——「重新评估」象限仅可搁置/驳回；其余象限可选择通过；
-    # 驳回=关闭需求，必填理由（≥5 字）
+    # 驳回=退回已到达的历史节点（默认上一节点），必填理由（≥5 字）。
     cfg = requirement_scoring.get_config(db)
     scores_now = requirement_scoring.requirement_scores(r)
     quadrant = requirement_scoring.compute_quadrant(scores_now, cfg.thresholds, cfg.weights)
@@ -1134,9 +1144,9 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
         if quadrant is None:
             raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
         if quadrant == requirement_scoring.QUADRANT_REEVALUATE:
-            raise AppError("QUADRANT_REJECTED", "评分落入「重新评估」象限，仅可选择 搁置（补充后重评）或 驳回（关闭）")
+            raise AppError("QUADRANT_REJECTED", "评分落入「重新评估」象限，仅可选择搁置或退回已到达的前序位置")
     if r.decision == "驳回" and len((data.get("comment") or "").strip()) < 5:
-        raise AppError("REASON_REQUIRED", "驳回将关闭需求，必须填写理由（至少 5 个字）")
+        raise AppError("REASON_REQUIRED", "驳回必须填写理由（至少 5 个字）")
     # upsert 共识评分行
     person = db.get(OrgMember, user.person_id) if user.person_id else None
     row = (
@@ -1190,21 +1200,29 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
                                     link=f"/requirements/{r.id}")
             flowed_to = "on_hold"
         elif r.decision == "驳回":
-            wf_transition(db, r, "requirement", "cancelled", {}, user)
-            # M24：驳回=需求终态——收尾整个流程实例（评审任务记驳回理由），
-            # 不再走 _complete_review_step（那会推进流程、给产品 leader 派发方案评估任务）
-            process_engine.finalize_instance(db, "requirement", r.id,
-                                             f"评审驳回，需求关闭：{(data.get('comment') or '').strip()}"[:500])
-            r.closure_note = f"[评审驳回] {(data.get('comment') or '').strip()}"
-            r.closed_at = now
-            if r.requester:
-                ru = db.get(AuthUser, r.requester)
-                if ru and ru.person_id:
-                    notifier.notify(db, "requirement.rejected", "requirement", r.id, [ru.person_id],
-                                    f"需求评审未通过：{r.requirement_code} {r.title}",
-                                    f"驳回理由：{(data.get('comment') or '').strip()}",
-                                    link=f"/requirements/{r.id}")
-            flowed_to = "cancelled"
+            if not process_task:
+                raise AppError("PROCESS_STEP_MISSING", "需求流程没有待处理节点，无法执行驳回", 409)
+            from app.services.requirement_returns import project_return
+
+            instance, selected = process_engine.return_requirement_task(
+                db,
+                process_task.id,
+                user,
+                (data.get("comment") or "").strip(),
+                data.get("return_to_seq"),
+            )
+            flowed_to = project_return(
+                db,
+                r,
+                selected,
+                user,
+                (data.get("comment") or "").strip(),
+            )
+            audit(db, "process_task", process_task.id, "return", user, {
+                "reason": (data.get("comment") or "").strip(),
+                "target_seq": selected,
+                "source": "requirement_score",
+            })
         if flowed_to:
             publish(db, f"requirement.{flowed_to}", "requirement", r.id, {})
     db.commit()
@@ -1215,6 +1233,25 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
         "quadrant": requirement_scoring.compute_quadrant(scores, cfg.thresholds, cfg.weights),
         **scores,
     })
+
+
+@router.post("/{requirement_id}/resubmit")
+def resubmit_requirement(
+    requirement_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """登记人补充完成后，在原需求和原流程实例上重新提交。"""
+    r = _get_requirement(db, requirement_id, user)
+    ensure_not_example(r)
+    if r.requester != user.id and not _is_req_admin(db, user):
+        raise AppError("FORBIDDEN", "仅需求登记人或管理员可以重新提交", 403)
+    from app.services.requirement_returns import resubmit
+
+    instance = resubmit(db, r, user)
+    publish(db, "requirement.resubmitted", "requirement", r.id, {})
+    db.commit()
+    return ok({"id": r.id, "status": r.status, "instance_id": instance.id})
 
 
 class ToProjectIn(BaseModel):

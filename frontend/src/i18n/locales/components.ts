@@ -59,10 +59,11 @@ export const zh: Dict = {
   'comp.flow.approveTitle': '审批同意',
   'comp.flow.approveCommentOptional': '同意理由（可选）',
   'comp.flow.rejectTitle': '驳回申请',
+  'comp.flow.returnTarget': '退回位置',
   'comp.flow.rejectReasonPlaceholder': '请填写驳回理由（至少 5 个字）',
   'comp.flow.rejectReasonRequired': '请填写驳回理由（至少 5 个字）',
   'comp.flow.approved': '已同意，流程推进到下一节点',
-  'comp.flow.rejected': '已驳回流程申请',
+  'comp.flow.rejected': '已退回选定位置',
 
   // 示例数据徽标 / 提示
   'comp.example.tip': '示例数据：字段内容即填写指引，仅供学习参考，不可编辑',
@@ -181,10 +182,11 @@ export const en: Dict = {
   'comp.flow.approveTitle': 'Approve request',
   'comp.flow.approveCommentOptional': 'Approval comment (optional)',
   'comp.flow.rejectTitle': 'Reject request',
+  'comp.flow.returnTarget': 'Return to',
   'comp.flow.rejectReasonPlaceholder': 'Enter a rejection reason (at least 5 characters)',
   'comp.flow.rejectReasonRequired': 'Please enter a rejection reason (at least 5 characters)',
   'comp.flow.approved': 'Approved; the process advanced to the next step',
-  'comp.flow.rejected': 'Process request rejected',
+  'comp.flow.rejected': 'Returned to the selected position',
 
   // Example-data badge / notice
   'comp.example.tip': 'Example data: field content is the filling guidance, for reference only, not editable',

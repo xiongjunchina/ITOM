@@ -23,6 +23,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -97,11 +98,11 @@ function EvaluationPanel({
   const { roleLabel } = useRoleOptions();
   const [config, setConfig] = useState<ScoringConfig | null>(null);
 
-  // 单人评分场景：优先共识分或首条评分记录。
-  // 导入/历史数据可能仅保存到了需求主表，没有评分历史行；这时也必须回填主表评分。
+  // 当前评分只认有效共识行。退回评审或登记人时，旧行保留为历史，
+  // 不得再回填为当前评分。导入数据若只有主表分数，仍由 persistedScores 兼容。
   const scoreRecord = useMemo(() => {
     const list = detail.scores ?? [];
-    return list.find((s) => s.is_consensus) ?? list[0] ?? null;
+    return list.find((s) => s.is_consensus) ?? null;
   }, [detail.scores]);
 
   const persistedScores = useMemo<DimScores>(() => {
@@ -136,13 +137,15 @@ function EvaluationPanel({
   const [scores, setScores] = useState<DimScores>({});
   const [decision, setDecision] = useState<string | undefined>(detail.decision ?? undefined);
   const [comment, setComment] = useState<string>('');
+  const [returnToSeq, setReturnToSeq] = useState<number | undefined>(detail.process?.return_targets?.[0]?.seq);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setScores(persistedScores);
     setComment(scoreRecord?.comment ?? '');
     setDecision(detail.decision ?? undefined);
-  }, [persistedScores, scoreRecord, detail.decision]);
+    setReturnToSeq(detail.process?.return_targets?.[0]?.seq);
+  }, [persistedScores, scoreRecord, detail.decision, detail.process?.return_targets]);
 
   useEffect(() => {
     api
@@ -196,6 +199,7 @@ function EvaluationPanel({
         if (scores[d.key] != null) body[d.key] = scores[d.key];
       });
       if (decision) body.decision = decision;
+      if (decision === '驳回' && returnToSeq != null) body.return_to_seq = returnToSeq;
       // 决议保存即自动流转（M16）：按返回 flowed_to 提示去向
       const res = await api.post<{ status: string; flowed_to: string | null }>(
         `/requirements/${id}/score`,
@@ -206,8 +210,10 @@ function EvaluationPanel({
           ? t('req.eval.flowedAnalyzing')
           : res.flowed_to === 'on_hold'
             ? t('req.eval.flowedOnHold')
-            : res.flowed_to === 'cancelled'
-              ? t('req.eval.flowedCancelled')
+            : res.flowed_to === 'supplementing'
+              ? t('req.eval.flowedSupplementing')
+              : res.flowed_to === 'evaluating'
+                ? t('req.eval.flowedEvaluating')
               : t('req.scoreSaved'),
       );
       onSaved();
@@ -332,6 +338,20 @@ function EvaluationPanel({
           <Typography.Text type="warning" style={{ fontSize: 12 }}>
             {t('req.eval.quadrantBlocked')}
           </Typography.Text>
+        )}
+        {editable && decision === '驳回' && (detail.process?.return_targets?.length ?? 0) > 0 && (
+          <Space wrap align="center">
+            <Typography.Text strong>{t('req.eval.returnTarget')}</Typography.Text>
+            <Select
+              style={{ minWidth: 240 }}
+              value={returnToSeq}
+              onChange={setReturnToSeq}
+              options={detail.process!.return_targets!.map((target) => ({
+                value: target.seq,
+                label: target.name,
+              }))}
+            />
+          </Space>
         )}
         {editable ? (
           <>
@@ -639,6 +659,8 @@ export default function RequirementDetail() {
 
   const [detail, setDetail] = useState<RequirementDetailData | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [resubmitting, setResubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [members, setMembers] = useState<Member[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -707,6 +729,33 @@ export default function RequirementDetail() {
       void load();
     } catch {
       // 已统一提示
+    }
+  };
+
+  const uploadSupplementAttachment = async (file: File) => {
+    if (!id) return;
+    setAttachmentUploading(true);
+    try {
+      await api.upload<AttachmentItem>(`/attachments?entity_type=requirement&entity_id=${id}`, file);
+      message.success(t('req.attachmentUploaded'));
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setAttachmentUploading(false);
+    }
+  };
+
+  const resubmitRequirement = async () => {
+    setResubmitting(true);
+    try {
+      await api.post(`/requirements/${id}/resubmit`, {});
+      message.success(t('req.resubmitDone'));
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setResubmitting(false);
     }
   };
 
@@ -797,7 +846,8 @@ export default function RequirementDetail() {
 
   const submitEdit = async () => {
     const v = await editForm.validateFields();
-    const isUpstreamCorrection = detail?.workflow_edit_mode?.startsWith('upstream_') === true;
+    const isUpstreamCorrection = detail?.workflow_edit_mode?.startsWith('upstream_') === true
+      || detail?.workflow_edit_mode === 'returned_requester';
     setEditSaving(true);
     try {
       await api.patch(`/requirements/${id}`, {
@@ -959,12 +1009,15 @@ export default function RequirementDetail() {
   const canCreateLinkedProject = !isExample && !isFinal && !!user && !isRequesterOnly(user);
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
-  const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
+  const processRunning = detail.process?.status === 'running';
+  const currentProcessStep = processRunning
+    ? detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq)
+    : undefined;
   // 流程实例的当前待处理节点优先于历史阶段时间戳。旧单据可能存在
   // Requirement.status 落后于流程任务的情况，不能再用它决定页面当前阶段。
   const processSeq = detail.process?.current_step_seq ?? null;
   const processCompleted = detail.process?.status === 'completed';
-  const processDriven = processSeq != null;
+  const processDriven = processRunning && processSeq != null;
   const evaluationIsCurrent = processDriven
     ? !processCompleted && processSeq === 1
     : st === 'registered' || st === 'evaluating';
@@ -992,6 +1045,8 @@ export default function RequirementDetail() {
   // ----- 阶段进度条 -----
   const currentStep = processCompleted || st === 'closed'
     ? 4
+    : st === 'supplementing'
+      ? 0
     : processDriven
       ? Math.min(4, Math.max(1, processSeq ?? 1))
     : reachedImplementing
@@ -1159,6 +1214,7 @@ export default function RequirementDetail() {
           )}
           <ProcessActionButtons
             step={currentProcessStep}
+            returnTargets={detail.process?.return_targets}
             disabled={isExample}
             onDone={() => void load()}
           />
@@ -1177,6 +1233,30 @@ export default function RequirementDetail() {
       {st === 'cancelled' && (
         <Alert type="info" showIcon message={t('req.cancelledTitle')} description={t('req.cancelledDesc')} />
       )}
+      {st === 'supplementing' && (
+        <Alert
+          type="warning"
+          showIcon
+          message={t('req.returnedTitle')}
+          description={(
+            <Space direction="vertical" size={4}>
+              <Typography.Text>
+                {detail.process?.return_info?.reason || t('req.returnedReasonUnknown')}
+              </Typography.Text>
+              {detail.process?.return_info?.returned_by_name && (
+                <Typography.Text type="secondary">
+                  {t('req.returnedBy', { name: detail.process.return_info.returned_by_name })}
+                </Typography.Text>
+              )}
+              {detail.can_resubmit && (
+                <Button type="primary" loading={resubmitting} onClick={() => void resubmitRequirement()}>
+                  {t('req.resubmit')}
+                </Button>
+              )}
+            </Space>
+          )}
+        />
+      )}
 
       {/* 阶段进度条 */}
       <Card size="small">
@@ -1194,7 +1274,7 @@ export default function RequirementDetail() {
           <FlowDiagram
             steps={detail.process.steps}
             roleLabel={roleLabel}
-            currentSeq={detail.process.current_step_seq}
+            currentSeq={processRunning ? detail.process.current_step_seq : null}
             // M18：能否完成由 FlowDiagram 按任务处理人判定（PM 无需求编辑权也要能完成「实现交付」）
             onCompleteStep={!detail.is_example ? setCompletingStep : undefined}
           />
@@ -1265,6 +1345,25 @@ export default function RequirementDetail() {
       </Card>
 
       <Card title={t('req.attachments')} size="small">
+        {detail.can_resubmit && (
+          <Upload
+            multiple
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void uploadSupplementAttachment(file);
+              return Upload.LIST_IGNORE;
+            }}
+            accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+          >
+            <Button
+              icon={<PaperClipOutlined />}
+              loading={attachmentUploading}
+              style={{ marginBottom: attachments.length > 0 ? 12 : 0 }}
+            >
+              {t('req.uploadSupplementAttachment')}
+            </Button>
+          </Upload>
+        )}
         {attachments.length === 0 ? (
           <Typography.Text type="secondary">{t('req.noAttachments')}</Typography.Text>
         ) : (
@@ -1615,7 +1714,7 @@ export default function RequirementDetail() {
           <Form.Item name="req_type" label={t('req.reqType')} rules={[{ required: true, message: t('req.reqTypeRequired') }]}>
             <Select options={REQ_TYPES.map((v) => ({ value: v, label: et.reqType(v) }))} />
           </Form.Item>
-          {!detail?.workflow_edit_mode?.startsWith('upstream_') && (
+          {!detail?.workflow_edit_mode?.startsWith('upstream_') && detail?.workflow_edit_mode !== 'returned_requester' && (
             <Form.Item
               name="business_domain_id"
               label={t('req.belongDomain')}

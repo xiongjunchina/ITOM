@@ -284,7 +284,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 | Evaluation stage | six D1–D6 scores, decision, solution_type, PRD/dev effort |
 | Analysis stage | moscow, owner FK, target_date, solution, acceptance_criteria JSONB |
 | Implementation stage | project_id FK (optional attachment), implementation_route (nullable route snapshot: In-house Dev / To Project; written when routing is executed and never backfilled into history) |
-| Derived [C] | requirement_code, status, requester/name, registered/evaluating/analyzing/implementing/closed timestamps, closure_note |
+| Derived [C] | requirement_code, status (`registered` / **`supplementing`** / `evaluating` / `analyzing` / `implementing` / `closed`, etc.), requester/name, stage timestamps, closure_note; `supplementing` means explicitly returned to the original requester and is neither closed nor cancelled |
 
 ### 4.2 requirement_task — requirement task
 
@@ -328,11 +328,11 @@ definition_id FK, seq, step_code (stable code within a version), name, node_type
 
 ### 5.3 process_instance — process instance
 
-definition_id FK, entity_type, entity_id (triggering record), status (In Progress / Completed / Terminated), current_step_seq [C], started_at, completed_at.
+definition_id FK, entity_type, entity_id (triggering record), status (In Progress / Completed / Terminated, plus requirement-specific `returned` while waiting for requester supplementation), current_step_seq [C], started_at, completed_at. Returning a requirement to a reached process node keeps the instance `running` and creates a new target-node task. Only Requester supplement uses `returned` without a synthetic task. Resubmission restores `running` on the same instance rather than creating another requirement or process instance.
 
 ### 5.4 process_task — process task
 
-instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Skipped), started_at, due_at [C] (from the step SLA), `viewed_at`, `viewed_by` FK (the current handler's first actual-view fact), `upstream_correction_enabled` (true for new tasks; false by default for pre-upgrade pending tasks), completed_at, completed_by FK, comment. `started_at` only records generation/dispatch and never substitutes for an actual view; snapshots plus the view fact keep workflow versions, performance extraction, and correction-window history auditable.
+instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Rejected / Skipped), started_at, due_at [C] (from the step SLA), `viewed_at`, `viewed_by` FK (the current handler's first actual-view fact), `upstream_correction_enabled` (true for new tasks; false by default for pre-upgrade pending tasks), completed_at, completed_by FK, comment. `started_at` only records generation/dispatch and never substitutes for an actual view; snapshots plus the view fact keep workflow versions, performance extraction, and correction-window history auditable. Requirement rejection retains the original Rejected task, real actor, and target-bearing comment. A return to a reached prior node appends a new pending task for that step instead of soft-deleting history. Candidate targets are derived from non-deleted historical task `step_id` values in the same instance, so no target-snapshot table is added. Only the newest effective legacy requirement instance incorrectly terminated with `status=rejected` is repaired idempotently. Closed, cancelled, or on-hold requirements are skipped; older process instances are never resurrected, and historical tasks, scores, attachments, and audit are never overwritten.
 
 ---
 

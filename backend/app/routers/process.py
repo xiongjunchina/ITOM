@@ -51,6 +51,7 @@ class CompleteIn(BaseModel):
 
 class RejectIn(BaseModel):
     reason: str = Field(min_length=5, max_length=500)
+    target_seq: int | None = Field(default=None, ge=0)
 
 
 class ReassignIn(BaseModel):
@@ -279,10 +280,32 @@ def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: Au
         )
         db.commit()
         return ok(result)
-    instance = process_engine.reject_task(db, task_id, user, body.reason)
-    audit(db, "process_task", task_id, "reject", user, {"reason": body.reason})
+    task = db.get(ProcessTask, task_id)
+    task_instance = db.get(ProcessInstance, task.instance_id) if task else None
+    if task_instance and task_instance.entity_type == "requirement":
+        from app.models import Requirement
+        from app.services.requirement_returns import project_return
+
+        instance, selected = process_engine.return_requirement_task(
+            db, task_id, user, body.reason, body.target_seq
+        )
+        requirement = db.get(Requirement, instance.entity_id)
+        project_return(db, requirement, selected, user, body.reason)
+        audit(db, "process_task", task_id, "return", user, {
+            "reason": body.reason,
+            "target_seq": selected,
+        })
+    else:
+        instance = process_engine.reject_task(db, task_id, user, body.reason)
+        selected = None
+        audit(db, "process_task", task_id, "reject", user, {"reason": body.reason})
     db.commit()
-    return ok({"instance_id": instance.id, "status": instance.status, "current_step_seq": instance.current_step_seq})
+    return ok({
+        "instance_id": instance.id,
+        "status": instance.status,
+        "current_step_seq": instance.current_step_seq,
+        "return_target_seq": selected,
+    })
 
 
 @router.post("/api/process-tasks/{task_id}/reassign")
