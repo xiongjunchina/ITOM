@@ -135,6 +135,12 @@ class TaskProgressIn(BaseModel):
     comment: str = Field(min_length=1, max_length=2000)
 
 
+class ProjectTaskProgressIn(TaskProgressIn):
+    """项目开发进度；完成任务必须由调用方明确表达。"""
+
+    complete: bool = False
+
+
 class ProjectTaskCreate(BaseModel):
     project_id: str
     wbs_task_id: str | None = None
@@ -152,6 +158,8 @@ class ProjectTaskCreate(BaseModel):
 
 
 class ProjectTaskUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
     project_id: str | None = None
     wbs_task_id: str | None = None
     title: str | None = Field(default=None, min_length=2, max_length=200)
@@ -167,7 +175,6 @@ class ProjectTaskUpdate(BaseModel):
     plan_effort: float | None = None
     actual_effort: float | None = None
     status: str | None = None
-    completion_note: str | None = None
 
 
 @router.get("/reference/cis")
@@ -438,11 +445,16 @@ def update_project_task(
 
 @router.post("/project-tasks/{task_id}/progress")
 def add_project_task_progress(
-    task_id: str, body: TaskProgressIn,
+    task_id: str, body: ProjectTaskProgressIn,
     db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
 ):
     task = task_management.add_project_task_progress(
-        db, _get_project_task(db, task_id), body.progress_percent, body.comment, user,
+        db,
+        _get_project_task(db, task_id),
+        body.progress_percent,
+        body.comment,
+        user,
+        complete=body.complete,
     )
     db.commit()
     return ok(task_management._project_task_row(db, task, user))

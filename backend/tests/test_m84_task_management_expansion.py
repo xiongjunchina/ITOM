@@ -169,6 +169,8 @@ def test_project_development_task_requires_project_but_not_wbs(client, task_user
     assert row["wbs_task_id"] is None
     assert row["registrar"] == task_users["registrar_id"]
     assert row["registrar_name"] == "M84任务登记人"
+    assert row["status"] == "待处理"
+    assert row["completion_percent"] == 0
 
     admin_created = client.post(
         "/api/task-management/project-tasks",
@@ -183,22 +185,63 @@ def test_project_development_task_requires_project_but_not_wbs(client, task_user
     assert admin_created.status_code == 200, admin_created.text
     assert admin_created.json()["data"]["registrar"] is None
 
-    progressed = client.patch(
-        f"/api/task-management/project-tasks/{task_id}",
-        json={"status": "进行中", "actual_effort": 1.5},
-        headers=task_users["assignee"],
-    )
-    assert progressed.status_code == 200, progressed.text
-    progressed_row = progressed.json()["data"]
-    assert progressed_row["progress_entries"][0]["status_snapshot"] == "进行中"
-
     added = client.post(
         f"/api/task-management/project-tasks/{task_id}/progress",
         json={"progress_percent": 50, "comment": "接口联调完成一半"},
         headers=task_users["assignee"],
     )
     assert added.status_code == 200, added.text
-    assert len(added.json()["data"]["progress_entries"]) == 2
+    added_row = added.json()["data"]
+    assert added_row["status"] == "进行中"
+    assert added_row["completion_percent"] == 50
+    assert added_row["progress_entries"][0]["status_snapshot"] == "进行中"
+
+    direct_100 = client.post(
+        f"/api/task-management/project-tasks/{task_id}/progress",
+        json={"progress_percent": 100, "comment": "尝试直接写满"},
+        headers=task_users["assignee"],
+    )
+    assert direct_100.status_code == 400
+    assert direct_100.json()["error"]["code"] == "COMPLETE_ACTION_REQUIRED"
+
+    direct_status = client.patch(
+        f"/api/task-management/project-tasks/{task_id}",
+        json={"status": "已完成"},
+        headers=task_users["assignee"],
+    )
+    assert direct_status.status_code == 400
+    assert direct_status.json()["error"]["code"] == "COMPLETE_ACTION_REQUIRED"
+
+    direct_note = client.patch(
+        f"/api/task-management/project-tasks/{task_id}",
+        json={"completion_note": "绕过完成动作写入说明"},
+        headers=task_users["assignee"],
+    )
+    assert direct_note.status_code == 422
+
+    completed = client.post(
+        f"/api/task-management/project-tasks/{task_id}/progress",
+        json={"progress_percent": 100, "comment": "接口联调和验收已完成", "complete": True},
+        headers=task_users["assignee"],
+    )
+    assert completed.status_code == 200, completed.text
+    completed_row = completed.json()["data"]
+    assert completed_row["status"] == "已完成"
+    assert completed_row["completion_percent"] == 100
+    assert completed_row["completion_note"] == "接口联调和验收已完成"
+    assert completed_row["done_at"] is not None
+    assert completed_row["progress_entries"][0]["status_snapshot"] == "已完成"
+    assert completed_row["progress_entries"][0]["progress_percent"] == 100
+    assert completed_row["capabilities"]["progress"] is False
+    assert completed_row["capabilities"]["complete"] is False
+
+    after_completion = client.post(
+        f"/api/task-management/project-tasks/{task_id}/progress",
+        json={"progress_percent": 80, "comment": "完成后不应再写入"},
+        headers=task_users["assignee"],
+    )
+    assert after_completion.status_code == 409
+    assert after_completion.json()["error"]["code"] == "TASK_ALREADY_COMPLETED"
     assert any(
         title.startswith("项目开发任务进度更新：补充接口开发任务")
         for title in _notification_titles(client, task_users["registrar"])

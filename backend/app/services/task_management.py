@@ -739,6 +739,20 @@ def _project_task_row(db: Session, task: ProjectDevelopmentTask, user: AuthUser 
     is_admin = bool(user and _is_admin(db, user))
     person_id = user.person_id if user else None
     progress_rows = _progress_rows(db, "project_development_task", task.id)
+    if task.status == "已完成":
+        completion_percent = 100
+    else:
+        latest_percent = next(
+            (row["progress_percent"] for row in progress_rows if row["progress_percent"] is not None),
+            0,
+        )
+        # 历史数据可能在旧版中写入 100% 批注但未同步任务状态。状态仍以任务
+        # 主记录为准，未完成任务的清单完成度最多显示 99%，避免再次出现两个
+        # 相互矛盾的“完成”信号；原始进度记录保持不变并继续可审计。
+        completion_percent = min(latest_percent, 99)
+    can_progress = task.status != "已完成" and bool(
+        is_admin or (person_id is not None and person_id in {task.registrar, task.assignee})
+    )
     return {
         "id": task.id,
         "task_code": task.task_code,
@@ -764,6 +778,7 @@ def _project_task_row(db: Session, task: ProjectDevelopmentTask, user: AuthUser 
         "plan_effort": task.plan_effort,
         "actual_effort": task.actual_effort,
         "status": task.status,
+        "completion_percent": completion_percent,
         "completion_note": task.completion_note,
         "done_at": task.done_at,
         "progress_entries": progress_rows,
@@ -771,7 +786,8 @@ def _project_task_row(db: Session, task: ProjectDevelopmentTask, user: AuthUser 
         "capabilities": {
             "edit": can_edit,
             "delete": is_admin or bool(can_edit and task.status == "待处理"),
-            "progress": task.status != "已完成" and bool(is_admin or person_id in {task.registrar, task.assignee}),
+            "progress": can_progress,
+            "complete": can_progress,
         },
     }
 
@@ -839,15 +855,17 @@ def update_project_task(db: Session, task: ProjectDevelopmentTask, data: dict, a
     status = data.get("status", task.status)
     if status not in PROJECT_TASK_STATUSES:
         raise AppError("INVALID_STATUS", "项目开发任务状态必须为 待处理/进行中/已完成")
+    if status == "已完成" and task.status != "已完成":
+        raise AppError("COMPLETE_ACTION_REQUIRED", "请使用“完成任务”操作填写完成说明并关闭任务")
+    if task.status == "已完成" and status != "已完成":
+        raise AppError("INVALID_STATUS_TRANSITION", "已完成任务不能通过编辑表单重新打开")
+    if task.status == "进行中" and status == "待处理":
+        raise AppError("INVALID_STATUS_TRANSITION", "进行中的任务不能退回待处理")
     old_assignee = task.assignee
     old_status = task.status
     for key, value in data.items():
         if hasattr(task, key) and key not in {"task_code", "registrar", "is_deleted"}:
             setattr(task, key, value)
-    if task.status == "已完成":
-        task.done_at = task.done_at or datetime.now()
-    elif old_status == "已完成":
-        task.done_at = None
     audit(db, "project_development_task", task.id, "update", actor, {"fields": list(data)})
     if task.assignee and task.assignee != old_assignee:
         notifier.notify(
@@ -855,44 +873,64 @@ def update_project_task(db: Session, task: ProjectDevelopmentTask, data: dict, a
             f"项目开发任务已分配：{task.title}", f"任务编号：{task.task_code}",
             "/task-management/development",
         )
-    if task.registrar and actor.person_id != task.registrar and (
-        task.status != old_status or "actual_effort" in data or "completion_note" in data
-    ):
+    should_record_progress = task.status != old_status or "actual_effort" in data
+    if should_record_progress:
         entry = _append_progress(
             db,
             task_kind="project_development_task",
             task_id=task.id,
             status=task.status,
             actor=actor,
-            comment=(data.get("completion_note") or "").strip()
-            or (
+            comment=(
                 f"状态从「{old_status}」更新为「{task.status}」"
                 if task.status != old_status
-                else "已更新实际工时或任务进展"
+                else "已更新实际工时"
             ),
-            progress_percent=100 if task.status == "已完成" else None,
+            progress_percent=None,
         )
-        notifier.notify(
-            db, "project_task.progressed", "task_progress_entry", entry.id, [task.registrar],
-            f"项目开发任务进度更新：{task.title}", entry.comment,
-            "/task-management/development",
-        )
+        if task.registrar and actor.person_id != task.registrar:
+            notifier.notify(
+                db, "project_task.progressed", "task_progress_entry", entry.id, [task.registrar],
+                f"项目开发任务进度更新：{task.title}", entry.comment,
+                "/task-management/development",
+            )
     return task
 
 
 def add_project_task_progress(
-    db: Session, task: ProjectDevelopmentTask, progress_percent: int | None, comment: str, actor: AuthUser,
+    db: Session,
+    task: ProjectDevelopmentTask,
+    progress_percent: int | None,
+    comment: str,
+    actor: AuthUser,
+    *,
+    complete: bool = False,
 ) -> ProjectDevelopmentTask:
     _require_module(db, actor, "task_development", "edit")
     is_participant = bool(actor.person_id and actor.person_id in {task.assignee, task.registrar})
     if not _is_admin(db, actor) and not is_participant:
         raise AppError("FORBIDDEN", "仅任务登记人、负责人或管理员可以更新进度", 403)
+    if task.status == "已完成":
+        raise AppError("TASK_ALREADY_COMPLETED", "任务已完成，不能继续追加进度", 409)
+    if not complete and progress_percent == 100:
+        raise AppError("COMPLETE_ACTION_REQUIRED", "100% 完成度必须使用“完成任务”操作")
+
+    if complete:
+        task.status = "已完成"
+        task.done_at = datetime.now()
+        task.completion_note = comment.strip()
+        progress_percent = 100
+    elif task.status == "待处理":
+        task.status = "进行中"
+
     entry = _append_progress(
         db, task_kind="project_development_task", task_id=task.id,
         status=task.status, actor=actor, comment=comment, progress_percent=progress_percent,
     )
     audit(db, "project_development_task", task.id, "progress", actor, {
-        "progress_percent": progress_percent, "progress_entry_id": entry.id,
+        "progress_percent": progress_percent,
+        "progress_entry_id": entry.id,
+        "complete": complete,
     })
     if task.registrar and actor.person_id != task.registrar:
         notifier.notify(

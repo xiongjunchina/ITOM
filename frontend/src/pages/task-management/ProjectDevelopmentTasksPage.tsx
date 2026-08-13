@@ -48,7 +48,6 @@ interface ProjectTaskForm {
   plan_effort?: number;
   actual_effort?: number;
   status?: ProjectDevelopmentTaskStatus;
-  completion_note?: string;
 }
 
 const STATUSES: ProjectDevelopmentTaskStatus[] = ['待处理', '进行中', '已完成'];
@@ -67,8 +66,10 @@ export default function ProjectDevelopmentTasksPage() {
   const [editing, setEditing] = useState<ProjectDevelopmentTaskRow | null>(null);
   const [detail, setDetail] = useState<ProjectDevelopmentTaskRow | null>(null);
   const [progressOpen, setProgressOpen] = useState(false);
+  const [completeOpen, setCompleteOpen] = useState(false);
   const [form] = Form.useForm<ProjectTaskForm>();
   const [progressForm] = Form.useForm<{ progress_percent?: number; comment: string }>();
+  const [completeForm] = Form.useForm<{ comment: string }>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -134,7 +135,6 @@ export default function ProjectDevelopmentTasksPage() {
       plan_effort: row.plan_effort ?? undefined,
       actual_effort: row.actual_effort ?? undefined,
       status: row.status,
-      completion_note: row.completion_note || undefined,
     });
   };
 
@@ -182,6 +182,24 @@ export default function ProjectDevelopmentTasksPage() {
     }
   };
 
+  const submitComplete = async () => {
+    if (!detail) return;
+    const values = await completeForm.validateFields();
+    setSaving(true);
+    try {
+      setDetail(await api.post<ProjectDevelopmentTaskRow>(
+        `/task-management/project-tasks/${detail.id}/progress`,
+        { progress_percent: 100, comment: values.comment, complete: true },
+      ));
+      message.success(t('task.complete.saved'));
+      setCompleteOpen(false);
+      completeForm.resetFields();
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const remove = (row: ProjectDevelopmentTaskRow) => Modal.confirm({
     title: t('task.project.deleteConfirm'),
     okText: t('common.delete'),
@@ -202,9 +220,12 @@ export default function ProjectDevelopmentTasksPage() {
     { title: t('task.project.wbs'), key: 'wbs', width: 200, render: (_, row) => row.wbs_task_id ? `${row.wbs_code || ''} ${row.wbs_name || ''}`.trim() : '-' },
     { title: t('task.assignee'), dataIndex: 'assignee_name', width: 110, render: (value) => value || '-' },
     { title: t('task.priority'), dataIndex: 'priority', width: 80, render: (value: TicketPriority) => <Tag color={PRIORITY_COLORS[value]}>{value}</Tag> },
-    { title: t('common.status'), dataIndex: 'status', width: 100, render: (value) => <Tag>{value}</Tag> },
+    { title: t('task.status'), dataIndex: 'status', width: 110, render: (value) => <Tag>{value}</Tag> },
     { title: t('task.planDate'), dataIndex: 'plan_date', width: 115, render: (value) => value || '-' },
-    { title: t('task.progress.latest'), dataIndex: 'latest_progress', width: 220, ellipsis: true, render: (value: ProjectDevelopmentTaskRow['latest_progress']) => value?.comment || '-' },
+    {
+      title: t('task.progress.percent'), dataIndex: 'completion_percent', width: 150,
+      render: (value: number) => <Progress percent={value} size="small" style={{ minWidth: 110 }} />,
+    },
     {
       title: t('common.actions'), key: 'actions', width: 150, fixed: 'right',
       render: (_, row) => <Space size={0}>
@@ -246,7 +267,7 @@ export default function ProjectDevelopmentTasksPage() {
           <Form.Item name="task_type" label={t('task.taskType')}><Select style={{ width: 120 }} options={['开发', '测试', '发布', '其他'].map((value) => ({ value, label: value }))} /></Form.Item>
           <Form.Item name="assignee" label={t('task.assignee')}><Select allowClear showSearch optionFilterProp="label" style={{ width: 160 }} options={members.map((row) => ({ value: row.id, label: row.name }))} /></Form.Item>
           <Form.Item name="priority" label={t('task.priority')}><Select style={{ width: 90 }} options={['P1', 'P2', 'P3', 'P4'].map((value) => ({ value, label: value }))} /></Form.Item>
-          {editing && <Form.Item name="status" label={t('common.status')}><Select style={{ width: 110 }} options={STATUSES.map((value) => ({ value, label: value }))} /></Form.Item>}
+          {editing && <Form.Item name="status" label={t('task.status')}><Select style={{ width: 110 }} options={STATUSES.filter((value) => value !== '已完成').map((value) => ({ value, label: value }))} /></Form.Item>}
         </Space>
         <Space wrap size={16} align="start">
           <Form.Item name="environment" label={t('task.project.environment')}><Input style={{ width: 150 }} /></Form.Item>
@@ -256,7 +277,6 @@ export default function ProjectDevelopmentTasksPage() {
           <Form.Item name="plan_effort" label={t('task.planEffort')}><InputNumber min={0} precision={1} /></Form.Item>
           {editing && <Form.Item name="actual_effort" label={t('task.actualEffort')}><InputNumber min={0} precision={1} /></Form.Item>}
         </Space>
-        {editing && <Form.Item name="completion_note" label={t('task.project.completion')}><Input.TextArea rows={2} /></Form.Item>}
       </Form>
     </Modal>
 
@@ -266,6 +286,7 @@ export default function ProjectDevelopmentTasksPage() {
           <Tag>{detail.status}</Tag>
           <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
           {detail.capabilities.progress && <Button type="primary" onClick={() => { progressForm.resetFields(); setProgressOpen(true); }}>{t('task.progress.add')}</Button>}
+          {detail.capabilities.complete && <Button onClick={() => { completeForm.resetFields(); setCompleteOpen(true); }}>{t('task.complete.action')}</Button>}
         </Space>
         <Typography.Paragraph>{detail.description}</Typography.Paragraph>
         <Typography.Text strong>{t('task.progress.timeline')}</Typography.Text>
@@ -286,8 +307,14 @@ export default function ProjectDevelopmentTasksPage() {
 
     <Modal title={t('task.progress.add')} open={progressOpen} onOk={() => void submitProgress()} confirmLoading={saving} onCancel={() => setProgressOpen(false)} destroyOnClose>
       <Form form={progressForm} layout="vertical">
-        <Form.Item name="progress_percent" label={t('task.progress.percent')}><InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: 180 }} /></Form.Item>
+        <Form.Item name="progress_percent" label={t('task.progress.percent')} extra={t('task.progress.maxHint')}><InputNumber min={0} max={99} precision={0} addonAfter="%" style={{ width: 180 }} /></Form.Item>
         <Form.Item name="comment" label={t('task.progress.comment')} rules={[{ required: true, message: t('task.progress.commentRequired') }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
+      </Form>
+    </Modal>
+
+    <Modal title={t('task.complete.action')} open={completeOpen} onOk={() => void submitComplete()} confirmLoading={saving} onCancel={() => setCompleteOpen(false)} destroyOnClose>
+      <Form form={completeForm} layout="vertical">
+        <Form.Item name="comment" label={t('task.project.completion')} rules={[{ required: true, message: t('task.complete.noteRequired') }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
       </Form>
     </Modal>
   </div>;

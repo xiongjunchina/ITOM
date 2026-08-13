@@ -998,6 +998,7 @@ export interface TaskCapabilities {
   verify?: boolean;
   reopen?: boolean;
   progress?: boolean;
+  complete?: boolean;
 }
 
 export interface TaskProgressEntry {
@@ -1115,6 +1116,8 @@ export interface ProjectDevelopmentTaskRow {
   plan_effort: number | null;
   actual_effort: number | null;
   status: ProjectDevelopmentTaskStatus;
+  /** Derived from append-only progress; task status remains the completion authority. */
+  completion_percent: number;
   completion_note: string | null;
   done_at: string | null;
   progress_entries: TaskProgressEntry[];
