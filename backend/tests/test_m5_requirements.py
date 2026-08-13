@@ -189,6 +189,19 @@ def test_development_task_template_and_import(client, ctx, admin_headers):
         f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers,
     ).status_code == 200
 
+    # 普通项目关联不等于已冻结为“转项目管理”路径，仍允许关联需求开发任务。
+    project = client.post("/api/projects", json={
+        "name": "开发任务导入关联项目",
+        "pm": ctx["pdm_p"],
+        "planned_start": "2026-08-01",
+        "planned_end": "2026-09-30",
+        "requirement_id": rid,
+    }, headers=admin_headers)
+    assert project.status_code == 200, project.text
+    linked = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
+    assert linked["project_id"] == project.json()["data"]["id"]
+    assert linked["implementation_route"] != "转项目管理"
+
     template = client.get("/api/requirements/tasks/template", headers=ctx["dev"])
     assert template.status_code == 200
     workbook = load_workbook(BytesIO(template.content))

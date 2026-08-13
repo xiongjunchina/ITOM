@@ -78,6 +78,7 @@ import {
   SOLUTION_TYPES,
 } from '../../api/types';
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag, fmtDt } from './shared';
+import { shouldLoadRequirementTaskMembers } from './developmentTaskOptions';
 import { DIMENSIONS, computeRoute, computeScore, type DimScores } from './dimensions';
 
 // ---------- 评估评分面板 ----------
@@ -685,9 +686,10 @@ export default function RequirementDetail() {
   }, [load]);
   useProcessTaskView(detail?.process, user, load);
 
-  // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
+  // 单据编辑与开发任务维护是两套权限：流程当前节点只读时，任务维护人仍需加载负责人候选。
   const canEdit = detail?.can_edit ?? false;
   const canManageTasks = detail?.can_manage_tasks ?? canEdit;
+  const canLoadTaskMembers = shouldLoadRequirementTaskMembers(canEdit, canManageTasks);
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   // M28 主动关闭（登记人/admin）
   const [closeOpen, setCloseOpen] = useState(false);
@@ -696,11 +698,21 @@ export default function RequirementDetail() {
   /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/转出按钮） */
   const isExample = detail?.is_example === true;
   useEffect(() => {
-    if (!canEdit) return;
+    if (!canLoadTaskMembers) {
+      setMembers([]);
+      return;
+    }
     api
       .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
+  }, [canLoadTaskMembers]);
+
+  useEffect(() => {
+    if (!canEdit) {
+      setProjects([]);
+      return;
+    }
     api
       .getList<ProjectRow>('/projects', { page: 1, page_size: 200 })
       .then((res) => setProjects(res.items))

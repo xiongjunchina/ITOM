@@ -781,8 +781,12 @@ async def import_development_tasks(
         if requirement_code and not requirement:
             errors.append({"row": rownum, "error": f"关联需求编号「{requirement_code}」不存在"})
             continue
-        if requirement and (requirement.is_example or requirement.project_id or requirement.status != "implementing"):
-            errors.append({"row": rownum, "error": "关联需求必须是未转项目、非示例且处于「实现中」状态"})
+        if requirement and (
+            requirement.is_example
+            or requirement.implementation_route == requirement_scoring.ROUTE_PROJECT
+            or requirement.status != "implementing"
+        ):
+            errors.append({"row": rownum, "error": "关联需求必须是未明确转项目、非示例且处于「实现中」状态"})
             continue
         assignees = members_by_name.get(row["assignee_name"], [])
         if not assignees:

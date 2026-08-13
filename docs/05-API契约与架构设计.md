@@ -173,7 +173,7 @@ DELETE /api/requirements/tasks/{task_id}
 GET /api/requirements/tasks/active
 ```
 
-同一实现中需求可重复调用带 `requirement_id` 的 `POST` 登记多行任务；不带路径 ID 的 `POST /api/requirements/tasks` 可创建 `requirement_id=null` 的独立开发任务，并在 `PATCH` 时补充或调整关联。填写关联时目标必须处于实现中且非示例、未转项目。需求负责人或拥有任务维护权的账号可维护完整字段；任务负责人在无全局编辑权限时只能更新自己的 `status` 和 `actual_effort`。所有写接口重新校验权限、关联需求状态、负责人范围和示例保护；既有任务保持原主键及软删除状态。
+同一实现中需求可重复调用带 `requirement_id` 的 `POST` 登记多行任务；不带路径 ID 的 `POST /api/requirements/tasks` 可创建 `requirement_id=null` 的独立开发任务，并在 `PATCH` 时补充或调整关联。填写关联时目标必须处于实现中且非示例，并且已冻结的 `implementation_route` 不得为“转项目管理”；`project_id` 仅表示普通项目关联，不能代替实施路径判断。需求负责人或拥有任务维护权的账号可维护完整字段；任务负责人在无全局编辑权限时只能更新自己的 `status` 和 `actual_effort`。所有写接口重新校验权限、关联需求状态、负责人范围和示例保护；既有任务保持原主键及软删除状态。前端需求候选和批量导入使用同一实施路径口径，需求详情的负责人候选按 `can_manage_tasks` 加载，不依赖流程记录的 `can_edit`。
 
 需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回要求不少于 5 字的理由，可携带 `return_to_seq` 选择详情 `process.return_targets` 中某个已实际到达的前序节点或 `0`（登记人补充）。省略时默认最近前序节点；首审批节点没有流程前序时默认 `0`。服务端必须在同一事务完成当前任务驳回审计、流程实例回退和需求状态投影，不能把驳回写成关闭/取消。
 
@@ -215,7 +215,7 @@ DELETE /api/task-management/project-tasks/{id}
 
 同一实现中需求可重复调用 `POST` 登记多行任务。所有内置 IT 类角色的 `task_development` 均授予 `view/create/edit`，因此可维护实现中需求上的完整任务字段；需求负责人保留兼容的数据范围维护，未获得维护权的任务负责人只能更新自己任务的 `status` 和 `actual_effort`。删除采用服务端状态规则而不是矩阵 `delete`：非“进行中”任务可由具备开发任务维护权的 IT 人员软删除，“进行中”任务仅系统管理员可删除。列表返回 `can_manage_tasks`、`can_edit`、`can_delete`，详情任务行返回 `can_delete`；服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。
 
-`GET /api/requirements/tasks/template` 返回“开发任务”工作表；A 列关联需求编号为可选。`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`；空编号创建独立任务，填写编号时才校验未转项目、非示例和实现中。处理人按在岗 IT 成员姓名精确匹配。有效行写审计及指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，只追加、不更新或去重。
+`GET /api/requirements/tasks/template` 返回“开发任务”工作表；A 列关联需求编号为可选。`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`；空编号创建独立任务，填写编号时才校验已冻结实施路径不是“转项目管理”、非示例和实现中，普通 `project_id` 关联不触发拒绝。处理人按在岗 IT 成员姓名精确匹配。有效行写审计及指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，只追加、不更新或去重。
 
 Bug 接口固定使用 `ci.product_manager_id` 快照，不接受客户端指定审批人；在通用上游回改窗口内，`PATCH` 可变更 `ci_id` 并重新校验、快照目标产品经理。`DELETE /bugs/{id}` 复用流程单据删除窗口：创建人仅在下一节点未查阅处理时允许，管理员始终允许；删除同时终止并软删除活动流程任务。Bug 编号和详情按钮均调用 `GET /bugs/{id}`。委派任务进度接口只追加 `task_progress_entry`，不覆盖历史；项目开发要求项目、WBS 可选且必须属于该项目。所有列表响应返回 `capabilities`，后端仍按当前用户、状态、负责人和管理员身份重新校验。
 

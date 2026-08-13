@@ -29,6 +29,7 @@ import type { ActiveTaskRow, Member, RequirementRow, RequirementTaskStatus } fro
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import { REQ_TASK_STATUSES, REQ_TASK_STATUS_COLORS } from '../../api/types';
 import { QuadrantTag, ReqStatusBadge } from './shared';
+import { isRequirementDevelopmentTaskCandidate } from './developmentTaskOptions';
 
 /** 计划/实际工天展示：形如「计划5·实际3」，均空显示 - */
 function effortText(
@@ -76,7 +77,7 @@ export default function ActiveTaskList() {
     ]);
     setReqOptions(
       reqs.items
-        .filter((r) => !r.is_example && !r.project_id && r.can_manage_tasks === true)
+        .filter(isRequirementDevelopmentTaskCandidate)
         .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
     );
     setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
