@@ -502,7 +502,34 @@ html[data-theme='dark'] .help-breadcrumb-link:focus-visible { color: #cfe0ff !im
 .app-content__inner { width: 100%; max-width: 1720px; margin: 0 auto; }
 .app-content .ant-card { border-color: #e4e8ee; box-shadow: 0 2px 8px rgba(15,23,42,.035); }
 .app-content .ant-card-head { min-height: 54px; border-bottom-color: #edf0f3; }
-.app-content .ant-table-wrapper { border: 1px solid #e8ebf0; border-radius: 10px; overflow: hidden; }
+.app-content .ant-table-wrapper {
+  /*
+   * Ant Design 会把宽表的 sticky 横向滚动条绘制在 table container 之外。
+   * wrapper 使用 overflow:hidden 会把这条唯一可用的滚动条一起裁掉，导致长清单
+   * 在未滚动到最后一行时无法访问屏幕外字段。
+   */
+  border: 1px solid #e8ebf0;
+  border-radius: 10px;
+  overflow: visible;
+}
+.app-content .ant-table-wrapper .ant-table-container {
+  border-radius: 10px;
+  overflow: hidden;
+}
+.app-content .ant-table-wrapper .ant-table-sticky-scroll {
+  display: block;
+  z-index: 6;
+  opacity: 1;
+  background: #fff;
+  border-top: 1px solid #dfe4ec;
+}
+.app-content .ant-table-wrapper .ant-table-sticky-scroll-bar {
+  height: 10px;
+  background: #a8b3c2;
+  border-radius: 5px;
+}
+.app-content .ant-table-wrapper .ant-table-sticky-scroll-bar:hover,
+.app-content .ant-table-wrapper .ant-table-sticky-scroll-bar-active { background: #7f8da1; }
 .table-standard-toolbar {
   display: flex;
   align-items: center;

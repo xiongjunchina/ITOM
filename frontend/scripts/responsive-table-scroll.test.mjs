@@ -10,7 +10,10 @@ test('the global floating scrollbar enhancer is not mounted', () => {
   assert.doesNotMatch(styles, /responsive-table__bottom-scroll/);
 });
 
-test('WBS keeps the Ant Design sticky scrollbar visible', () => {
+test('all business tables keep the Ant Design sticky scrollbar outside the clipped table container', () => {
+  assert.match(styles, /\.app-content \.ant-table-wrapper \{[\s\S]*?overflow: visible;/);
+  assert.match(styles, /\.app-content \.ant-table-wrapper \.ant-table-container \{[\s\S]*?overflow: hidden;/);
+  assert.match(styles, /\.app-content \.ant-table-wrapper \.ant-table-sticky-scroll \{[\s\S]*?display: block;/);
   assert.match(styles, /\.sticky-table__body \.ant-table-sticky-scroll \{[\s\S]*?display: block;/);
   assert.doesNotMatch(styles, /\.ant-table-sticky-scroll[\s\S]{0,160}display: none !important/);
 });
