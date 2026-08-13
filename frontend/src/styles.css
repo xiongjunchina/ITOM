@@ -514,7 +514,13 @@ html[data-theme='dark'] .help-breadcrumb-link:focus-visible { color: #cfe0ff !im
 }
 .app-content .ant-table-wrapper .ant-table-container {
   border-radius: 10px;
-  overflow: hidden;
+  /*
+   * 不得在这里裁剪：Ant Design 的 sticky holder 位于该容器内部。
+   * overflow:hidden 会把它变成最近的滚动/裁剪祖先，导致页面纵向滚动时
+   * 表头随整张表离开视口。圆角只作为视觉样式保留，实际横向溢出仍由
+   * Table 自身的 content/body 与唯一 sticky scrollbar 管理。
+   */
+  overflow: visible;
 }
 .app-content .ant-table-wrapper .ant-table-sticky-scroll {
   display: block;
