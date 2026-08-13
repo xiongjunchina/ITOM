@@ -514,109 +514,7 @@ html[data-theme='dark'] .help-breadcrumb-link:focus-visible { color: #cfe0ff !im
 html[data-theme='dark'] .table-standard-toolbar__count,
 .workbench-c--dark .table-standard-toolbar__count { color: #aab4c2; }
 
-/* 全局表格交互：超宽表格只保留一条底部悬浮横向滚动条。 */
-.responsive-table__bottom-scroll {
-  position: fixed;
-  left: 0;
-  bottom: 0;
-  z-index: 12;
-  height: 16px;
-  min-height: 16px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  background: #fff;
-  border: 1px solid #dfe4ec;
-  border-radius: 5px 5px 0 0;
-  box-sizing: border-box;
-  scrollbar-width: thin;
-  scrollbar-color: #a8b3c2 #edf1f6;
-}
-.responsive-table__bottom-scroll[data-visible='false'] {
-  visibility: hidden;
-  pointer-events: none;
-  height: 0;
-  min-height: 0;
-  border: 0;
-}
-.responsive-table__bottom-scroll > div { min-width: 100%; height: 1px; }
-.responsive-table__bottom-scroll::-webkit-scrollbar { height: 10px; }
-.responsive-table__bottom-scroll::-webkit-scrollbar-track { background: #edf1f6; border-radius: 5px; }
-.responsive-table__bottom-scroll::-webkit-scrollbar-thumb { background: #a8b3c2; border-radius: 5px; }
-.responsive-table__bottom-scroll::-webkit-scrollbar-thumb:hover { background: #7f8da1; }
-.app-content .ant-table-wrapper.responsive-table--enhanced { overflow: visible; }
-.responsive-table--enhanced .ant-table-content > table,
-.responsive-table--enhanced .ant-table-body > table,
-.responsive-table--enhanced .ant-table-header > table { min-width: max-content; }
-.responsive-table--enhanced .ant-table-body,
-.responsive-table--enhanced .ant-table-content {
-  /* 在悬浮条尚未激活时保留原生横向滚动，避免宽表完全失去访问入口。 */
-  overflow-x: auto !important;
-  scrollbar-width: thin;
-  scrollbar-color: #a8b3c2 #edf1f6;
-}
-.responsive-table--floating-scroll-active .ant-table-body,
-.responsive-table--floating-scroll-active .ant-table-content {
-  /* 悬浮条可见后，正文容器只保留纵向滚动能力，确保同一时刻仅一条横向条。 */
-  overflow-x: hidden !important;
-}
-.responsive-table--floating-scroll-active .ant-table-body::-webkit-scrollbar,
-.responsive-table--floating-scroll-active .ant-table-content::-webkit-scrollbar,
-.responsive-table--floating-scroll-active .ant-table-container::-webkit-scrollbar,
-.responsive-table--floating-scroll-active .ant-table-scroll::-webkit-scrollbar {
-  display: none;
-  width: 0;
-  height: 0;
-}
-.responsive-table--native-header .ant-table-header {
-  position: sticky;
-  top: var(--responsive-table-sticky-offset, 0px);
-  z-index: 6;
-  background: #fff;
-}
-.responsive-table--native-header .ant-table-content > table > .ant-table-thead > tr > th {
-  position: sticky;
-  top: var(--responsive-table-sticky-offset, 0px);
-  z-index: 5;
-  background: #f7f8fa;
-}
-.responsive-table--enhanced .ant-table-sticky-holder {
-  top: var(--responsive-table-sticky-offset, 0px) !important;
-  z-index: 6;
-}
-/*
- * 只有系统统一悬浮滚动条已经完成测量并真实可见时，才隐藏 antd 自带滚动条。
- * 任一初始化/测量异常都会保留 antd 或正文原生滚动条作为兜底。
- */
-.responsive-table--floating-scroll-active .ant-table-sticky-scroll {
-  display: none !important;
-  height: 0 !important;
-  min-height: 0 !important;
-  pointer-events: none !important;
-}
-html[data-theme='dark'] .responsive-table__bottom-scroll,
-.workbench-c--dark .responsive-table__bottom-scroll { background: #171b21; border-color: #343b46; scrollbar-color: #596779 #252b34; }
-html[data-theme='dark'] .responsive-table__bottom-scroll::-webkit-scrollbar-track,
-.workbench-c--dark .responsive-table__bottom-scroll::-webkit-scrollbar-track { background: #252b34; }
-html[data-theme='dark'] .responsive-table__bottom-scroll::-webkit-scrollbar-thumb,
-.workbench-c--dark .responsive-table__bottom-scroll::-webkit-scrollbar-thumb { background: #596779; }
-html[data-theme='dark'] .responsive-table--native-header .ant-table-header,
-.workbench-c--dark .responsive-table--native-header .ant-table-header { background: #171b21; }
-html[data-theme='dark'] .responsive-table--native-header .ant-table-content > table > .ant-table-thead > tr > th,
-.workbench-c--dark .responsive-table--native-header .ant-table-content > table > .ant-table-thead > tr > th { background: #20242b; }
-html[data-theme='dark'] .responsive-table--enhanced .ant-table-body,
-html[data-theme='dark'] .responsive-table--enhanced .ant-table-content,
-.workbench-c--dark .responsive-table--enhanced .ant-table-body,
-.workbench-c--dark .responsive-table--enhanced .ant-table-content { scrollbar-color: #596779 #252b34; }
-html[data-theme='dark'] .responsive-table--enhanced .ant-table-body::-webkit-scrollbar-track,
-html[data-theme='dark'] .responsive-table--enhanced .ant-table-content::-webkit-scrollbar-track,
-.workbench-c--dark .responsive-table--enhanced .ant-table-body::-webkit-scrollbar-track,
-.workbench-c--dark .responsive-table--enhanced .ant-table-content::-webkit-scrollbar-track { background: #252b34; }
-html[data-theme='dark'] .responsive-table--enhanced .ant-table-body::-webkit-scrollbar-thumb,
-html[data-theme='dark'] .responsive-table--enhanced .ant-table-content::-webkit-scrollbar-thumb,
-.workbench-c--dark .responsive-table--enhanced .ant-table-body::-webkit-scrollbar-thumb,
-.workbench-c--dark .responsive-table--enhanced .ant-table-content::-webkit-scrollbar-thumb { background: #596779; }
-
-/* 宽表操作：WBS 复用全局底部悬浮横向滚动条。 */
+/* 宽表操作：使用 Ant Design 自带的唯一底部横向滚动条。 */
 .sticky-table { position: relative; min-width: 0; }
 .sticky-table__body { position: relative; min-width: 0; }
 .sticky-table__body .ant-table-wrapper { overflow: visible; }
@@ -636,7 +534,7 @@ html[data-theme='dark'] .responsive-table--enhanced .ant-table-content::-webkit-
   height: 0;
 }
 .sticky-table__body .ant-table-sticky-scroll {
-  display: none !important;
+  display: block;
   z-index: 6;
   opacity: 1;
   background: #fff;

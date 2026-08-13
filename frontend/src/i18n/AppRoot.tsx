@@ -10,7 +10,6 @@ import { router } from '../router';
 import { useLangStore } from './store';
 import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
-import ResponsiveTableEnhancer from '../components/ResponsiveTableEnhancer';
 
 /** 语言随 store 响应式驱动 antd 组件文案（分页/日期/空态）与 dayjs 本地化。 */
 export default function AppRoot() {
@@ -54,7 +53,6 @@ export default function AppRoot() {
         },
       }}
     >
-      <ResponsiveTableEnhancer />
       <RouterProvider router={router} />
     </ConfigProvider>
   );
