@@ -1,5 +1,5 @@
 import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
 import { SettingOutlined } from '@ant-design/icons';
@@ -313,6 +313,29 @@ function augmentColumns<T extends object>(columns: ColumnsType<T>): ColumnsType<
 export default function SortableTable<T extends object>({ autoSort = true, columns, standardToolbar, dataSource, pagination, tableKey, requiredColumnKeys = [], ...props }: SortableTableProps<T>) {
   const user = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
+  const tableAnchorRef = useRef<HTMLDivElement>(null);
+  const [appScrollContainer, setAppScrollContainer] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    // MainLayout 不是由 window 滚动，而是由固定高度的 .app-content 滚动。
+    // Ant Design 的 sticky 若仍绑定 window，会同时导致表头无法吸顶、底部横向
+    // 滚动条离开当前可视区域。统一在业务清单入口绑定真实滚动容器。
+    setAppScrollContainer(tableAnchorRef.current?.closest<HTMLElement>('.app-content') ?? null);
+  }, []);
+  const resolvedSticky = useMemo<TableProps<T>['sticky']>(() => {
+    if (props.sticky === false) return false;
+    if (typeof props.sticky === 'object') {
+      return {
+        ...props.sticky,
+        getContainer: props.sticky.getContainer ?? (() => appScrollContainer ?? window),
+      };
+    }
+    // 主页面的所有统一业务清单默认固定表头；Drawer/Modal 等不在 app-content
+    // 内的表格保持原行为，除非页面显式传入 sticky。
+    if (appScrollContainer) {
+      return { offsetHeader: 0, getContainer: () => appScrollContainer };
+    }
+    return props.sticky;
+  }, [appScrollContainer, props.sticky]);
   const leaves = useMemo(() => leafColumns(columns ?? []), [columns]);
   const knownKeys = useMemo(() => leaves.map((item) => item.key), [leaves]);
   const legacyTableKey = tableKey ?? routeTableKey(window.location.pathname);
@@ -471,17 +494,20 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
             <Tooltip title="配置显示字段和列宽"><Button icon={<SettingOutlined />}>列设置</Button></Tooltip>
           </Dropdown>
         </Space>
-        <Table<T>
-          {...props}
-          columns={tableColumnsWithView}
-          dataSource={standardToolbar ? filteredRows : dataSource}
-          pagination={tablePagination}
-          scroll={{ x: 'max-content', ...(props.scroll ?? {}) }}
-          // 明确固定布局，列宽状态变化才会同步应用到 colgroup，而不是被单元格
-          // 内容重新撑回原宽度。
-          tableLayout={props.tableLayout ?? 'fixed'}
-          components={{ ...(props.components ?? {}), header: { ...(props.components?.header ?? {}), cell: headerCell } }}
-        />
+        <div ref={tableAnchorRef} className="sortable-table__viewport-anchor">
+          <Table<T>
+            {...props}
+            columns={tableColumnsWithView}
+            dataSource={standardToolbar ? filteredRows : dataSource}
+            pagination={tablePagination}
+            scroll={{ x: 'max-content', ...(props.scroll ?? {}) }}
+            sticky={resolvedSticky}
+            // 明确固定布局，列宽状态变化才会同步应用到 colgroup，而不是被单元格
+            // 内容重新撑回原宽度。
+            tableLayout={props.tableLayout ?? 'fixed'}
+            components={{ ...(props.components ?? {}), header: { ...(props.components?.header ?? {}), cell: headerCell } }}
+          />
+        </div>
       </Space>
     </>
   );

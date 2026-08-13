@@ -530,6 +530,7 @@ html[data-theme='dark'] .help-breadcrumb-link:focus-visible { color: #cfe0ff !im
 }
 .app-content .ant-table-wrapper .ant-table-sticky-scroll-bar:hover,
 .app-content .ant-table-wrapper .ant-table-sticky-scroll-bar-active { background: #7f8da1; }
+.sortable-table__viewport-anchor { width: 100%; min-width: 0; }
 .table-standard-toolbar {
   display: flex;
   align-items: center;
