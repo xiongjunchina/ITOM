@@ -31,7 +31,7 @@ The top-right bar provides the **User Manual** button, language switcher, notifi
 
 ### Common list behavior
 
-Business tables provide keyword search, core-field filters, clickable sortable headers, 10/20/50/100 page sizes, and exactly one ITOM-managed bottom horizontal scrollbar when needed; the duplicate Ant Design sticky scrollbar is hidden. Table headers remain visible while scrolling. If a page offers a template, download the latest template and keep sheet names, column names, and hidden validation columns unchanged. Example records are read-only and may be deleted by system administrators.
+Business tables provide keyword search, core-field filters, clickable sortable headers, 10/20/50/100 page sizes, and normally one ITOM-managed bottom horizontal scrollbar when needed. Duplicate Ant Design/native scrollbars are hidden only after that scrollbar is confirmed usable; one native scrollbar remains as a fallback if enhancement fails. Table headers remain visible while scrolling. If a page offers a template, download the latest template and keep sheet names, column names, and hidden validation columns unchanged. Example records are read-only and may be deleted by system administrators.
 
 ## 2. Dashboard and notifications
 

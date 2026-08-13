@@ -549,15 +549,20 @@ html[data-theme='dark'] .table-standard-toolbar__count,
 .responsive-table--enhanced .ant-table-header > table { min-width: max-content; }
 .responsive-table--enhanced .ant-table-body,
 .responsive-table--enhanced .ant-table-content {
-  /* 横向滚动交给底部悬浮条，原生容器仅保留纵向滚动能力。 */
-  overflow-x: hidden !important;
+  /* 在悬浮条尚未激活时保留原生横向滚动，避免宽表完全失去访问入口。 */
+  overflow-x: auto !important;
   scrollbar-width: thin;
   scrollbar-color: #a8b3c2 #edf1f6;
 }
-.responsive-table--enhanced .ant-table-body::-webkit-scrollbar,
-.responsive-table--enhanced .ant-table-content::-webkit-scrollbar,
-.responsive-table--enhanced .ant-table-container::-webkit-scrollbar,
-.responsive-table--enhanced .ant-table-scroll::-webkit-scrollbar {
+.responsive-table--floating-scroll-active .ant-table-body,
+.responsive-table--floating-scroll-active .ant-table-content {
+  /* 悬浮条可见后，正文容器只保留纵向滚动能力，确保同一时刻仅一条横向条。 */
+  overflow-x: hidden !important;
+}
+.responsive-table--floating-scroll-active .ant-table-body::-webkit-scrollbar,
+.responsive-table--floating-scroll-active .ant-table-content::-webkit-scrollbar,
+.responsive-table--floating-scroll-active .ant-table-container::-webkit-scrollbar,
+.responsive-table--floating-scroll-active .ant-table-scroll::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
@@ -578,8 +583,11 @@ html[data-theme='dark'] .table-standard-toolbar__count,
   top: var(--responsive-table-sticky-offset, 0px) !important;
   z-index: 6;
 }
-/* antd sticky-scroll 与系统统一悬浮滚动条功能重复，且前者在部分页面不可操作。 */
-.responsive-table--enhanced .ant-table-sticky-scroll {
+/*
+ * 只有系统统一悬浮滚动条已经完成测量并真实可见时，才隐藏 antd 自带滚动条。
+ * 任一初始化/测量异常都会保留 antd 或正文原生滚动条作为兜底。
+ */
+.responsive-table--floating-scroll-active .ant-table-sticky-scroll {
   display: none !important;
   height: 0 !important;
   min-height: 0 !important;

@@ -82,6 +82,9 @@ function createController(wrapper: HTMLElement, scroll: HTMLElement, activateTab
     const visible = overflow && bottom.dataset.active === 'true' && viewportRight > viewportLeft;
     bottom.dataset.visible = visible ? 'true' : 'false';
     bottom.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    // 只有悬浮滚动条真实可见时才隐藏表格自身的横向滚动条。若增强器尚未
+    // 完成测量或失效，原生滚动条必须继续作为兜底，不能让宽表失去访问入口。
+    wrapper.classList.toggle('responsive-table--floating-scroll-active', visible);
     if (visible) {
       bottom.style.left = `${Math.round(viewportLeft)}px`;
       bottom.style.width = `${Math.round(viewportRight - viewportLeft)}px`;
@@ -124,7 +127,11 @@ function createController(wrapper: HTMLElement, scroll: HTMLElement, activateTab
       document.removeEventListener('scroll', scheduleUpdate, true);
       if (positionFrame) window.cancelAnimationFrame(positionFrame);
       bottom.remove();
-      wrapper.classList.remove('responsive-table--enhanced', 'responsive-table--native-header');
+      wrapper.classList.remove(
+        'responsive-table--enhanced',
+        'responsive-table--native-header',
+        'responsive-table--floating-scroll-active',
+      );
       wrapper.style.removeProperty('--responsive-table-sticky-offset');
     },
   };
@@ -146,23 +153,6 @@ export default function ResponsiveTableEnhancer(): null {
         .filter((wrapper) => !wrapper.closest('.responsive-table__bottom-scroll'));
       const active = new Set(wrappers);
 
-      // 只在确实存在横向溢出的表格之间选择活动表，避免普通窄表抢走唯一滚动条。
-      const wideWrappers = wrappers.filter((wrapper) => {
-        const scroll = findScrollElement(wrapper);
-        return Boolean(scroll && scroll.scrollWidth > scroll.clientWidth + 1);
-      });
-      // 选择当前视口中占比最大的宽表；滚出视口后保留该活动表格，直到另一张宽表进入视口。
-      const visibleWrapper = wideWrappers
-        .map((wrapper) => ({ wrapper, area: getIntersectionArea(wrapper) }))
-        .filter((entry) => entry.area > 0)
-        .sort((left, right) => right.area - left.area)[0]?.wrapper;
-      if (visibleWrapper) activeWrapper = visibleWrapper;
-      // 筛选、分页会整体替换 antd 表格节点。旧节点已消失时，必须立即接管新的宽表，
-      // 否则全局唯一的底部滚动条会被错误隐藏，导致少量筛选结果无法横向查看。
-      if (!activeWrapper || !active.has(activeWrapper) || !wideWrappers.includes(activeWrapper)) {
-        activeWrapper = visibleWrapper ?? wideWrappers[0] ?? null;
-      }
-
       controllers.forEach((controller, wrapper) => {
         if (!active.has(wrapper) || !document.body.contains(wrapper)) {
           controller.cleanup();
@@ -175,9 +165,6 @@ export default function ResponsiveTableEnhancer(): null {
         if (!scroll) return;
         const current = controllers.get(wrapper);
         if (current && current.scroll === scroll) {
-          current.bottom.dataset.active = activeWrapper === wrapper ? 'true' : 'false';
-          current.bottom.dataset.visible = activeWrapper === wrapper ? 'true' : 'false';
-          current.update();
           return;
         }
         current?.cleanup();
@@ -186,6 +173,24 @@ export default function ResponsiveTableEnhancer(): null {
           scheduleRefresh();
         }));
       });
+
+      // 必须先创建 controller、应用 enhanced 表格宽度，再判断是否溢出。旧顺序在
+      // 首次渲染时先测到“未溢出”，随后 CSS 才把表格撑宽，activeWrapper 因此一直
+      // 为空，最终悬浮条和已隐藏的原生条同时消失。
+      const wideWrappers = wrappers.filter((wrapper) => {
+        const controller = controllers.get(wrapper);
+        return Boolean(controller && controller.scroll.scrollWidth > controller.scroll.clientWidth + 1);
+      });
+      // 选择当前视口中占比最大的宽表；滚出视口后保留该活动表格，直到另一张宽表进入视口。
+      const visibleWrapper = wideWrappers
+        .map((wrapper) => ({ wrapper, area: getIntersectionArea(wrapper) }))
+        .filter((entry) => entry.area > 0)
+        .sort((left, right) => right.area - left.area)[0]?.wrapper;
+      if (visibleWrapper) activeWrapper = visibleWrapper;
+      // 筛选、分页会整体替换 antd 表格节点。旧节点已消失时，必须立即接管新的宽表。
+      if (!activeWrapper || !active.has(activeWrapper) || !wideWrappers.includes(activeWrapper)) {
+        activeWrapper = visibleWrapper ?? wideWrappers[0] ?? null;
+      }
 
       controllers.forEach((controller, wrapper) => {
         controller.bottom.dataset.active = activeWrapper === wrapper ? 'true' : 'false';
