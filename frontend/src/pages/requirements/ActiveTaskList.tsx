@@ -201,6 +201,12 @@ export default function ActiveTaskList() {
 
   const columns: ColumnsType<ActiveTaskRow> = [
     {
+      title: t('task.code'),
+      dataIndex: 'task_code',
+      width: 150,
+      sorter: (a, b) => a.task_code.localeCompare(b.task_code),
+    },
+    {
       title: t('req.activeTask.col.name'),
       dataIndex: 'name',
       width: 200,
@@ -227,6 +233,13 @@ export default function ActiveTaskList() {
       dataIndex: 'registrar_name',
       width: 110,
       render: (v: string | null) => v || '-',
+    },
+    {
+      title: t('task.registeredAt'),
+      dataIndex: 'created_at',
+      width: 155,
+      sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(),
+      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm'),
     },
     {
       title: t('req.activeTask.col.owner'),

@@ -1,5 +1,7 @@
 """M82：任务管理域的新增模型必须可创建，且不影响既有需求任务。"""
 
+from datetime import datetime
+
 from sqlalchemy import inspect
 
 from app.db import Base, engine
@@ -13,6 +15,7 @@ from app.models import (
     TaskProgressEntry,
     WorkTask,
 )
+from app.services.migrate import _legacy_task_code_assignments
 
 
 def test_task_management_models_are_registered_without_replacing_requirement_task():
@@ -36,6 +39,28 @@ def test_requirement_task_can_be_registered_before_linking_requirement():
 
     assert requirement.nullable is True
     assert registrar.nullable is True
+
+
+def test_requirement_and_bug_fix_tasks_have_persistent_unique_business_codes():
+    for model in (RequirementTask, BugFixTask):
+        task_code = model.__table__.columns["task_code"]
+        assert task_code.nullable is False
+        assert task_code.unique is True
+
+
+def test_legacy_development_task_codes_are_backfilled_deterministically_without_collisions():
+    rows = [
+        ("old-1", None, datetime(2026, 7, 1, 9, 0)),
+        ("existing", "RT-202607-10001", datetime(2026, 7, 2, 9, 0)),
+        ("old-2", "", datetime(2026, 7, 3, 9, 0)),
+        ("old-3", None, datetime(2026, 8, 1, 9, 0)),
+    ]
+
+    assert _legacy_task_code_assignments(rows, "RT") == [
+        ("old-1", "RT-202607-10002"),
+        ("old-2", "RT-202607-10003"),
+        ("old-3", "RT-202608-0001"),
+    ]
 
 
 def test_progress_author_supports_admin_account_without_person_binding():

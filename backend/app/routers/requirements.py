@@ -805,6 +805,7 @@ async def import_development_tasks(
             errors.append({"row": rownum, "error": exc.message})
             continue
         task = RequirementTask(
+            task_code=gen_code(db, RequirementTask, "task_code", "RT"),
             requirement_id=requirement.id if requirement else None,
             registrar=user.person_id,
             name=row["name"],
@@ -910,10 +911,10 @@ def get_requirement(requirement_id: str, db: Session = Depends(get_db), user: Au
             for s in scores
         ],
         "tasks": [
-            {"id": t.id, "name": t.name, "description": t.description,
+            {"id": t.id, "task_code": t.task_code, "name": t.name, "description": t.description,
              "assignee": t.assignee, "assignee_name": names.get(t.assignee),
              "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
-             "status": t.status, "done_at": t.done_at,
+             "status": t.status, "done_at": t.done_at, "created_at": t.created_at,
              "can_delete": _can_delete_requirement_task(db, user, t)}
             for t in tasks
         ],
@@ -1390,11 +1391,11 @@ def active_tasks(
     rows = sorted(rows, key=_prio)
     return ok([
         {
-            "id": t.id, "name": t.name, "description": t.description,
+            "id": t.id, "task_code": t.task_code, "name": t.name, "description": t.description,
             "registrar": t.registrar, "registrar_name": names.get(t.registrar),
             "assignee": t.assignee, "assignee_name": names.get(t.assignee),
             "plan_date": t.plan_date, "plan_effort": t.plan_effort, "actual_effort": t.actual_effort,
-            "status": t.status, "done_at": t.done_at,
+            "status": t.status, "done_at": t.done_at, "created_at": t.created_at,
             "requirement_id": r.id if r else None,
             "requirement_code": r.requirement_code if r else None,
             "requirement_title": r.title if r else None,
@@ -1446,6 +1447,7 @@ def _create_requirement_task(
         raise AppError("PERSON_REQUIRED", "当前账号未绑定人员，不能登记开发任务", 403)
     require_it_member_if_configured(db, body.assignee, "需求任务负责人")
     task = RequirementTask(
+        task_code=gen_code(db, RequirementTask, "task_code", "RT"),
         requirement_id=requirement.id if requirement else None,
         # 页面直接登记取当前操作人；从需求转入时即使历史登记账号没有
         # 绑定人员，也不能错误地把执行转化的 IT 人员记为登记人。

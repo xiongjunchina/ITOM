@@ -47,6 +47,7 @@ class BugFixTask(GlidBase):
 
     __tablename__ = "bug_fix_task"
 
+    task_code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
     bug_id: Mapped[str] = mapped_column(ForeignKey("bug.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     task_type: Mapped[str] = mapped_column(String(16), default="开发")

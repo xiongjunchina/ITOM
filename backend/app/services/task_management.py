@@ -208,6 +208,7 @@ def _bug_row(db: Session, bug: Bug, user: AuthUser | None = None) -> dict:
     return {
         "id": bug.id,
         "bug_code": bug.bug_code,
+        "created_at": bug.created_at,
         "title": bug.title,
         "description": bug.description,
         "priority": bug.priority,
@@ -251,6 +252,7 @@ def _bug_row(db: Session, bug: Bug, user: AuthUser | None = None) -> dict:
 def _fix_task_row(db: Session, task: BugFixTask) -> dict:
     return {
         "id": task.id,
+        "task_code": task.task_code,
         "bug_id": task.bug_id,
         "name": task.name,
         "task_type": task.task_type,
@@ -264,6 +266,7 @@ def _fix_task_row(db: Session, task: BugFixTask) -> dict:
         "status": task.status,
         "done_at": task.done_at,
         "completion_note": task.completion_note,
+        "created_at": task.created_at,
     }
 
 
@@ -384,6 +387,7 @@ def create_fix_tasks(db: Session, bug: Bug, rows: list[dict], actor: AuthUser) -
             raise AppError("ASSIGNEE_REQUIRED", "每条修复任务必须指定执行人")
         require_it_member_if_configured(db, assignee, "Bug 修复任务负责人")
         item = BugFixTask(
+            task_code=gen_code(db, BugFixTask, "task_code", "BT"),
             bug_id=bug.id,
             name=row["name"],
             task_type=row.get("task_type") or "开发",
@@ -394,8 +398,11 @@ def create_fix_tasks(db: Session, bug: Bug, rows: list[dict], actor: AuthUser) -
             plan_effort=row.get("plan_effort"),
         )
         db.add(item)
+        # SessionLocal has autoflush disabled; make the just-generated BT code
+        # visible to the next gen_code call while keeping the whole operation
+        # in the same transaction.
+        db.flush()
         result.append(item)
-    db.flush()
     for item in result:
         notifier.notify(
             db,
@@ -781,6 +788,7 @@ def _project_task_row(db: Session, task: ProjectDevelopmentTask, user: AuthUser 
         "completion_percent": completion_percent,
         "completion_note": task.completion_note,
         "done_at": task.done_at,
+        "created_at": task.created_at,
         "progress_entries": progress_rows,
         "latest_progress": progress_rows[0] if progress_rows else None,
         "capabilities": {

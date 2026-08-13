@@ -66,6 +66,8 @@ def _register_bug(client, actors, title="供应链接口异常"):
 def test_bug_list_exposes_registrar(client, actors):
     bug = _register_bug(client, actors, "Bug 登记人展示")
     assert bug["reporter_name"] == "Bug 登记开发"
+    assert bug["bug_code"].startswith("BG-")
+    assert bug["created_at"] is not None
 
 
 def test_cmdb_requires_product_manager_for_new_app_and_legacy_ci_can_be_repaired(client, actors):
@@ -235,6 +237,9 @@ def test_bug_registration_confirmation_multi_tasks_and_verification_close(client
         assert current.assignee is None
     tasks = generated.json()["data"]["tasks"]
     assert len(tasks) == 2
+    assert len({task["task_code"] for task in tasks}) == 2
+    assert all(task["task_code"].startswith("BT-") for task in tasks)
+    assert all(task["created_at"] is not None for task in tasks)
 
     for task in tasks:
         response = client.patch(

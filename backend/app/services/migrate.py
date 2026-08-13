@@ -3,6 +3,8 @@
 M3.5：org_member 的 dept/team 自由文本列 → department 表 / 用户组成员关系，然后删列。
 """
 import logging
+import re
+from datetime import datetime
 
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -101,10 +103,14 @@ ENSURE_COLUMNS = {
         ("stakeholders", "JSONB"),
     ],
     "requirement_task": [
+        ("task_code", "VARCHAR(32)"),
         ("description", "TEXT"),
         ("plan_effort", "DOUBLE PRECISION"),
         ("actual_effort", "DOUBLE PRECISION"),
         ("registrar", "VARCHAR(26)"),
+    ],
+    "bug_fix_task": [
+        ("task_code", "VARCHAR(32)"),
     ],
     "auth_user": [
         ("preferences", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
@@ -237,6 +243,61 @@ def ensure_columns(db: Session):
             if name not in existing:
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                 logger.info("added column %s.%s", table, name)
+    db.commit()
+
+
+def _legacy_task_code_assignments(rows: list[tuple], prefix: str) -> list[tuple[str, str]]:
+    """为缺少业务编号的历史开发任务生成稳定、无碰撞的月份序号。"""
+    # Keep accepting sequences beyond 9999.  ``:04d`` is a minimum width,
+    # therefore a busy month may legitimately contain a five-digit suffix.
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d{{6}})-(\d+)$")
+    maxima: dict[str, int] = {}
+    used: set[str] = set()
+    pending: list[tuple[str, datetime | None]] = []
+    for row_id, task_code, created_at in rows:
+        normalized = (task_code or "").strip()
+        if normalized:
+            used.add(normalized)
+            match = pattern.fullmatch(normalized)
+            if match:
+                month, sequence = match.groups()
+                maxima[month] = max(maxima.get(month, 0), int(sequence))
+        else:
+            pending.append((row_id, created_at))
+
+    assignments: list[tuple[str, str]] = []
+    for row_id, created_at in pending:
+        month = (created_at or datetime.now()).strftime("%Y%m")
+        sequence = maxima.get(month, 0) + 1
+        candidate = f"{prefix}-{month}-{sequence:04d}"
+        while candidate in used:
+            sequence += 1
+            candidate = f"{prefix}-{month}-{sequence:04d}"
+        maxima[month] = sequence
+        used.add(candidate)
+        assignments.append((row_id, candidate))
+    return assignments
+
+
+def backfill_development_task_codes(db: Session):
+    """M109：补齐需求开发、Bug 修复子任务编号，保留所有历史业务数据。"""
+    specs = (
+        ("requirement_task", "RT", "uq_requirement_task_task_code"),
+        ("bug_fix_task", "BT", "uq_bug_fix_task_task_code"),
+    )
+    for table, prefix, index_name in specs:
+        rows = db.execute(text(
+            f"SELECT id, task_code, created_at FROM {table} ORDER BY created_at, id"
+        )).all()
+        for row_id, task_code in _legacy_task_code_assignments(rows, prefix):
+            db.execute(
+                text(f"UPDATE {table} SET task_code = :task_code WHERE id = :id"),
+                {"id": row_id, "task_code": task_code},
+            )
+        db.execute(text(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table} (task_code)"
+        ))
+        db.execute(text(f"ALTER TABLE {table} ALTER COLUMN task_code SET NOT NULL"))
     db.commit()
 
 
@@ -1089,6 +1150,7 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    backfill_development_task_codes(db)
     # M97：需求开发任务允许先登记、后关联需求。仅放宽约束，不删除、不改写
     # 任何既有任务及其关联关系。
     db.execute(text("ALTER TABLE requirement_task ALTER COLUMN requirement_id DROP NOT NULL"))

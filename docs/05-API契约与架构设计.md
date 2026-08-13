@@ -217,6 +217,8 @@ DELETE /api/task-management/project-tasks/{id}
 
 `GET /api/requirements/tasks/template` 返回“开发任务”工作表；A 列关联需求编号为可选。`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`；空编号创建独立任务，填写编号时才校验已冻结实施路径不是“转项目管理”、非示例和实现中，普通 `project_id` 关联不触发拒绝。处理人按在岗 IT 成员姓名精确匹配。有效行写审计及指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，只追加、不更新或去重。
 
+开发任务读取合同统一返回持久化编号和登记时间：需求开发行为 `task_code`（RT）与 `created_at`，项目开发行为 `task_code`（PT）与 `created_at`，Bug 父行为 `bug_code`（BG）与 `created_at`，其 `fix_tasks` 子行为 `task_code`（BT）与 `created_at`。前端对这些列提供本地排序，显示的是接口返回的真实业务编号/时间而不是当前页序号。启动迁移只补齐缺失的 RT/BT，按原 `created_at` 月份和 `created_at + id` 稳定顺序生成，并在补齐后建立唯一非空约束；不修改其他存量字段。
+
 Bug 接口固定使用 `ci.product_manager_id` 快照，不接受客户端指定审批人；在通用上游回改窗口内，`PATCH` 可变更 `ci_id` 并重新校验、快照目标产品经理。`DELETE /bugs/{id}` 复用流程单据删除窗口：创建人仅在下一节点未查阅处理时允许，管理员始终允许；删除同时终止并软删除活动流程任务。Bug 编号和详情按钮均调用 `GET /bugs/{id}`。委派任务进度接口只追加 `task_progress_entry`，不覆盖历史；项目开发要求项目、WBS 可选且必须属于该项目。项目开发进度请求新增可选 `complete`（默认 `false`）：普通请求的 `progress_percent` 只允许 0–99，并在任务尚为待处理时自动启动为进行中；`complete=true` 要求非空 `comment`，服务端忽略客户端百分比并原子写入已完成、100%、完成说明和完成时间。普通 `PATCH` 不得首次写入已完成，也不得重开已完成任务。列表返回派生的 `completion_percent` 以及 `capabilities.complete`，文字进展继续只存在追加式时间线；所有能力字段仅供界面提示，后端仍按当前用户、状态、负责人和管理员身份重新校验。
 
 任务通知统一调用 `notifier.notify()`：首次指派或改派写给负责人；非登记人更新状态、实际工时、完成说明或显式进度时写给登记人。通知与业务写入同事务产生站内记录和 `notification_outbox(channel=feishu_aily)`，Outbox 继续按身份映射、租户和 Bot 配置异步投递；没有映射时保持待处理，不向未知收件人发送。每条进度记录 ID 作为幂等来源，连续更新不会被合并。

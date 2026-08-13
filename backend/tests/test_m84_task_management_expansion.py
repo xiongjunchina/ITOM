@@ -65,6 +65,8 @@ def test_requirement_task_can_start_unlinked_and_notify_progress(client, task_us
         "/api/requirements/tasks/active", headers=task_users["registrar"],
     ).json()["data"]
     task = next(row for row in rows if row["id"] == task_id)
+    assert task["task_code"].startswith("RT-")
+    assert task["created_at"] is not None
     assert task["requirement_id"] is None
     assert task["requirement_code"] is None
     assert task["registrar"] == task_users["registrar_id"]
@@ -169,6 +171,8 @@ def test_project_development_task_requires_project_but_not_wbs(client, task_user
     assert row["wbs_task_id"] is None
     assert row["registrar"] == task_users["registrar_id"]
     assert row["registrar_name"] == "M84任务登记人"
+    assert row["task_code"].startswith("PT-")
+    assert row["created_at"] is not None
     assert row["status"] == "待处理"
     assert row["completion_percent"] == 0
 

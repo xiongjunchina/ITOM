@@ -34,6 +34,7 @@ from app.models import (
     Vendor,
     WbsTask,
 )
+from app.services.codes import gen_code
 
 
 def run_seed_examples(db: Session):
@@ -292,12 +293,17 @@ def run_seed_examples(db: Session):
     db.add(requirement)
     db.flush()
     db.add(RequirementTask(
-        is_example=True, requirement_id=requirement.id, name="【示例】指标口径确认",
+        is_example=True, task_code=gen_code(db, RequirementTask, "task_code", "RT"),
+        requirement_id=requirement.id, name="【示例】指标口径确认",
         assignee=person.id, plan_date=today - timedelta(days=1), status="已完成",
         done_at=now - timedelta(days=1),
     ))
+    # SessionLocal disables autoflush.  Flush before generating the next
+    # business number so two seed rows never receive the same RT code.
+    db.flush()
     db.add(RequirementTask(
-        is_example=True, requirement_id=requirement.id, name="【示例】报表开发与推送配置",
+        is_example=True, task_code=gen_code(db, RequirementTask, "task_code", "RT"),
+        requirement_id=requirement.id, name="【示例】报表开发与推送配置",
         assignee=person.id, plan_date=today + timedelta(days=10), status="进行中",
     ))
 

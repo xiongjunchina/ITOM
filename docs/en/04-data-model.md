@@ -288,7 +288,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.2 requirement_task — requirement task
 
-`requirement_id` FK (nullable for register-before-link), `registrar` FK (nullable for compatibility with administrator accounts without a person), `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), and `done_at` [C]. A direct registration stores the current actor's person; conversion from a requirement stores the original requirement requester's linked person rather than the converter. A standalone task can be linked later. Startup migration only drops PostgreSQL's NOT NULL constraint on `requirement_id`; it never backfills, deletes, or rebuilds existing rows. Import adds no batch table and overwrites no existing task.
+Unique non-null `task_code` (`RT-YYYYMM-NNNN`), nullable `requirement_id` FK for register-before-link, nullable `registrar` FK for administrator accounts without a person, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C], and the base model's persisted `created_at` registration time. A direct registration stores the current actor's person; conversion from a requirement stores the original requirement requester's linked person rather than the converter. A standalone task can be linked later. Startup migration drops PostgreSQL's NOT NULL constraint on `requirement_id` and fills only missing historical task codes using the original `created_at` month and deterministic `created_at + id` order. It never overwrites, deletes, or rebuilds existing rows. Import adds no batch table and overwrites no existing task.
 
 ### 4.3 bug — defect record
 
@@ -296,7 +296,7 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 
 ### 4.4 bug_fix_task — Bug repair task
 
-`bug_id` FK, `name`, `task_type` (development/testing/other), `description`, `assignee` FK, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed), `done_at`, and `completion_note`. A Bug may have multiple development or testing rows; all required child tasks must be closed before product-manager verification.
+Unique non-null `task_code` (`BT-YYYYMM-NNNN`), `bug_id` FK, `name`, `task_type` (development/testing/other), `description`, `assignee` FK, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed), `done_at`, `completion_note`, and the base model's persisted `created_at` registration time. A Bug may have multiple development or testing rows; all required child tasks must be closed before product-manager verification. The parent Bug keeps its `BG-YYYYMM-NNNN` code and never shares a child code. Startup migration fills only missing historical child codes by original registration month and deterministic creation order, without changing parent-child relations or business fields.
 
 ### 4.5 work_task — delegated work task
 
@@ -306,7 +306,7 @@ Only the registrar may delete an unassigned task still in Registered status. Aft
 
 ### 4.6 project_development_task — project development task
 
-`task_code` [C], required `project_id` FK, optional `wbs_task_id` FK, `title`, `description`, `acceptance_criteria`, `task_type`, `registrar` FK, `assignee` FK, `priority`, `environment`, `version`, planned dates, planned/actual effort, `status` (Pending / In Progress / Done, the sole state authority), `completion_note`, and `done_at`. Direct registration stores the current actor; project/WBS conversion stores the project manager. The server validates that a selected WBS row belongs to the project. Non-administrators may delete only Pending rows; administrators retain audited deletion authority. Completion is not a second state field: reads derive it from `task_progress_entry`, returning 100% for Done and otherwise the newest non-null percentage capped at 99%.
+Unique non-null `task_code` (`PT-YYYYMM-NNNN`), required `project_id` FK, optional `wbs_task_id` FK, `title`, `description`, `acceptance_criteria`, `task_type`, `registrar` FK, `assignee` FK, `priority`, `environment`, `version`, planned dates, planned/actual effort, `status` (Pending / In Progress / Done, the sole state authority), `completion_note`, `done_at`, and the base model's persisted `created_at` registration time. Direct registration stores the current actor; project/WBS conversion stores the project manager. The server validates that a selected WBS row belongs to the project. Non-administrators may delete only Pending rows; administrators retain audited deletion authority. Completion is not a second state field: reads derive it from `task_progress_entry`, returning 100% for Done and otherwise the newest non-null percentage capped at 99%.
 
 ### 4.7 task_progress_entry — append-only task progress
 

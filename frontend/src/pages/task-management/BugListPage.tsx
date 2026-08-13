@@ -23,7 +23,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
-import { type Dayjs } from 'dayjs';
+import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
 import { api } from '../../api/client';
 import type { AttachmentItem, BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
@@ -318,9 +318,10 @@ export default function BugListPage() {
   };
 
   const columns: ColumnsType<BugRow> = useMemo(() => [
-    { title: t('task.bug.code'), dataIndex: 'bug_code', width: 140, fixed: 'left', render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void refreshDetail(row.id)}>{value}</Button> },
+    { title: t('task.bug.code'), dataIndex: 'bug_code', width: 150, fixed: 'left', sorter: (a, b) => a.bug_code.localeCompare(b.bug_code), render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void refreshDetail(row.id)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 260, ellipsis: true },
     { title: t('task.registrar'), dataIndex: 'reporter_name', width: 110, render: (v) => v || '-' },
+    { title: t('task.registeredAt'), dataIndex: 'created_at', width: 155, sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(), render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
     { title: t('task.bug.system'), dataIndex: 'ci_name', width: 170, render: (v) => v || '-' },
     {
       title: t('task.priority'), dataIndex: 'priority', width: 90,
@@ -450,10 +451,12 @@ export default function BugListPage() {
           <AntTable<BugFixTaskRow>
             rowKey="id" size="small" pagination={false} dataSource={detail.fix_tasks}
             columns={[
+              { title: t('task.code'), dataIndex: 'task_code', width: 150, sorter: (a, b) => a.task_code.localeCompare(b.task_code) },
               { title: t('task.title'), dataIndex: 'name' },
               { title: t('task.bug.taskType'), dataIndex: 'task_type', width: 100 },
               { title: t('task.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
               { title: t('common.status'), dataIndex: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
+              { title: t('task.registeredAt'), dataIndex: 'created_at', width: 155, sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(), render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
               { title: t('common.actions'), key: 'actions', width: 150, render: (_: unknown, row) => FIX_NEXT[row.status].length > 0 ? <Space size={0}>{FIX_NEXT[row.status].map((next) => <Button key={next} type="link" size="small" onClick={() => void updateFixTask(row, next)}>{next}</Button>)}</Space> : '-' },
             ]}
             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.bug.noFixTasks')} /> }}

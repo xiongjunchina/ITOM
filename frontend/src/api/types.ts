@@ -1013,6 +1013,7 @@ export interface TaskProgressEntry {
 
 export interface BugFixTaskRow {
   id: string;
+  task_code: string;
   bug_id: string;
   name: string;
   task_type: string;
@@ -1026,6 +1027,7 @@ export interface BugFixTaskRow {
   status: BugFixTaskStatus;
   done_at: string | null;
   completion_note: string | null;
+  created_at: string;
 }
 
 export interface BugRow {
@@ -1053,6 +1055,7 @@ export interface BugRow {
   rejection_reason: string | null;
   reopened_at: string | null;
   closed_at: string | null;
+  created_at: string;
   fix_tasks: BugFixTaskRow[];
   capabilities: TaskCapabilities;
   /** Bug 管理也使用同一流程任务视图，以便记录产品经理/开发负责人首次查阅。 */
@@ -1120,6 +1123,7 @@ export interface ProjectDevelopmentTaskRow {
   completion_percent: number;
   completion_note: string | null;
   done_at: string | null;
+  created_at: string;
   progress_entries: TaskProgressEntry[];
   latest_progress: TaskProgressEntry | null;
   capabilities: TaskCapabilities;
@@ -1664,6 +1668,7 @@ export const REQ_TASK_STATUS_COLORS: Record<RequirementTaskStatus, string> = {
 /** 需求任务（实现阶段分解） */
 export interface RequirementTask {
   id: string;
+  task_code: string;
   name: string;
   /** 任务描述 */
   description?: string | null;
@@ -1677,6 +1682,7 @@ export interface RequirementTask {
   actual_effort?: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
+  created_at: string;
   /** 当前用户是否可删除此任务（进行中任务仅管理员可删） */
   can_delete?: boolean;
 }
@@ -1684,6 +1690,7 @@ export interface RequirementTask {
 /** 排期/实现中的需求任务行（GET /requirements/tasks/active）：跨需求聚合的任务清单 */
 export interface ActiveTaskRow {
   id: string;
+  task_code: string;
   name: string;
   description: string | null;
   /** 登记人（人员主数据 id）；需求转化任务继承需求登记人。 */
@@ -1697,6 +1704,7 @@ export interface ActiveTaskRow {
   actual_effort: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
+  created_at: string;
   requirement_id: string | null;
   requirement_code: string | null;
   requirement_title: string | null;
