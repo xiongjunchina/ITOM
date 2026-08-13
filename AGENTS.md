@@ -14,6 +14,46 @@ Required checks before declaring work complete:
 
 The delivery definition of done is: **implementation + tests + affected documentation are mutually consistent**.
 
+## Mandatory fix-task execution standard
+
+For every bug fix or corrective code task, read and follow
+`skills/itom-fix-delivery/SKILL.md`. Start the local task ledger with
+`python3 scripts/task-lifecycle.py start` before editing implementation files.
+The ledger is local evidence under `.itom-task/` and must not be committed.
+
+The following gates are mandatory:
+
+1. Record task grade, impact scope, and an explicit acceptance matrix at task start.
+2. For an S task, freeze a minimum candidate within 30 minutes; if the scope grows, re-grade immediately.
+3. Do not update formal delivery documentation, commit, push, build release images, or deploy before the changed real target has passed its focused acceptance.
+4. After the second failure of the same acceptance target, stop patching. Record a root-cause review before making another candidate.
+5. Run the complete CI and IDC release flow only once for a frozen candidate. A retry requires a recorded root cause and a newly frozen candidate.
+6. Report development, CI/pipeline waiting, and external-blocker time separately.
+7. Preserve task evidence so the four weekly metrics can be calculated: first-pass acceptance, rework commits, candidate-to-IDC-ready time, and CI/build/deploy waiting share.
+
+`scripts/git-hooks/pre-commit` enforces the target-verification and documentation
+assessment gates. Bypassing hooks does not waive this working agreement.
+
+## Mandatory fix-task execution standard
+
+For every bug fix or corrective code task, read and follow
+`.agents/skills/itom-fix-delivery/SKILL.md`. Start the local task ledger with
+`python3 scripts/task-lifecycle.py start` before editing implementation files.
+The ledger is local evidence under `.itom-task/` and must not be committed.
+
+The following gates are mandatory:
+
+1. Record task grade, impact scope, and an explicit acceptance matrix at task start.
+2. For an S task, freeze a minimum candidate within 30 minutes; if the scope grows, re-grade immediately.
+3. Do not update formal delivery documentation, commit, push, build release images, or deploy before the changed real target has passed its focused acceptance.
+4. After the second failure of the same acceptance target, stop patching. Record a root-cause review before making another candidate.
+5. Run the complete CI and IDC release flow only once for a frozen candidate. A retry requires a recorded root cause and a newly frozen candidate.
+6. Report development, CI/pipeline waiting, and external-blocker time separately.
+7. Preserve task evidence so the four weekly metrics can be calculated: first-pass acceptance, rework commits, candidate-to-IDC-ready time, and CI/build/deploy waiting share.
+
+`scripts/git-hooks/pre-commit` enforces the target-verification and documentation
+assessment gates. Bypassing hooks does not waive this working agreement.
+
 ## Aily Agent + MCP and Web Agent development lines
 
 The `feature/aily-agent-mcp` branch is archived and must not receive new

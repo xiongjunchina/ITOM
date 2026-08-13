@@ -123,6 +123,8 @@ IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址�
 
 提交前可按指定基线运行 `scripts/fast-check.sh` 获得后端、前端或文档范围的快速反馈；共享/未知路径失败安全地升级为全量检查。提交仍先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端契约测试与生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor；默认全量，经范围复核可只发布 backend 或 frontend，PostgreSQL 镜像仅显式请求时同步。组件级 `k8s-deploy.sh` 强制跳过数据库并保留共享资源和未选中 Deployment；全量和组件模式都严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
 
+所有代码修复另受 `skills/itom-fix-delivery/SKILL.md` 与 `scripts/task-lifecycle.py` 的任务生命周期门禁约束：开始即记录分级、影响范围和验收矩阵；定向真实目标验证通过后才评估并同步正式文档、提交或进入发布；同一目标第二次失败先停止补丁式处理并完成根因复盘；冻结候选仅执行一次完整 CI 和一次 IDC 发布尝试。过程记录位于 Git 忽略的 `.itom-task/`，不含业务数据或密钥，用于分离开发、流水线等待、外部阻塞时间并形成周度指标。
+
 ### 4.1 职责边界
 
 | 组件 | 负责 | 禁止 |

@@ -76,6 +76,8 @@ npm run build                          # tsc --noEmit + vite build（提交前�
 
 `scripts/change-scope.sh <base> [head]` 输出 `none|docs|backend|frontend|all`；未知或共享路径失败安全地归为 `all`。`fast-check.sh` 始终执行差异空白检查，后端变化运行完整 pytest，前端变化运行契约测试和生产构建。它只提供提交前快速反馈，不替代 GitHub Actions 完整质量门禁或 IDC 业务验收。
 
+所有代码修复还必须使用 [`skills/itom-fix-delivery/SKILL.md`](skills/itom-fix-delivery/SKILL.md) 和 `scripts/task-lifecycle.py`：任务开始记录 S/M/L 分级、影响范围与验收矩阵；真实目标定向验证通过后才允许评估/更新正式文档和提交；同一目标第二次失败强制转入根因复盘；冻结候选只允许一次完整 CI 和一次 IDC 发布尝试。`.itom-task/` 仅保存本机过程证据并被 Git 忽略，`report` 分开输出开发、流水线等待和外部阻塞时间，供每周指标统计。
+
 ### 生产部署
 
 > IDC Kubernetes 是唯一运行、联调和验收环境，公网根地址为 `https://itom.snnc.cc:30443`。必须先提交完整代码/测试/文档并通过 GitHub Actions；发布脚本拒绝脏工作区，按 Git 提交生成不可变 linux/amd64 镜像标签，不启动本地 ITOM 应用环境。
@@ -246,6 +248,8 @@ BASE_REF=origin/feature/AI-agent-version ./scripts/fast-check.sh
 ```
 
 `scripts/change-scope.sh <base> [head]` emits `none|docs|backend|frontend|all`; shared or unknown paths fail safely to `all`. `fast-check.sh` always checks diff whitespace, runs complete pytest for backend changes, and runs frontend contract tests plus the production build for frontend changes. It does not replace the complete GitHub Actions gate or IDC business acceptance.
+
+Every corrective code task must also follow [`skills/itom-fix-delivery/SKILL.md`](skills/itom-fix-delivery/SKILL.md) and `scripts/task-lifecycle.py`. Start by recording the S/M/L grade, impact scope, and acceptance matrix. Formal documentation assessment/update and commit are blocked until the focused real target passes. A second failure of the same target requires root-cause review, and a frozen candidate gets only one complete CI and one IDC release attempt. Local evidence stays under the Git-ignored `.itom-task/`; `report` separates development, pipeline-wait, and external-blocker time for weekly metrics.
 
 ### Production deployment
 
