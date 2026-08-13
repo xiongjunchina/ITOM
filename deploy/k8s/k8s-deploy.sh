@@ -7,6 +7,7 @@
 #   ./k8s-deploy.sh
 #   TAG=release-name-linux-amd64 ./k8s-deploy.sh
 #   SKIP_DATABASE=1 ./k8s-deploy.sh  # strict app-only rollout; do not apply/wait for PostgreSQL
+#   DEPLOY_SCOPE=frontend SKIP_DATABASE=1 ./k8s-deploy.sh
 #
 # Prereqs: VPN up + a valid Rancher token in ~/.kube/{sn-rancher.yaml,sn-prod-ip.conf}.
 set -euo pipefail
@@ -23,6 +24,7 @@ PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://itom.snnc.cc:30443}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 PUBLIC_TLS_SECRET="${PUBLIC_TLS_SECRET:-itom-snnc-cc-tls}"
 SKIP_DATABASE="${SKIP_DATABASE:-0}"
+DEPLOY_SCOPE="${DEPLOY_SCOPE:-all}"
 
 case "$TAG" in
   ""|*[!A-Za-z0-9_.-]*)
@@ -38,6 +40,14 @@ case "$SKIP_DATABASE" in
     exit 1
     ;;
 esac
+case "$DEPLOY_SCOPE" in
+  all|backend|frontend) ;;
+  *) echo "!! DEPLOY_SCOPE must be all, backend, or frontend"; exit 1 ;;
+esac
+if [ "$DEPLOY_SCOPE" != all ] && [ "$SKIP_DATABASE" != 1 ]; then
+  echo "!! Component-scoped deployment requires SKIP_DATABASE=1"
+  exit 1
+fi
 
 if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
   echo "!! Refusing to deploy from a dirty worktree. Commit the complete implementation, tests, and documentation first."
@@ -46,6 +56,7 @@ fi
 
 echo "==> Release commit: $COMMIT_SHA"
 echo "==> Deploy image tag: $TAG"
+echo "==> Deploy scope: $DEPLOY_SCOPE"
 if [ "$SKIP_DATABASE" = "1" ]; then
   echo "==> Database mode: preserve PostgreSQL StatefulSet/PVC; skip database manifest apply and rollout wait"
 fi
@@ -62,42 +73,46 @@ TOKEN="$(grep -m1 'token:' "$newest" | sed 's/.*token:[[:space:]]*//' | sed 's/[
 KC=(kubectl --kubeconfig=/dev/null --server="$SERVER" --insecure-skip-tls-verify --token="$TOKEN" --request-timeout=40s)
 echo "==> auth via $newest"
 
-echo "==> Namespace"
-"${KC[@]}" apply -f 00-namespace.yaml
+if [ "$DEPLOY_SCOPE" = all ]; then
+  echo "==> Namespace"
+  "${KC[@]}" apply -f 00-namespace.yaml
 
-echo "==> Copy harbor pull secret + wildcard TLS into $NS (from $SRC_NS)"
-copy_secret() {  # $1 = secret name
-  "${KC[@]}" -n "$SRC_NS" get secret "$1" -o json \
-    | python3 -c 'import sys,json; d=json.load(sys.stdin); m=d["metadata"]; [m.pop(k,None) for k in ("namespace","resourceVersion","uid","creationTimestamp","managedFields","ownerReferences","selfLink","generation")]; a=m.get("annotations") or {}; a.pop("kubectl.kubernetes.io/last-applied-configuration",None); m["annotations"]=a; d.pop("status",None); print(json.dumps(d))' \
-    | "${KC[@]}" -n "$NS" apply -f -
-}
-copy_secret harbor-isa
-copy_secret wildcard-prod-sn-local-tls
+  echo "==> Copy harbor pull secret + wildcard TLS into $NS (from $SRC_NS)"
+  copy_secret() {
+    "${KC[@]}" -n "$SRC_NS" get secret "$1" -o json \
+      | python3 -c 'import sys,json; d=json.load(sys.stdin); m=d["metadata"]; [m.pop(k,None) for k in ("namespace","resourceVersion","uid","creationTimestamp","managedFields","ownerReferences","selfLink","generation")]; a=m.get("annotations") or {}; a.pop("kubectl.kubernetes.io/last-applied-configuration",None); m["annotations"]=a; d.pop("status",None); print(json.dumps(d))' \
+      | "${KC[@]}" -n "$NS" apply -f -
+  }
+  copy_secret harbor-isa
+  copy_secret wildcard-prod-sn-local-tls
 
-echo "==> Verify public TLS Secret in $NS"
-public_tls_type="$("${KC[@]}" -n "$NS" get secret "$PUBLIC_TLS_SECRET" -o jsonpath='{.type}' 2>/dev/null || true)"
-[ "$public_tls_type" = "kubernetes.io/tls" ] || {
-  echo "!! Required public TLS Secret $NS/$PUBLIC_TLS_SECRET is missing or is not type kubernetes.io/tls"
-  exit 1
-}
+  echo "==> Verify public TLS Secret in $NS"
+  public_tls_type="$("${KC[@]}" -n "$NS" get secret "$PUBLIC_TLS_SECRET" -o jsonpath='{.type}' 2>/dev/null || true)"
+  [ "$public_tls_type" = "kubernetes.io/tls" ] || {
+    echo "!! Required public TLS Secret $NS/$PUBLIC_TLS_SECRET is missing or is not type kubernetes.io/tls"
+    exit 1
+  }
 
-echo "==> App secret (generated once; kept on re-run so the DB password is stable)"
-if ! "${KC[@]}" -n "$NS" get secret itom-secrets >/dev/null 2>&1; then
-  DB_PASSWORD="$(openssl rand -hex 24)"
-  JWT_SECRET="$(openssl rand -hex 48)"
-  ADMIN_INIT_PASSWORD="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | cut -c1-16)"
-  DATABASE_URL="postgresql+psycopg2://aom:${DB_PASSWORD}@itom-db:5432/new_aom"
-  "${KC[@]}" -n "$NS" create secret generic itom-secrets \
-    --from-literal=DB_PASSWORD="$DB_PASSWORD" \
-    --from-literal=JWT_SECRET="$JWT_SECRET" \
-    --from-literal=ADMIN_INIT_PASSWORD="$ADMIN_INIT_PASSWORD" \
-    --from-literal=DATABASE_URL="$DATABASE_URL"
-  echo "   ****************************************************************"
-  echo "   *  ITOM 初始登录:  用户名 admin   密码 ${ADMIN_INIT_PASSWORD}"
-  echo "   *  (登录后请立即修改;此密码只在此显示一次)"
-  echo "   ****************************************************************"
+  echo "==> App secret (generated once; kept on re-run so the DB password is stable)"
+  if ! "${KC[@]}" -n "$NS" get secret itom-secrets >/dev/null 2>&1; then
+    DB_PASSWORD="$(openssl rand -hex 24)"
+    JWT_SECRET="$(openssl rand -hex 48)"
+    ADMIN_INIT_PASSWORD="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | cut -c1-16)"
+    DATABASE_URL="postgresql+psycopg2://aom:${DB_PASSWORD}@itom-db:5432/new_aom"
+    "${KC[@]}" -n "$NS" create secret generic itom-secrets \
+      --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+      --from-literal=JWT_SECRET="$JWT_SECRET" \
+      --from-literal=ADMIN_INIT_PASSWORD="$ADMIN_INIT_PASSWORD" \
+      --from-literal=DATABASE_URL="$DATABASE_URL"
+    echo "   ****************************************************************"
+    echo "   *  ITOM 初始登录:  用户名 admin   密码 ${ADMIN_INIT_PASSWORD}"
+    echo "   *  (登录后请立即修改;此密码只在此显示一次)"
+    echo "   ****************************************************************"
+  else
+    echo "   itom-secrets already exists — keeping current values (DB password unchanged)."
+  fi
 else
-  echo "   itom-secrets already exists — keeping current values (DB password unchanged)."
+  echo "==> Preserve shared resources (namespace, Secrets, Ingress, PostgreSQL)"
 fi
 
 if [ "$SKIP_DATABASE" = "1" ]; then
@@ -106,12 +121,16 @@ else
   echo "==> Apply PostgreSQL"
   "${KC[@]}" apply -f 10-postgres.yaml
 fi
-echo "==> Apply immutable app images and ingress"
-sed -E "s#(image:[[:space:]]*$REG/sn/itom-backend:)[^[:space:]]+#\\1$TAG#" 20-backend.yaml \
-  | "${KC[@]}" apply -f -
-sed -E "s#(image:[[:space:]]*$REG/sn/itom-frontend:)[^[:space:]]+#\\1$TAG#" 30-frontend.yaml \
-  | "${KC[@]}" apply -f -
-"${KC[@]}" apply -f 40-ingress.yaml
+echo "==> Apply selected immutable app images"
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = backend ]; then
+  sed -E "s#(image:[[:space:]]*$REG/sn/itom-backend:)[^[:space:]]+#\\1$TAG#" 20-backend.yaml \
+    | "${KC[@]}" apply -f -
+fi
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = frontend ]; then
+  sed -E "s#(image:[[:space:]]*$REG/sn/itom-frontend:)[^[:space:]]+#\\1$TAG#" 30-frontend.yaml \
+    | "${KC[@]}" apply -f -
+fi
+if [ "$DEPLOY_SCOPE" = all ]; then "${KC[@]}" apply -f 40-ingress.yaml; fi
 
 if [ "$SKIP_DATABASE" = "1" ]; then
   echo "==> Preserve PostgreSQL (skip StatefulSet rollout wait)"
@@ -120,16 +139,22 @@ else
   "${KC[@]}" -n "$NS" rollout status statefulset/itom-db --timeout=180s
 fi
 
-echo "==> Wait for backend (first boot runs schema create + seed)"
-"${KC[@]}" -n "$NS" rollout status deploy/itom-backend --timeout=240s
-
-echo "==> Wait for frontend"
-"${KC[@]}" -n "$NS" rollout status deploy/itom-frontend --timeout=180s
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = backend ]; then
+  echo "==> Wait for backend (first boot runs schema create + seed)"
+  "${KC[@]}" -n "$NS" rollout status deploy/itom-backend --timeout=240s
+fi
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = frontend ]; then
+  echo "==> Wait for frontend"
+  "${KC[@]}" -n "$NS" rollout status deploy/itom-frontend --timeout=180s
+fi
 
 # Endpoint recovery: if a rollout has no Ready endpoint, recreate one pending
 # pod a bounded number of times before failing the release.
 echo "==> Ensuring Ready endpoints"
-for dep in itom-backend itom-frontend; do
+deps=()
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = backend ]; then deps+=(itom-backend); fi
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = frontend ]; then deps+=(itom-frontend); fi
+for dep in "${deps[@]}"; do
   svc="$dep"; [ "$dep" = "itom-backend" ] && svc="backend"
   ok=
   for attempt in 1 2 3 4 5; do
@@ -152,12 +177,14 @@ for dep in itom-backend itom-frontend; do
 done
 
 echo "==> Verify deployed image identities"
-expected_backend="$REG/sn/itom-backend:$TAG"
-expected_frontend="$REG/sn/itom-frontend:$TAG"
 actual_backend="$("${KC[@]}" -n "$NS" get deployment itom-backend -o jsonpath='{.spec.template.spec.containers[0].image}')"
 actual_frontend="$("${KC[@]}" -n "$NS" get deployment itom-frontend -o jsonpath='{.spec.template.spec.containers[0].image}')"
-[ "$actual_backend" = "$expected_backend" ] || { echo "!! backend image mismatch: $actual_backend"; exit 1; }
-[ "$actual_frontend" = "$expected_frontend" ] || { echo "!! frontend image mismatch: $actual_frontend"; exit 1; }
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = backend ]; then
+  [ "$actual_backend" = "$REG/sn/itom-backend:$TAG" ] || { echo "!! backend image mismatch: $actual_backend"; exit 1; }
+fi
+if [ "$DEPLOY_SCOPE" = all ] || [ "$DEPLOY_SCOPE" = frontend ]; then
+  [ "$actual_frontend" = "$REG/sn/itom-frontend:$TAG" ] || { echo "!! frontend image mismatch: $actual_frontend"; exit 1; }
+fi
 echo "   backend: $actual_backend"
 echo "   frontend: $actual_frontend"
 

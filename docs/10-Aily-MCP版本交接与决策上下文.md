@@ -121,7 +121,7 @@ ITOM 领域事件 → 可靠通知发件箱 → Aily 机器人飞书消息 → �
 
 IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。当前 IDC 前端仅限节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两个前端副本以必需主机反亲和分布；节点 03 不再承载 ITOM 前端。前端滚动更新采用 `maxSurge: 0` 与 `maxUnavailable: 1`，在仅有节点 01/02 可运行时先释放旧副本占用的节点，再创建替换副本，避免默认超额副本与强制反亲和导致发布卡住。后端固定节点 02，数据库 StatefulSet/PVC 与备份 Job 不属于应用重部署范围。经批准的非数据库应用恢复使用 `SKIP_DATABASE=1 ./k8s-deploy.sh`，明确跳过 PostgreSQL 清单 apply 与 StatefulSet 等待，不删除、重启或重新调度数据库 Pod/PVC；涉及结构迁移的版本不得使用该模式。默认禁止在本地启动 ITOM 应用栈、数据库、Docker Compose、8180 或 ngrok；只有用户明确要求临时隔离排障时才允许例外，且不能作为交付证据。
 
-提交先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor，`k8s-deploy.sh` 部署同一标签并严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
+提交前可按指定基线运行 `scripts/fast-check.sh` 获得后端、前端或文档范围的快速反馈；共享/未知路径失败安全地升级为全量检查。提交仍先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端契约测试与生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor；默认全量，经范围复核可只发布 backend 或 frontend，PostgreSQL 镜像仅显式请求时同步。组件级 `k8s-deploy.sh` 强制跳过数据库并保留共享资源和未选中 Deployment；全量和组件模式都严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
 
 ### 4.1 职责边界
 

@@ -61,6 +61,9 @@ cd deploy && docker compose up --build
 如需在提交前做本机快速检查，只运行原生测试/构建命令，不启动本地 ITOM 应用栈：
 
 ```bash
+# 根据与基线的差异自动选择后端、前端或仅文档检查
+BASE_REF=origin/feature/AI-agent-version ./scripts/fast-check.sh
+
 # 后端
 cd backend && python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -70,6 +73,8 @@ pytest -q                       # 全量测试
 cd frontend && npm ci
 npm run build                          # tsc --noEmit + vite build（提交前必须 0 错误）
 ```
+
+`scripts/change-scope.sh <base> [head]` 输出 `none|docs|backend|frontend|all`；未知或共享路径失败安全地归为 `all`。`fast-check.sh` 始终执行差异空白检查，后端变化运行完整 pytest，前端变化运行契约测试和生产构建。它只提供提交前快速反馈，不替代 GitHub Actions 完整质量门禁或 IDC 业务验收。
 
 ### 生产部署
 
@@ -87,9 +92,13 @@ cd deploy/k8s
 
 # 4) 部署同一 Git 提交派生的不可变标签并执行严格探针
 ./k8s-deploy.sh
+
+# 已确认不含数据库/共享部署变化的纯前端候选
+BUILD_SCOPE=frontend ./push-images.sh
+DEPLOY_SCOPE=frontend SKIP_DATABASE=1 ./k8s-deploy.sh
 ```
 
-`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。发布构建通过已验证的 `mirror.gcr.io` 官方 Docker Library 缓存及固定摘要取得 Python、Node、Nginx 和 PostgreSQL 基础镜像，避免 Docker Hub 限流和可变标签漂移。脚本会把当前 Docker CLI context 的 daemon 地址显式传给 `skopeo`，因此兼容默认 Docker socket 以及 OrbStack、Colima、Rancher Desktop 等非默认 socket。前端保持两个副本，当前仅允许调度到节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两副本以必需主机反亲和分布，避免节点 03 的已知运行异常；节点 01 或 02 不可用时保留另一个副本，不把两个副本静默堆叠到单节点。后端保持无节点硬绑定的单副本 `Recreate`，以适配 uploads PVC 的 RWO 约束；数据库 StatefulSet、PVC、Secret、上传和飞书配置均不属于应用重部署范围。`k8s-deploy.sh` 要求 rollout 成功，并逐一核对每个前端 Endpoint 的后端代理、实际镜像、外部 `/api/health` 与 MCP `initialize`。回滚时使用上一有效标签执行 `TAG=<previous-tag> ./k8s-deploy.sh`。`ALLOW_UNTRUSTED_TLS=1` 只允许临时诊断，不得作为正式验收结果。
+`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。默认 `BUILD_SCOPE=all`；经变更范围复核后可显式使用 `backend` 或 `frontend`，只构建、校验和推送对应镜像。PostgreSQL 基础镜像不再随每次应用发布重复镜像，只有显式 `MIRROR_POSTGRES=1` 才执行。对应的 `DEPLOY_SCOPE` 组件模式强制要求 `SKIP_DATABASE=1`，保留 Namespace、Secret、Ingress、PostgreSQL 和未选中的 Deployment，只更新并核验所选组件；共享部署文件或数据库结构变化必须使用全量模式和批准的检查点。发布构建继续使用固定基础镜像摘要、linux/amd64 架构校验和当前 Docker context。`k8s-deploy.sh` 无论组件或全量模式都验证实际镜像、前端到后端代理、外部 `/api/health` 与 MCP `initialize`。组件回滚使用相同 `DEPLOY_SCOPE` 和上一有效组件标签。`ALLOW_UNTRUSTED_TLS=1` 不得作为正式验收结果。
 
 ### 目录结构
 ```
@@ -231,7 +240,12 @@ pytest -q                       # full test suite
 # Frontend
 cd frontend && npm ci
 npm run build                          # tsc --noEmit + vite build (must be 0 errors before commit)
+
+# Scope-aware fast feedback without starting ITOM locally
+BASE_REF=origin/feature/AI-agent-version ./scripts/fast-check.sh
 ```
+
+`scripts/change-scope.sh <base> [head]` emits `none|docs|backend|frontend|all`; shared or unknown paths fail safely to `all`. `fast-check.sh` always checks diff whitespace, runs complete pytest for backend changes, and runs frontend contract tests plus the production build for frontend changes. It does not replace the complete GitHub Actions gate or IDC business acceptance.
 
 ### Production deployment
 
@@ -252,9 +266,13 @@ cd deploy/k8s
 
 # Strict app-only rollout: do not apply or wait for the PostgreSQL StatefulSet
 SKIP_DATABASE=1 ./k8s-deploy.sh
+
+# Reviewed frontend-only candidate
+BUILD_SCOPE=frontend ./push-images.sh
+DEPLOY_SCOPE=frontend SKIP_DATABASE=1 ./k8s-deploy.sh
 ```
 
-`push-images.sh` builds and pushes images only; it does not start the application. Its default tag is `git-<first-12-commit-chars>-linux-amd64`. Release builds obtain Python, Node, Nginx, and PostgreSQL from the verified `mirror.gcr.io` Docker Library cache at pinned digests, avoiding Docker Hub rate limits and mutable-tag drift. The script explicitly passes the active Docker CLI context's daemon endpoint to `skopeo`, so the same release path works with the default Docker socket and non-default sockets provided by OrbStack, Colima, or Rancher Desktop. The two frontend replicas are currently eligible only for nodes 01/02: the build taint on node 02 is tolerated explicitly by ITOM frontend only, and required hostname anti-affinity keeps the replicas separate to avoid node 03's known runtime failures. Its controlled rolling update uses `maxSurge: 0` and `maxUnavailable: 1`, releasing an eligible host before creating its replacement; this prevents a rollout deadlock when only those two hosts are eligible. If node 01 or 02 is unavailable, the remaining replica is retained rather than silently stacking both replicas on one host. The backend remains a single unpinned `Recreate` Deployment because its uploads PVC is RWO. For an approved strict app-only recovery, `SKIP_DATABASE=1` skips both applying `10-postgres.yaml` and waiting for the PostgreSQL StatefulSet: it never deletes, restarts, or reschedules the database Pod/PVC, while the existing application Secrets, uploads, and Feishu configuration remain preserved. Schema-affecting releases must not use that mode and require the approved database checkpoint first. `k8s-deploy.sh` requires successful app rollouts and verifies every frontend endpoint's backend proxy, image identity, external `/api/health`, and MCP `initialize`. Roll back with `TAG=<previous-tag> ./k8s-deploy.sh`. `ALLOW_UNTRUSTED_TLS=1` is a temporary diagnostic override and never formal acceptance evidence.
+`push-images.sh` builds and pushes images only; it does not start the application. It defaults to `BUILD_SCOPE=all`; after scope review, `backend` or `frontend` builds, verifies, and pushes only that component. PostgreSQL is mirrored only with explicit `MIRROR_POSTGRES=1`. Component `DEPLOY_SCOPE` requires `SKIP_DATABASE=1` and preserves the Namespace, Secrets, Ingress, PostgreSQL, and the unselected Deployment. Shared deployment or schema changes require full scope and the approved checkpoint. Pinned base digests, linux/amd64 checks, strict rollout and image verification, frontend-to-backend proxy checks, external `/api/health`, normal TLS, and MCP `initialize` remain mandatory. Component rollback uses the same scope and the previous valid component tag.
 
 ### Directory layout
 ```

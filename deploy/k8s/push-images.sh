@@ -10,6 +10,8 @@
 # Usage:
 #   ./push-images.sh
 #   TAG=release-name-linux-amd64 ./push-images.sh
+#   BUILD_SCOPE=frontend ./push-images.sh  # build/push frontend only
+#   BUILD_SCOPE=backend ./push-images.sh   # build/push backend only
 #
 # The default immutable tag is derived from the current Git commit. This script
 # builds images only; it never starts a local ITOM application environment.
@@ -24,12 +26,23 @@ PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-mirror.gcr.io/library/python:3.12-slim@s
 NODE_BASE_IMAGE="${NODE_BASE_IMAGE:-mirror.gcr.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32}"
 NGINX_BASE_IMAGE="${NGINX_BASE_IMAGE:-mirror.gcr.io/library/nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10}"
 POSTGRES_BASE_IMAGE="${POSTGRES_BASE_IMAGE:-mirror.gcr.io/library/postgres@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382}"
+BUILD_SCOPE="${BUILD_SCOPE:-all}"
+MIRROR_POSTGRES="${MIRROR_POSTGRES:-0}"
 
 case "$TAG" in
   ""|*[!A-Za-z0-9_.-]*)
     echo "!! Invalid image tag: $TAG"
     exit 1
     ;;
+esac
+
+case "$BUILD_SCOPE" in
+  all|backend|frontend) ;;
+  *) echo "!! BUILD_SCOPE must be all, backend, or frontend"; exit 1 ;;
+esac
+case "$MIRROR_POSTGRES" in
+  0|1) ;;
+  *) echo "!! MIRROR_POSTGRES must be 0 or 1"; exit 1 ;;
 esac
 
 if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
@@ -50,16 +63,23 @@ DOCKER_DAEMON_HOST="${DOCKER_DAEMON_HOST:-$(docker context inspect --format '{{.
 
 echo "==> Release commit: $COMMIT_SHA"
 echo "==> Immutable image tag: $TAG"
-echo "==> Build backend + frontend for linux/amd64 from pinned base digests (no local app startup)"
-docker build --platform linux/amd64 --pull --no-cache \
-  --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
-  -t "$REG/sn/itom-backend:$TAG" "$REPO_ROOT/backend"
-docker build --platform linux/amd64 --pull --no-cache \
-  --build-arg "NODE_BASE_IMAGE=$NODE_BASE_IMAGE" \
-  --build-arg "NGINX_BASE_IMAGE=$NGINX_BASE_IMAGE" \
-  -t "$REG/sn/itom-frontend:$TAG" "$REPO_ROOT/frontend"
+echo "==> Build scope: $BUILD_SCOPE"
+if [ "$BUILD_SCOPE" = all ] || [ "$BUILD_SCOPE" = backend ]; then
+  docker build --platform linux/amd64 --pull --no-cache \
+    --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
+    -t "$REG/sn/itom-backend:$TAG" "$REPO_ROOT/backend"
+fi
+if [ "$BUILD_SCOPE" = all ] || [ "$BUILD_SCOPE" = frontend ]; then
+  docker build --platform linux/amd64 --pull --no-cache \
+    --build-arg "NODE_BASE_IMAGE=$NODE_BASE_IMAGE" \
+    --build-arg "NGINX_BASE_IMAGE=$NGINX_BASE_IMAGE" \
+    -t "$REG/sn/itom-frontend:$TAG" "$REPO_ROOT/frontend"
+fi
 
-for image in itom-backend itom-frontend; do
+images=()
+if [ "$BUILD_SCOPE" = all ] || [ "$BUILD_SCOPE" = backend ]; then images+=(itom-backend); fi
+if [ "$BUILD_SCOPE" = all ] || [ "$BUILD_SCOPE" = frontend ]; then images+=(itom-frontend); fi
+for image in "${images[@]}"; do
   arch="$(docker image inspect "$REG/sn/$image:$TAG" --format '{{.Architecture}}')"
   [ "$arch" = "amd64" ] || {
     echo "!! $image:$TAG architecture is $arch, expected amd64"
@@ -94,23 +114,30 @@ echo "==> Validate creds (read-only inspect of an existing image)"
 skopeo inspect --tls-verify=false --creds "$CREDS" docker://$REG/sn/aom-gateway:547ccd8 >/dev/null \
   || { echo "!! cred/connectivity check failed — NOT pushing (avoids admin lockout)"; exit 1; }
 
-echo "==> Push backend"
-skopeo copy --all --src-daemon-host "$DOCKER_DAEMON_HOST" --dest-tls-verify=false --dest-creds "$CREDS" \
-  docker-daemon:$REG/sn/itom-backend:$TAG docker://$REG/sn/itom-backend:$TAG
+for image in "${images[@]}"; do
+  echo "==> Push $image"
+  skopeo copy --all --src-daemon-host "$DOCKER_DAEMON_HOST" --dest-tls-verify=false --dest-creds "$CREDS" \
+    "docker-daemon:$REG/sn/$image:$TAG" "docker://$REG/sn/$image:$TAG"
+done
 
-echo "==> Push frontend"
-skopeo copy --all --src-daemon-host "$DOCKER_DAEMON_HOST" --dest-tls-verify=false --dest-creds "$CREDS" \
-  docker-daemon:$REG/sn/itom-frontend:$TAG docker://$REG/sn/itom-frontend:$TAG
-
-echo "==> Mirror pinned postgres:16-alpine (amd64) so air-gapped nodes can pull it"
-skopeo copy --override-arch amd64 --override-os linux \
-  --src-tls-verify=false --dest-tls-verify=false --dest-creds "$CREDS" \
-  "docker://$POSTGRES_BASE_IMAGE" docker://$REG/sn/postgres:16-alpine
+if [ "$MIRROR_POSTGRES" = 1 ]; then
+  echo "==> Mirror pinned postgres:16-alpine (amd64)"
+  skopeo copy --override-arch amd64 --override-os linux \
+    --src-tls-verify=false --dest-tls-verify=false --dest-creds "$CREDS" \
+    "docker://$POSTGRES_BASE_IMAGE" docker://$REG/sn/postgres:16-alpine
+fi
 
 echo "==> Verify in Harbor"
-for rt in itom-backend:$TAG itom-frontend:$TAG postgres:16-alpine; do
+verify_images=()
+for image in "${images[@]}"; do verify_images+=("$image:$TAG"); done
+if [ "$MIRROR_POSTGRES" = 1 ]; then verify_images+=(postgres:16-alpine); fi
+for rt in "${verify_images[@]}"; do
   skopeo inspect --tls-verify=false --creds "$CREDS" docker://$REG/sn/$rt >/dev/null \
     && echo "   sn/$rt OK" || echo "   !! sn/$rt MISSING"
 done
 echo "==> Done. Deploy the same immutable tag with:"
-echo "    TAG=$TAG ./k8s-deploy.sh"
+if [ "$BUILD_SCOPE" = all ]; then
+  echo "    TAG=$TAG ./k8s-deploy.sh"
+else
+  echo "    DEPLOY_SCOPE=$BUILD_SCOPE SKIP_DATABASE=1 TAG=$TAG ./k8s-deploy.sh"
+fi
