@@ -414,7 +414,7 @@ Requirement list/detail/attachment/relation reads share one web data-scope polic
 ### 4.6 Team
 
 ```text
-GET /api/team/overview                   # all active IT-member workload (web local 20-row pagination) / points Top / training count / hiring progress aggregation
+GET /api/team/overview                   # all active IT-member workload (project tasks = open WBS + open Project Development; web local 20-row pagination) / points Top / training count / hiring progress aggregation
 GET/POST/PATCH /api/positions | /api/hiring-needs; Excel template/export/import endpoints are also available at `/api/positions/{template,export,import}` and `/api/hiring-needs/{template,export,import}`.
 GET/POST/PATCH/DELETE /api/trainings     # training activities; PATCH/DELETE only admin/CIO/registrar
 GET/PUT /api/team-charter

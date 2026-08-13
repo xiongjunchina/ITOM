@@ -24,6 +24,7 @@ from app.models import (
     PerformancePeriod,
     PointEntry,
     Position,
+    ProjectDevelopmentTask,
     Requirement,
     RequirementTask,
     TeamCharter,
@@ -523,6 +524,15 @@ def _workload(db: Session) -> list[dict]:
     open_wbs: dict[str, int] = {}
     for (assignee,) in db.query(WbsTask.assignee).filter(
         WbsTask.is_deleted.is_(False), WbsTask.is_example.is_(False), WbsTask.progress < 100,
+    ):
+        open_wbs[assignee] = open_wbs.get(assignee, 0) + 1
+    # “项目任务”同时包含项目计划中的未完成 WBS 工作包，以及在 WBS
+    # 未细分到开发活动时单独登记的未完成项目开发任务。
+    for (assignee,) in db.query(ProjectDevelopmentTask.assignee).filter(
+        ProjectDevelopmentTask.assignee.isnot(None),
+        ProjectDevelopmentTask.is_deleted.is_(False),
+        ProjectDevelopmentTask.is_example.is_(False),
+        ProjectDevelopmentTask.status != "已完成",
     ):
         open_wbs[assignee] = open_wbs.get(assignee, 0) + 1
     open_req: dict[str, int] = {}

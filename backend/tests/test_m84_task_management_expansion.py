@@ -141,6 +141,13 @@ def test_delegated_task_progress_is_append_only_and_notifies_registrar(client, t
 
 def test_project_development_task_requires_project_but_not_wbs(client, task_users):
     today = date.today()
+    workload_before = client.get(
+        "/api/team/overview", headers=task_users["admin"],
+    ).json()["data"]["workload"]
+    project_load_before = next(
+        row["wbs_tasks"] for row in workload_before
+        if row["person_id"] == task_users["assignee_id"]
+    )
     project = client.post(
         "/api/projects",
         json={
@@ -175,6 +182,13 @@ def test_project_development_task_requires_project_but_not_wbs(client, task_user
     assert row["created_at"] is not None
     assert row["status"] == "待处理"
     assert row["completion_percent"] == 0
+    workload_after_create = client.get(
+        "/api/team/overview", headers=task_users["admin"],
+    ).json()["data"]["workload"]
+    assert next(
+        row["wbs_tasks"] for row in workload_after_create
+        if row["person_id"] == task_users["assignee_id"]
+    ) == project_load_before + 1
 
     admin_created = client.post(
         "/api/task-management/project-tasks",
@@ -238,6 +252,15 @@ def test_project_development_task_requires_project_but_not_wbs(client, task_user
     assert completed_row["progress_entries"][0]["progress_percent"] == 100
     assert completed_row["capabilities"]["progress"] is False
     assert completed_row["capabilities"]["complete"] is False
+    workload_after_completion = client.get(
+        "/api/team/overview", headers=task_users["admin"],
+    ).json()["data"]["workload"]
+    # The first task no longer contributes after completion; the second open
+    # project-development task created above remains in the workload.
+    assert next(
+        row["wbs_tasks"] for row in workload_after_completion
+        if row["person_id"] == task_users["assignee_id"]
+    ) == project_load_before + 1
 
     after_completion = client.post(
         f"/api/task-management/project-tasks/{task_id}/progress",
