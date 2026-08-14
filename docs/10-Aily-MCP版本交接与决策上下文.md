@@ -123,7 +123,7 @@ IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址�
 
 提交前可按指定基线运行 `scripts/fast-check.sh` 获得后端、前端或文档范围的快速反馈；共享/未知路径失败安全地升级为全量检查。提交仍先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端契约测试与生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor；默认全量，经范围复核可只发布 backend 或 frontend，PostgreSQL 镜像仅显式请求时同步。组件级 `k8s-deploy.sh` 强制跳过数据库并保留共享资源和未选中 Deployment；全量和组件模式都严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
 
-所有代码修复另受 `skills/itom-fix-delivery/SKILL.md` 与 `scripts/task-lifecycle.py` 的任务生命周期门禁约束：开始即记录分级、影响范围和验收矩阵；定向真实目标验证通过后才评估并同步正式文档、提交或进入发布；同一目标第二次失败先停止补丁式处理并完成根因复盘；冻结候选仅执行一次完整 CI 和一次 IDC 发布尝试。过程记录位于 Git 忽略的 `.itom-task/`，不含业务数据或密钥，用于分离开发、流水线等待、外部阻塞时间并形成周度指标。
+所有编码任务在修改前先确认 `production-fix|feature-local|code-candidate` 路线，并使用 `scripts/task-lifecycle.py --track` 建立生命周期证据。生产修复以 IDC 真实事实为基线；新功能可在不含任何生产数据、凭据、Secret、OAuth/Aily 应用或回调的本地隔离 Docker 环境形成候选；代码候选不启动应用。定向目标验证通过后才同步正式文档和提交；冻结候选只运行一次完整 CI。任何 IDC 写入都必须在 CI 后另行展示精确提交、不可变标签、变更对象、数据影响、中断、回滚及验收方案，并记录用户 `approve-idc` 明确批准；本地候选和 CI 均不构成生产交付。
 
 ### 4.1 职责边界
 
@@ -343,7 +343,7 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 ## 11. 完成交付标准
 
-每次改动必须同时完成实现、测试、中文权威文档和 `docs/en` 英文镜像；feature 分支先通过 GitHub Actions 的相关单元、API/MCP 集成、身份权限、幂等重试测试、前端生产构建和仓库契约检查。自动化测试不得连接 IDC 业务数据库。本地不启动应用环境；只有用户明确要求时才允许临时隔离排障。发布必须来自干净提交、使用 Git SHA 不可变 linux/amd64 镜像，并在 IDC 完成 rollout、镜像、健康链路、MCP 和真实角色验收。
+每次改动必须同时完成实现、测试、中文权威文档和 `docs/en` 英文镜像；feature 分支先通过 GitHub Actions 的相关单元、API/MCP 集成、身份权限、幂等重试测试、前端生产构建和仓库契约检查。自动化测试不得连接 IDC 业务数据库。只有已确认的 `feature-local` 路线可启动仓库定义的本地隔离应用与测试数据库；`production-fix` 和 `code-candidate` 默认不启动。发布必须来自干净提交、使用 Git SHA 不可变 linux/amd64 镜像，并在单独获得精确发布批准后于 IDC 完成 rollout、镜像、健康链路、MCP 和真实角色验收。
 
 不得把 CI 全绿、镜像构建成功、`/api/health`、MCP 初始化、单次工具成功或模拟载荷测试当作完整业务验收。验收证据必须覆盖真实身份和多角色业务闭环。
 

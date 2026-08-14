@@ -76,7 +76,7 @@ npm run build                          # tsc --noEmit + vite build（提交前�
 
 `scripts/change-scope.sh <base> [head]` 输出 `none|docs|backend|frontend|all`；未知或共享路径失败安全地归为 `all`。`fast-check.sh` 始终执行差异空白检查，后端变化运行完整 pytest，前端变化运行契约测试和生产构建。它只提供提交前快速反馈，不替代 GitHub Actions 完整质量门禁或 IDC 业务验收。
 
-所有代码修复还必须使用 [`skills/itom-fix-delivery/SKILL.md`](skills/itom-fix-delivery/SKILL.md) 和 `scripts/task-lifecycle.py`：任务开始记录 S/M/L 分级、影响范围与验收矩阵；真实目标定向验证通过后才允许评估/更新正式文档和提交；同一目标第二次失败强制转入根因复盘；冻结候选只允许一次完整 CI 和一次 IDC 发布尝试。`.itom-task/` 仅保存本机过程证据并被 Git 忽略，`report` 分开输出开发、流水线等待和外部阻塞时间，供每周指标统计。
+每个编码任务开始前必须先确认路线：`production-fix`（IDC 生产修复）、`feature-local`（本地隔离 Docker 新功能候选）或 `code-candidate`（只形成代码候选）。客户端支持时使用可点击选项，否则使用简短编号提问。修复路线使用 [`skills/itom-fix-delivery/SKILL.md`](skills/itom-fix-delivery/SKILL.md)，新功能路线使用 [`skills/itom-feature-delivery/SKILL.md`](skills/itom-feature-delivery/SKILL.md)。`scripts/task-lifecycle.py` 记录分级、范围、验收、候选和分段计时；任何 IDC 写入均须在 CI 通过后另行展示精确标签、对象和回滚方案，并以 `approve-idc` 记录用户明确批准。
 
 ### 生产部署
 
@@ -249,7 +249,7 @@ BASE_REF=origin/feature/AI-agent-version ./scripts/fast-check.sh
 
 `scripts/change-scope.sh <base> [head]` emits `none|docs|backend|frontend|all`; shared or unknown paths fail safely to `all`. `fast-check.sh` always checks diff whitespace, runs complete pytest for backend changes, and runs frontend contract tests plus the production build for frontend changes. It does not replace the complete GitHub Actions gate or IDC business acceptance.
 
-Every corrective code task must also follow [`skills/itom-fix-delivery/SKILL.md`](skills/itom-fix-delivery/SKILL.md) and `scripts/task-lifecycle.py`. Start by recording the S/M/L grade, impact scope, and acceptance matrix. Formal documentation assessment/update and commit are blocked until the focused real target passes. A second failure of the same target requires root-cause review, and a frozen candidate gets only one complete CI and one IDC release attempt. Local evidence stays under the Git-ignored `.itom-task/`; `report` separates development, pipeline-wait, and external-blocker time for weekly metrics.
+Every coding task starts with a confirmed route: `production-fix` for an IDC production repair, `feature-local` for an isolated local-Docker feature candidate, or `code-candidate` for code-only delivery. Use clickable choices when the client supports them and a concise numbered question otherwise. Production fixes follow [`skills/itom-fix-delivery/SKILL.md`](skills/itom-fix-delivery/SKILL.md); features follow [`skills/itom-feature-delivery/SKILL.md`](skills/itom-feature-delivery/SKILL.md). `scripts/task-lifecycle.py` records grade, scope, acceptance, candidates, and segmented time. Every IDC write requires a separate post-CI presentation of the exact tag, affected objects, and rollback plan plus explicit `approve-idc` authorization.
 
 ### Production deployment
 

@@ -16,7 +16,7 @@ approval boundaries.
    migration, and open decisions when required by `AGENTS.md`.
 3. Start the ledger:
 
-   `python3 scripts/task-lifecycle.py start --id <id> --grade <S|M|L> --scope <scope> --acceptance <matrix>`
+   `python3 scripts/task-lifecycle.py start --id <id> --track production-fix --grade <S|M|L> --scope <scope> --acceptance <matrix>`
 
 4. Give the user the grade, impact scope, and acceptance matrix within ten
    minutes. Treat S as a small, bounded fix. Freeze its minimum candidate within
@@ -37,8 +37,11 @@ updated or the explicit no-contract-change assessment with `docs-assessed`.
 
 Run `freeze` only after focused acceptance and documentation assessment. Run
 the full CI once for that candidate, recording `ci-start` and `ci-finish`.
-For user-visible runtime changes, use the repository release procedure once and
-record `idc-start` and `idc-finish` only after the changed real workflow passes.
+For user-visible runtime changes, show the exact commit, immutable image tag,
+affected objects, rollback tag, disruption, and IDC acceptance method. Record
+the user's explicit authorization with `approve-idc` before `idc-start`, then
+use the repository release procedure once and record `idc-finish` only after
+the changed real workflow passes.
 Never count health checks or MCP initialization alone as business acceptance.
 
 If CI or release fails, record `fail`. Do not retry the frozen candidate. Make a
