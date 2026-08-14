@@ -761,6 +761,84 @@ def test_failed_provider_probe_cannot_leave_provider_healthy_or_leak_error_conte
         }
 
 
+def test_automatic_provider_probe_refreshes_enabled_due_configuration_and_audits_system_trigger(
+    client, admin_headers, monkeypatch
+):
+    """Normal active use must not require an administrator to re-probe every 15 minutes."""
+    from app.services import assistant_config, scheduler
+
+    provider_id = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-auto-refresh")
+    stale_at = assistant_config._utcnow() - assistant_config.PROBE_REFRESH_INTERVAL
+    with SessionLocal() as db:
+        row = db.get(AiProviderConfig, provider_id)
+        row.last_probed_at = stale_at
+        db.commit()
+
+    class SuccessfulProbe:
+        async def probe(self):
+            return ProviderProbe(
+                success=True,
+                supports_streaming=True,
+                supports_tools=True,
+                supports_json_schema=True,
+                checked_at=datetime.now(timezone.utc),
+                model="test-model",
+            )
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(assistant_config, "_provider_for_probe", lambda _row: SuccessfulProbe())
+    _run(scheduler.scan_ai_provider_probe_refresh())
+
+    with SessionLocal() as db:
+        refreshed = db.get(AiProviderConfig, provider_id)
+        assert refreshed.enabled is True
+        assert refreshed.probe_status == "success"
+        assert refreshed.last_probed_at > stale_at
+        audit_row = (
+            db.query(AuditLog)
+            .filter_by(entity_type="ai_provider_config", entity_id=provider_id, action="probe")
+            .order_by(AuditLog.created_at.desc())
+            .first()
+        )
+        assert audit_row is not None
+        assert audit_row.actor is None
+        assert audit_row.actor_name is None
+        assert audit_row.summary["trigger"] == "automatic"
+
+    # A second backend pod can have selected the same provider before the first
+    # pod completed its network call.  It must skip the now-fresh record after
+    # acquiring the provider lock rather than probing and auditing it again.
+    with SessionLocal() as db:
+        duplicate = _run(
+            assistant_config.probe_provider(
+                db,
+                provider_id,
+                None,
+                trigger="automatic",
+                require_enabled=True,
+            )
+        )
+        assert duplicate is None
+
+
+def test_automatic_provider_probe_skips_fresh_or_disabled_provider(client, admin_headers, monkeypatch):
+    """Only enabled providers whose probe is due may consume periodic probe capacity."""
+    from app.services import assistant_config
+
+    fresh_id = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-auto-fresh")
+    disabled_id = _create_healthy_provider(client, admin_headers, monkeypatch, "wa0-auto-disabled")
+    with SessionLocal() as db:
+        db.get(AiProviderConfig, disabled_id).enabled = False
+        db.commit()
+
+    with SessionLocal() as db:
+        due_provider_ids = assistant_config.list_provider_ids_due_for_automatic_probe(db)
+        assert fresh_id not in due_provider_ids
+        assert disabled_id not in due_provider_ids
+
+
 def test_profile_bootstrap_is_fixed_and_draft_updates_reject_stale_or_unsafe_content(
     client, admin_headers, monkeypatch
 ):

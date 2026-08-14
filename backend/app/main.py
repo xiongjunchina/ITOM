@@ -76,10 +76,19 @@ async def lifespan(app: FastAPI):
     async with mcp_runtime.run():
         task = asyncio.create_task(scheduler.run_forever())
         outbox_task = asyncio.create_task(scheduler.run_aily_outbox_forever())
+        provider_probe_task = asyncio.create_task(
+            scheduler.run_ai_provider_probe_refresh_forever()
+        )
         yield
         task.cancel()
         outbox_task.cancel()
-        await asyncio.gather(task, outbox_task, return_exceptions=True)
+        provider_probe_task.cancel()
+        await asyncio.gather(
+            task,
+            outbox_task,
+            provider_probe_task,
+            return_exceptions=True,
+        )
 
 
 app = FastAPI(title="IT运营管理平台 API", version="0.9.0-m9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")

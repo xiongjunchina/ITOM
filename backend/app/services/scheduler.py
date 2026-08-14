@@ -1,4 +1,4 @@
-"""内置定时扫描（docs/05 §5）：每 15 分钟。M2 交付 SLA 临期升级。"""
+"""内置定时扫描：SLA 升级、Aily 发件箱和 AI 提供商安全复探。"""
 import asyncio
 import logging
 from datetime import datetime
@@ -13,6 +13,7 @@ logger = logging.getLogger("aom.scheduler")
 
 INTERVAL_SECONDS = 15 * 60
 AILY_OUTBOX_INTERVAL_SECONDS = 5
+AI_PROVIDER_PROBE_REFRESH_INTERVAL_SECONDS = 10 * 60
 WARN_RATIO = 0.8  # PRD §5.1：超 SLA 目标 80% 未解决触发升级
 
 
@@ -179,3 +180,43 @@ async def run_aily_outbox_forever():
         except Exception:
             logger.exception("Aily outbox scan failed")
         await asyncio.sleep(AILY_OUTBOX_INTERVAL_SECONDS)
+
+
+async def scan_ai_provider_probe_refresh():
+    """Refresh unchanged enabled model-provider probes before their 15m expiry."""
+    from app.core.errors import AppError
+    from app.services import assistant_config
+
+    with SessionLocal() as db:
+        provider_ids = assistant_config.list_provider_ids_due_for_automatic_probe(db)
+
+    for provider_id in provider_ids:
+        with SessionLocal() as db:
+            try:
+                result = await assistant_config.probe_provider(
+                    db,
+                    provider_id,
+                    None,
+                    trigger="automatic",
+                    require_enabled=True,
+                )
+                if result is not None:
+                    logger.info("automatic AI provider probe succeeded: provider_id=%s", provider_id)
+            except AppError as exc:
+                logger.warning(
+                    "automatic AI provider probe failed: provider_id=%s code=%s",
+                    provider_id,
+                    exc.code,
+                )
+            except Exception:
+                logger.exception("automatic AI provider probe failed: provider_id=%s", provider_id)
+
+
+async def run_ai_provider_probe_refresh_forever():
+    """Keep active, unchanged model providers safely verified without UI work."""
+    while True:
+        try:
+            await scan_ai_provider_probe_refresh()
+        except Exception:
+            logger.exception("AI provider probe refresh scanner failed")
+        await asyncio.sleep(AI_PROVIDER_PROBE_REFRESH_INTERVAL_SECONDS)

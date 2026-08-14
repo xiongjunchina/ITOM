@@ -23,7 +23,11 @@ from app.services.audit import audit
 from app.services.secrets_store import encrypt_secret
 
 
+# A published AI profile accepts a successful provider probe for at most 15
+# minutes. Refresh it sooner in the background so normal use does not depend
+# on an administrator repeatedly clicking "probe".
 PROBE_MAX_AGE = timedelta(minutes=15)
+PROBE_REFRESH_INTERVAL = timedelta(minutes=10)
 AI_PROVIDER_GOVERNANCE_LOCK_KEY = 0x49544F4D41495052
 PROFILE_AUDIENCES = {
     "requester": "requester",
@@ -191,6 +195,43 @@ def _probe_is_usable(row: AiProviderConfig) -> bool:
     return timedelta(0) <= age <= PROBE_MAX_AGE and probe.get("authentication") is True and probe.get("supports_streaming") is True
 
 
+def _provider_probe_refresh_due(
+    row: AiProviderConfig, *, now: datetime | None = None
+) -> bool:
+    """Return whether an enabled provider needs its background safety probe.
+
+    A configuration or secret change disables the provider in ``update_provider``.
+    The scheduler consequently refreshes only an unchanged enabled configuration;
+    a changed configuration still needs an administrator's explicit probe.
+    """
+
+    if row.is_deleted or not row.enabled:
+        return False
+    if row.last_probed_at is None:
+        return True
+    age = (now or _utcnow()) - row.last_probed_at
+    return age < timedelta(0) or age >= PROBE_REFRESH_INTERVAL
+
+
+def list_provider_ids_due_for_automatic_probe(
+    db: Session, *, now: datetime | None = None
+) -> list[str]:
+    """List enabled providers whose verified safety probe should be refreshed."""
+
+    checked_at = now or _utcnow()
+    rows = (
+        db.query(AiProviderConfig)
+        .filter(AiProviderConfig.is_deleted.is_(False), AiProviderConfig.enabled.is_(True))
+        .order_by(AiProviderConfig.created_at.asc(), AiProviderConfig.id.asc())
+        .all()
+    )
+    return [
+        row.id
+        for row in rows
+        if _provider_probe_refresh_due(row, now=checked_at)
+    ]
+
+
 def create_provider(db: Session, values: dict[str, Any], actor: AuthUser) -> dict[str, Any]:
     _lock_provider_governance(db)
     if values.get("enabled"):
@@ -315,12 +356,30 @@ def _provider_probe_snapshot(row: AiProviderConfig) -> SimpleNamespace:
     )
 
 
-async def probe_provider(db: Session, provider_id: str, actor: AuthUser) -> dict[str, Any]:
-    """Probe outside DB locks and persist only for the unchanged configuration."""
+async def probe_provider(
+    db: Session,
+    provider_id: str,
+    actor: AuthUser | None,
+    *,
+    trigger: str = "manual",
+    require_enabled: bool = False,
+) -> dict[str, Any] | None:
+    """Probe outside DB locks and persist only for the unchanged configuration.
+
+    ``require_enabled`` is used by the background refresh loop. It guarantees
+    that a configuration changed since its last manual verification is not
+    silently re-enabled by a scheduled task.
+    """
     # Phase A: serialize and snapshot a validated configuration, then release
     # all advisory/row/transaction locks before any network await.
     _lock_provider_governance(db)
     row = _provider_or_404(db, provider_id)
+    # The scheduler first finds due providers without holding the advisory lock.
+    # Re-check both conditions after the lock is acquired so another backend pod
+    # that refreshed the same provider first does not issue a duplicate probe.
+    if require_enabled and (not row.enabled or not _provider_probe_refresh_due(row)):
+        db.rollback()
+        return None
     _validate_provider_config({
         "provider_type": row.provider_type,
         "api_base_url": row.api_base_url,
@@ -417,6 +476,7 @@ async def probe_provider(db: Session, provider_id: str, actor: AuthUser) -> dict
         actor,
         {
             "probe_status": row.probe_status,
+            "trigger": trigger,
             "capabilities": _safe_capability_probe(capabilities),
         },
     )

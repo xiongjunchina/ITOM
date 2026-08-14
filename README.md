@@ -100,7 +100,7 @@ BUILD_SCOPE=frontend ./push-images.sh
 DEPLOY_SCOPE=frontend SKIP_DATABASE=1 ./k8s-deploy.sh
 ```
 
-`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。默认 `BUILD_SCOPE=all`；经变更范围复核后可显式使用 `backend` 或 `frontend`，只构建、校验和推送对应镜像。PostgreSQL 基础镜像不再随每次应用发布重复镜像，只有显式 `MIRROR_POSTGRES=1` 才执行。对应的 `DEPLOY_SCOPE` 组件模式强制要求 `SKIP_DATABASE=1`，保留 Namespace、Secret、Ingress、PostgreSQL 和未选中的 Deployment，只更新并核验所选组件；共享部署文件或数据库结构变化必须使用全量模式和批准的检查点。发布构建继续使用固定基础镜像摘要、linux/amd64 架构校验和当前 Docker context。`k8s-deploy.sh` 无论组件或全量模式都验证实际镜像、前端到后端代理、外部 `/api/health` 与 MCP `initialize`。组件回滚使用相同 `DEPLOY_SCOPE` 和上一有效组件标签。`ALLOW_UNTRUSTED_TLS=1` 不得作为正式验收结果。Web Agent 模型提供商的出站主机由后端环境变量 `AI_PROVIDER_ALLOWED_HOSTS` 严格白名单控制；当前 IDC 清单仅允许 DashScope 的 `dashscope.aliyuncs.com`，不保存、读取或启用任何 API Key。切换提供商前必须同步调整白名单、重新发布后端并通过安全探测。
+`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。默认 `BUILD_SCOPE=all`；经变更范围复核后可显式使用 `backend` 或 `frontend`，只构建、校验和推送对应镜像。PostgreSQL 基础镜像不再随每次应用发布重复镜像，只有显式 `MIRROR_POSTGRES=1` 才执行。对应的 `DEPLOY_SCOPE` 组件模式强制要求 `SKIP_DATABASE=1`，保留 Namespace、Secret、Ingress、PostgreSQL 和未选中的 Deployment，只更新并核验所选组件；共享部署文件或数据库结构变化必须使用全量模式和批准的检查点。发布构建继续使用固定基础镜像摘要、linux/amd64 架构校验和当前 Docker context。`k8s-deploy.sh` 无论组件或全量模式都验证实际镜像、前端到后端代理、外部 `/api/health` 与 MCP `initialize`。组件回滚使用相同 `DEPLOY_SCOPE` 和上一有效组件标签。`ALLOW_UNTRUSTED_TLS=1` 不得作为正式验收结果。Web Agent 模型提供商的出站主机由后端环境变量 `AI_PROVIDER_ALLOWED_HOSTS` 严格白名单控制；当前 IDC 清单仅允许 DashScope 的 `dashscope.aliyuncs.com`，不保存、读取或启用任何 API Key。首次配置以及配置或密钥变更后必须手动通过安全探测；已启用且未变更的提供商由后端每 10 分钟自动复探，探测失败会自动停用。切换提供商前仍须同步调整白名单并重新发布后端。
 
 ### 目录结构
 ```

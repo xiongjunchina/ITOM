@@ -296,7 +296,7 @@ WA0 Task 1–2 已实现持久化基础及服务器内的策略/脱敏内核：�
 
 WA0 Task 3 已实现提供商中立的 `ModelProvider` 契约、OpenAI-compatible `/chat/completions` 适配器和 `AssistantGateway`。`AI_PROVIDER_ALLOWED_HOSTS` 必须配置逗号分隔的精确主机或显式 `*.受控后缀`；空白名单失败关闭。Base URL 只允许 HTTPS，禁止 URL 凭据、查询、片段和路径逃逸；路径按最多 8 轮、长度最多 2048 字符解码至稳定状态，残留、循环/歧义百分号编码及解码后分隔符、反斜杠或点段均拒绝。每个真实请求在发送前重新解析 DNS，并拒绝 loopback、private、link-local、multicast、unspecified、reserved 和 metadata 类地址；生产 DNS 只在专用有界 DNS/IO executor 中调用同步 `socket.getaddrinfo`，其容量准入和等待共用 `ChatRequest` 的 absolute deadline/剩余预算，不调用 `loop.getaddrinfo`、`asyncio.to_thread` 或默认 executor。DNS 满载或超时安全失败；解析成功后生产传输为该请求建立独立连接池，只向当次通过校验的字面 IP 集合拨号，HTTP origin/Host、TLS SNI 和证书主机校验仍使用原始白名单主机。环境代理和重定向均禁用；只有测试可注入 `httpx.MockTransport`，普通注入客户端拒绝。连接/读取超时分别由 `AI_PROVIDER_CONNECT_TIMEOUT_SECONDS`（默认 5）与 `AI_PROVIDER_READ_TIMEOUT_SECONDS`（默认 60）控制。
 
-当前 IDC 部署清单为 DashScope 百炼测试配置 `AI_PROVIDER_ALLOWED_HOSTS=dashscope.aliyuncs.com`。该项仅允许连接该受控主机，不保存、读取或启用任何 API Key；API Key 只能由管理员在 ITOM 的模型提供商页面录入并以加密形式保存。切换提供商前必须同步调整白名单、重新发布后端并完成安全探测。
+当前 IDC 部署清单为 DashScope 百炼测试配置 `AI_PROVIDER_ALLOWED_HOSTS=dashscope.aliyuncs.com`。该项仅允许连接该受控主机，不保存、读取或启用任何 API Key；API Key 只能由管理员在 ITOM 的模型提供商页面录入并以加密形式保存。首次配置以及配置或密钥变更后必须手动完成安全探测；已启用且未变更的提供商由后端每 10 分钟自动复探，以覆盖 15 分钟探测有效期，失败即自动停用并记录系统触发的脱敏审计。切换提供商前仍必须同步调整白名单并重新发布后端。
 
 `probe()` 依次独立执行并精确校验：认证基础响应、带合法 `[DONE]` 终止语义的流式响应、`tool_choice` 强制的唯一已提供工具名及合法参数、符合请求中 strict schema 常量/必填/禁额外字段约束的 JSON；提供商忽略某项时仅该能力标记为 false，认证、连接、超时或上游服务故障仍使探测失败。L2/L3 必须同时具备 `supports_streaming`、`supports_tools` 和 `supports_json_schema`，并满足启用、近期探测成功及同策略主/备条件。流式响应只接受可验证的 SSE delta、完整 JSON 对象工具参数、usage、受支持的 `stop/tool_calls` 终止原因和最终 `[DONE]`，见到 `[DONE]` 即停止读取并关闭响应；未知事件、非法 JSON、截断或缺失终止语义均失败关闭。主模型任何输出开始后失败不得切换备用。
 
