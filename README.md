@@ -100,7 +100,7 @@ BUILD_SCOPE=frontend ./push-images.sh
 DEPLOY_SCOPE=frontend SKIP_DATABASE=1 ./k8s-deploy.sh
 ```
 
-`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。默认 `BUILD_SCOPE=all`；经变更范围复核后可显式使用 `backend` 或 `frontend`，只构建、校验和推送对应镜像。PostgreSQL 基础镜像不再随每次应用发布重复镜像，只有显式 `MIRROR_POSTGRES=1` 才执行。对应的 `DEPLOY_SCOPE` 组件模式强制要求 `SKIP_DATABASE=1`，保留 Namespace、Secret、Ingress、PostgreSQL 和未选中的 Deployment，只更新并核验所选组件；共享部署文件或数据库结构变化必须使用全量模式和批准的检查点。发布构建继续使用固定基础镜像摘要、linux/amd64 架构校验和当前 Docker context。`k8s-deploy.sh` 无论组件或全量模式都验证实际镜像、前端到后端代理、外部 `/api/health` 与 MCP `initialize`。组件回滚使用相同 `DEPLOY_SCOPE` 和上一有效组件标签。`ALLOW_UNTRUSTED_TLS=1` 不得作为正式验收结果。
+`push-images.sh` 只在本机执行镜像构建和推送，不启动应用；默认标签为 `git-<commit前12位>-linux-amd64`。默认 `BUILD_SCOPE=all`；经变更范围复核后可显式使用 `backend` 或 `frontend`，只构建、校验和推送对应镜像。PostgreSQL 基础镜像不再随每次应用发布重复镜像，只有显式 `MIRROR_POSTGRES=1` 才执行。对应的 `DEPLOY_SCOPE` 组件模式强制要求 `SKIP_DATABASE=1`，保留 Namespace、Secret、Ingress、PostgreSQL 和未选中的 Deployment，只更新并核验所选组件；共享部署文件或数据库结构变化必须使用全量模式和批准的检查点。发布构建继续使用固定基础镜像摘要、linux/amd64 架构校验和当前 Docker context。`k8s-deploy.sh` 无论组件或全量模式都验证实际镜像、前端到后端代理、外部 `/api/health` 与 MCP `initialize`。组件回滚使用相同 `DEPLOY_SCOPE` 和上一有效组件标签。`ALLOW_UNTRUSTED_TLS=1` 不得作为正式验收结果。Web Agent 模型提供商的出站主机由后端环境变量 `AI_PROVIDER_ALLOWED_HOSTS` 严格白名单控制；当前 IDC 清单仅允许 DashScope 的 `dashscope.aliyuncs.com`，不保存、读取或启用任何 API Key。切换提供商前必须同步调整白名单、重新发布后端并通过安全探测。
 
 ### 目录结构
 ```
@@ -276,7 +276,7 @@ BUILD_SCOPE=frontend ./push-images.sh
 DEPLOY_SCOPE=frontend SKIP_DATABASE=1 ./k8s-deploy.sh
 ```
 
-`push-images.sh` builds and pushes images only; it does not start the application. It defaults to `BUILD_SCOPE=all`; after scope review, `backend` or `frontend` builds, verifies, and pushes only that component. PostgreSQL is mirrored only with explicit `MIRROR_POSTGRES=1`. Component `DEPLOY_SCOPE` requires `SKIP_DATABASE=1` and preserves the Namespace, Secrets, Ingress, PostgreSQL, and the unselected Deployment. Shared deployment or schema changes require full scope and the approved checkpoint. Pinned base digests, linux/amd64 checks, strict rollout and image verification, frontend-to-backend proxy checks, external `/api/health`, normal TLS, and MCP `initialize` remain mandatory. Component rollback uses the same scope and the previous valid component tag.
+`push-images.sh` builds and pushes images only; it does not start the application. It defaults to `BUILD_SCOPE=all`; after scope review, `backend` or `frontend` builds, verifies, and pushes only that component. PostgreSQL is mirrored only with explicit `MIRROR_POSTGRES=1`. Component `DEPLOY_SCOPE` requires `SKIP_DATABASE=1` and preserves the Namespace, Secrets, Ingress, PostgreSQL, and the unselected Deployment. Shared deployment or schema changes require full scope and the approved checkpoint. Pinned base digests, linux/amd64 checks, strict rollout and image verification, frontend-to-backend proxy checks, external `/api/health`, normal TLS, and MCP `initialize` remain mandatory. Component rollback uses the same scope and the previous valid component tag. Web Agent provider egress is strictly controlled by the backend `AI_PROVIDER_ALLOWED_HOSTS` environment allowlist; the current IDC manifest permits only DashScope at `dashscope.aliyuncs.com` and does not store, read, or enable any API key. A provider change must update the allowlist, redeploy the backend, and pass the security probe.
 
 ### Directory layout
 ```
