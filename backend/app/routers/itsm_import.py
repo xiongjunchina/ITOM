@@ -44,7 +44,8 @@ CATALOG_SHEETS = [
 CI_SHEET = Sheet("配置项", [
     Col("name", "名称", required=True),
     Col("category", "类别", required=True, enum=CI_CATEGORIES),
-    Col("owner_name", "负责人姓名", required=True, hint="须为系统中已有人员"),
+    Col("owner_name", "技术负责人姓名", required=True, hint="须为系统中已有在岗人员"),
+    Col("product_manager_name", "应用产品经理姓名", hint="仅类别为应用时可填写且必填；须为系统中已有在岗人员"),
     Col("status", "状态", enum=["运行中", "维护中", "已下线"], hint="留空默认运行中"),
     Col("environment", "环境", enum=["生产", "测试", "开发"]),
     Col("business_owner", "业务负责人"),
@@ -187,11 +188,25 @@ async def import_ci(file: UploadFile, db: Session = Depends(get_db), actor=Depen
             continue
         owner = members.get(r["owner_name"])
         if not owner:
-            errors.append({"row": r["_row"], "error": f"负责人「{r['owner_name']}」不是系统中的在岗人员"})
+            errors.append({"row": r["_row"], "error": f"技术负责人「{r['owner_name']}」不是系统中的在岗人员"})
+            continue
+        product_manager_name = r.get("product_manager_name")
+        product_manager_id = members.get(product_manager_name or "")
+        if r["category"] == "应用" and not product_manager_id:
+            error = (
+                f"应用产品经理「{product_manager_name}」不是系统中的在岗人员"
+                if product_manager_name
+                else "应用配置项必须填写应用产品经理姓名"
+            )
+            errors.append({"row": r["_row"], "error": error})
+            continue
+        if r["category"] != "应用" and product_manager_name:
+            errors.append({"row": r["_row"], "error": "应用产品经理姓名仅可填写在类别为应用的配置项中"})
             continue
         db.add(Ci(
             ci_code=gen_code(db, Ci, "ci_code", "CI"),
             name=r["name"], category=r["category"], owner=owner,
+            product_manager_id=product_manager_id,
             status=r.get("status") or "运行中",
             environment=r.get("environment"), business_owner=r.get("business_owner"),
             vendor_id=vendors.get(r.get("vendor_name") or ""),

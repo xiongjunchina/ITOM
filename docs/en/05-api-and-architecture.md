@@ -229,6 +229,8 @@ Task notification events use `notifier.notify()`: initial assignment or reassign
 
 `GET /api/task-management/reference/cis` returns only non-deleted, non-retired CMDB configuration items and readable product-manager information for the Bug form's “Affected system” field. It does not create a second system dictionary or grant CMDB write access. CMDB `owner` is the required technical owner for every CI; only an Application's `product_manager_id` is its Bug-confirmation and verification product manager. They may be the same person but are not duplicate fields. The backend rejects creating or editing an Application without a product manager. A legacy Application missing the value returns `PRODUCT_MANAGER_REQUIRED` on Bug registration; configure it and retry, then the registration snapshots that person.
 
+`GET /api/itsm-import/ci/template` returns the CMDB Excel template and `POST /api/itsm-import/ci` appends rows independently. **Technical owner name** maps to `owner`, while **Application product manager name** maps to `product_manager_id`; the latter may be filled only for, and is required by, an Application. Both names exactly match active system members. A missing or unknown Application product manager, or a product-manager value on a non-Application row, is returned as a row error; import never updates existing CIs or migrates historical data.
+
 `DELETE /api/tickets/{id}` first finalizes and soft-deletes every active process instance and unfinished task for the ticket after the existing record-level delete authorization, then soft-deletes the ticket and writes its audit record. A later `GET /api/tickets/{id}` for a previously existing, soft-deleted ticket returns HTTP 404 with `TICKET_DELETED` and “The ticket was withdrawn or deleted and its detail is unavailable”; a never-existing ID still returns `NOT_FOUND`. No deleted fields are returned. This gives in-app and Feishu/Aily historical links an accurate outcome; already-delivered external messages cannot be recalled.
 
 Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
@@ -356,6 +358,7 @@ POST /api/tickets/{id}/accept                  # target; actual acceptance times
 POST /api/tickets/{id}/confirm-resolution      # target; requester close or reopen, shared by web and MCP
 POST /api/integrations/feishu/card-actions     # P2.1; signed Feishu callback, no ITOM Bearer token
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # impact analysis (upstream/downstream + linked tickets)
+GET /api/itsm-import/ci/template | POST /api/itsm-import/ci # CMDB Excel template and row-by-row append import
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # live attainment rate
 GET/POST/PATCH /api/vendors | /api/contracts

@@ -227,6 +227,8 @@ Bug 创建成功后，网页可用通用附件接口依次上传零个或多个�
 
 `GET /api/task-management/reference/cis` 只返回未删除、未退役的 CMDB 配置项及其产品经理可读信息，供 Bug 登记页选择“所属系统”；它不维护第二套系统字典，也不放宽 `cmdb.view` 之外的写权限。CMDB 的 `owner` 是全部配置项均必填的技术负责人；仅“应用”类别的 `product_manager_id` 是 Bug 确认和验证关闭的产品经理，二者可为同一人但不是重复字段。后端拒绝新建或编辑时缺少产品经理的应用；历史应用缺值的 Bug 登记返回 `PRODUCT_MANAGER_REQUIRED`，补配后重新登记即可，登记成功后保存快照。
 
+`GET /api/itsm-import/ci/template` 返回 CMDB Excel 模板，`POST /api/itsm-import/ci` 按行追加导入。模板以“技术负责人姓名”映射 `owner`，以“应用产品经理姓名”映射 `product_manager_id`；后者仅“应用”类别可填写且必填。两列均按系统中在岗人员姓名精确匹配，缺失或无法匹配的应用产品经理、以及非应用填写产品经理，均返回该行错误；导入不更新既有配置项，也不迁移历史数据。
+
 绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
 
 #### 禁止工具
@@ -354,6 +356,7 @@ POST /api/tickets/{id}/accept                  # 目标：实际受理打点，�
 POST /api/tickets/{id}/confirm-resolution      # 目标：提交人确认关闭或未解决重开；网页与 MCP 共用服务
 POST /api/integrations/feishu/card-actions     # P2.1：飞书新版验签卡片回调；无需 ITOM Bearer Token
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # 影响分析(上下游+关联工单)
+GET /api/itsm-import/ci/template | POST /api/itsm-import/ci # CMDB Excel 模板与逐行追加导入
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # 实时达成率
 GET/POST/PATCH /api/vendors | /api/contracts

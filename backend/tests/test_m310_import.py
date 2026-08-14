@@ -8,8 +8,9 @@ from openpyxl import Workbook, load_workbook
 
 @pytest.fixture(scope="module")
 def ctx(client, admin_headers):
-    m = client.post("/api/members", json={"name": "导入负责人"}, headers=admin_headers).json()["data"]
-    return {"member": m["id"]}
+    owner = client.post("/api/members", json={"name": "导入负责人"}, headers=admin_headers).json()["data"]
+    product_manager = client.post("/api/members", json={"name": "导入产品经理"}, headers=admin_headers).json()["data"]
+    return {"member": owner["id"], "product_manager": product_manager["id"]}
 
 
 def _fill(ws, headers_row3: list[list]):
@@ -93,14 +94,44 @@ def test_catalog_two_sheet_import(client, admin_headers, ctx):
 
 def test_ci_import(client, admin_headers, ctx):
     content = _xlsx({"配置项": [
-        ["核心交换机", "网络", "导入负责人", "运行中", "生产", "", "华云科技", "", "2026-01-01", ""],
-        ["负责人不存在的CI", "服务器", "查无此人", "", "", "", "", "", None, ""],
+        ["核心交换机", "网络", "导入负责人", "", "运行中", "生产", "", "华云科技", "", "2026-01-01", ""],
+        ["负责人不存在的CI", "服务器", "查无此人", "", "", "", "", "", "", None, ""],
     ]})
     r = _upload(client, admin_headers, "/api/itsm-import/ci", content).json()["data"]
     assert r["created"] == 1 and len(r["failed"]) == 1
     cis = client.get("/api/cis", headers=admin_headers).json()["data"]
     sw = next(c for c in cis if c["name"] == "核心交换机")
     assert sw["category"] == "网络" and sw["vendor_name"] == "华云科技"
+
+
+def test_ci_template_and_application_product_manager_import(client, admin_headers, ctx):
+    template = client.get("/api/itsm-import/ci/template", headers=admin_headers)
+    assert template.status_code == 200
+    workbook = load_workbook(io.BytesIO(template.content))
+    sheet = workbook["配置项"]
+    assert sheet.cell(row=1, column=3).value == "*技术负责人姓名"
+    assert sheet.cell(row=1, column=4).value == "应用产品经理姓名"
+    hint = sheet.cell(row=2, column=4).value or ""
+    assert "类别为应用" in hint and "必填" in hint
+
+    content = _xlsx({"配置项": [
+        ["导入应用产品经理", "应用", "导入负责人", "导入产品经理", "运行中", "生产", "", "", "", None, ""],
+        ["缺少产品经理的应用", "应用", "导入负责人", "", "运行中", "生产", "", "", "", None, ""],
+        ["未知产品经理的应用", "应用", "导入负责人", "查无此人", "运行中", "生产", "", "", "", None, ""],
+        ["非应用填写产品经理", "网络", "导入负责人", "导入产品经理", "运行中", "生产", "", "", "", None, ""],
+    ]})
+    result = _upload(client, admin_headers, "/api/itsm-import/ci", content).json()["data"]
+    assert result["created"] == 1 and len(result["failed"]) == 3
+    errors = [row["error"] for row in result["failed"]]
+    assert any("必须填写应用产品经理姓名" in error for error in errors)
+    assert any("应用产品经理「查无此人」不是系统中的在岗人员" in error for error in errors)
+    assert any("仅可填写在类别为应用" in error for error in errors)
+
+    cis = client.get("/api/cis", headers=admin_headers).json()["data"]
+    application = next(ci for ci in cis if ci["name"] == "导入应用产品经理")
+    assert application["owner_name"] == "导入负责人"
+    assert application["product_manager_id"] == ctx["product_manager"]
+    assert application["product_manager_name"] == "导入产品经理"
 
 
 def test_wrong_sheet_rejected(client, admin_headers):
