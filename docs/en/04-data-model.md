@@ -238,11 +238,46 @@ article_id + person, UNIQUE composite. Triggers the "marked helpful" points.
 
 ---
 
-## 3. Project Domain (6 tables)
+## 3. Project Domain and Portfolio Governance (14 tables)
 
 ### 3.1 portfolio — portfolio
 
-code [C], name, owner FK, year, description, status.
+`portfolio_code` [C], name, owner_id FK, year, description, status (draft/active/archived), planning_start, planning_end, budget_limit_10k, and sort.
+
+Creation always starts in draft and successful baseline publication activates the portfolio; a non-empty portfolio cannot be archived. Startup idempotently assigns stable `PF-LEGACY-NNNN` codes to existing portfolios, while new portfolios receive `PF-*` business codes.
+
+### 3.1.1 portfolio_objective
+
+portfolio_id FK, objective_code, name, description, metric_name, target_value, current_value, weight (0–100), owner_id FK, period_start/end, and status. The service caps active objective weights at 100%, and active objective codes are unique within a portfolio.
+
+### 3.1.2 portfolio_project — governed membership
+
+portfolio_id FK, project_id FK, governance_status, system_score [C], priority_rank, proposal_reason, decision_reason, objective_contributions JSONB, decided_by, and decided_at. `objective_contributions` is `[{objective_id, weight, note}]`, capped at 100% per project.
+
+This release permits one active primary portfolio per project. PostgreSQL partial unique indexes with `WHERE is_deleted=false` protect active `project_id`, active `(portfolio_id, project_id)`, and each non-null active `priority_rank` within a portfolio; ordinary UNIQUE constraints are intentionally avoided because they would prevent a soft-deleted membership from moving and later returning. `project.portfolio_id` remains the compatibility projection, while prior soft-deleted memberships and governance actions are retained.
+
+### 3.1.3 portfolio_scoring_rule / portfolio_project_score
+
+- `portfolio_scoring_rule`: portfolio_id, dimension_code, name, description, weight (0–100), evidence_required, active, and sort; dimension code is unique within a portfolio.
+- `portfolio_project_score`: portfolio_project_id, rule_id, score (0–100), evidence, scored_by, and scored_at; one current row per governed member/dimension.
+
+A system score exists only after every active dimension is scored and active weights equal exactly 100%. Governance actions and published baselines retain the historical evidence.
+
+### 3.1.4 project_dependency
+
+predecessor_project_id, successor_project_id, dependency_type, deliverable, due_date, owner_id, impact, status, and description. The database rejects self-dependencies and the domain service rejects active cycles. Internal WBS dependencies remain in `wbs_task.predecessor_ids`.
+
+### 3.1.5 project_resource_commitment
+
+project_id, person_id, role_name, start_date, end_date, allocation_percent (1–100), planned_person_days, and note. End date cannot precede start date. The portfolio dashboard aggregates overlapping intervals for each person and emits a warning above 100%; it persists no automatic schedule.
+
+### 3.1.6 portfolio_governance_action
+
+portfolio_id, nullable portfolio_project_id, action, reason, before_value JSONB, after_value JSONB, actor_id, and effective_at. It appends move, objective-contribution, score, decision, and baseline-publication facts and is not deleted with a project.
+
+### 3.1.7 portfolio_baseline
+
+portfolio_id, version, snapshot JSONB, published_by, and published_at, with unique `(portfolio_id, version)`. Each publication inserts an incrementing JSON-safe snapshot of the portfolio, objectives, scores, ranks, project-derived metrics, dependencies, and resource commitments; old versions are immutable.
 
 ### 3.2 project — project
 
@@ -253,7 +288,7 @@ code [C], name, owner FK, year, description, status.
 | Staged | latest_update (one-line update) |
 | Derived [C] | project_code, status, actual_start, actual_end, progress_pct (WBS-weighted), health_status (green/yellow/red, per PRD 6.1 rules), actual_cost_10k (rolled up from cost_entry) |
 
-> progress_pct / health_status / actual_cost_10k are **redundant computed columns**: on task/cost/milestone changes, the service layer recomputes and writes them back synchronously (to guarantee list-filtering performance); they are not user-maintained.
+> `progress_pct` / `health_status` / `actual_cost_10k` are real-time API-derived values and are not persisted on `project`. The portfolio dashboard reuses the same `compute_metrics` contract rather than introducing a second execution fact.
 
 ### 3.3 wbs_task — WBS task
 
@@ -418,7 +453,16 @@ erDiagram
     ticket }o--o{ problem : "problem_ticket"
     vendor ||--o{ contract : ""
     vendor ||--o{ ci : ""
-    portfolio ||--o{ project : "groups"
+    portfolio ||--o{ project : "primary compatibility field"
+    portfolio ||--o{ portfolio_objective : "objectives"
+    portfolio ||--o{ portfolio_project : "governed members"
+    portfolio ||--o{ portfolio_scoring_rule : "scoring rules"
+    portfolio ||--o{ portfolio_baseline : "immutable baselines"
+    portfolio ||--o{ portfolio_governance_action : "governance actions"
+    project ||--o{ portfolio_project : "one active membership"
+    portfolio_project ||--o{ portfolio_project_score : "dimension scores"
+    project ||--o{ project_dependency : "predecessor or successor"
+    project ||--o{ project_resource_commitment : "resource commitments"
     project ||--o{ wbs_task : ""
     project ||--o{ milestone : ""
     project ||--o{ risk : ""

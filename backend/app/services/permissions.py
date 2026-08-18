@@ -33,6 +33,11 @@ MODULES = [
     ("contracts", "合同管理", "ITSM"),
     ("knowledge", "知识库", "ITSM"),
     ("projects", "项目管理（项目列表/项目组合）", "项目管理"),
+    ("portfolio_governance", "组合治理（目标/成员/依赖）", "项目管理"),
+    ("portfolio_scoring", "组合评分", "项目管理"),
+    ("portfolio_decision", "组合决策与基线", "项目管理"),
+    ("portfolio_resource", "组合资源承诺", "项目管理"),
+    ("portfolio_audit", "组合治理审计", "项目管理"),
     # 需求域按菜单页独立授权；只有 BDO/授权 IT 角色可登记需求，不能查看任务跟踪/评分规则。
     ("requirements", "需求总览（登记/评审/方案）", "需求管理"),
     ("req_tasks", "任务跟踪", "需求管理"),
@@ -94,7 +99,7 @@ MODULE_PAGES = {
 # 动作缩写：v=view c=create e=edit d=delete
 _BUSINESS_VIEW = [
     "dashboard", "ticket_sr", "ticket_incident", "ticket_change", "catalog", "cmdb", "sla",
-    "problems", "vendors", "contracts", "knowledge", "projects", "requirements",
+    "problems", "vendors", "contracts", "knowledge", "projects", "portfolio_governance", "requirements",
     "req_tasks", "req_scoring", "team_overview", "activities", "ideas", "charter",
     "task_development", "task_bug", "task_delegated",
 ]
@@ -123,7 +128,7 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "bdo": {"ticket_sr": "vc", "knowledge": "v", "requirements": "vc"},
     "auditor": _merge(
         {m: "v" for m in _BUSINESS_VIEW},
-        {"process_definitions": "v", "process_monitor": "v", "admin_audit": "v"},
+        {"process_definitions": "v", "process_monitor": "v", "portfolio_audit": "v", "admin_audit": "v"},
     ),
     "it_dev": _staff_base(),
     "it_bp": _merge(_staff_base(), {"requirements": "e"}),
@@ -133,8 +138,13 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "task_development": "vce",
                                              "task_bug": "vce", "task_delegated": "vce",
                                              "process_monitor": "v", "performance_review": "vce"}),
-    "it_pm": _merge(_staff_base(), {"projects": "ce"}),
-    "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
+    # PM 可提交自己负责项目的目标贡献和跨项目依赖；评分由 BM/PMO 执行。
+    "it_pm": _merge(_staff_base(), {"projects": "ce", "portfolio_governance": "vc", "portfolio_scoring": "v"}),
+    "it_pmo": _merge(_staff_base(), {
+        "projects": "ce", "portfolio_governance": "vce", "portfolio_scoring": "vce",
+        "portfolio_decision": "v", "portfolio_resource": "vce", "portfolio_audit": "v",
+        "process_monitor": "v", "performance": "v", "performance_review": "vce",
+    }),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
     "it_op_leader": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce",
                                            "contracts": "ce", "sla": "e", "process_monitor": "v", "performance_review": "vce"}),
@@ -143,17 +153,21 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "cio": _merge(_staff_base(), {
         "catalog": "ce", "cmdb": "ce", "problems": "ce", "vendors": "ce", "contracts": "ce",
         "projects": "ce", "requirements": "e", "positions": "vced", "activities": "e",
+        "portfolio_governance": "vce", "portfolio_scoring": "vce", "portfolio_decision": "vce",
+        "portfolio_resource": "vced", "portfolio_audit": "v",
         "ideas": "e", "charter": "e", "sla": "e",
         "performance": "vce", "performance_review": "vce", "performance_external": "vced",
         "performance_admin": "vce", "process_definitions": "v", "process_monitor": "v",
         "admin_business_domains": "vce", "admin_members": "vced", "admin_audit": "v",
     }),
     "it_bm": _merge(_staff_base(), {
-        "requirements": "e", "projects": "ce", "admin_business_domains": "v",
+        "requirements": "e", "projects": "ce", "portfolio_governance": "v",
+        "portfolio_scoring": "vce", "portfolio_audit": "v", "admin_business_domains": "v",
         "performance": "vce", "performance_review": "vce", "process_monitor": "v",
     }),
     "it_tm": _merge(_staff_base(), {
-        "activities": "e", "charter": "e", "performance": "vce", "performance_review": "vce",
+        "activities": "e", "charter": "e", "portfolio_governance": "v",
+        "portfolio_resource": "vced", "portfolio_audit": "v", "performance": "vce", "performance_review": "vce",
         "learning_growth": "vced", "ideas": "e", "process_monitor": "v", "admin_members": "vce",
     }),
 }

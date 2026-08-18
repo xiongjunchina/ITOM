@@ -153,13 +153,14 @@ def test_service_item_search_status_filter_and_sort(client, ctx):
     assert [row["name"] for row in descending] == sorted([first["name"], second["name"]], reverse=True)
 
 
-def test_portfolio_delete_unlinks_projects(client, ctx):
+def test_portfolio_delete_requires_projects_to_be_migrated(client, ctx):
     pf = client.post("/api/portfolios", json={"name": "M21组合"}, headers=ctx["admin"]).json()["data"]
     m = client.post("/api/members", json={"name": "PM-M21"}, headers=ctx["admin"]).json()["data"]
     p = client.post("/api/projects", json={"name": "M21组合内项目", "pm": m["id"],
                                            "planned_start": "2026-08-01", "planned_end": "2026-09-30",
                                            "portfolio_id": pf["id"]}, headers=ctx["admin"]).json()["data"]
     r = client.delete(f"/api/portfolios/{pf['id']}", headers=ctx["admin"])
-    assert r.json()["success"] and r.json()["data"]["projects_unlinked"] == 1
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "PORTFOLIO_NOT_EMPTY"
     d = client.get(f"/api/projects/{p['id']}", headers=ctx["admin"]).json()["data"]
-    assert d["portfolio_id"] is None
+    assert d["portfolio_id"] == pf["id"]

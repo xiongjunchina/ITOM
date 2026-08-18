@@ -28,7 +28,22 @@ from app.models.itsm_assets import (
     Vendor,
 )
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
-from app.models.project import CostEntry, Milestone, Portfolio, Project, Risk, WbsTask
+from app.models.project import (
+    CostEntry,
+    Milestone,
+    Portfolio,
+    PortfolioBaseline,
+    PortfolioGovernanceAction,
+    PortfolioObjective,
+    PortfolioProject,
+    PortfolioProjectScore,
+    PortfolioScoringRule,
+    Project,
+    ProjectDependency,
+    ProjectResourceCommitment,
+    Risk,
+    WbsTask,
+)
 from app.models.requirement import (
     Requirement,
     RequirementScore,
@@ -154,8 +169,16 @@ __all__ = [
     "PointEntry",
     "PointRule",
     "Portfolio",
+    "PortfolioBaseline",
+    "PortfolioGovernanceAction",
+    "PortfolioObjective",
+    "PortfolioProject",
+    "PortfolioProjectScore",
+    "PortfolioScoringRule",
     "Position",
     "Project",
+    "ProjectDependency",
+    "ProjectResourceCommitment",
     "Requirement",
     "RequirementScore",
     "RequirementScoringConfig",

@@ -44,6 +44,10 @@ class PortfolioIn(BaseModel):
     owner_id: str | None = None
     year: str | None = None
     description: str | None = None
+    status: str = Field(default="draft", pattern="^(draft|active|archived)$")
+    planning_start: date | None = None
+    planning_end: date | None = None
+    budget_limit_10k: float | None = Field(default=None, ge=0)
     sort: int = 0
 
 
@@ -162,8 +166,11 @@ def list_portfolios(db: Session = Depends(get_db), _=Depends(require_perm("proje
             s = stats.setdefault(p.portfolio_id, {"count": 0})
             s["count"] += 1
     return ok([
-        {"id": r.id, "name": r.name, "is_example": r.is_example, "owner_id": r.owner_id, "owner_name": names.get(r.owner_id),
-         "year": r.year, "description": r.description, "sort": r.sort,
+        {"id": r.id, "portfolio_code": r.portfolio_code, "name": r.name, "is_example": r.is_example,
+         "owner_id": r.owner_id, "owner_name": names.get(r.owner_id),
+         "year": r.year, "description": r.description, "status": r.status,
+         "planning_start": r.planning_start, "planning_end": r.planning_end,
+         "budget_limit_10k": r.budget_limit_10k, "sort": r.sort,
          "project_count": stats.get(r.id, {}).get("count", 0)}
         for r in rows
     ], total=len(rows))
@@ -174,9 +181,16 @@ def create_portfolio(body: PortfolioIn, db: Session = Depends(get_db), actor=Dep
     if db.query(Portfolio).filter(Portfolio.name == body.name, Portfolio.is_deleted.is_(False)).first():
         raise AppError("DUPLICATE", "组合名称已存在")
     require_it_member_if_configured(db, body.owner_id, "项目组合负责人")
-    row = Portfolio(**body.model_dump())
+    if body.planning_start and body.planning_end and body.planning_end < body.planning_start:
+        raise AppError("INVALID_DATES", "组合规划结束日期不能早于开始日期")
+    data = body.model_dump()
+    data["status"] = "draft"  # 只有发布不可变基线才能令组合生效。
+    row = Portfolio(**data, portfolio_code=gen_code(db, Portfolio, "portfolio_code", "PF"))
     db.add(row)
     db.flush()
+    from app.services.portfolio_governance import create_default_rules
+
+    create_default_rules(db, row.id)
     audit(db, "portfolio", row.id, "create", actor, {"name": body.name})
     db.commit()
     return ok({"id": row.id})
@@ -189,7 +203,9 @@ def update_portfolio(portfolio_id: str, body: PortfolioIn, db: Session = Depends
         raise AppError("NOT_FOUND", "组合不存在", 404)
     ensure_not_example(row)
     require_it_member_if_configured(db, body.owner_id, "项目组合负责人")
-    for k, v in body.model_dump().items():
+    if body.planning_start and body.planning_end and body.planning_end < body.planning_start:
+        raise AppError("INVALID_DATES", "组合规划结束日期不能早于开始日期")
+    for k, v in body.model_dump(exclude={"status"}).items():
         setattr(row, k, v)
     audit(db, "portfolio", row.id, "update", actor, {"name": body.name})
     db.commit()
@@ -198,19 +214,19 @@ def update_portfolio(portfolio_id: str, body: PortfolioIn, db: Session = Depends
 
 @router.delete("/api/portfolios/{portfolio_id}")
 def delete_portfolio(portfolio_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "delete"))):
-    """删除项目组合（M21，软删）：组合仅是分组，成员项目解除挂接后保留。"""
+    """归档空组合；存在成员项目时必须先迁移，禁止无审计批量解除挂接。"""
     row = db.get(Portfolio, portfolio_id)
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "组合不存在", 404)
     ensure_example_delete_allowed(row, db, actor)
-    unlinked = 0
-    for p in db.query(Project).filter(Project.portfolio_id == row.id, Project.is_deleted.is_(False)):
-        p.portfolio_id = None
-        unlinked += 1
+    project_count = db.query(Project).filter(Project.portfolio_id == row.id, Project.is_deleted.is_(False)).count()
+    if project_count:
+        raise AppError("PORTFOLIO_NOT_EMPTY", "组合仍有关联项目，请先完成项目迁移后再归档")
+    row.status = "archived"
     row.is_deleted = True
-    audit(db, "portfolio", row.id, "delete", actor, {"name": row.name, "projects_unlinked": unlinked})
+    audit(db, "portfolio", row.id, "archive", actor, {"name": row.name})
     db.commit()
-    return ok({"id": row.id, "projects_unlinked": unlinked})
+    return ok({"id": row.id, "archived": True})
 
 
 # ---------- 项目 ----------
@@ -328,6 +344,9 @@ def _create_project(db: Session, data: dict, actor: AuthUser) -> Project:
     )
     db.add(project)
     db.flush()
+    from app.services.portfolio_governance import ensure_primary_membership
+
+    ensure_primary_membership(db, project, actor)
     process_engine.start_instance(db, "project", project.id, {}, preferred_assignee=project.pm)
     audit(db, "project", project.id, "create", actor, {"code": project.project_code, "name": project.name})
     publish(db, "project.created", "project", project.id, {"code": project.project_code})
@@ -432,6 +451,10 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
         setattr(p, k, v)
     if p.planned_end < p.planned_start:
         raise AppError("INVALID_DATES", "计划结束不能早于计划开始")
+    if "portfolio_id" in data:
+        from app.services.portfolio_governance import ensure_primary_membership
+
+        ensure_primary_membership(db, p, actor)
     audit(db, "project", p.id, "update", actor, {"fields": list(data.keys()), "workflow_edit_mode": access.mode})
     db.commit()
     return ok({"id": p.id})
@@ -452,7 +475,9 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
     from app.models import Attachment, PointEntry, ProcessInstance, ProcessTask, Requirement
 
     stats = {"wbs": 0, "milestones": 0, "costs": 0, "risks": 0, "attachments": 0,
-             "process_instances": 0, "requirements_unlinked": 0, "point_entries": 0}
+             "process_instances": 0, "requirements_unlinked": 0, "point_entries": 0,
+             "portfolio_memberships": 0, "portfolio_scores": 0,
+             "project_dependencies": 0, "resource_commitments": 0}
     wbs_ids: list[str] = []
     for t in db.query(WbsTask).filter(WbsTask.project_id == p.id, WbsTask.is_deleted.is_(False)):
         t.is_deleted = True
@@ -486,6 +511,45 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
         for pe in db.query(PointEntry).filter(PointEntry.source_ref.in_(wbs_ids), PointEntry.is_deleted.is_(False)):
             pe.is_deleted = True
             stats["point_entries"] += 1
+    # 组合治理引用随项目归档：成员/最新评分/依赖/资源承诺停止参与实时看板，
+    # 历史治理动作与已发布基线保留为不可变审计证据。
+    from app.models import (
+        PortfolioProject,
+        PortfolioProjectScore,
+        ProjectDependency,
+        ProjectResourceCommitment,
+    )
+
+    memberships = db.query(PortfolioProject).filter(
+        PortfolioProject.project_id == p.id,
+        PortfolioProject.is_deleted.is_(False),
+    ).all()
+    membership_ids = [row.id for row in memberships]
+    for row in memberships:
+        row.is_deleted = True
+        stats["portfolio_memberships"] += 1
+    if membership_ids:
+        for row in db.query(PortfolioProjectScore).filter(
+            PortfolioProjectScore.portfolio_project_id.in_(membership_ids),
+            PortfolioProjectScore.is_deleted.is_(False),
+        ):
+            row.is_deleted = True
+            stats["portfolio_scores"] += 1
+    for row in db.query(ProjectDependency).filter(
+        or_(
+            ProjectDependency.predecessor_project_id == p.id,
+            ProjectDependency.successor_project_id == p.id,
+        ),
+        ProjectDependency.is_deleted.is_(False),
+    ):
+        row.is_deleted = True
+        stats["project_dependencies"] += 1
+    for row in db.query(ProjectResourceCommitment).filter(
+        ProjectResourceCommitment.project_id == p.id,
+        ProjectResourceCommitment.is_deleted.is_(False),
+    ):
+        row.is_deleted = True
+        stats["resource_commitments"] += 1
     p.is_deleted = True
     audit(db, "project", p.id, "delete", actor, {
         "code": p.project_code, **stats, "workflow_delete_mode": access.mode,

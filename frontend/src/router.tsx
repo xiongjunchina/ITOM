@@ -42,6 +42,7 @@ import DevelopmentTasksPage from './pages/task-management/DevelopmentTasksPage';
 import DelegatedTasksPage from './pages/task-management/DelegatedTasksPage';
 import RequirementScoring from './pages/admin/RequirementScoring';
 import ProjectDetail from './pages/projects/ProjectDetail';
+import PortfolioGovernance from './pages/projects/PortfolioGovernance';
 import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
 import UserManual from './pages/UserManual';
@@ -128,6 +129,7 @@ export const router = createBrowserRouter([
       { path: 'projects', element: <LegacyProjectsRedirect /> },
       { path: 'projects/list', element: <Projects pane="list" /> },
       { path: 'projects/portfolios', element: <Projects pane="portfolios" /> },
+      { path: 'projects/portfolios/:id', element: <PortfolioGovernance /> },
       { path: 'projects/:id', element: <ProjectDetail /> },
 
       // 需求管理（M5 交付）

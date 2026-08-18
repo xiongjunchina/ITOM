@@ -58,6 +58,7 @@ const ROUTE_RULES: ContextRule[] = [
   { pattern: /^\/itsm\/problems\/([0-9A-HJKMNP-TV-Z]{26})$/, pageType: 'problem_detail', entityType: 'problem' },
   { pattern: /^\/itsm\/knowledge\/([0-9A-HJKMNP-TV-Z]{26})(?:\/edit)?$/, pageType: 'knowledge_detail', entityType: 'knowledge' },
   { pattern: /^\/projects\/([0-9A-HJKMNP-TV-Z]{26})$/, pageType: 'project_detail', entityType: 'project' },
+  { pattern: /^\/projects\/portfolios\/([0-9A-HJKMNP-TV-Z]{26})$/, pageType: 'portfolio_detail', entityType: 'portfolio' },
   { pattern: /^\/requirements\/([0-9A-HJKMNP-TV-Z]{26})$/, pageType: 'requirement_detail', entityType: 'requirement' },
   { pattern: /^\/team\/performance\/review\/([0-9A-HJKMNP-TV-Z]{26})$/, pageType: 'performance_review', entityType: 'person' },
   ...STATIC_PAGES.map(([path, pageType, tabs]) => ({

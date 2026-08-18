@@ -1302,15 +1302,143 @@ export const HEALTH_META: Record<ProjectHealth, { color: string; label: string }
 /** 项目组合 */
 export interface Portfolio {
   id: string;
+  portfolio_code: string | null;
   name: string;
   owner_id: string | null;
   owner_name: string | null;
   year: string | null;
   description: string | null;
+  status: 'draft' | 'active' | 'archived' | string;
+  planning_start: string | null;
+  planning_end: string | null;
+  budget_limit_10k: number | null;
   sort: number;
   project_count: number;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+}
+
+export interface PortfolioObjective {
+  id: string;
+  objective_code: string;
+  name: string;
+  description: string | null;
+  metric_name: string | null;
+  target_value: number | null;
+  current_value: number | null;
+  weight: number;
+  owner_id: string | null;
+  owner_name: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  status: string;
+}
+
+export interface PortfolioScoringRule {
+  id: string;
+  dimension_code: string;
+  name: string;
+  description: string | null;
+  weight: number;
+  evidence_required: boolean;
+  active: boolean;
+  sort: number;
+}
+
+export interface PortfolioGovernedProject {
+  membership_id: string;
+  project_id: string;
+  project_code: string;
+  name: string;
+  pm: string;
+  pm_name: string | null;
+  status: string;
+  governance_status: string;
+  system_score: number | null;
+  priority_rank: number | null;
+  proposal_reason: string | null;
+  decision_reason: string | null;
+  objective_contributions: Array<{ objective_id: string; weight: number; note?: string | null }>;
+  scores: Record<string, number>;
+  score_details: Record<string, { score: number; evidence: string | null; scored_by: string; scored_at: string }>;
+  progress: number | null;
+  planned_progress: number | null;
+  health: ProjectHealth;
+  actual_cost_10k: number;
+  budget_10k: number | null;
+  milestone_overdue: number;
+  red_risks: number;
+}
+
+export interface ProjectDependencyRow {
+  id: string;
+  predecessor_project_id: string;
+  predecessor_project_name: string | null;
+  successor_project_id: string;
+  successor_project_name: string | null;
+  dependency_type: string;
+  deliverable: string;
+  due_date: string | null;
+  owner_id: string | null;
+  owner_name: string | null;
+  impact: string;
+  status: string;
+  description: string | null;
+}
+
+export interface ResourceCommitmentRow {
+  id: string;
+  project_id: string;
+  project_name: string | null;
+  person_id: string;
+  person_name: string | null;
+  role_name: string | null;
+  start_date: string;
+  end_date: string;
+  allocation_percent: number;
+  planned_person_days: number | null;
+  note: string | null;
+}
+
+export interface ResourceConflictRow {
+  person_id: string;
+  person_name: string | null;
+  start_date: string;
+  end_date: string;
+  allocation_percent: number;
+  commitments: Array<{ id: string; project_id: string; project_name: string | null; allocation_percent: number }>;
+}
+
+export interface PortfolioDashboard {
+  portfolio: Portfolio;
+  summary: {
+    project_count: number;
+    admitted_count: number;
+    pending_decisions: number;
+    health: Record<string, number>;
+    budget_10k: number;
+    actual_cost_10k: number;
+    open_dependencies: number;
+    resource_conflict_count: number;
+  };
+  objectives: PortfolioObjective[];
+  projects: PortfolioGovernedProject[];
+  dependencies: ProjectDependencyRow[];
+  resource_commitments: ResourceCommitmentRow[];
+  resource_conflicts: ResourceConflictRow[];
+  scoring_rules: PortfolioScoringRule[];
+  latest_baseline: { id: string; version: number; published_by: string; published_at: string } | null;
+}
+
+export interface PortfolioGovernanceActionRow {
+  id: string;
+  portfolio_project_id: string | null;
+  action: string;
+  reason: string;
+  before_value: Record<string, unknown> | null;
+  after_value: Record<string, unknown> | null;
+  actor_id: string;
+  effective_at: string;
 }
 
 /** 项目列表行（含后端实时计算的派生指标） */

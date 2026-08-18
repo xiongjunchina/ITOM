@@ -119,7 +119,7 @@ ITOM 领域事件 → 可靠通知发件箱 → Aily 机器人飞书消息 → �
 用户回复 → Aily → MCP → ITOM 确认、重开或评价
 ```
 
-IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。当前 IDC 前端仅限节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两个前端副本以必需主机反亲和分布；节点 03 不再承载 ITOM 前端。前端滚动更新采用 `maxSurge: 0` 与 `maxUnavailable: 1`，在仅有节点 01/02 可运行时先释放旧副本占用的节点，再创建替换副本，避免默认超额副本与强制反亲和导致发布卡住。后端固定节点 02，数据库 StatefulSet/PVC 与备份 Job 不属于应用重部署范围。经批准的非数据库应用恢复使用 `SKIP_DATABASE=1 ./k8s-deploy.sh`，明确跳过 PostgreSQL 清单 apply 与 StatefulSet 等待，不删除、重启或重新调度数据库 Pod/PVC；涉及结构迁移的版本不得使用该模式。默认禁止在本地启动 ITOM 应用栈、数据库、Docker Compose、8180 或 ngrok；只有用户明确要求临时隔离排障时才允许例外，且不能作为交付证据。
+IDC Kubernetes 是唯一生产交付和最终验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。当前 IDC 前端仅限节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两个前端副本以必需主机反亲和分布；节点 03 不再承载 ITOM 前端。前端滚动更新采用 `maxSurge: 0` 与 `maxUnavailable: 1`，在仅有节点 01/02 可运行时先释放旧副本占用的节点，再创建替换副本，避免默认超额副本与强制反亲和导致发布卡住。后端固定节点 02，数据库 StatefulSet/PVC 与备份 Job 不属于应用重部署范围。经批准的非数据库应用恢复使用 `SKIP_DATABASE=1 ./k8s-deploy.sh`，明确跳过 PostgreSQL 清单 apply 与 StatefulSet 等待，不删除、重启或重新调度数据库 Pod/PVC；涉及结构迁移的版本不得使用该模式。仓库 Compose 仅可在确认 `feature-local` 路线或另行批准临时隔离排障后启动，且不得包含生产数据、凭据、Secret、OAuth/Aily 应用、回调或集成；本地业务 UAT 只证明候选版本，不能替代 IDC 正式验收，ngrok 仍须另行批准。
 
 提交前可按指定基线运行 `scripts/fast-check.sh` 获得后端、前端或文档范围的快速反馈；共享/未知路径失败安全地升级为全量检查。提交仍先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端契约测试与生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor；默认全量，经范围复核可只发布 backend 或 frontend，PostgreSQL 镜像仅显式请求时同步。组件级 `k8s-deploy.sh` 强制跳过数据库并保留共享资源和未选中 Deployment；全量和组件模式都严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
 
@@ -340,6 +340,10 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 - 指定 ITOM 审批节点接入飞书审批并做双向幂等（按用户决定暂缓，不阻塞当前发布加固）；
 - IDC 公网入口已替换为受信 TLS；继续完成安全、性能、故障恢复和当前版本真实角色 UAT；
 - 从 `feature/AI-agent-version` 发起用户确认的 PR 合入 `main`。
+
+### 项目组合治理边界（2026-08-18）
+
+项目组合治理本期只增加 ITOM 网页与领域 API，仍以项目、WBS、风险、成本、权限和审计为事实来源。它不修改 Aily JWT、MCP transport、身份映射、回调、通知或 Web Agent 能力注册；没有新增组合读取或写入工具。`PortfolioGovernance` 页面只把受控 `page=portfolio_detail` 与组合 GLID 放入既有网页上下文白名单，不读取 DOM，也不授予任何动作。未来若要让 Aily/MCP 或 Web Agent 操作组合，必须另行完成能力风险分级、领域服务封装、记录级重授权、L3 预览确认、幂等与真实角色验收，不能直接复用本期网页 API 作为隐式工具权限。
 
 ## 11. 完成交付标准
 

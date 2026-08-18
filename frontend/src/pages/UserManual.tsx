@@ -105,14 +105,16 @@ const ZH_SECTIONS: ManualSection[] = [
   {
     id: 'projects',
     title: '项目管理',
-    summary: '管理项目立项、组合、章程、里程碑、WBS 和交付进度。',
+    summary: '管理项目立项、组合目标与优先级、章程、里程碑、WBS 和交付进度。',
     logic: [
       '项目经理只能从数字化团队成员中选择。章程导入可解析目标、范围、组织、里程碑和 WBS 草稿。',
       'WBS 完成度提供 0%/50%/100% 预设，也支持填写 0–100% 自定义比例。',
       '父级设为 100% 会级联子级；修改子级后父级按直接子项平均值递归回算。项目进度按末级任务工期加权。',
       'WBS 支持冻结表头和前三列、列宽/行高调整以及底部横向滚动条。',
+      '组合治理复用项目执行数据，维护目标贡献、五维证据评分、人工优先级、跨项目依赖、资源超配告警和不可变基线。',
+      '项目经理提交本人项目材料，BM/PMO 评分，TM 维护资源，CIO 决策并发布基线；系统不会因冲突告警自动改排期。',
     ],
-    steps: ['进入“项目管理 → 项目列表”，新建项目并填写经理、日期、预算和描述。', '需要时上传章程并确认解析结果。', '在项目详情维护里程碑和 WBS。', '按流程完成立项、执行监控和收尾复盘。'],
+    steps: ['进入“项目管理 → 项目列表”，新建项目并填写经理、日期、预算、主要组合和描述。', '需要时上传章程并确认解析结果。', '在项目详情维护里程碑和 WBS。', '进入“项目组合 → 治理总览”维护目标、评分、优先级、依赖和资源承诺。', '处理全部待治理项目后由 CIO 发布组合基线。'],
   },
   {
     id: 'requirements',
@@ -210,9 +212,9 @@ const EN_SECTIONS: ManualSection[] = [
     role: 'Business users normally see requests and knowledge; ITSM maintenance is permission-controlled.',
   },
   {
-    id: 'projects', title: 'Project management', summary: 'Manage charter, milestones, WBS, portfolios, and delivery progress.',
-    logic: ['Project managers are selected from the digital team.', 'WBS supports presets and custom 0–100% progress.', 'Parent 100% cascades to descendants; child changes roll up by direct-child average; overall progress is leaf-task duration weighted.', 'WBS freezes the header and first three columns and supports resizing.'],
-    steps: ['Create a project with manager, dates, budget, portfolio, and description.', 'Optionally upload a charter and confirm parsed content.', 'Maintain milestones and WBS in project detail.', 'Complete launch, monitoring, and closure workflow steps.'],
+    id: 'projects', title: 'Project management', summary: 'Manage charter, milestones, WBS, portfolio objectives and priority, and delivery progress.',
+    logic: ['Project managers are selected from the digital team.', 'WBS supports presets and custom 0–100% progress.', 'Parent 100% cascades to descendants; child changes roll up by direct-child average; overall progress is leaf-task duration weighted.', 'WBS freezes the header and first three columns and supports resizing.', 'Portfolio governance reuses project facts and adds objective contributions, five-dimension evidence scoring, a human rank, cross-project dependencies, allocation-conflict warnings, and immutable baselines.', 'PM submits own-project material, BM/PMO scores, TM maintains resources, and CIO decides and publishes; warnings never auto-reschedule work.'],
+    steps: ['Create a project with manager, dates, budget, one primary portfolio, and description.', 'Optionally upload a charter and confirm parsed content.', 'Maintain milestones and WBS in project detail.', 'Open Portfolio → Governance Overview to maintain objectives, scores, rank, dependencies, and commitments.', 'Resolve pending governance before CIO publishes a baseline.'],
   },
   {
     id: 'requirements', title: 'Requirement management', summary: 'Close the loop from registration and review through solution routing and acceptance.',

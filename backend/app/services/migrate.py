@@ -53,6 +53,14 @@ ENSURE_COLUMNS = {
         ("progress", "INTEGER NOT NULL DEFAULT 0"),
         ("remarks", "TEXT"),
     ],
+    "portfolio": [
+        # 项目组合治理：只增兼容列；存量项目归属通过 portfolio_project 幂等回填。
+        ("portfolio_code", "VARCHAR(32)"),
+        ("status", "VARCHAR(24) NOT NULL DEFAULT 'draft'"),
+        ("planning_start", "DATE"),
+        ("planning_end", "DATE"),
+        ("budget_limit_10k", "DOUBLE PRECISION"),
+    ],
     "hiring_need": [
         ("level", "VARCHAR(8) NOT NULL DEFAULT '中级'"),
         ("qualification", "TEXT"),
@@ -298,6 +306,78 @@ def backfill_development_task_codes(db: Session):
             f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table} (task_code)"
         ))
         db.execute(text(f"ALTER TABLE {table} ALTER COLUMN task_code SET NOT NULL"))
+    db.commit()
+
+
+def ensure_portfolio_governance_schema(db: Session):
+    """组合治理增量迁移：只补标识、默认规则和主要组合成员，不伪造历史决策。"""
+    from app.models import Portfolio, PortfolioProject, PortfolioScoringRule, Project
+    from app.services.portfolio_governance import DEFAULT_SCORING_RULES
+
+    portfolios = db.query(Portfolio).order_by(Portfolio.created_at, Portfolio.id).all()
+    used_codes = {row.portfolio_code for row in portfolios if row.portfolio_code}
+    sequence = 1
+    for portfolio in portfolios:
+        if not portfolio.portfolio_code:
+            code = f"PF-LEGACY-{sequence:04d}"
+            while code in used_codes:
+                sequence += 1
+                code = f"PF-LEGACY-{sequence:04d}"
+            portfolio.portfolio_code = code
+            used_codes.add(code)
+            sequence += 1
+        existing_rules = {
+            row.dimension_code for row in db.query(PortfolioScoringRule).filter(
+                PortfolioScoringRule.portfolio_id == portfolio.id,
+                PortfolioScoringRule.is_deleted.is_(False),
+            )
+        }
+        for sort, (dimension_code, name, weight) in enumerate(DEFAULT_SCORING_RULES):
+            if dimension_code not in existing_rules:
+                db.add(PortfolioScoringRule(
+                    portfolio_id=portfolio.id,
+                    dimension_code=dimension_code,
+                    name=name,
+                    weight=weight,
+                    evidence_required=True,
+                    active=True,
+                    sort=sort,
+                ))
+    db.flush()
+    for project in db.query(Project).filter(
+        Project.portfolio_id.is_not(None),
+        Project.is_deleted.is_(False),
+    ):
+        exists = db.query(PortfolioProject).filter(
+            PortfolioProject.project_id == project.id,
+            PortfolioProject.is_deleted.is_(False),
+        ).first()
+        if not exists:
+            db.add(PortfolioProject(
+                portfolio_id=project.portfolio_id,
+                project_id=project.id,
+                governance_status="admitted",
+                proposal_reason="存量主要组合兼容回填；评分与历史决策未知",
+                objective_contributions=[],
+            ))
+    db.flush()
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_portfolio_code "
+        "ON portfolio (portfolio_code) WHERE portfolio_code IS NOT NULL"
+    ))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_project_active_project "
+        "ON portfolio_project (project_id) WHERE is_deleted = FALSE"
+    ))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_project_active_pair "
+        "ON portfolio_project (portfolio_id, project_id) WHERE is_deleted = FALSE"
+    ))
+    db.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_portfolio_project_active_priority "
+        "ON portfolio_project (portfolio_id, priority_rank) "
+        "WHERE is_deleted = FALSE AND priority_rank IS NOT NULL"
+    ))
     db.commit()
 
 
@@ -1150,6 +1230,7 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    ensure_portfolio_governance_schema(db)
     backfill_development_task_codes(db)
     # M97：需求开发任务允许先登记、后关联需求。仅放宽约束，不删除、不改写
     # 任何既有任务及其关联关系。

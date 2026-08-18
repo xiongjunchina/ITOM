@@ -21,7 +21,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
 import { DownloadOutlined, ImportOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Dayjs } from 'dayjs';
+import dayjs, { type Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
 import { ExampleTag } from '../../components/ExampleTag';
@@ -613,6 +613,8 @@ interface PortfolioFormValues {
   owner_id?: string;
   year?: string;
   description?: string;
+  planning?: [Dayjs, Dayjs];
+  budget_limit_10k?: number;
   sort?: number;
 }
 
@@ -623,6 +625,7 @@ function PortfolioPane() {
   const canDelete = useProjectPerm('delete'); // M21：默认矩阵仅 admin
   const user = useAuthStore((s) => s.user);
   const isAdmin = !!user?.permissions?.['*'];
+  const canGovern = !!user && hasPermission(user, 'portfolio_governance', 'view');
 
   const [items, setItems] = useState<Portfolio[]>([]);
   const [loading, setLoading] = useState(false);
@@ -658,6 +661,8 @@ function PortfolioPane() {
         owner_id: row.owner_id ?? undefined,
         year: row.year ?? undefined,
         description: row.description ?? undefined,
+        planning: row.planning_start && row.planning_end ? [dayjs(row.planning_start), dayjs(row.planning_end)] : undefined,
+        budget_limit_10k: row.budget_limit_10k ?? undefined,
         sort: row.sort,
       });
     }
@@ -677,6 +682,10 @@ function PortfolioPane() {
       owner_id: values.owner_id ?? null,
       year: values.year ?? null,
       description: values.description || null,
+      status: editing?.status ?? 'draft',
+      planning_start: values.planning?.[0]?.format('YYYY-MM-DD') ?? null,
+      planning_end: values.planning?.[1]?.format('YYYY-MM-DD') ?? null,
+      budget_limit_10k: values.budget_limit_10k ?? null,
       sort: values.sort ?? 0,
     };
     setSaving(true);
@@ -705,19 +714,21 @@ function PortfolioPane() {
       ellipsis: true,
       render: (v: string, r) => (
         <Space size={4}>
-          {v}
+          {canGovern ? <Link to={`/projects/portfolios/${r.id}`}>{v}</Link> : v}
           {r.is_example && <ExampleTag />}
         </Space>
       ),
     },
     { title: t('proj.col.owner'), dataIndex: 'owner_name', width: 120, render: (v) => v || '-' },
     { title: t('proj.col.year'), dataIndex: 'year', width: 100, render: (v) => v || '-' },
+    { title: t('proj.col.status'), dataIndex: 'status', width: 100, render: (v) => <Badge status={v === 'active' ? 'success' : 'default'} text={t(`portfolio.portfolioStatus.${v}`)} /> },
+    { title: t('portfolio.budgetLimit'), dataIndex: 'budget_limit_10k', width: 120, align: 'right', render: (v) => v == null ? '-' : v },
     {
       title: t('proj.col.projectCount'),
       dataIndex: 'project_count',
       width: 90,
       render: (v: number, r) =>
-        v > 0 ? <Link to={`/projects?portfolio=${r.id}`}>{v}</Link> : v,
+        v > 0 ? <Link to={`/projects/list?portfolio=${r.id}`}>{v}</Link> : v,
     },
     { title: t('proj.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit || canDelete
@@ -725,10 +736,13 @@ function PortfolioPane() {
           {
             title: t('common.actions'),
             key: 'action',
-            width: 120,
+            width: 190,
             render: (_: unknown, r: Portfolio) =>
               r.is_example && !isAdmin ? null : (
                 <Space size={8}>
+                  {canGovern && (
+                    <Link to={`/projects/portfolios/${r.id}`}>{t('portfolio.governance')}</Link>
+                  )}
                   {canEdit && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openModal(r)}>
                       {t('common.edit')}
@@ -795,6 +809,12 @@ function PortfolioPane() {
           </Form.Item>
           <Form.Item name="year" label={t('proj.year')}>
             <Input maxLength={16} placeholder={t('proj.yearPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="planning" label={t('portfolio.period')}>
+            <DatePicker.RangePicker style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="budget_limit_10k" label={t('portfolio.budgetLimit')}>
+            <InputNumber min={0} addonAfter={t('portfolio.tenThousand')} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="description" label={t('proj.desc')}>
             <Input.TextArea rows={3} maxLength={1000} />

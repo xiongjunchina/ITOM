@@ -371,12 +371,31 @@ GET /api/knowledge/search?q=
 ### 4.3 项目
 
 ```text
-GET/POST/PATCH /api/portfolios
+GET/POST/PATCH/DELETE /api/portfolios
+GET  /api/portfolios/{id}/dashboard
+POST /api/portfolios/{id}/objectives
+PATCH /api/portfolio-objectives/{objective_id}
+PUT  /api/portfolios/{id}/scoring-rules/{rule_id}
+PUT  /api/portfolios/{id}/projects/{project_id}/scores
+PUT  /api/portfolios/{id}/projects/{project_id}/objectives
+POST /api/portfolios/{id}/projects/{project_id}/transition
+POST/PATCH /api/project-dependencies | /api/project-dependencies/{id}
+POST/DELETE /api/project-resource-commitments | /api/project-resource-commitments/{id}
+POST /api/portfolios/{id}/baselines
+GET  /api/portfolios/{id}/governance-actions
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx 解析 → 草稿预览 → 确认落库(两步)
 GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
 GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ```
+
+组合治理写接口全部先执行功能权限，再执行记录范围和领域校验：PM 可通过 `portfolio_governance.create` 提交本人负责项目的目标贡献和涉及本人项目的跨项目依赖，但不能创建组合目标或为项目评分；具备 `portfolio_governance.edit` 的 PMO/CIO 可跨项目维护。项目评分使用 `portfolio_scoring.edit`；评分规则配置同时要求 `portfolio_scoring.edit` 与 `portfolio_governance.edit`，因此仅负责评分的 BM 不能改规则。资源承诺使用 `portfolio_resource.edit/delete`，治理状态与基线发布使用 `portfolio_decision.edit`，历史读取使用 `portfolio_audit.view`。前端权限只控制入口可见性，后端始终重新校验。
+
+`GET /api/portfolios/{id}/dashboard` 是组合读模型：复用项目域的 WBS/里程碑/风险/成本实时指标，聚合目标、评分与证据、治理顺序、依赖、组合内外项目的资源冲突和最新基线，不新增第二套项目执行事实。依赖创建禁止自依赖、重复活动关系和环；资源重叠超过 100% 只返回告警，不修改排期。
+
+基线发布前要求不存在 candidate/scoring/pending_review 成员，并要求启用评分权重为 100%、每个纳入项目完成评分及治理排序。发布在同一事务插入递增 `portfolio_baseline` 和治理动作，旧快照不可变；资源冲突作为快照告警，不阻断发布。
+
+启动迁移先由 `create_all` 创建新增表，再为既有 `portfolio` 补列、补稳定业务编码和默认五维评分，为仍有 `project.portfolio_id` 的活动项目幂等回填 admitted 成员，并创建仅约束活动行的 PostgreSQL 部分唯一索引。迁移不修改项目主键、主要组合 FK、流程、WBS、风险、成本、账号、集成配置或软删除数据，也不伪造历史评分/决策人/决策时间。
 
 ### 4.4 需求
 
@@ -534,7 +553,7 @@ IDC Kubernetes:
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
-- IDC Kubernetes 是唯一运行、联调和验收环境；默认禁止在本地启动应用栈、数据库、Compose、8180 或 ngrok。只有用户明确要求临时隔离排障时才允许例外，且结果不属于交付验收。
+- IDC Kubernetes 是唯一生产交付和最终验收环境。仓库 Compose 仅可在确认 `feature-local` 路线或另行批准临时隔离排障后启动，且不得包含生产数据、凭据、Secret、OAuth/Aily 应用、回调或集成。本地业务 UAT 只证明候选版本，不能替代 IDC 正式验收；ngrok 仍须另行批准。
 - `.github/workflows/quality-gate.yml` 在 feature/develop/main 的推送和 PR 上运行完整后端回归、前端生产构建、部署文件检查及中英文文档交付守卫。测试夹具使用临时 SQLite，不连接 IDC 业务数据库。
 - 提交前可用 `scripts/change-scope.sh` 将相对指定基线的差异失败安全地分类为 `none|docs|backend|frontend|all`，并由 `scripts/fast-check.sh` 执行对应的 pytest、前端契约测试和生产构建；共享或未知路径归为 `all`。快速检查不替代 GitHub Actions 或 IDC 验收。质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，默认 `BUILD_SCOPE=all`；经范围复核可显式只构建/推送 backend 或 frontend。所有构建继续使用固定摘要并校验 linux/amd64；PostgreSQL 镜像仅在 `MIRROR_POSTGRES=1` 时镜像，不再随普通应用发布重复执行。
 - 每个编码任务在修改前必须确认 `production-fix|feature-local|code-candidate` 路线，并由 `scripts/task-lifecycle.py --track` 建立本机生命周期记录。`production-fix` 默认基于 IDC 真实故障事实且不启动本地应用；`feature-local` 可使用仓库定义的隔离 Docker 与测试数据库形成 `local_candidate_ready`，但严禁生产数据、凭据、Secret、OAuth/Aily 应用和回调进入本地；`code-candidate` 不启动应用环境且不能进入 IDC 状态。定向真实目标验收是正式文档和提交的前置门禁，同一目标第二次失败必须先完成根因复盘。所有 IDC 写入还必须在 CI 后单独展示提交、不可变标签、变更对象、数据库影响、中断、回滚和验收方法，并以 `approve-idc` 记录用户明确批准。
@@ -552,6 +571,7 @@ IDC Kubernetes:
 | M2 工单 | tickets/catalogs/service-items/sla + 流程引擎最小版 + 定时扫描 | 工单列表/详情/服务目录/SLA 看板 | PRD §5.1/5.3/5.5 |
 | M3 ITSM 余下 | problems/cis/vendors/contracts/knowledge | 对应 5 页 | PRD §5.2/5.4/5.6/5.7 |
 | M4 项目 | portfolios/projects/wbs/milestones/risks/costs/charter-import | 项目两标签页/详情 5 tab/甘特 | PRD §6 |
+| M109 项目组合治理 | portfolio objectives/membership/scoring/dependencies/resources/actions/baselines | 组合总体看板/评分排序/依赖资源/审计基线 | PRD §6.5 |
 | M5 需求 | requirements/tasks/close 转出 | 需求看板/详情 | PRD §7 |
 | M6 团队+总览 | points/ideas/activities/positions/performance/learning-growth/dashboard/流程监控 | 团队页/总览/流程监控 | PRD §4/8/9 |
 | Aily-MCP P0（代码/自动化/真实身份及机器人真实收件已完成） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |

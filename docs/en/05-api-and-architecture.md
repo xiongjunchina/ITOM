@@ -373,12 +373,31 @@ GET /api/knowledge/search?q=
 ### 4.3 Project
 
 ```text
-GET/POST/PATCH /api/portfolios
+GET/POST/PATCH/DELETE /api/portfolios
+GET  /api/portfolios/{id}/dashboard
+POST /api/portfolios/{id}/objectives
+PATCH /api/portfolio-objectives/{objective_id}
+PUT  /api/portfolios/{id}/scoring-rules/{rule_id}
+PUT  /api/portfolios/{id}/projects/{project_id}/scores
+PUT  /api/portfolios/{id}/projects/{project_id}/objectives
+POST /api/portfolios/{id}/projects/{project_id}/transition
+POST/PATCH /api/project-dependencies | /api/project-dependencies/{id}
+POST/DELETE /api/project-resource-commitments | /api/project-resource-commitments/{id}
+POST /api/portfolios/{id}/baselines
+GET  /api/portfolios/{id}/governance-actions
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx parse → draft preview → confirm and persist (two steps)
 GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
 GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + milestones)
 ```
+
+Every portfolio-governance write first checks function permission and then record scope plus domain rules. A PM with `portfolio_governance.create` may submit objective contributions for a project they manage and dependencies involving their project, but cannot create portfolio objectives or score projects. PMO/CIO with `portfolio_governance.edit` can maintain cross-project material. Project scoring uses `portfolio_scoring.edit`; scoring-rule configuration requires both `portfolio_scoring.edit` and `portfolio_governance.edit`, so a BM who only scores projects cannot change rules. Resource commitments use `portfolio_resource.edit/delete`, decisions/baselines use `portfolio_decision.edit`, and history uses `portfolio_audit.view`. Frontend permissions control visibility only; the backend always reauthorizes.
+
+`GET /api/portfolios/{id}/dashboard` is a portfolio read model. It reuses real-time WBS/milestone/risk/cost metrics from the project domain and aggregates objectives, score/evidence, governance rank, dependencies, conflicts that include external projects, and the latest baseline. It creates no second execution fact. Dependency creation rejects self-links, duplicate active relations, and cycles. Allocation above 100% is a warning and never mutates schedules.
+
+Baseline publication requires no candidate/scoring/pending-review members, exactly 100% active scoring-rule weight, and complete scoring plus governance rank for admitted projects. One transaction inserts the incrementing `portfolio_baseline` and governance action. Old snapshots are immutable; resource conflicts are captured as warnings and do not block publication.
+
+At startup, `create_all` creates the new tables, then the migration adds compatible portfolio columns, stable codes, and default five-dimension rules; it idempotently backfills an admitted member for each active project that still has `project.portfolio_id`, and adds PostgreSQL partial unique indexes over active memberships. It changes no project/portfolio ID, primary-portfolio FK, workflow, WBS, risk, cost, account, integration configuration, or soft-deleted row, and invents no historic score, decision actor, or decision time.
 
 ### 4.4 Requirement
 
@@ -532,7 +551,7 @@ IDC Kubernetes:
 ```
 
 - Environment variables: `DATABASE_URL`, `JWT_SECRET`, `ADMIN_INIT_PASSWORD`, `TZ=Asia/Shanghai`.
-- IDC Kubernetes is the sole runtime, integration, and acceptance environment. Starting a local application stack, database, Compose, port 8180, or ngrok is prohibited by default. It is allowed only for an explicitly requested isolated investigation and never counts as delivery acceptance.
+- IDC Kubernetes is the sole production-delivery and final-acceptance environment. The repository Compose stack may run only for a confirmed `feature-local` route or a separately approved isolated investigation, and must contain no production data, credentials, Secrets, OAuth/Aily apps, callbacks, or integrations. Local business UAT proves only a candidate and never replaces formal IDC acceptance; ngrok still requires separate approval.
 - `.github/workflows/quality-gate.yml` runs the complete backend regression, frontend production build, deployment-file checks, and bilingual documentation guard for pushes and pull requests on feature/develop/main. Test fixtures use temporary SQLite and never the IDC business database.
 - Before commit, `scripts/change-scope.sh` fail-safely classifies changes relative to an explicit base as `none|docs|backend|frontend|all`; `scripts/fast-check.sh` runs the applicable pytest, frontend contract tests, and production build. Shared or unknown paths become `all`, and this fast feedback never replaces GitHub Actions or IDC acceptance. After a green gate, `deploy/k8s/push-images.sh` accepts only a clean commit and defaults to `BUILD_SCOPE=all`; a reviewed release may explicitly build and push only backend or frontend. Builds retain pinned base digests and linux/amd64 verification. PostgreSQL mirroring now runs only with `MIRROR_POSTGRES=1`, rather than on every application release.
 - Every coding task must confirm a `production-fix|feature-local|code-candidate` route before modification and create a local lifecycle record through `scripts/task-lifecycle.py --track`. `production-fix` defaults to real IDC fault evidence without a local application runtime; `feature-local` may use the repository-defined isolated Docker stack and test database to reach `local_candidate_ready`, but production data, credentials, Secrets, OAuth/Aily applications, and callbacks are forbidden locally; `code-candidate` starts no application runtime and cannot enter IDC states. Focused real-target acceptance gates formal documentation and commit, and a second failure of the same target requires root-cause review. Every IDC write also requires a separate post-CI presentation of the commit, immutable tag, affected objects, database impact, disruption, rollback, and acceptance method, followed by explicit user authorization recorded through `approve-idc`.
@@ -550,6 +569,7 @@ IDC Kubernetes:
 | M2 Ticket | tickets/catalogs/service-items/sla + minimal process engine + scheduled scans | ticket list/detail/service catalog/SLA board | PRD §5.1/5.3/5.5 |
 | M3 Rest of ITSM | problems/cis/vendors/contracts/knowledge | the corresponding 5 pages | PRD §5.2/5.4/5.6/5.7 |
 | M4 Project | portfolios/projects/wbs/milestones/risks/costs/charter-import | project two tabs / detail 5 tabs / Gantt | PRD §6 |
+| M109 Portfolio Governance | portfolio objectives/membership/scoring/dependencies/resources/actions/baselines | portfolio dashboard/scoring and rank/dependencies and resources/audit baseline | PRD §6.5 |
 | M5 Requirement | requirements/tasks/close hand-off | requirement kanban/detail | PRD §7 |
 | M6 Team + Overview | points/ideas/activities/positions/performance/dashboard/process-monitoring | team 6 pages/Overview/process monitoring | PRD §4/8/9 |
 | Aily-MCP P0 (code/automation/real identity path and live bot receipt complete) | remove Helpdesk, mount MCP, identity/audit/message | Nginx `/mcp`, Aily config | docs/10 §10 |

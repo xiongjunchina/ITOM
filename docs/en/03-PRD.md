@@ -2,7 +2,7 @@
 
 > English translation of [../03-PRD.md](../03-PRD.md). For the authoritative version, the Chinese source prevails.
 
-> Version: v1.2 (2026-07-29, includes the approved Aily + MCP final design baseline)
+> Version: v1.3 (2026-08-18, includes portfolio governance)
 > Upstream basis: [01-redesign-proposal.md](01-redesign-proposal.md), [02-field-reduction.md](02-field-reduction.md)
 > This document is self-contained and is the single baseline for all subsequent technical design, development, and milestone-by-milestone acceptance.
 > The Aily + MCP sections originated as the formal contract for the now-archived `feature/aily-agent-mcp` branch and are inherited by `feature/AI-agent-version` for current Web Agent development. P0 protocol, identity, and live bot receipt; P1 intake; and P2 service-closure code are complete. P1 passed real-Aily write UAT. P2 passed automated regression, a real-Aily multi-role conversational loop, normal-user bot receipt, and a normal-user same-ticket end-to-end loop. P2.1 has moved from the Aily Workflow/Skill path, which could not provide a trusted JWT, to Feishu's new `card.action.trigger`: ordinary conversation remains MCP-only, while card buttons are the sole exception and are signature-verified by ITOM before clicker mapping and invocation of the same domain services. Automation and the live unresolved → reopen → resolve and close → rate button loop have both passed. P3 Feishu Approval is deferred by user decision, while IDC release hardening and formal acceptance continue.
@@ -25,13 +25,13 @@ This system, the "IT Operations Platform" (project code ITOM), is a **lightweigh
 
 ### 1.3 What We Don't Do (explicitly excluded)
 
-- A standalone portfolio-governance domain (stage gates / benefits realization / capability maps / roadmaps) — a portfolio is only a grouping tag for projects.
+- Enterprise multi-portfolio optimization, capability maps, strategic roadmaps, and automated benefits realization. This release adds one-primary-portfolio objectives, scoring, admission, dependencies, resource-conflict warnings, and baselines inside Project Management rather than creating a standalone PPM product domain.
 - The data-governance domain, organizational maturity assessment, OCM.
 - ITSM Continual Service Improvement (CSI), the knowledge-review flow, the standalone CAB-review machinery, ISO 27001 security-incident fields.
 - Requirement version snapshots, multi-approver flows, elicitation sessions, three-dimension scoring.
-- Project stakeholder matrix, baseline management, quality-metrics page, full EVM entry.
+- A full project stakeholder matrix, project-configuration baselines, a quality-metrics page, or full EVM entry. Portfolio baselines are governance snapshots and do not copy execution details.
 - A general AI-agent marketplace and the n8n external workflow engine. The approved Feishu Aily + MCP capability is an employee service channel, not a general agent platform. Feishu org sync, QR authentication, workplace login, and account binding remain.
-- Data migration (starts on an empty database).
+- Migration from external PPM products; only the existing ITOM `portfolio` and `project.portfolio_id` data are idempotently reconciled in this release.
 
 ---
 
@@ -326,11 +326,20 @@ Name ✔, target date ✔, description; the actual achievement date is set with 
 
 ### 6.5 Portfolio (a tab within the Project Management page)
 
-The Project Management landing page has two tabs: **Project List** (default) and **Portfolio**.
+The Project Management landing page has **Project List** (default) and **Portfolio**. A portfolio is not a second project ledger: projects, WBS, risks, costs, and workflows remain the execution source of truth; the portfolio stores only strategic selection, cross-project coordination, and published governance snapshots.
 
-- Portfolio tab: maintain portfolio definitions — name ✔, owner, year, description; the list shows each portfolio's project count and health distribution.
-- When creating a project, the "Owning portfolio" dropdown selects an already-created portfolio name (the portfolio must first be created on this tab).
-- The Dashboard and project list support filtering by portfolio.
+- **Definition**: name is required; the system generates `portfolio_code`. Owner, year, planning period, investment limit, and description are editable. A new portfolio is draft and becomes active only after a baseline is published. A non-empty portfolio cannot be archived until its projects are moved.
+- **Membership**: one project has one active primary portfolio in this release, while `project.portfolio_id` remains the compatibility field. Moving a project preserves prior membership rows and governance actions. Concurrent multi-portfolio membership is excluded.
+- **Objectives**: code, metric, target/current value, weight, owner, and period are managed. Active objective weights cannot exceed 100%. A project can contribute to multiple active objectives, with project contribution weights capped at 100%.
+- **Scoring and priority**: the defaults are strategic alignment 30%, business value 25%, compliance/urgency 15%, resource feasibility 15%, and delivery confidence 15%. Dimensions, weights, activation, and evidence requirements are configurable. A system score exists only when all active dimensions are scored and active weights equal 100%; the separate governance rank remains a CIO decision.
+- **Governance flow**: `candidate → scoring → pending_review → admitted`; scoring may be deferred/rejected, and admitted work may be paused/resumed/completed/terminated. Each score, move, decision, and baseline publication retains reason, before/after values, actor, and time. A baseline is blocked while any candidate, scoring, or pending-review project remains.
+- **Dependencies**: store predecessor/successor, type, deliverable, date, owner, impact, and status. Self-dependencies and active cycles are rejected. Internal WBS dependencies remain in `wbs_task.predecessor_ids`.
+- **Resource commitments**: store person, project, date range, and allocation percentage. Overlapping commitments above 100% are warnings only; the system does not automatically change priority, staffing, or schedules.
+- **Dashboard**: shows project/decision counts, health mix, budget versus actual cost, governance status and rank, dependencies, resource conflicts, objectives, scoring rules, latest immutable baseline, and governance history.
+- **Baseline**: each publication creates an immutable incrementing version containing the portfolio, objectives, scores, ranks, project metrics, dependencies, and resource commitments. Later project changes do not rewrite old versions.
+- Project create/edit retains the Owning Portfolio field, and Dashboard/project lists retain portfolio filtering.
+
+Out of scope: concurrent multi-portfolio membership, skills/leave calendars, automatic resource scheduling or optimization, and portfolio write capabilities in Aily/MCP or the Web Agent.
 
 ### 6.6 Acceptance Criteria
 
@@ -338,6 +347,12 @@ The Project Management landing page has two tabs: **Project List** (default) and
 - [ ] The Gantt chart correctly renders a 3-level WBS and dependency lines.
 - [ ] Health / progress / cost-execution rate are fully automatic and consistent with the detail data.
 - [ ] An overdue milestone appears in the Dashboard alert area the next day.
+- [ ] Existing `project.portfolio_id` rows are idempotently backfilled as admitted members without changing project IDs, portfolio IDs, workflows, or business data.
+- [ ] A project can move to another portfolio and later return, with only one active primary membership at a time.
+- [ ] Scoring weights/evidence, governance transitions, decision reasons, and immutable baseline rules are enforced server-side.
+- [ ] Self/cyclic dependencies, objective-weight overflow, and archiving a non-empty portfolio are rejected.
+- [ ] A person committed above 100% across overlapping in-portfolio and external projects produces a warning without schedule mutation.
+- [ ] PM submits own-project objective/dependency material; BM/PMO scores; TM manages resources; CIO decides/publishes; auditor remains read-only.
 
 ---
 
@@ -591,7 +606,7 @@ Task 8C Round 1 makes a valid raw confirmation token and a non-null, parseable e
 | Item | Requirement |
 | --- | --- |
 | Tech stack | Backend FastAPI + SQLAlchemy + PostgreSQL; frontend React + Ant Design; single repository |
-| Deployment | IDC Kubernetes is the sole runtime, integration, and acceptance environment. The workstation must not start the ITOM application stack, database, Compose, port 8180, or ngrok unless the user explicitly requests temporary isolated troubleshooting. GitHub Actions first runs the complete backend regression, frontend production build, and repository-contract checks. A clean commit then produces Git-SHA-derived immutable linux/amd64 images that are pushed to Harbor and deployed under the same tag. The two frontend replicas use soft hostname topology spread (`maxSkew=1`, `ScheduleAnyway`) to prefer different nodes while still recovering on one node during temporary capacity reduction; a release validates the backend proxy of every Ready frontend endpoint. Formal acceptance covers strict rollout, actual image identity, internal/external health paths, MCP entry, and real-role business UAT; automation must never target the IDC business database |
+| Deployment | IDC Kubernetes is the sole production-delivery and final-acceptance environment. The repository Compose stack may run only for a confirmed `feature-local` route or a separately approved isolated investigation, and must contain no production data, credentials, Secrets, OAuth/Aily apps, callbacks, or integrations. Local business UAT proves only a candidate and never replaces formal IDC acceptance; ngrok still requires separate approval. GitHub Actions first runs the complete backend regression, frontend production build, and repository-contract checks. A clean commit then produces Git-SHA-derived immutable linux/amd64 images that are pushed to Harbor and deployed under the same tag. The two frontend replicas use soft hostname topology spread (`maxSkew=1`, `ScheduleAnyway`) to prefer different nodes while still recovering on one node during temporary capacity reduction; a release validates the backend proxy of every Ready frontend endpoint. Formal acceptance covers strict rollout, actual image identity, internal/external health paths, MCP entry, and real-role business UAT; automation must never target the IDC business database |
 | Performance | List pages ≤ 1s; Dashboard ≤ 2s; sized for 100k tickets over 5 years |
 | Security | Hashed password storage, JWT sessions, interface-level RBAC, immutable audit logs |
 | API convention | Unified response `{success, data, total, page}`; RESTful; OpenAPI docs auto-generated |
@@ -608,6 +623,7 @@ Task 8C Round 1 makes a valid raw confirmation token and a non-null, parseable e
 | M2 Ticket + SLA + Catalog | 5.1, 5.3, 5.5 | 30-second ticket creation, change-approval flow, automatic SLA determination |
 | M3 Rest of ITSM | 5.2, 5.4, 5.6, 5.7 | CMDB impact analysis, contract alerts, one-click knowledge capture |
 | M4 Project | 6 | Charter import, Gantt chart, automatic health |
+| M109 Portfolio Governance | 6.5 | Objective alignment, evidence scoring, human priority, dependency closure, resource conflicts, governance audit, and immutable baselines |
 | M5 Requirement | 7 | Four-stage closed loop, hand-off to problem/knowledge |
 | M6 Team + Dashboard + Process | 4, 8, 9 | Automatic point scoring and ranking, performance framework, Overview page, process monitoring |
 | M34–35 Notifications and Org Sync | 2, 3, 10 | Provisioning alerts reach admins; whole-company sync runs in background with queryable status and completion/failure notifications |
