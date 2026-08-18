@@ -123,7 +123,7 @@ IDC Kubernetes 是唯一生产交付和最终验收环境，当前公网根地�
 
 提交前可按指定基线运行 `scripts/fast-check.sh` 获得后端、前端或文档范围的快速反馈；共享/未知路径失败安全地升级为全量检查。提交仍先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端契约测试与生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor；默认全量，经范围复核可只发布 backend 或 frontend，PostgreSQL 镜像仅显式请求时同步。组件级 `k8s-deploy.sh` 强制跳过数据库并保留共享资源和未选中 Deployment；全量和组件模式都严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
 
-所有编码任务在修改前先确认 `production-fix|feature-local|code-candidate` 路线，并使用 `scripts/task-lifecycle.py --track` 建立生命周期证据。生产修复以 IDC 真实事实为基线；新功能可在不含任何生产数据、凭据、Secret、OAuth/Aily 应用或回调的本地隔离 Docker 环境形成候选；代码候选不启动应用。定向目标验证通过后才同步正式文档和提交；冻结候选只运行一次完整 CI。任何 IDC 写入都必须在 CI 后另行展示精确提交、不可变标签、变更对象、数据影响、中断、回滚及验收方案，并记录用户 `approve-idc` 明确批准；本地候选和 CI 均不构成生产交付。
+所有编码任务在修改前先由仓库级 `.agents/skills/itom-task-routing` 确认 `production-fix|feature-local|code-candidate` 路线，读取对应路线 skill，并使用 `scripts/task-lifecycle.py --track` 建立生命周期证据。生产修复以 IDC 真实事实为基线；新功能可在不含任何生产数据、凭据、Secret、OAuth/Aily 应用或回调的本地隔离 Docker 环境形成候选，到达 `local_candidate_ready` 后须保持容器、数据库、卷、端口和验收数据，直到用户明确完成 UAT 或要求关闭；代码候选不得启动、停止或改变应用运行环境。定向目标验证通过后才同步正式文档和提交；冻结候选只运行一次完整 CI。任何 IDC 写入都必须在 CI 后另行展示精确提交、不可变标签、变更对象、数据影响、中断、回滚及验收方案，并记录用户 `approve-idc` 明确批准；本地候选、用户本地 UAT 通过和 CI 均不构成生产发布授权。
 
 ### 4.1 职责边界
 

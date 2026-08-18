@@ -1,0 +1,4 @@
+interface:
+  display_name: "ITOM Local Feature Delivery"
+  short_description: "Build and hold local features for user UAT"
+  default_prompt: "Use $itom-feature-delivery to build a feature locally and hold it for user UAT."

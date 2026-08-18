@@ -1,0 +1,4 @@
+interface:
+  display_name: "ITOM Coding Task Router"
+  short_description: "Choose the governed ITOM delivery route"
+  default_prompt: "Use $itom-task-routing to choose the correct route before starting ITOM coding work."

@@ -16,6 +16,7 @@ The delivery definition of done is: **implementation + tests + affected document
 
 ## Mandatory coding-task route confirmation
 
+Read `.agents/skills/itom-task-routing/SKILL.md` for every new coding task.
 Before every new coding task, present the user with a route choice and wait for
 confirmation. Use a structured selection control when the client exposes one;
 otherwise ask one concise numbered question. Do not edit files, start an
@@ -38,9 +39,9 @@ After confirmation, start `scripts/task-lifecycle.py` with the matching
 
 ## Mandatory coding-task execution standard
 
-Read `skills/itom-fix-delivery/SKILL.md` for `production-fix` or
-`skills/itom-feature-delivery/SKILL.md` for `feature-local`. For
-`code-candidate`, apply the common gates below without an application runtime.
+Read `.agents/skills/itom-fix-delivery/SKILL.md` for `production-fix`,
+`.agents/skills/itom-feature-delivery/SKILL.md` for `feature-local`, or
+`.agents/skills/itom-code-candidate-delivery/SKILL.md` for `code-candidate`.
 
 1. Record task grade, impact scope, and an explicit acceptance matrix at task start.
 2. For an S task, freeze a minimum candidate within 30 minutes; if the scope grows, re-grade immediately.
@@ -118,11 +119,15 @@ For a `production-fix`, the completion flow is:
 6. Verify strict rollout success, expected image identities, pod/service/ingress health, the frontend-to-backend `/api/health` path, external `/api/health`, MCP `initialize`, and the changed real user workflow in IDC.
 7. Treat the work as delivered only after IDC verification succeeds; report any infrastructure blocker explicitly and retain the previous image tag as the rollback point.
 
-For a `feature-local` task, stop after isolated local business UAT, affected
-bilingual documentation, a frozen commit, and one passing CI run. Record
-`local-candidate-ready` and report the exact release and rollback plan. Do not
-build release images or write to IDC until the user separately approves that
-exact plan. A deferred local candidate may be closed as `local-candidate`.
+For a `feature-local` task, complete agent-run isolated local acceptance,
+affected bilingual documentation, a frozen commit, and one passing CI run.
+Deploy that candidate locally, record `local-candidate-ready`, and report access
+details plus the exact release and rollback plan. This starts the user's UAT
+window: keep the application containers, database, volumes, ports, and acceptance
+data running and unchanged until the user explicitly completes UAT or asks to
+stop. Do not close the task or stop/restart/remove the environment while UAT is
+pending. Preserve volumes unless deletion is separately requested. Do not build
+release images or write to IDC until the user separately approves the exact plan.
 
 For a `code-candidate` task, stop after implementation, focused verification,
 affected bilingual documentation, a frozen commit, and one passing CI run. It

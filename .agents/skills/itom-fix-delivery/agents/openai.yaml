@@ -1,0 +1,4 @@
+interface:
+  display_name: "ITOM Production Fix"
+  short_description: "Repair and release verified IDC incidents"
+  default_prompt: "Use $itom-fix-delivery to repair an IDC incident through verified production acceptance."

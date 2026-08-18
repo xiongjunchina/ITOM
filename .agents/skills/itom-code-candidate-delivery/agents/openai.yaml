@@ -1,0 +1,4 @@
+interface:
+  display_name: "ITOM Code Candidate"
+  short_description: "Prepare code without local runtime or IDC"
+  default_prompt: "Use $itom-code-candidate-delivery to prepare a tested code-only candidate."
