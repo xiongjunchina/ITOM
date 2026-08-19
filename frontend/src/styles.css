@@ -548,7 +548,61 @@ html[data-theme='dark'] .help-breadcrumb-link:focus-visible { color: #cfe0ff !im
 html[data-theme='dark'] .table-standard-toolbar__count,
 .workbench-c--dark .table-standard-toolbar__count { color: #aab4c2; }
 
-/* 宽表操作：使用 Ant Design 自带的唯一底部横向滚动条。 */
+/* 宽表操作：使用浏览器原生的唯一底部横向滚动条，并保留表内原生条作故障兜底。 */
+.responsive-table__bottom-scroll {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  z-index: 20;
+  height: 16px;
+  min-height: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #dfe4ec;
+  border-radius: 5px 5px 0 0;
+  scrollbar-width: thin;
+  scrollbar-color: #a8b3c2 #edf1f6;
+}
+.responsive-table__bottom-scroll[data-visible='false'] {
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  min-height: 0;
+  border: 0;
+}
+.responsive-table__bottom-scroll > div { min-width: 100%; height: 1px; }
+.responsive-table__bottom-scroll::-webkit-scrollbar { height: 10px; }
+.responsive-table__bottom-scroll::-webkit-scrollbar-track { background: #edf1f6; border-radius: 5px; }
+.responsive-table__bottom-scroll::-webkit-scrollbar-thumb { background: #a8b3c2; border-radius: 5px; }
+.responsive-table__bottom-scroll::-webkit-scrollbar-thumb:hover { background: #7f8da1; }
+.ant-table-wrapper.responsive-table--enhanced .ant-table-body,
+.ant-table-wrapper.responsive-table--enhanced .ant-table-content {
+  overflow-x: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: #a8b3c2 #edf1f6;
+}
+.ant-table-wrapper.responsive-table--enhanced .ant-table-body::-webkit-scrollbar,
+.ant-table-wrapper.responsive-table--enhanced .ant-table-content::-webkit-scrollbar {
+  display: block;
+  width: auto;
+  height: 10px;
+}
+.ant-table-wrapper.responsive-table--floating-scroll-active .ant-table-body,
+.ant-table-wrapper.responsive-table--floating-scroll-active .ant-table-content {
+  overflow-x: hidden !important;
+}
+.ant-table-wrapper.responsive-table--floating-scroll-active .ant-table-body::-webkit-scrollbar,
+.ant-table-wrapper.responsive-table--floating-scroll-active .ant-table-content::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.ant-table-wrapper.responsive-table--floating-scroll-active .ant-table-sticky-scroll {
+  display: none !important;
+  pointer-events: none !important;
+}
 .sticky-table { position: relative; min-width: 0; }
 .sticky-table__body { position: relative; min-width: 0; }
 .sticky-table__body .ant-table-wrapper { overflow: visible; }

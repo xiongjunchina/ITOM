@@ -75,7 +75,7 @@ const ZH_SECTIONS: ManualSection[] = [
     summary: '所有业务表格采用统一的搜索、筛选、排序、分页和横向浏览规则。',
     logic: [
       '表头字段可点击排序；分页支持 10/20/50/100 条每页。',
-      '表格超过内容区域时，只显示 Ant Design 自带的底部横向滚动条；拖动该滚动条即可访问屏幕外字段，ITOM 不再额外生成第二条悬浮滚动条。',
+      '表格超过内容区域时，当前活动宽表显示浏览器原生、可拖拽的底部悬浮横向滚动条；若它尚未完成测量或浏览器异常，表内原生横向滚动条仍可使用。',
       '提供下载模板时，必须保持工作表名称、列名和隐藏校验列不变；导入失败会返回工作表、行号和原因。',
       '示例数据只用于字段说明，不能编辑或参与业务流转；系统管理员可明确删除。',
     ],
@@ -110,7 +110,7 @@ const ZH_SECTIONS: ManualSection[] = [
       '项目经理只能从数字化团队成员中选择。章程导入可解析目标、范围、组织、里程碑和 WBS 草稿。',
       'WBS 完成度提供 0%/50%/100% 预设，也支持填写 0–100% 自定义比例。',
       '父级设为 100% 会级联子级；修改子级后父级按直接子项平均值递归回算。项目进度按末级任务工期加权。',
-      'WBS 支持冻结表头和前三列、列宽/行高调整以及底部横向滚动条。',
+      'WBS 支持冻结表头和前三列、列宽/行高调整，以及浏览器原生底部横向滚动条和表内原生兜底。',
     ],
     steps: ['进入“项目管理 → 项目列表”，新建项目并填写经理、日期、预算和描述。', '需要时上传章程并确认解析结果。', '在项目详情维护里程碑和 WBS。', '按流程完成立项、执行监控和收尾复盘。'],
   },
@@ -200,7 +200,7 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'common', title: 'Common list and data actions', summary: 'Business tables share search, filters, sorting, pagination, and horizontal browsing.',
-    logic: ['Headers sort ascending/descending; page sizes are 10/20/50/100.', 'Wide tables normally retain one ITOM-managed bottom scrollbar and a visible header; duplicate scrollbars are hidden only after it is usable, with a native scrollbar retained as fallback.', 'Use the latest downloaded template without changing sheet names, columns, or validation columns.', 'Example rows are read-only and can be deleted by administrators.'],
+    logic: ['Headers sort ascending/descending; page sizes are 10/20/50/100.', 'The active wide table gets one browser-native, draggable bottom scrollbar and a visible header; the in-table native scrollbar remains available until the floating control is measured and usable, and remains the fallback on failure.', 'Use the latest downloaded template without changing sheet names, columns, or validation columns.', 'Example rows are read-only and can be deleted by administrators.'],
     steps: ['Search by keyword.', 'Apply a core-field filter.', 'Click a header to sort.', 'For bulk work, download, fill, import, and fix rejected rows.'],
   },
   {
