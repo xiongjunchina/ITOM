@@ -20,8 +20,9 @@ from app.models import (
     WbsTask,
     WorkTask,
 )
-from app.schemas.common import ok, paginate
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services import task_management
+from app.services.batch_delete import execute_batch_delete
 
 router = APIRouter(prefix="/api/task-management", tags=["task-management"])
 
@@ -247,6 +248,15 @@ def create_bug(body: BugCreate, db: Session = Depends(get_db), user: AuthUser = 
     return ok(task_management._bug_row(db, bug, user))
 
 
+@router.delete("/bugs/batch-delete")
+def batch_delete_bugs(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """批量删除仍逐条执行 Bug 流程撤回和级联修复任务清理规则。"""
+    def delete_one(bug_id: str) -> None:
+        task_management.delete_bug(db, _get_bug(db, bug_id), user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
 @router.get("/bugs/{bug_id}")
 def get_bug(bug_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     task_management._require_module(db, user, "task_bug", "view")
@@ -322,6 +332,15 @@ def create_work_task(body: WorkTaskCreate, db: Session = Depends(get_db), user: 
     task = task_management.create_work_task(db, body.model_dump(), user)
     db.commit()
     return ok(task_management._work_row(db, task, user))
+
+
+@router.delete("/work-tasks/batch-delete")
+def batch_delete_work_tasks(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """逐条沿用委派任务的登记人、分配状态与管理员删除规则。"""
+    def delete_one(task_id: str) -> None:
+        task_management.delete_work_task(db, _get_work_task(db, task_id), user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
 
 
 @router.get("/work-tasks/{task_id}")
@@ -420,6 +439,15 @@ def create_project_task(
     task = task_management.create_project_task(db, body.model_dump(), user)
     db.commit()
     return ok(task_management._project_task_row(db, task, user))
+
+
+@router.delete("/project-tasks/batch-delete")
+def batch_delete_project_tasks(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """逐条沿用项目开发任务的状态及管理员删除限制。"""
+    def delete_one(task_id: str) -> None:
+        task_management.delete_project_task(db, _get_project_task(db, task_id), user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
 
 
 @router.get("/project-tasks/{task_id}")

@@ -86,14 +86,18 @@ def test_wbs_progress_and_health(client, ctx):
     assert detail["health"] == "green"  # 计划=实际（过去任务完成，未来任务未到期）
     assert detail["task_done"] == 1
 
-    # WBS 层级编码
+    # 已完成任务属于交付基线，不允许再新增子任务改变结构。
     child = client.post(f"/api/projects/{pid}/wbs", json={
         "name": "子任务", "assignee": ctx["dev_person"], "parent_task_id": t1["id"],
         "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=1)),
-    }, headers=ctx["pm"]).json()["data"]
+    }, headers=ctx["pm"])
+    assert child.status_code == 400
+    assert child.json()["error"]["code"] == "WBS_STRUCTURE_LOCKED"
+
+    # WBS 层级编码仍保持原有一级任务顺序。
     wbs = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"]
     codes = {w["name"]: w["wbs_code"] for w in wbs}
-    assert codes["已完成任务"] == "1" and codes["子任务"] == "1.1" and codes["未来任务"] == "2"
+    assert codes["已完成任务"] == "1" and codes["未来任务"] == "2"
 
 
 def test_health_yellow_on_overdue_milestone_and_red_risk(client, ctx):

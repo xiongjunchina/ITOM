@@ -18,6 +18,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import ImportButtons from '../../components/ImportButtons';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
@@ -62,6 +63,7 @@ export default function ActiveTaskList() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<RequirementTaskStatus | undefined>();
   const [mineOnly, setMineOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // 登记任务：内置 IT 类角色可在本页为实现中的需求维护任务清单。
   const [addOpen, setAddOpen] = useState(false);
@@ -366,6 +368,16 @@ export default function ActiveTaskList() {
         )}
       </Space>
 
+      <BatchDeleteToolbar
+        endpoint="/requirements/tasks/batch-delete"
+        selectedIds={selectedIds}
+        entityName="需求开发任务"
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
+
       <Modal
         title={t('req.activeTask.add')}
         open={addOpen}
@@ -449,6 +461,11 @@ export default function ActiveTaskList() {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({ disabled: !row.can_delete }),
+        }}
         standardToolbar={{ exportFileName: '需求活动任务', searchPlaceholder: '搜索需求、任务、负责人或状态' }}
         sticky
         scroll={{ x: 1460 }}

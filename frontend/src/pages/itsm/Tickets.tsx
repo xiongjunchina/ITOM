@@ -34,6 +34,7 @@ import { useEnums } from '../../i18n/enums';
 import type { AttachmentItem, Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 
 /** 状态 → Badge 样式（按语义猜测，未匹配用 processing；含变更状态机 rejected/rolled_back） */
 function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning' | 'processing' {
@@ -103,6 +104,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const t = useT();
   const et = useEnums();
   const [items, setItems] = useState<TicketRow[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -633,6 +635,17 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
+        {(canDelete || items.some((item) => item.can_delete)) && (
+          <BatchDeleteToolbar
+            endpoint="/tickets/batch-delete"
+            entityName="工单"
+            selectedIds={selectedIds}
+            onCompleted={() => {
+              setSelectedIds([]);
+              void load();
+            }}
+          />
+        )}
       </Space>
 
       <Table<TicketRow>
@@ -640,6 +653,15 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         loading={loading}
         columns={columns}
         dataSource={items}
+        rowSelection={
+          canDelete || items.some((item) => item.can_delete)
+            ? {
+                selectedRowKeys: selectedIds,
+                onChange: (keys) => setSelectedIds(keys.map(String)),
+                getCheckboxProps: (row) => ({ disabled: !(row.can_delete ?? canDelete) || (!!row.is_example && !isAdmin) }),
+              }
+            : undefined
+        }
         standardToolbar={{
           exportFileName: '工单清单',
           exportLabel: t('itsm.ticket.exportAll'),

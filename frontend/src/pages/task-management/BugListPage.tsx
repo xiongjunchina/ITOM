@@ -25,6 +25,7 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import { DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import { api } from '../../api/client';
 import type { AttachmentItem, BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
@@ -95,6 +96,7 @@ export default function BugListPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [pendingFiles, setPendingFiles] = useState<UploadFile[]>([]);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -356,8 +358,23 @@ export default function BugListPage() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.bug.register')}</Button>
       </Space>
 
+      <BatchDeleteToolbar
+        endpoint="/task-management/bugs/batch-delete"
+        selectedIds={selectedIds}
+        entityName="Bug"
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
+
       <Table<BugRow>
         rowKey="id" loading={loading} columns={columns} dataSource={rows}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({ disabled: !row.capabilities.delete }),
+        }}
         standardToolbar={{ exportFileName: 'Bug修复任务', searchPlaceholder: t('task.bug.search') }}
         sticky scroll={{ x: 1180 }} pagination={false}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.bug.empty')} /> }}

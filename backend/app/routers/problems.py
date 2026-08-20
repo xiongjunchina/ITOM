@@ -11,9 +11,10 @@ from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.events.bus import publish
 from app.models import AuthUser, OrgMember, Problem, ProblemTicket, ServiceItem, Ticket
-from app.schemas.common import ok, paginate
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services import process_engine
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.codes import gen_code
 from app.services.team_scope import require_it_member_if_configured
 from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
@@ -211,12 +212,8 @@ def update_problem(problem_id: str, body: ProblemUpdate, db: Session = Depends(g
     return ok({"id": p.id})
 
 
-@router.delete("/api/problems/{problem_id}")
-def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends(get_current_user)):
-    """删除问题（M21，软删）：级联软删流程实例与任务；来源工单解除关联。"""
-    p = db.get(Problem, problem_id)
-    if not p or p.is_deleted:
-        raise AppError("NOT_FOUND", "问题不存在", 404)
+def _delete_problem(db: Session, p: Problem, actor: AuthUser) -> dict:
+    """执行单条问题删除规则；由单删和批删共同复用，调用方负责提交事务。"""
     ensure_example_delete_allowed(p, db, actor)
     access = process_engine.require_workflow_delete(db, actor, "problem", p.id, "problems")
     from app.models import ProcessInstance, ProcessTask, Ticket
@@ -239,8 +236,30 @@ def delete_problem(problem_id: str, db: Session = Depends(get_db), actor=Depends
     audit(db, "problem", p.id, "delete", actor, {
         "code": p.problem_code, "tickets_unlinked": unlinked, "workflow_delete_mode": access.mode,
     })
+    return {"id": p.id, "tickets_unlinked": unlinked}
+
+
+@router.delete("/api/problems/batch-delete")
+def batch_delete_problems(body: BatchDeleteIn, db: Session = Depends(get_db), actor: AuthUser = Depends(get_current_user)):
+    """逐条复用问题删除窗口、权限、关联解除和审计规则，允许部分成功。"""
+    def delete_one(problem_id: str) -> None:
+        problem = db.get(Problem, problem_id)
+        if not problem or problem.is_deleted:
+            raise AppError("NOT_FOUND", "问题不存在", 404)
+        _delete_problem(db, problem, actor)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/problems/{problem_id}")
+def delete_problem(problem_id: str, db: Session = Depends(get_db), actor: AuthUser = Depends(get_current_user)):
+    """删除问题（M21，软删）：级联软删流程实例与任务；来源工单解除关联。"""
+    p = db.get(Problem, problem_id)
+    if not p or p.is_deleted:
+        raise AppError("NOT_FOUND", "问题不存在", 404)
+    result = _delete_problem(db, p, actor)
     db.commit()
-    return ok({"id": p.id, "tickets_unlinked": unlinked})
+    return ok(result)
 
 
 class ConfirmIn(BaseModel):

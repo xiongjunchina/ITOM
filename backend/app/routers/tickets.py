@@ -9,11 +9,12 @@ from app.core.rbac import BDO, REQUESTER
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, OrgMember, ServiceDispatchRule, ServiceItem, Ticket, TicketSatisfaction
-from app.schemas.common import ok, paginate
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.schemas.itsm import SatisfactionIn, TicketCloseIn, TicketCreate, TicketUpdate, TransitionIn
 from app.services import process_engine
 from app.services import tickets as svc
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.team_scope import require_it_member_if_configured
 from app.services.service_audience import service_item_visible_to_user
 from app.services.workflow import allowed_targets, restrict_terminal_targets, require_terminal_transition_admin, status_names
@@ -417,10 +418,8 @@ def close_ticket(ticket_id: str, body: TicketCloseIn, db: Session = Depends(get_
     return ok({"id": t.id, "status": t.status})
 
 
-@router.delete("/{ticket_id}")
-def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    """删除工单：终止流程待办后软删，已发送的外部历史消息保留审计。"""
-    t = _get_ticket(db, ticket_id, user)
+def _delete_ticket(db: Session, t: Ticket, user: AuthUser) -> dict:
+    """执行一条工单的既有删除规则；由单条/批量接口分别提交事务。"""
     ensure_example_delete_allowed(t, db, user)
     access = process_engine.require_workflow_delete(db, user, svc.entity_type_of(t), t.id, _ticket_module(t.ticket_type))
 
@@ -430,8 +429,23 @@ def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser 
     audit(db, "ticket", t.id, "delete", user, {
         "code": t.ticket_code, "process_instances": instances, "workflow_delete_mode": access.mode,
     })
+    return {"id": t.id, "process_instances": instances}
+
+
+@router.delete("/batch-delete")
+def batch_delete_tickets(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """逐条执行工单删除权限、流程可撤回与审计校验，允许部分成功。"""
+    result = execute_batch_delete(db, body.ids, lambda ticket_id: _delete_ticket(db, _get_ticket(db, ticket_id, user), user))
+    return ok(result)
+
+
+@router.delete("/{ticket_id}")
+def delete_ticket(ticket_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """删除工单：终止流程待办后软删，已发送的外部历史消息保留审计。"""
+    t = _get_ticket(db, ticket_id, user)
+    result = _delete_ticket(db, t, user)
     db.commit()
-    return ok({"id": t.id, "process_instances": instances})
+    return ok(result)
 
 
 @router.post("/{ticket_id}/satisfaction")

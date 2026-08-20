@@ -170,6 +170,7 @@ POST /api/requirements/{requirement_id}/tasks
 POST /api/requirements/tasks                       # 可不关联需求的独立开发任务
 PATCH /api/requirements/tasks/{task_id}
 DELETE /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/batch-delete
 GET /api/requirements/tasks/active
 ```
 
@@ -191,6 +192,7 @@ POST /api/requirements/tasks/import
 
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
+DELETE /api/task-management/bugs/batch-delete
 GET /api/task-management/reference/cis              # Bug 所属系统候选；只读 CMDB 配置项
 POST /api/task-management/bugs/{id}/confirm
 POST /api/task-management/bugs/{id}/reject-confirm
@@ -204,6 +206,7 @@ GET /api/task-management/work-tasks/{id}
 POST /api/task-management/work-tasks/{id}/progress
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
+DELETE /api/task-management/work-tasks/batch-delete
 
 GET /api/task-management/reference/projects
 GET /api/task-management/reference/projects/{project_id}/wbs
@@ -211,6 +214,7 @@ GET/POST/PATCH /api/task-management/project-tasks
 GET /api/task-management/project-tasks/{id}
 POST /api/task-management/project-tasks/{id}/progress
 DELETE /api/task-management/project-tasks/{id}
+DELETE /api/task-management/project-tasks/batch-delete
 ```
 
 同一实现中需求可重复调用 `POST` 登记多行任务。所有内置 IT 类角色的 `task_development` 均授予 `view/create/edit`，因此可维护实现中需求上的完整任务字段；需求负责人保留兼容的数据范围维护，未获得维护权的任务负责人只能更新自己任务的 `status` 和 `actual_effort`。删除采用服务端状态规则而不是矩阵 `delete`：非“进行中”任务可由具备开发任务维护权的 IT 人员软删除，“进行中”任务仅系统管理员可删除。列表返回 `can_manage_tasks`、`can_edit`、`can_delete`，详情任务行返回 `can_delete`；服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。
@@ -230,6 +234,20 @@ Bug 创建成功后，网页可用通用附件接口依次上传零个或多个�
 `GET /api/itsm-import/ci/template` 返回 CMDB Excel 模板，`POST /api/itsm-import/ci` 按行追加导入。模板以“技术负责人姓名”映射 `owner`，以“应用产品经理姓名”映射 `product_manager_id`；后者仅“应用”类别可填写且必填。两列均按系统中在岗人员姓名精确匹配，缺失或无法匹配的应用产品经理、以及非应用填写产品经理，均返回该行错误；导入不更新既有配置项，也不迁移历史数据。
 
 绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
+
+#### 清单受控批量删除
+
+```text
+DELETE /api/tickets/batch-delete | /api/requirements/batch-delete
+DELETE /api/problems/batch-delete
+DELETE /api/requirements/tasks/batch-delete
+DELETE /api/task-management/bugs/batch-delete | /work-tasks/batch-delete | /project-tasks/batch-delete
+DELETE /api/trainings/batch-delete
+DELETE /api/cis/batch-delete | /api/ci-relationships/batch-delete
+DELETE /api/catalogs/batch-delete | /api/service-items/batch-delete
+```
+
+所有批量删除接口接收 `{ids: [...]}`（1–100 条），返回 `{deleted_ids, rejected:[{id, code, message}]}`。每条记录在独立嵌套事务中复用原单条删除的权限、状态、引用/依赖和审计校验；仅实际删除的记录提交，拒绝项不影响其他记录。服务目录批量删除不级联，仍含服务项的目录、仍被有效工单引用的服务项等均按原业务错误码拒绝。
 
 #### 禁止工具
 
@@ -375,6 +393,7 @@ GET/POST/PATCH /api/portfolios
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx 解析 → 草稿预览 → 确认落库(两步)
 GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
+POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}；仅未启动子树可调整层级和同级顺序
 GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ```
 

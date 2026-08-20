@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type DragEvent as ReactDragEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -33,6 +33,7 @@ import {
   ArrowLeftOutlined,
   DownloadOutlined,
   EditOutlined,
+  HolderOutlined,
   PlusOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -230,7 +231,29 @@ function buildWbsTree(list: WbsTask[]): WbsNode[] {
       roots.push(node);
     }
   });
+  const bySort = (a: WbsNode, b: WbsNode) => a.sort - b.sort || a.wbs_code.localeCompare(b.wbs_code, undefined, { numeric: true });
+  roots.sort(bySort);
+  map.forEach((node) => node.children?.sort(bySort));
   return roots;
+}
+
+function wbsDescendantIds(taskId: string, tasks: WbsTask[]): Set<string> {
+  const children = new Map<string, string[]>();
+  tasks.forEach((task) => {
+    if (!task.parent_task_id) return;
+    const rows = children.get(task.parent_task_id) ?? [];
+    rows.push(task.id);
+    children.set(task.parent_task_id, rows);
+  });
+  const result = new Set<string>();
+  const pending = [...(children.get(taskId) ?? [])];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (result.has(id)) continue;
+    result.add(id);
+    pending.push(...(children.get(id) ?? []));
+  }
+  return result;
 }
 
 export default function ProjectDetail() {
@@ -426,6 +449,11 @@ export default function ProjectDetail() {
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskForm] = Form.useForm();
   const [expandedKeys, setExpandedKeys] = useState<readonly React.Key[]>([]);
+  const [moveTask, setMoveTask] = useState<WbsTask | null>(null);
+  const [moveParentId, setMoveParentId] = useState<string | null>(null);
+  const [moveBeforeId, setMoveBeforeId] = useState<string | null>(null);
+  const [moveSaving, setMoveSaving] = useState(false);
+  const [draggingWbsId, setDraggingWbsId] = useState<string | null>(null);
 
   const wbsTree = useMemo(() => buildWbsTree(wbs), [wbs]);
   const phaseTasks = useMemo(
@@ -438,6 +466,20 @@ export default function ProjectDetail() {
   useEffect(() => {
     setExpandedKeys(wbs.map((t) => t.id));
   }, [wbs]);
+
+  const moveDescendantIds = useMemo(() => (moveTask ? wbsDescendantIds(moveTask.id, wbs) : new Set<string>()), [moveTask, wbs]);
+  const movableParentOptions = useMemo(
+    () => wbs
+      .filter((task) => !task.structure_locked && task.id !== moveTask?.id && !moveDescendantIds.has(task.id))
+      .map((task) => ({ value: task.id, label: `${task.wbs_code} ${task.name}` })),
+    [moveDescendantIds, moveTask?.id, wbs],
+  );
+  const moveSiblingOptions = useMemo(
+    () => wbs
+      .filter((task) => task.parent_task_id === moveParentId && task.id !== moveTask?.id)
+      .map((task) => ({ value: task.id, label: `${task.wbs_code} ${task.name}` })),
+    [moveParentId, moveTask?.id, wbs],
+  );
 
   const openTaskModal = (mode: 'create' | 'edit', task?: WbsTask, parent?: WbsTask) => {
     taskForm.resetFields();
@@ -528,6 +570,59 @@ export default function ProjectDetail() {
     } catch {
       // 已统一提示（有子任务时后端返回 400）
     }
+  };
+
+  const openMoveTask = (task: WbsTask) => {
+    setMoveTask(task);
+    setMoveParentId(task.parent_task_id);
+    setMoveBeforeId(null);
+  };
+
+  const moveWbsTask = async (task: WbsTask, parentTaskId: string | null, beforeTaskId: string | null) => {
+    setMoveSaving(true);
+    try {
+      await api.post(`/wbs/${task.id}/move`, {
+        parent_task_id: parentTaskId,
+        before_task_id: beforeTaskId,
+      });
+      message.success(t('proj.wbs.moveSaved'));
+      setMoveTask(null);
+      setDraggingWbsId(null);
+      void loadWbs();
+      void loadMilestoneTracking();
+      void loadDetail();
+    } catch {
+      // 已统一提示，服务端会拒绝已开始/已完成、循环引用和跨层级参照。
+    } finally {
+      setMoveSaving(false);
+    }
+  };
+
+  const startWbsDrag = (event: ReactDragEvent<HTMLSpanElement>, task: WbsTask) => {
+    if (task.structure_locked || !canEdit || isExample) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', task.id);
+    setDraggingWbsId(task.id);
+  };
+
+  const allowWbsDrop = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
+    const source = wbs.find((task) => task.id === draggingWbsId);
+    if (!source || source.id === target.id || source.structure_locked || target.structure_locked || source.parent_task_id !== target.parent_task_id) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+  };
+
+  const dropWbsBefore = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
+    event.preventDefault();
+    const source = wbs.find((task) => task.id === draggingWbsId);
+    if (!source || source.id === target.id || source.structure_locked || target.structure_locked || source.parent_task_id !== target.parent_task_id) {
+      setDraggingWbsId(null);
+      return;
+    }
+    void moveWbsTask(source, target.parent_task_id, target.id);
   };
 
   /** 完成度可编辑：有 projects.edit 或本人是任务负责人；示例数据一律只读 */
@@ -868,7 +963,29 @@ export default function ProjectDetail() {
   ];
 
   const wbsColumns: ColumnsType<WbsNode> = [
-    { title: t('proj.wbs.col.stage'), dataIndex: 'stage', width: 110, render: (v) => v || '-' },
+    {
+      title: t('proj.wbs.col.stage'),
+      dataIndex: 'stage',
+      width: 130,
+      render: (v, r) => (
+        <Space size={4}>
+          {!isExample && canEdit && (
+            <Tooltip title={r.structure_locked ? t('proj.wbs.structureLocked') : t('proj.wbs.dragHandle')}>
+              <span
+                draggable={!r.structure_locked}
+                aria-label={t('proj.wbs.dragHandle')}
+                onDragStart={(event) => startWbsDrag(event, r)}
+                onDragEnd={() => setDraggingWbsId(null)}
+                style={{ cursor: r.structure_locked ? 'not-allowed' : 'grab', color: '#8c8c8c', display: 'inline-flex' }}
+              >
+                <HolderOutlined />
+              </span>
+            </Tooltip>
+          )}
+          <span>{v || '-'}</span>
+        </Space>
+      ),
+    },
     { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 90 },
     { title: t('proj.wbs.col.name'), dataIndex: 'name', width: 200, ellipsis: true },
     {
@@ -963,17 +1080,42 @@ export default function ProjectDetail() {
                     <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
                       {t('common.edit')}
                     </Button>
-                    <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
-                      {t('proj.addSubtask')}
-                    </Button>
+                    {r.structure_locked ? (
+                      <Tooltip title={t('proj.wbs.structureLocked')}>
+                        <Button type="link" size="small" disabled>
+                          {t('proj.addSubtask')}
+                        </Button>
+                      </Tooltip>
+                    ) : (
+                      <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
+                        {t('proj.addSubtask')}
+                      </Button>
+                    )}
+                    {r.structure_locked ? (
+                      <Tooltip title={t('proj.wbs.structureLocked')}>
+                        <Button type="link" size="small" disabled>
+                          {t('proj.wbs.adjustStructure')}
+                        </Button>
+                      </Tooltip>
+                    ) : (
+                      <Button type="link" size="small" onClick={() => openMoveTask(r)}>
+                        {t('proj.wbs.adjustStructure')}
+                      </Button>
+                    )}
                   </>
                 )}
-                {(!isExample && canEdit) || canDeleteExamples ? (
+                {!r.completed_locked && ((!isExample && canEdit) || canDeleteExamples) ? (
                   <Popconfirm title={t('proj.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
                     <Button type="link" size="small" danger>
                       {t('common.delete')}
                     </Button>
                   </Popconfirm>
+                ) : (canEdit || canDeleteExamples) ? (
+                  <Tooltip title={t('proj.wbs.completedLocked')}>
+                    <Button type="link" size="small" danger disabled>
+                      {t('common.delete')}
+                    </Button>
+                  </Tooltip>
                 ) : null}
               </Space>
             ),
@@ -1062,6 +1204,7 @@ export default function ProjectDetail() {
           )
         }
       >
+        <Alert type="info" showIcon message={t('proj.wbs.structureHint')} style={{ marginBottom: 12 }} />
         <StickyTable<WbsNode>
           size="small"
           rowKey="id"
@@ -1078,6 +1221,10 @@ export default function ProjectDetail() {
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: setExpandedKeys,
           }}
+          onRow={(record) => ({
+            onDragOver: (event) => allowWbsDrop(event, record),
+            onDrop: (event) => dropWbsBefore(event, record),
+          })}
           locale={{ emptyText: t('proj.emptyWbs') }}
         />
       </Card>
@@ -1502,6 +1649,45 @@ export default function ProjectDetail() {
               />
             </div>
           )}
+        </Space>
+      </Modal>
+
+      {/* WBS 层级与顺序调整：树形变更必须显式确认，拖拽仅用于同级排序。 */}
+      <Modal
+        title={t('proj.wbs.moveTitle', { name: moveTask?.name ?? '' })}
+        open={!!moveTask}
+        onOk={() => moveTask && void moveWbsTask(moveTask, moveParentId, moveBeforeId)}
+        confirmLoading={moveSaving}
+        onCancel={() => setMoveTask(null)}
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Alert type="info" showIcon message={t('proj.wbs.moveHint')} />
+          <div>
+            <div style={{ marginBottom: 4 }}>{t('proj.wbs.newParent')}</div>
+            <Select
+              allowClear
+              value={moveParentId ?? undefined}
+              placeholder={t('proj.wbs.root')}
+              options={movableParentOptions}
+              style={{ width: '100%' }}
+              onChange={(value?: string) => {
+                setMoveParentId(value ?? null);
+                setMoveBeforeId(null);
+              }}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4 }}>{t('proj.wbs.movePosition')}</div>
+            <Select
+              allowClear
+              value={moveBeforeId ?? undefined}
+              placeholder={t('proj.wbs.moveToEnd')}
+              options={moveSiblingOptions}
+              style={{ width: '100%' }}
+              onChange={(value?: string) => setMoveBeforeId(value ?? null)}
+            />
+          </div>
         </Space>
       </Modal>
 

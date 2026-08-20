@@ -54,6 +54,7 @@ import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/typ
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag } from './shared';
 import RequirementImportModal from './RequirementImportModal';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
@@ -153,6 +154,7 @@ export default function Requirements() {
 
   const [view, setView] = useState<'board' | 'table'>('table');
   const [items, setItems] = useState<RequirementRow[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -564,6 +566,17 @@ export default function Requirements() {
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             {t('common.refresh')}
           </Button>
+          {view === 'table' && (canDelete || items.some((item) => item.can_delete)) && (
+            <BatchDeleteToolbar
+              endpoint="/requirements/batch-delete"
+              entityName="需求"
+              selectedIds={selectedIds}
+              onCompleted={() => {
+                setSelectedIds([]);
+                void load();
+              }}
+            />
+          )}
         </Space>
         {canCreate && (
           <Space>
@@ -599,6 +612,15 @@ export default function Requirements() {
           loading={loading}
           columns={columns}
           dataSource={items}
+          rowSelection={
+            canDelete || items.some((item) => item.can_delete)
+              ? {
+                  selectedRowKeys: selectedIds,
+                  onChange: (keys) => setSelectedIds(keys.map(String)),
+                  getCheckboxProps: (row) => ({ disabled: !(row.can_delete ?? canDelete) || (!!row.is_example && !isAdmin) }),
+                }
+              : undefined
+          }
           sticky
           scroll={{ x: 'max-content' }}
           pagination={{

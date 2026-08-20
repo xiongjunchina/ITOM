@@ -109,15 +109,75 @@ def test_wbs_progress_cascade_and_rollup(client, ctx):
     rows = {row["id"]: row for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]}
     assert all(rows[item_id]["progress"] == 100 for item_id in (root["id"], child_a["id"], child_b["id"], grandchild["id"]))
 
-    # 已完成父项新增子项后，父项立即恢复为新的子项平均值；再次显式完成可重新级联。
+    # 已完成父项是交付基线，不允许再新增子项改变其层级或完成度。
     child_c = client.post(f"/api/projects/{pid}/wbs", json={
         "name": "新增校验", "assignee": ctx["dev"], "parent_task_id": root["id"],
         "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=1)),
-    }, headers=h).json()["data"]
-    rows = {row["id"]: row for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]}
-    assert rows[root["id"]]["progress"] == 67 and rows[child_c["id"]]["progress"] == 0
-    client.patch(f"/api/wbs/{root['id']}", json={"progress": 100}, headers=h)
+    }, headers=h)
+    assert child_c.status_code == 400
+    assert child_c.json()["error"]["code"] == "WBS_STRUCTURE_LOCKED"
 
     # 项目汇总只按末级任务计权，父项不会因级联而重复计入。
     detail = client.get(f"/api/projects/{pid}", headers=h).json()["data"]
-    assert detail["progress"] == 100.0 and detail["task_total"] == 3 and detail["task_done"] == 3
+    assert detail["progress"] == 100.0 and detail["task_total"] == 2 and detail["task_done"] == 2
+
+
+def test_wbs_structure_move_and_completion_lock(client, ctx):
+    """只允许未开始任务调整层级/排序，且已完成任务不可删除。"""
+    h = ctx["h"]
+    project = client.post("/api/projects", json={
+        "name": "M9 WBS 结构调整项目", "pm": ctx["pm"],
+        "planned_start": str(TODAY), "planned_end": str(TODAY + timedelta(days=30)),
+    }, headers=h).json()["data"]
+    pid = project["id"]
+    root_a = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "一级 A", "assignee": ctx["pm"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=10)),
+    }, headers=h).json()["data"]
+    root_b = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "一级 B", "assignee": ctx["pm"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=10)),
+    }, headers=h).json()["data"]
+    child = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "待移动子任务", "assignee": ctx["dev"], "parent_task_id": root_a["id"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=5)),
+    }, headers=h).json()["data"]
+
+    # 同时调整层级与顺序：将子任务移到一级 B 下，WBS 编号随之重建。
+    moved = client.post(f"/api/wbs/{child['id']}/move", json={
+        "parent_task_id": root_b["id"], "before_task_id": None,
+    }, headers=h)
+    assert moved.status_code == 200
+    rows = {row["id"]: row for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]}
+    assert rows[child["id"]]["parent_task_id"] == root_b["id"]
+    assert rows[root_a["id"]]["wbs_code"] == "1"
+    assert rows[root_b["id"]]["wbs_code"] == "2"
+    assert rows[child["id"]]["wbs_code"] == "2.1"
+
+    # 未开始的一级 B 可排序到一级 A 前，其未开始子任务随树一起保留层级。
+    reordered = client.post(f"/api/wbs/{root_b['id']}/move", json={
+        "parent_task_id": None, "before_task_id": root_a["id"],
+    }, headers=h)
+    assert reordered.status_code == 200
+    rows = {row["id"]: row for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]}
+    assert rows[root_b["id"]]["wbs_code"] == "1"
+    assert rows[child["id"]]["wbs_code"] == "1.1"
+    assert rows[root_a["id"]]["wbs_code"] == "2"
+
+    # 移动到自身的后代会形成循环，必须拒绝。
+    cycle = client.post(f"/api/wbs/{root_b['id']}/move", json={
+        "parent_task_id": child["id"], "before_task_id": None,
+    }, headers=h)
+    assert cycle.status_code == 400
+    assert cycle.json()["error"]["code"] == "WBS_CYCLE"
+
+    # 完成即成为交付记录：不允许删除，也不允许再做结构性调整。
+    assert client.patch(f"/api/wbs/{child['id']}", json={"progress": 100}, headers=h).status_code == 200
+    deleted = client.delete(f"/api/wbs/{child['id']}", headers=h)
+    assert deleted.status_code == 400
+    assert deleted.json()["error"]["code"] == "WBS_COMPLETED_LOCKED"
+    locked_move = client.post(f"/api/wbs/{child['id']}/move", json={
+        "parent_task_id": None, "before_task_id": None,
+    }, headers=h)
+    assert locked_move.status_code == 400
+    assert locked_move.json()["error"]["code"] == "WBS_STRUCTURE_LOCKED"

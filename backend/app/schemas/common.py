@@ -1,5 +1,17 @@
 from typing import Any
 
+from pydantic import BaseModel, Field
+
+
+class BatchDeleteIn(BaseModel):
+    """批量删除请求。
+
+    路由仍须逐条调用自身实体的删除规则；这个模型只约束一次请求的
+    输入规模，不能作为绕过状态、关联或权限校验的通用删除入口。
+    """
+
+    ids: list[str] = Field(min_length=1, max_length=100)
+
 
 def ok(data: Any = None, total: int | None = None, page: int | None = None) -> dict:
     body: dict = {"success": True, "data": data}

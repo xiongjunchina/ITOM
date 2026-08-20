@@ -31,8 +31,9 @@ from app.models import (
     Ticket,
     WbsTask,
 )
-from app.schemas.common import ok
+from app.schemas.common import BatchDeleteIn, ok
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.points import award_by_rule, current_period, live_team_points_expression, period_clause
 from app.services.rbac import effective_roles
 from app.services.team_scope import is_it_member, it_member_ids
@@ -314,6 +315,34 @@ def update_training(
     return ok({"id": row.id, "points_recalculated": scores_changed})
 
 
+def _delete_training(db: Session, row: DevelopmentActivity, user: AuthUser) -> dict:
+    """沿用培训活动的登记人/CIO/管理员权限与积分撤回规则，不提交事务。"""
+    roles = effective_roles(db, user)
+    if not _can_manage_training(row, user, roles):
+        raise AppError("FORBIDDEN", "仅管理员、CIO 或登记人可删除该培训活动", 403)
+    entries = _ensure_training_points_mutable(db, row.id)
+    for entry in entries:
+        entry.is_deleted = True
+    row.is_deleted = True
+    audit(db, "development_activity", row.id, "delete", user, {"points_retracted": len(entries)})
+    return {"id": row.id, "points_retracted": len(entries)}
+
+
+@router.delete("/api/trainings/batch-delete")
+def batch_delete_trainings(
+    body: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_perm("activities", "view")),
+):
+    def delete_one(activity_id: str) -> None:
+        row = db.get(DevelopmentActivity, activity_id)
+        if not row or row.is_deleted:
+            raise AppError("NOT_FOUND", "培训活动不存在", 404)
+        _delete_training(db, row, user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
 @router.delete("/api/trainings/{activity_id}")
 def delete_training(
     activity_id: str,
@@ -323,16 +352,9 @@ def delete_training(
     row = db.get(DevelopmentActivity, activity_id)
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "培训活动不存在", 404)
-    roles = effective_roles(db, user)
-    if not _can_manage_training(row, user, roles):
-        raise AppError("FORBIDDEN", "仅管理员、CIO 或登记人可删除该培训活动", 403)
-    entries = _ensure_training_points_mutable(db, row.id)
-    for entry in entries:
-        entry.is_deleted = True
-    row.is_deleted = True
-    audit(db, "development_activity", row.id, "delete", user, {"points_retracted": len(entries)})
+    result = _delete_training(db, row, user)
     db.commit()
-    return ok({"id": row.id, "points_retracted": len(entries)})
+    return ok(result)
 
 
 # ---------- 团队文化（单例） ----------

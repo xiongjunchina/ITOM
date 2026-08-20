@@ -27,7 +27,7 @@ from app.models import (
     RequirementScoringConfig,
     RequirementTask,
 )
-from app.schemas.common import ok, paginate
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services import process_engine, requirement_intake, requirement_scoring
 from app.services.requirement_access import (
     business_portal_requirement_filter,
@@ -35,6 +35,7 @@ from app.services.requirement_access import (
     is_business_portal_only,
 )
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
 from app.services.rbac import effective_roles
@@ -974,12 +975,8 @@ def update_requirement(requirement_id: str, body: RequirementUpdate, db: Session
     return ok({"id": r.id})
 
 
-@router.delete("/{requirement_id}")
-def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor=Depends(get_current_user)):
-    """删除需求（M21，软删；delete 权限默认仅 admin）：级联软删开发任务清单与流程实例。"""
-    r = db.get(Requirement, requirement_id)
-    if not r or r.is_deleted:
-        raise AppError("NOT_FOUND", "需求不存在", 404)
+def _delete_requirement(db: Session, r: Requirement, actor: AuthUser) -> dict:
+    """执行一条需求的既有软删除、流程归档和审计规则，不在此提交事务。"""
     ensure_example_delete_allowed(r, db, actor)
     access = process_engine.require_workflow_delete(db, actor, "requirement", r.id, "requirements")
     from app.models import ProcessInstance, ProcessTask, RequirementTask
@@ -1001,8 +998,28 @@ def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor
     audit(db, "requirement", r.id, "delete", actor, {
         "code": r.requirement_code, **stats, "workflow_delete_mode": access.mode,
     })
+    return {"id": r.id, **stats}
+
+
+@router.delete("/batch-delete")
+def batch_delete_requirements(body: BatchDeleteIn, db: Session = Depends(get_db), actor=Depends(get_current_user)):
+    result = execute_batch_delete(
+        db,
+        body.ids,
+        lambda requirement_id: _delete_requirement(db, _get_requirement(db, requirement_id, actor), actor),
+    )
+    return ok(result)
+
+
+@router.delete("/{requirement_id}")
+def delete_requirement(requirement_id: str, db: Session = Depends(get_db), actor=Depends(get_current_user)):
+    """删除需求（M21，软删；delete 权限默认仅 admin）：级联软删开发任务清单与流程实例。"""
+    r = db.get(Requirement, requirement_id)
+    if not r or r.is_deleted:
+        raise AppError("NOT_FOUND", "需求不存在", 404)
+    result = _delete_requirement(db, r, actor)
     db.commit()
-    return ok({"id": r.id, **stats})
+    return ok(result)
 
 
 def _is_req_admin(db: Session, user: AuthUser) -> bool:
@@ -1559,11 +1576,7 @@ def update_task(task_id: str, body: TaskUpdate, db: Session = Depends(get_db), u
     return ok({"id": task.id})
 
 
-@router.delete("/tasks/{task_id}")
-def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
-    task = db.get(RequirementTask, task_id)
-    if not task or task.is_deleted:
-        raise AppError("NOT_FOUND", "任务不存在", 404)
+def _delete_requirement_task(db: Session, task: RequirementTask, user: AuthUser) -> None:
     requirement = db.get(Requirement, task.requirement_id) if task.requirement_id else None
     if requirement:
         ensure_example_delete_allowed(requirement, db, user)
@@ -1573,6 +1586,25 @@ def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = De
         raise AppError("FORBIDDEN", "无开发任务删除权限", 403)
     task.is_deleted = True
     audit(db, "requirement_task", task.id, "delete", user, {"name": task.name})
+
+
+@router.delete("/tasks/batch-delete")
+def batch_delete_requirement_tasks(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    def delete_one(task_id: str) -> None:
+        task = db.get(RequirementTask, task_id)
+        if not task or task.is_deleted:
+            raise AppError("NOT_FOUND", "任务不存在", 404)
+        _delete_requirement_task(db, task, user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    task = db.get(RequirementTask, task_id)
+    if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "任务不存在", 404)
+    _delete_requirement_task(db, task, user)
     db.commit()
     return ok({"id": task.id})
 

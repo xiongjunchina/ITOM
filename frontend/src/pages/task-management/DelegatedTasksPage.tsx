@@ -20,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import { api } from '../../api/client';
 import type { Member, TicketPriority, WorkTaskRow, WorkTaskStatus } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
@@ -52,6 +53,7 @@ export default function DelegatedTasksPage() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>();
   const [mineOnly, setMineOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<WorkTaskRow | null>(null);
   const [transitioning, setTransitioning] = useState<{ row: WorkTaskRow; to: WorkTaskStatus } | null>(null);
   const [detail, setDetail] = useState<WorkTaskRow | null>(null);
@@ -219,8 +221,22 @@ export default function DelegatedTasksPage() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button>
         <Button className="task-register-hitbox" type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.register')}</Button>
       </Space>
+      <BatchDeleteToolbar
+        endpoint="/task-management/work-tasks/batch-delete"
+        selectedIds={selectedIds}
+        entityName="委派任务"
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
       <Table<WorkTaskRow>
         rowKey="id" loading={loading} columns={columns} dataSource={rows}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({ disabled: !row.capabilities.delete }),
+        }}
         standardToolbar={{ exportFileName: '委派任务', searchPlaceholder: t('task.search') }} sticky scroll={{ x: 1320 }} pagination={false}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.empty')} /> }}
       />

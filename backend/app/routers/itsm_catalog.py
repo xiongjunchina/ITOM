@@ -21,7 +21,7 @@ from app.models import (
     SlaPolicy,
     Ticket,
 )
-from app.schemas.common import ok
+from app.schemas.common import BatchDeleteIn, ok
 from app.schemas.itsm import (
     CatalogCreate,
     CatalogUpdate,
@@ -32,6 +32,7 @@ from app.schemas.itsm import (
     SlaPolicyIn,
 )
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.codes import gen_code
 from app.services import dispatch, service_forms
 from app.services.service_audience import service_item_visible_to_user
@@ -272,21 +273,12 @@ def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(g
     return ok({"id": catalog.id})
 
 
-@router.delete("/api/catalogs/{catalog_id}")
-def delete_catalog(
-    catalog_id: str,
-    cascade: bool = Query(False, description="同时软删除该目录下的服务项"),
-    db: Session = Depends(get_db),
-    actor=Depends(require_perm("catalog", "delete")),
-):
+def _delete_catalog(db: Session, catalog: ServiceCatalog, actor: AuthUser, *, cascade: bool) -> dict:
     """删除服务目录（软删），可在管理员明确确认后级联软删下属服务项。
 
     级联只删除目录和服务项本身，不删除历史工单、项目或配置项；这些历史记录仍保留
     对原服务项的引用，避免为了清理目录而破坏审计链路。
     """
-    catalog = db.get(ServiceCatalog, catalog_id)
-    if not catalog or catalog.is_deleted:
-        raise AppError("NOT_FOUND", "目录不存在", 404)
     ensure_example_delete_allowed(catalog, db, actor)
     live_items = db.query(ServiceItem).filter(ServiceItem.catalog_id == catalog.id, ServiceItem.is_deleted.is_(False)).all()
     if live_items and not cascade:
@@ -314,8 +306,38 @@ def delete_catalog(
         actor,
         {"code": catalog.code, "name": catalog.name, "items_deleted": len(live_items), "cascade": cascade},
     )
+    return {"id": catalog.id, "items_deleted": len(live_items), "cascade": cascade}
+
+
+@router.delete("/api/catalogs/batch-delete")
+def batch_delete_catalogs(
+    body: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    """批量删除不支持级联，存在有效服务项的目录逐项返回拒绝原因。"""
+    def delete_one(catalog_id: str) -> None:
+        catalog = db.get(ServiceCatalog, catalog_id)
+        if not catalog or catalog.is_deleted:
+            raise AppError("NOT_FOUND", "目录不存在", 404)
+        _delete_catalog(db, catalog, actor, cascade=False)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/catalogs/{catalog_id}")
+def delete_catalog(
+    catalog_id: str,
+    cascade: bool = Query(False, description="同时软删除该目录下的服务项"),
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    catalog = db.get(ServiceCatalog, catalog_id)
+    if not catalog or catalog.is_deleted:
+        raise AppError("NOT_FOUND", "目录不存在", 404)
+    result = _delete_catalog(db, catalog, actor, cascade=cascade)
     db.commit()
-    return ok({"id": catalog.id, "items_deleted": len(live_items), "cascade": cascade})
+    return ok(result)
 
 
 # ---- 服务项 ----
@@ -727,12 +749,8 @@ def delete_global_implementation_dispatch_rule(
     return ok({"scope_type": "global", "scope_id": None, "dispatch_stage": "implementation"})
 
 
-@router.delete("/api/service-items/{item_id}")
-def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
+def _delete_item(db: Session, item: ServiceItem, actor: AuthUser) -> dict:
     """删除服务项（M21，软删）：已有工单引用时拒绝（历史可溯），建议改为下架。"""
-    item = db.get(ServiceItem, item_id)
-    if not item or item.is_deleted:
-        raise AppError("NOT_FOUND", "服务项不存在", 404)
     ensure_example_delete_allowed(item, db, actor)
     from app.models import ProcessInstance, ProcessTask, Ticket
 
@@ -756,8 +774,32 @@ def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(requi
             raise AppError("ITEM_IN_USE", f"该服务项已被 {len(live_tickets)} 张工单引用，不可删除；如不再提供请改为「下架」")
     item.is_deleted = True
     audit(db, "service_item", item.id, "delete", actor, {"code": item.item_code, "name": item.name, "tickets_deleted": len(live_tickets) if item.is_example else 0})
+    return {"id": item.id}
+
+
+@router.delete("/api/service-items/batch-delete")
+def batch_delete_items(
+    body: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    def delete_one(item_id: str) -> None:
+        item = db.get(ServiceItem, item_id)
+        if not item or item.is_deleted:
+            raise AppError("NOT_FOUND", "服务项不存在", 404)
+        _delete_item(db, item, actor)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/service-items/{item_id}")
+def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
+    item = db.get(ServiceItem, item_id)
+    if not item or item.is_deleted:
+        raise AppError("NOT_FOUND", "服务项不存在", 404)
+    result = _delete_item(db, item, actor)
     db.commit()
-    return ok({"id": item.id})
+    return ok(result)
 
 
 # ---- SLA 策略（admin）与看板 ----

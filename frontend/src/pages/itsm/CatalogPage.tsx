@@ -44,6 +44,7 @@ import {
 } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import ImportButtons from '../../components/ImportButtons';
 import { useAuthStore, hasAnyRole, hasPermission } from '../../stores/auth';
 import { isRequesterOnly } from '../../components/menu';
@@ -141,12 +142,14 @@ export default function CatalogPage() {
   const et = useEnums();
 
   const [catalogs, setCatalogs] = useState<Catalog[]>([]);
+  const [selectedCatalogIds, setSelectedCatalogIds] = useState<string[]>([]);
   const [selectedCatalog, setSelectedCatalog] = useState<string | null>(null);
   const [catalogHistory, setCatalogHistory] = useState<Array<string | null>>([null]);
   const [catalogHistoryIndex, setCatalogHistoryIndex] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
   const [items, setItems] = useState<ServiceItem[]>([]);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [itemLoading, setItemLoading] = useState(false);
   const [itemPage, setItemPage] = useState(1);
   const [itemPageSize, setItemPageSize] = useState(20);
@@ -246,6 +249,7 @@ export default function CatalogPage() {
 
   useEffect(() => {
     setItemPage(1);
+    setSelectedItemIds([]);
   }, [selectedCatalog, q, itemStatus]);
 
   useEffect(() => {
@@ -905,6 +909,20 @@ export default function CatalogPage() {
           }
         >
           <Space direction="vertical" style={{ width: '100%' }} size={8}>
+            {canDelete && (
+              <BatchDeleteToolbar
+                endpoint="/catalogs/batch-delete"
+                selectedIds={selectedCatalogIds}
+                entityName="服务目录"
+                onCompleted={() => {
+                  const selectedWasDeleted = !!selectedCatalog && selectedCatalogIds.includes(selectedCatalog);
+                  setSelectedCatalogIds([]);
+                  if (selectedWasDeleted) selectCatalog(null);
+                  void loadCatalogs();
+                  void loadItems();
+                }}
+              />
+            )}
             <Card
               size="small"
               hoverable
@@ -924,6 +942,20 @@ export default function CatalogPage() {
                 <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                   <Space direction="vertical" size={2}>
                     <Space size={6}>
+                      {canDelete && (!c.is_example || isAdmin) && (
+                        <Checkbox
+                          aria-label={`选择服务目录 ${c.name}`}
+                          checked={selectedCatalogIds.includes(c.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => {
+                            setSelectedCatalogIds((current) =>
+                              event.target.checked
+                                ? [...current, c.id]
+                                : current.filter((id) => id !== c.id),
+                            );
+                          }}
+                        />
+                      )}
                       <Typography.Text strong>{c.name}</Typography.Text>
                       {c.is_example && <ExampleTag />}
                       <Tag color={TIER_COLORS[c.tier]}>{et.tier(c.tier)}</Tag>
@@ -1086,11 +1118,34 @@ export default function CatalogPage() {
             </Space>
           }
         >
+          {canDelete && (
+            <BatchDeleteToolbar
+              endpoint="/service-items/batch-delete"
+              selectedIds={selectedItemIds}
+              entityName="服务项"
+              onCompleted={() => {
+                setSelectedItemIds([]);
+                void loadItems();
+                void loadCatalogs();
+              }}
+            />
+          )}
           <SortableTable<ServiceItem>
             rowKey="id"
             loading={itemLoading}
             columns={columns}
             dataSource={items}
+            rowSelection={
+              canDelete
+                ? {
+                    selectedRowKeys: selectedItemIds,
+                    onChange: (keys) => setSelectedItemIds(keys.map(String)),
+                    getCheckboxProps: (record) => ({
+                      disabled: record.is_example && !isAdmin,
+                    }),
+                  }
+                : undefined
+            }
             sticky
             scroll={{ x: 'max-content' }}
             pagination={{

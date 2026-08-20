@@ -1452,6 +1452,10 @@ export interface WbsTask {
   /** 前置任务的 WBS 编号（展示用） */
   predecessor_codes: string[];
   sort: number;
+  /** 已完成任务为项目交付记录，禁止直接删除。 */
+  completed_locked: boolean;
+  /** 仅未开始任务可调整层级与同级排序。 */
+  structure_locked: boolean;
 }
 
 /** 里程碑跟踪派生行（GET /projects/{id}/milestone-tracking，只读，来自 WBS is_milestone=true） */

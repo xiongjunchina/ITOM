@@ -174,6 +174,7 @@ POST /api/requirements/{requirement_id}/tasks
 POST /api/requirements/tasks                       # standalone development task
 PATCH /api/requirements/tasks/{task_id}
 DELETE /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/batch-delete
 GET /api/requirements/tasks/active
 ```
 
@@ -195,6 +196,7 @@ POST /api/requirements/tasks/import
 
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
+DELETE /api/task-management/bugs/batch-delete
 GET /api/task-management/reference/cis              # read-only CMDB system candidates for Bug registration
 POST /api/task-management/bugs/{id}/confirm
 POST /api/task-management/bugs/{id}/reject-confirm
@@ -208,6 +210,7 @@ GET /api/task-management/work-tasks/{id}
 POST /api/task-management/work-tasks/{id}/progress
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
+DELETE /api/task-management/work-tasks/batch-delete
 
 GET /api/task-management/reference/projects
 GET /api/task-management/reference/projects/{project_id}/wbs
@@ -215,6 +218,7 @@ GET/POST/PATCH /api/task-management/project-tasks
 GET /api/task-management/project-tasks/{id}
 POST /api/task-management/project-tasks/{id}/progress
 DELETE /api/task-management/project-tasks/{id}
+DELETE /api/task-management/project-tasks/batch-delete
 ```
 
 The same requirement in Implementation may repeatedly call `POST` to register multiple task rows. Every built-in IT role receives `view/create/edit` on `task_development` and may therefore maintain full development-task fields on an implementing requirement. The requirement owner retains compatible record-scope maintenance; an assignee without maintenance may update only their own `status` and `actual_effort`. Deletion is a server-side status rule rather than a matrix `delete` grant: an IT user with development-task maintenance may soft-delete a task that is not In Progress, while an In Progress task is deletable by the system administrator only. List responses return `can_manage_tasks`, `can_edit`, and `can_delete`; detail task rows return `can_delete`. The server never relies on a front-end button and rechecks requirement stage, owner scope, example-data protection, and permission for every write.
@@ -234,6 +238,20 @@ Task notification events use `notifier.notify()`: initial assignment or reassign
 `DELETE /api/tickets/{id}` first finalizes and soft-deletes every active process instance and unfinished task for the ticket after the existing record-level delete authorization, then soft-deletes the ticket and writes its audit record. A later `GET /api/tickets/{id}` for a previously existing, soft-deleted ticket returns HTTP 404 with `TICKET_DELETED` and “The ticket was withdrawn or deleted and its detail is unavailable”; a never-existing ID still returns `NOT_FOUND`. No deleted fields are returned. This gives in-app and Feishu/Aily historical links an accurate outcome; already-delivered external messages cannot be recalled.
 
 Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
+
+#### Controlled list batch deletion
+
+```text
+DELETE /api/tickets/batch-delete | /api/requirements/batch-delete
+DELETE /api/problems/batch-delete
+DELETE /api/requirements/tasks/batch-delete
+DELETE /api/task-management/bugs/batch-delete | /work-tasks/batch-delete | /project-tasks/batch-delete
+DELETE /api/trainings/batch-delete
+DELETE /api/cis/batch-delete | /api/ci-relationships/batch-delete
+DELETE /api/catalogs/batch-delete | /api/service-items/batch-delete
+```
+
+Every batch-delete endpoint accepts `{ids: [...]}` (1–100 records) and returns `{deleted_ids, rejected:[{id, code, message}]}`. Each item runs in an isolated nested transaction and reuses the original single-record deletion checks for authorization, state, references/dependencies, and audit. Only actually deleted records are committed, while rejected records do not block the remaining items. Catalog deletion does not cascade: a catalog still containing service items and a service item still referenced by an active ticket are rejected with their original business error codes.
 
 #### Forbidden tools
 
@@ -377,6 +395,7 @@ GET/POST/PATCH /api/portfolios
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx parse → draft preview → confirm and persist (two steps)
 GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
+POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}; only an unstarted subtree may change hierarchy or sibling order
 GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + milestones)
 ```
 

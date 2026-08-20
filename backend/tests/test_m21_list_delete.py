@@ -34,6 +34,40 @@ def test_problem_delete_unlinks_ticket(client, ctx):
     client.delete(f"/api/problems/{again.json()['data']['problem_id']}", headers=ctx["admin"])
 
 
+def test_problem_batch_delete_reuses_single_delete_permissions(client, ctx):
+    first = client.post(
+        "/api/problems",
+        json={"title": "M21批量问题一", "description": "验证逐条权限", "priority": "P3"},
+        headers=ctx["admin"],
+    ).json()["data"]
+    second = client.post(
+        "/api/problems",
+        json={"title": "M21批量问题二", "description": "验证重复选择去重", "priority": "P3"},
+        headers=ctx["admin"],
+    ).json()["data"]
+
+    forbidden = client.request(
+        "DELETE",
+        "/api/problems/batch-delete",
+        json={"ids": [first["id"], second["id"]]},
+        headers=ctx["ops_h"],
+    )
+    assert forbidden.status_code == 200, forbidden.text
+    assert forbidden.json()["data"]["deleted_ids"] == []
+    assert {row["code"] for row in forbidden.json()["data"]["rejected"]} == {"WORKFLOW_DELETE_LOCKED"}
+
+    deleted = client.request(
+        "DELETE",
+        "/api/problems/batch-delete",
+        json={"ids": [first["id"], second["id"], first["id"]]},
+        headers=ctx["admin"],
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["data"]["deleted_ids"] == [first["id"], second["id"]]
+    assert deleted.json()["data"]["rejected"] == []
+    assert client.get(f"/api/problems/{first['id']}", headers=ctx["admin"]).status_code == 404
+
+
 def test_knowledge_delete(client, ctx):
     a = client.post("/api/knowledge", json={"title": "M21测试文章", "content": "正文", "category": "faq"},
                     headers=ctx["admin"]).json()["data"]
@@ -118,6 +152,38 @@ def test_catalog_delete_cascades_service_items_without_deleting_history(client, 
     assert all(row["id"] != cat["id"] for row in client.get("/api/catalogs", headers=ctx["admin"]).json()["data"])
     assert all(row["id"] != item["id"] for row in client.get("/api/service-items", headers=ctx["admin"]).json()["data"])
     assert client.get(f"/api/tickets/{ticket['id']}", headers=ctx["admin"]).status_code == 200
+
+
+def test_catalog_batch_delete_reports_partial_result_and_keeps_rejected_row(client, ctx):
+    """批量删除不能绕过单条目录的引用校验，允许同批次部分成功。"""
+    removable = client.post(
+        "/api/catalogs", json={"name": "M21批量可删除目录"}, headers=ctx["admin"]
+    ).json()["data"]
+    blocked = client.post(
+        "/api/catalogs", json={"name": "M21批量受引用目录"}, headers=ctx["admin"]
+    ).json()["data"]
+    client.post(
+        "/api/service-items",
+        json={"name": "M21批量目录服务项", "catalog_id": blocked["id"], "service_type": "支持类"},
+        headers=ctx["admin"],
+    )
+
+    response = client.request(
+        "DELETE",
+        "/api/catalogs/batch-delete",
+        json={"ids": [removable["id"], blocked["id"], removable["id"]]},
+        headers=ctx["admin"],
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["data"]
+    assert result["deleted_ids"] == [removable["id"]]
+    assert result["rejected"][0]["id"] == blocked["id"]
+    assert result["rejected"][0]["code"] == "CATALOG_IN_USE"
+    assert "服务项" in result["rejected"][0]["message"]
+
+    catalog_rows = client.get("/api/catalogs", headers=ctx["admin"]).json()["data"]
+    assert all(row["id"] != removable["id"] for row in catalog_rows)
+    assert any(row["id"] == blocked["id"] for row in catalog_rows)
 
 
 def test_service_item_search_status_filter_and_sort(client, ctx):

@@ -20,6 +20,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import { api } from '../../api/client';
 import type {
   Member,
@@ -62,6 +63,7 @@ export default function ProjectDevelopmentTasksPage() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string>();
   const [mineOnly, setMineOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ProjectDevelopmentTaskRow | null>(null);
   const [detail, setDetail] = useState<ProjectDevelopmentTaskRow | null>(null);
@@ -244,8 +246,22 @@ export default function ProjectDevelopmentTasksPage() {
       <Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button>
       <Button type="primary" icon={<PlusOutlined />} onClick={() => void openCreate()}>{t('task.register')}</Button>
     </Space>
+    <BatchDeleteToolbar
+      endpoint="/task-management/project-tasks/batch-delete"
+      selectedIds={selectedIds}
+      entityName="项目开发任务"
+      onCompleted={() => {
+        setSelectedIds([]);
+        void load();
+      }}
+    />
     <Table<ProjectDevelopmentTaskRow>
       rowKey="id" loading={loading} columns={columns} dataSource={rows}
+      rowSelection={{
+        selectedRowKeys: selectedIds,
+        onChange: (keys) => setSelectedIds(keys.map(String)),
+        getCheckboxProps: (row) => ({ disabled: !row.capabilities.delete }),
+      }}
       standardToolbar={{ exportFileName: '项目开发任务', searchPlaceholder: t('task.project.search') }}
       sticky scroll={{ x: 1500 }} pagination={false}
       locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.project.empty')} /> }}
