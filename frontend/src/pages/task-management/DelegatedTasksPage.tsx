@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Button,
   DatePicker,
@@ -17,7 +17,15 @@ import {
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  CalendarOutlined,
+  CheckCircleOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
 import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
@@ -56,6 +64,7 @@ export default function DelegatedTasksPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<WorkTaskRow | null>(null);
   const [transitioning, setTransitioning] = useState<{ row: WorkTaskRow; to: WorkTaskStatus } | null>(null);
+  const [bulkTransitioning, setBulkTransitioning] = useState<WorkTaskStatus | null>(null);
   const [detail, setDetail] = useState<WorkTaskRow | null>(null);
   const [progressOpen, setProgressOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -149,19 +158,56 @@ export default function DelegatedTasksPage() {
   };
 
   const submitTransition = async () => {
-    if (!transitioning) return;
+    if (!transitioning && !bulkTransitioning) return;
     const values = await transitionForm.validateFields();
     setSaving(true);
     try {
-      await api.post(`/task-management/work-tasks/${transitioning.row.id}/transition`, { to: transitioning.to, reason: values.reason || '' });
-      message.success(t('task.transitionDone'));
-      setTransitioning(null);
+      if (transitioning) {
+        await api.post(`/task-management/work-tasks/${transitioning.row.id}/transition`, { to: transitioning.to, reason: values.reason || '' });
+        message.success(t('task.transitionDone'));
+        setTransitioning(null);
+      } else if (bulkTransitioning) {
+        const eligible = rows.filter((row) => (
+          selectedIds.includes(row.id)
+          && row.capabilities.transition
+          && NEXT[row.status].includes(bulkTransitioning)
+        ));
+        let succeeded = 0;
+        const failures: string[] = [];
+        for (const row of eligible) {
+          try {
+            await api.post(`/task-management/work-tasks/${row.id}/transition`, {
+              to: bulkTransitioning,
+              reason: values.reason || '',
+            });
+            succeeded += 1;
+          } catch {
+            failures.push(row.task_code);
+          }
+        }
+        const skipped = selectedIds.length - eligible.length;
+        if (failures.length === 0) {
+          message.success(`已${bulkTransitioning} ${succeeded} 条；跳过 ${skipped} 条不适用记录`);
+        } else {
+          Modal.warning({
+            title: '批量操作结果',
+            content: `成功 ${succeeded} 条，跳过 ${skipped} 条，失败 ${failures.length} 条：${failures.join('、')}`,
+          });
+        }
+        setBulkTransitioning(null);
+        setSelectedIds([]);
+      }
       await load();
     } catch {
       // API client 已统一提示错误
     } finally {
       setSaving(false);
     }
+  };
+
+  const openBulkTransition = (to: WorkTaskStatus) => {
+    transitionForm.resetFields();
+    setBulkTransitioning(to);
   };
 
   const remove = (row: WorkTaskRow) => {
@@ -213,6 +259,26 @@ export default function DelegatedTasksPage() {
     },
   ];
 
+  const selectedRows = rows.filter((row) => selectedIds.includes(row.id));
+  const deletableSelectedIds = selectedRows.filter((row) => row.capabilities.delete).map((row) => row.id);
+  const transitionMeta: Array<{ to: WorkTaskStatus; icon: ReactNode }> = [
+    { to: '排期', icon: <CalendarOutlined /> },
+    { to: '执行', icon: <PlayCircleOutlined /> },
+    { to: '暂停', icon: <PauseCircleOutlined /> },
+    { to: '关闭', icon: <CheckCircleOutlined /> },
+    { to: '中止', icon: <StopOutlined /> },
+  ];
+  const batchTransitionActions = transitionMeta.flatMap(({ to, icon }) => {
+    const count = selectedRows.filter((row) => row.capabilities.transition && NEXT[row.status].includes(to)).length;
+    return count > 0 ? [{
+      key: `transition-${to}`,
+      label: `${to}（${count}）`,
+      icon,
+      danger: to === '中止',
+      onClick: () => openBulkTransition(to),
+    }] : [];
+  });
+
   return (
     <div>
       <Space wrap style={{ marginBottom: 16 }}>
@@ -223,8 +289,10 @@ export default function DelegatedTasksPage() {
       </Space>
       <BatchDeleteToolbar
         endpoint="/task-management/work-tasks/batch-delete"
-        selectedIds={selectedIds}
+        selectedIds={deletableSelectedIds}
+        selectedCount={selectedIds.length}
         entityName="委派任务"
+        actions={batchTransitionActions}
         onCompleted={() => {
           setSelectedIds([]);
           void load();
@@ -235,7 +303,9 @@ export default function DelegatedTasksPage() {
         rowSelection={{
           selectedRowKeys: selectedIds,
           onChange: (keys) => setSelectedIds(keys.map(String)),
-          getCheckboxProps: (row) => ({ disabled: !row.capabilities.delete }),
+          getCheckboxProps: (row) => ({
+            disabled: !row.capabilities.delete && !(row.capabilities.transition && NEXT[row.status].length > 0),
+          }),
         }}
         standardToolbar={{ exportFileName: '委派任务', searchPlaceholder: t('task.search') }} sticky scroll={{ x: 1320 }} pagination={false}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.empty')} /> }}
@@ -262,8 +332,23 @@ export default function DelegatedTasksPage() {
         </Form>
       </Modal>
 
-      <Modal title={`${t('task.transition')}${transitioning ? `：${transitioning.to}` : ''}`} open={!!transitioning} onOk={() => void submitTransition()} confirmLoading={saving} onCancel={() => setTransitioning(null)} destroyOnClose>
-        <Form form={transitionForm} layout="vertical"><Form.Item name="reason" label={transitioning && ['暂停', '中止', '关闭'].includes(transitioning.to) ? t('task.reason') : t('common.remark')} rules={transitioning && ['暂停', '中止'].includes(transitioning.to) ? [{ required: true, min: 2, message: t('task.reasonRequired') }] : []}><Input.TextArea rows={3} /></Form.Item></Form>
+      <Modal
+        title={`${t('task.transition')}：${transitioning?.to ?? bulkTransitioning ?? ''}${bulkTransitioning ? `（批量）` : ''}`}
+        open={!!transitioning || !!bulkTransitioning}
+        onOk={() => void submitTransition()}
+        confirmLoading={saving}
+        onCancel={() => { setTransitioning(null); setBulkTransitioning(null); }}
+        destroyOnClose
+      >
+        <Form form={transitionForm} layout="vertical">
+          <Form.Item
+            name="reason"
+            label={['暂停', '中止', '关闭'].includes(transitioning?.to ?? bulkTransitioning ?? '') ? t('task.reason') : t('common.remark')}
+            rules={['暂停', '中止'].includes(transitioning?.to ?? bulkTransitioning ?? '') ? [{ required: true, min: 2, message: t('task.reasonRequired') }] : []}
+          >
+            <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal title={detail ? `${detail.task_code} · ${detail.title}` : t('common.detail')} open={!!detail} footer={null} onCancel={() => setDetail(null)} width={760} destroyOnClose>

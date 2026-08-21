@@ -1,8 +1,43 @@
 import { Button, Card, Checkbox, Divider, Dropdown, Space, Table, Tooltip } from 'antd';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactElement,
+  type ReactNode,
+} from 'react';
 import TableStandardToolbar, { type TableStandardOptions } from './TableStandardToolbar';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
-import { SettingOutlined } from '@ant-design/icons';
+import {
+  CalendarOutlined,
+  CheckCircleOutlined,
+  CopyOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  EyeOutlined,
+  LinkOutlined,
+  MoreOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  SettingOutlined,
+  StarOutlined,
+  StopOutlined,
+  SwapOutlined,
+  UndoOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
 import { api } from '../api/client';
 import { useAuthStore } from '../stores/auth';
 
@@ -23,8 +58,10 @@ type SortableTableProps<T extends object> = TableProps<T> & {
 type ViewConfig = { visible: string[]; widths: Record<string, number> };
 
 const TABLE_VIEW_KEY_PATTERN = /^[a-z][a-z0-9_.-]{1,63}$/;
-const MIN_COLUMN_WIDTH = 80;
+const MIN_COLUMN_WIDTH = 64;
 const MAX_COLUMN_WIDTH = 800;
+const MIN_ACTION_COLUMN_WIDTH = 80;
+const COMPACT_ACTION_COLUMN_WIDTH = 144;
 
 function sanitizeViewConfig(value: unknown): ViewConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -93,6 +130,13 @@ function defaultColumnWidth<T extends object>(column: ColumnType<T>): number {
   }
   // 旧页面未设置 width 时也必须可以拖拽；160px 是密集业务清单的中性起点。
   return 160;
+}
+
+function compactActionColumnWidth<T extends object>(column: ColumnType<T>): number {
+  const declared = typeof column.width === 'number' && Number.isFinite(column.width)
+    ? Math.round(column.width)
+    : COMPACT_ACTION_COLUMN_WIDTH;
+  return Math.max(MIN_ACTION_COLUMN_WIDTH, Math.min(COMPACT_ACTION_COLUMN_WIDTH, declared));
 }
 
 function ResizableHeaderCell(props: Record<string, unknown>) {
@@ -306,6 +350,96 @@ function augmentColumns<T extends object>(columns: ColumnsType<T>): ColumnsType<
   });
 }
 
+type ActionElementProps = {
+  children?: ReactNode;
+  className?: string;
+  icon?: ReactNode;
+  title?: ReactNode;
+  'aria-label'?: string;
+  onClick?: unknown;
+  href?: unknown;
+  to?: unknown;
+};
+
+function nodeText(node: unknown): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node).trim();
+  if (Array.isArray(node)) return node.map(nodeText).filter(Boolean).join(' ').trim();
+  if (isValidElement<ActionElementProps>(node)) return nodeText(node.props.children);
+  return '';
+}
+
+function isActionColumn<T extends object>(column: ColumnType<T>, key: string): boolean {
+  const dataIndex = Array.isArray(column.dataIndex) ? column.dataIndex.join('.') : String(column.dataIndex ?? '');
+  const normalized = `${key}|${dataIndex}`.toLocaleLowerCase();
+  const title = nodeText(column.title).toLocaleLowerCase();
+  return ['action', 'actions', 'operation', 'operations'].some((token) => normalized.split('|').includes(token))
+    || ['操作', '操作项', 'actions', 'action', 'operations', 'operation'].includes(title);
+}
+
+function actionIcon(label: string): ReactNode {
+  const normalized = label.toLocaleLowerCase();
+  if (/重新|重开|恢复|继续|reopen|restart|resume/.test(normalized)) return <ReloadOutlined />;
+  if (/详情|查看|预览|detail|view|preview/.test(normalized)) return <EyeOutlined />;
+  if (/编辑|修改|edit|modify/.test(normalized)) return <EditOutlined />;
+  if (/删除|移除|delete|remove/.test(normalized)) return <DeleteOutlined />;
+  if (/暂停|pause/.test(normalized)) return <PauseCircleOutlined />;
+  if (/关闭|完成|确认|close|complete|confirm/.test(normalized)) return <CheckCircleOutlined />;
+  if (/执行|开始|受理|启用|run|start|accept|enable/.test(normalized)) return <PlayCircleOutlined />;
+  if (/排期|日程|schedule|calendar/.test(normalized)) return <CalendarOutlined />;
+  if (/中止|终止|停用|abort|terminate|disable|stop/.test(normalized)) return <StopOutlined />;
+  if (/新增|添加|创建|加子任务|add|create|new/.test(normalized)) return <PlusOutlined />;
+  if (/导入|上传|import|upload/.test(normalized)) return <UploadOutlined />;
+  if (/导出|下载|export|download/.test(normalized)) return <DownloadOutlined />;
+  if (/转派|改派|指派|调整|移动|transfer|assign|move/.test(normalized)) return <SwapOutlined />;
+  if (/关联|链接|link|relate/.test(normalized)) return <LinkOutlined />;
+  if (/驳回|退回|撤回|reject|return|withdraw/.test(normalized)) return <UndoOutlined />;
+  if (/复制|copy/.test(normalized)) return <CopyOutlined />;
+  if (/评价|评分|审核|rate|review|score/.test(normalized)) return <StarOutlined />;
+  if (/保存|提交|save|submit/.test(normalized)) return <SaveOutlined />;
+  return <MoreOutlined />;
+}
+
+function iconifyActionNode(node: ReactNode, insideTooltip = false): ReactNode {
+  if (node == null || typeof node === 'boolean') return node;
+  if (Array.isArray(node)) return node.map((child) => iconifyActionNode(child, insideTooltip));
+  if (!isValidElement<ActionElementProps>(node)) return node;
+
+  const element = node as ReactElement<ActionElementProps>;
+  const isTooltip = element.type === Tooltip;
+  if (isTooltip) {
+    return cloneElement(element, undefined, Children.map(element.props.children, (child) => iconifyActionNode(child, true)));
+  }
+
+  const children = Children.map(element.props.children, (child) => iconifyActionNode(child, insideTooltip));
+  const label = nodeText(element.props.children) || nodeText(element.props.title) || element.props['aria-label'] || '';
+  const isControl = Boolean(element.props.onClick || element.props.href || element.props.to)
+    || element.type === Button
+    || element.type === 'a';
+  if (!isControl || !label) return cloneElement(element, undefined, children);
+
+  const className = [element.props.className, 'sortable-table__action-icon-button'].filter(Boolean).join(' ');
+  const converted = cloneElement(element, {
+    className,
+    icon: element.type === Button ? (element.props.icon ?? actionIcon(label)) : element.props.icon,
+    title: element.type === 'a' ? label : element.props.title,
+    'aria-label': element.props['aria-label'] ?? label,
+  }, element.type === Button ? null : actionIcon(label));
+  return insideTooltip ? converted : <Tooltip title={label}>{converted}</Tooltip>;
+}
+
+function iconifyActionRender(rendered: unknown): unknown {
+  if (
+    rendered
+    && typeof rendered === 'object'
+    && !isValidElement(rendered)
+    && 'children' in rendered
+  ) {
+    const descriptor = rendered as { children: ReactNode; props?: Record<string, unknown> };
+    return { ...descriptor, children: iconifyActionNode(descriptor.children) };
+  }
+  return iconifyActionNode(rendered as ReactNode);
+}
+
 /**
  * 统一表格排序入口。所有业务表只要使用此组件，表头字段即可点击排序，
  * 并且不会覆盖页面已经定义的自定义 sorter。
@@ -346,7 +480,10 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
   );
   const defaultConfig = useMemo<ViewConfig>(() => ({
     visible: knownKeys,
-    widths: Object.fromEntries(leaves.map(({ column, key }) => [key, defaultColumnWidth(column)])),
+    widths: Object.fromEntries(leaves.map(({ column, key }) => [
+      key,
+      isActionColumn(column, key) ? compactActionColumnWidth(column) : defaultColumnWidth(column),
+    ])),
   }), [knownKeys, leaves]);
   const [viewConfig, setViewConfig] = useState<ViewConfig>(defaultConfig);
   const viewConfigRef = useRef(viewConfig);
@@ -385,33 +522,47 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
     const transform = (sourceColumns: ColumnsType<T>, prefix = ''): ColumnsType<T> => {
       const result: ColumnsType<T> = [];
       sourceColumns.forEach((column, index) => {
-      if ('children' in column && column.children) {
-        const children = transform(column.children, `${prefix}${index}.`);
-        if (children.length) result.push({ ...column, children });
-        return;
-      }
-      const source = column as ColumnType<T>;
-      const key = columnKey(source, `${prefix}${index}`);
-      if (!viewConfig.visible.includes(key) && !protectedKeys.has(key)) return;
-      const width = viewConfig.widths[key] ?? defaultColumnWidth(source);
-      result.push({
-        ...source,
-        width,
-        onHeaderCell: (headerColumn) => ({
-          ...(source.onHeaderCell?.(headerColumn) ?? {}),
+        if ('children' in column && column.children) {
+          const children = transform(column.children, `${prefix}${index}.`);
+          if (children.length) result.push({ ...column, children });
+          return;
+        }
+        const source = column as ColumnType<T>;
+        const key = columnKey(source, `${prefix}${index}`);
+        if (!viewConfig.visible.includes(key) && !protectedKeys.has(key)) return;
+        const actionColumn = isActionColumn(source, key);
+        // 操作列沿用页面声明的紧凑宽度，并统一限制在 80-144px；这样既能容纳
+        // 页面实际操作数量，也不会被历史偏好或通用默认值撑出大块空白。
+        const width = actionColumn
+          ? compactActionColumnWidth(source)
+          : (viewConfig.widths[key] ?? defaultColumnWidth(source));
+        const render = source.render && actionColumn
+          ? ((value: unknown, record: T, renderIndex: number) => iconifyActionRender(source.render!(value, record, renderIndex))) as ColumnType<T>['render']
+          : source.render;
+        result.push({
+          ...source,
+          render,
           width,
-          onResize: (nextWidth: number) => {
-            const next = { ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } };
-            viewConfigRef.current = next;
-            setViewConfig(next);
-          },
-          onResizeEnd: () => void persistViewConfig(viewConfigRef.current),
-          onResizeStep: (delta: number) => {
-            const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width + delta));
-            void persistViewConfig({ ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } });
-          },
-        }),
-      } as ColumnType<T>);
+          className: [typeof source.className === 'string' ? source.className : '', actionColumn ? 'sortable-table__action-cell' : '']
+            .filter(Boolean)
+            .join(' '),
+          onHeaderCell: (headerColumn) => ({
+            ...(source.onHeaderCell?.(headerColumn) ?? {}),
+            width,
+            ...(actionColumn ? {} : {
+              onResize: (nextWidth: number) => {
+                const next = { ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } };
+                viewConfigRef.current = next;
+                setViewConfig(next);
+              },
+              onResizeEnd: () => void persistViewConfig(viewConfigRef.current),
+              onResizeStep: (delta: number) => {
+                const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width + delta));
+                void persistViewConfig({ ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } });
+              },
+            }),
+          }),
+        } as ColumnType<T>);
       });
       return result;
     };

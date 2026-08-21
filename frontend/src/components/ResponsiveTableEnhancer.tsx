@@ -141,7 +141,8 @@ export default function ResponsiveTableEnhancer(): null {
     const refresh = () => {
       frame = 0;
       const wrappers = Array.from(document.querySelectorAll<HTMLElement>(TABLE_SELECTOR))
-        .filter((wrapper) => !wrapper.closest('.responsive-table__bottom-scroll'));
+        // StickyTable 自己维护唯一底部原生滚动条；全局增强器不得再为它创建第二条。
+        .filter((wrapper) => !wrapper.closest('.responsive-table__bottom-scroll') && !wrapper.closest('.sticky-table'));
       const active = new Set(wrappers);
 
       controllers.forEach((controller, wrapper) => {

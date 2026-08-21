@@ -243,11 +243,14 @@ DELETE /api/problems/batch-delete
 DELETE /api/requirements/tasks/batch-delete
 DELETE /api/task-management/bugs/batch-delete | /work-tasks/batch-delete | /project-tasks/batch-delete
 DELETE /api/trainings/batch-delete
+DELETE /api/projects/{project_id}/wbs/batch-delete
 DELETE /api/cis/batch-delete | /api/ci-relationships/batch-delete
 DELETE /api/catalogs/batch-delete | /api/service-items/batch-delete
 ```
 
-所有批量删除接口接收 `{ids: [...]}`（1–100 条），返回 `{deleted_ids, rejected:[{id, code, message}]}`。每条记录在独立嵌套事务中复用原单条删除的权限、状态、引用/依赖和审计校验；仅实际删除的记录提交，拒绝项不影响其他记录。服务目录批量删除不级联，仍含服务项的目录、仍被有效工单引用的服务项等均按原业务错误码拒绝。
+所有批量删除接口接收 `{ids: [...]}`（1–100 条），返回 `{deleted_ids, rejected:[{id, code, message}]}`。每条记录在独立嵌套事务中复用原单条删除的权限、状态、引用/依赖和审计校验；仅实际删除的记录提交，拒绝项不影响其他记录。WBS 批量删除按层级从最深任务开始执行，已完成任务继续由单条删除规则拒绝；服务目录批量删除不级联，仍含服务项的目录、仍被有效工单引用的服务项等均按原业务错误码拒绝。
+
+清单界面只在存在选中记录时展示批量操作栏，并按页面原有能力及所选记录状态计算可执行动作。行级“操作”列统一渲染为带本地化 Tooltip 与 `aria-label` 的图标按钮，并由共享表格组件把操作列限制在最小可用宽度；历史持久化的过宽操作列偏好不得继续制造无意义空白，批量操作栏保留文字按钮。WBS 使用专用表格增强器：复选框/全选、当前 100% 完成任务禁选、一条固定底部原生横向滚动条和表内原生兜底均由同一组件维护，通用横向滚动增强器不得再次接管该表；“阶段”和“操作”列使用独立紧凑宽度。WBS 能力字段按当前完成度派生，`completed_at` 仅为首次完成审计时间；完成度从 100% 纠正为较低值后，前端必须等待 WBS 清单、里程碑跟踪和项目详情重新加载，再按新能力启用删除、增加子任务和结构调整按钮。
 
 #### 禁止工具
 

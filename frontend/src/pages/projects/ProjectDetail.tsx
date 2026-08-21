@@ -31,10 +31,12 @@ import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
 import {
   ArrowLeftOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   HolderOutlined,
   PlusOutlined,
+  SwapOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
@@ -53,6 +55,7 @@ import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import CompleteStepModal from '../../components/CompleteStepModal';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import StickyTable from '../../components/StickyTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
 import ReasonModal from './ReasonModal';
@@ -267,6 +270,7 @@ export default function ProjectDetail() {
   const [detail, setDetail] = useState<ProjectDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [wbs, setWbs] = useState<WbsTask[]>([]);
+  const [selectedWbsIds, setSelectedWbsIds] = useState<string[]>([]);
   const [, setMilestones] = useState<Milestone[]>([]);
   const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
   const [risks, setRisks] = useState<Risk[]>([]);
@@ -287,7 +291,10 @@ export default function ProjectDetail() {
   const loadWbs = useCallback(async () => {
     if (!id) return;
     try {
-      setWbs((await api.getList<WbsTask>(`/projects/${id}/wbs`)).items);
+      const items = (await api.getList<WbsTask>(`/projects/${id}/wbs`)).items;
+      setWbs(items);
+      const selectableIds = new Set(items.filter((task) => !task.completed_locked).map((task) => task.id));
+      setSelectedWbsIds((current) => current.filter((taskId) => selectableIds.has(taskId)));
     } catch {
       // 已统一提示
     }
@@ -551,10 +558,8 @@ export default function ProjectDetail() {
   const changeTaskProgress = async (task: WbsTask, progress: number) => {
     try {
       await api.patch(`/wbs/${task.id}`, { progress });
+      await Promise.all([loadWbs(), loadMilestoneTracking(), loadDetail()]);
       message.success(t('proj.taskProgressUpdated'));
-      void loadWbs();
-      void loadMilestoneTracking();
-      void loadDetail();
     } catch {
       // 403 等由拦截器统一中文提示
     }
@@ -966,7 +971,8 @@ export default function ProjectDetail() {
     {
       title: t('proj.wbs.col.stage'),
       dataIndex: 'stage',
-      width: 130,
+      width: 64,
+      className: 'wbs-table__stage-cell',
       render: (v, r) => (
         <Space size={4}>
           {!isExample && canEdit && (
@@ -1071,50 +1077,101 @@ export default function ProjectDetail() {
           {
             title: t('common.actions'),
             key: 'action',
-            width: 190,
+            width: 120,
             fixed: 'right' as const,
+            className: 'wbs-table__action-cell',
             render: (_: unknown, r: WbsNode) => (
               <Space size={0}>
                 {!isExample && canEdit && (
                   <>
-                    <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
-                      {t('common.edit')}
-                    </Button>
+                    <Tooltip title={t('common.edit')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        className="sortable-table__action-icon-button"
+                        icon={<EditOutlined />}
+                        aria-label={t('common.edit')}
+                        onClick={() => openTaskModal('edit', r)}
+                      />
+                    </Tooltip>
                     {r.structure_locked ? (
                       <Tooltip title={t('proj.wbs.structureLocked')}>
-                        <Button type="link" size="small" disabled>
-                          {t('proj.addSubtask')}
-                        </Button>
+                        <span>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="sortable-table__action-icon-button"
+                            icon={<PlusOutlined />}
+                            aria-label={t('proj.addSubtask')}
+                            disabled
+                          />
+                        </span>
                       </Tooltip>
                     ) : (
-                      <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
-                        {t('proj.addSubtask')}
-                      </Button>
+                      <Tooltip title={t('proj.addSubtask')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          className="sortable-table__action-icon-button"
+                          icon={<PlusOutlined />}
+                          aria-label={t('proj.addSubtask')}
+                          onClick={() => openTaskModal('create', undefined, r)}
+                        />
+                      </Tooltip>
                     )}
                     {r.structure_locked ? (
                       <Tooltip title={t('proj.wbs.structureLocked')}>
-                        <Button type="link" size="small" disabled>
-                          {t('proj.wbs.adjustStructure')}
-                        </Button>
+                        <span>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="sortable-table__action-icon-button"
+                            icon={<SwapOutlined />}
+                            aria-label={t('proj.wbs.adjustStructure')}
+                            disabled
+                          />
+                        </span>
                       </Tooltip>
                     ) : (
-                      <Button type="link" size="small" onClick={() => openMoveTask(r)}>
-                        {t('proj.wbs.adjustStructure')}
-                      </Button>
+                      <Tooltip title={t('proj.wbs.adjustStructure')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          className="sortable-table__action-icon-button"
+                          icon={<SwapOutlined />}
+                          aria-label={t('proj.wbs.adjustStructure')}
+                          onClick={() => openMoveTask(r)}
+                        />
+                      </Tooltip>
                     )}
                   </>
                 )}
                 {!r.completed_locked && ((!isExample && canEdit) || canDeleteExamples) ? (
                   <Popconfirm title={t('proj.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
-                    <Button type="link" size="small" danger>
-                      {t('common.delete')}
-                    </Button>
+                    <Tooltip title={t('common.delete')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        className="sortable-table__action-icon-button"
+                        icon={<DeleteOutlined />}
+                        aria-label={t('common.delete')}
+                      />
+                    </Tooltip>
                   </Popconfirm>
                 ) : (canEdit || canDeleteExamples) ? (
                   <Tooltip title={t('proj.wbs.completedLocked')}>
-                    <Button type="link" size="small" danger disabled>
-                      {t('common.delete')}
-                    </Button>
+                    <span>
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        disabled
+                        className="sortable-table__action-icon-button"
+                        icon={<DeleteOutlined />}
+                        aria-label={t('common.delete')}
+                      />
+                    </span>
                   </Tooltip>
                 ) : null}
               </Space>
@@ -1205,6 +1262,15 @@ export default function ProjectDetail() {
         }
       >
         <Alert type="info" showIcon message={t('proj.wbs.structureHint')} style={{ marginBottom: 12 }} />
+        <BatchDeleteToolbar
+          endpoint={id ? `/projects/${id}/wbs/batch-delete` : undefined}
+          selectedIds={selectedWbsIds}
+          entityName={t('proj.wbsTasks')}
+          onCompleted={() => {
+            setSelectedWbsIds([]);
+            void Promise.all([loadWbs(), loadMilestones(), loadMilestoneTracking(), loadDetail()]);
+          }}
+        />
         <StickyTable<WbsNode>
           size="small"
           rowKey="id"
@@ -1216,7 +1282,16 @@ export default function ProjectDetail() {
           freezeColumns={3}
           resizable
           rowResizable
-          storageKey={`project-wbs-layout:${id}`}
+          storageKey={`project-wbs-layout-v3:${id}`}
+          rowSelection={{
+            selectedRowKeys: selectedWbsIds,
+            checkStrictly: true,
+            onChange: (keys) => setSelectedWbsIds(keys.map(String)),
+            getCheckboxProps: (record) => ({
+              disabled: record.completed_locked || !((!isExample && canEdit) || canDeleteExamples),
+              title: record.completed_locked ? t('proj.wbs.completedLocked') : undefined,
+            }),
+          }}
           expandable={{
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: setExpandedKeys,

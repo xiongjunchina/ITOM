@@ -1,5 +1,6 @@
 import { Button, Modal, Space, Typography, message } from 'antd';
 import { DeleteOutlined } from '@ant-design/icons';
+import type { ReactNode } from 'react';
 import { api } from '../api/client';
 
 export interface BatchDeleteResult {
@@ -7,19 +8,39 @@ export interface BatchDeleteResult {
   rejected: Array<{ id: string; code: string; message: string }>;
 }
 
+export interface BatchToolbarAction {
+  key: string;
+  label: ReactNode;
+  icon?: ReactNode;
+  danger?: boolean;
+  disabled?: boolean;
+  loading?: boolean;
+  onClick: () => void;
+}
+
 interface BatchDeleteToolbarProps {
-  endpoint: string;
+  endpoint?: string;
   selectedIds: string[];
+  /** 当删除目标只是当前选择的一部分时，仍显示完整的选择数量。 */
+  selectedCount?: number;
   entityName: string;
   onCompleted: () => void;
+  actions?: BatchToolbarAction[];
 }
 
 /**
  * 仅负责确认、调用与反馈；服务端仍对每条记录执行原有权限、状态、关联和审计校验。
  * 因此批量操作不会成为绕过单条删除规则的入口。
  */
-export default function BatchDeleteToolbar({ endpoint, selectedIds, entityName, onCompleted }: BatchDeleteToolbarProps) {
-  if (selectedIds.length === 0) return null;
+export default function BatchDeleteToolbar({
+  endpoint,
+  selectedIds,
+  selectedCount = selectedIds.length,
+  entityName,
+  onCompleted,
+  actions = [],
+}: BatchDeleteToolbarProps) {
+  if (selectedCount === 0) return null;
 
   const confirmDelete = () => {
     Modal.confirm({
@@ -29,6 +50,7 @@ export default function BatchDeleteToolbar({ endpoint, selectedIds, entityName, 
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
+        if (!endpoint) return;
         const result = await api.delete<BatchDeleteResult>(endpoint, { ids: selectedIds });
         onCompleted();
         if (result.rejected.length === 0) {
@@ -55,8 +77,27 @@ export default function BatchDeleteToolbar({ endpoint, selectedIds, entityName, 
   };
 
   return (
-    <Button danger icon={<DeleteOutlined />} onClick={confirmDelete}>
-      删除已选（{selectedIds.length}）
-    </Button>
+    <div className="batch-operation-toolbar" role="toolbar" aria-label={`${entityName}批量操作`}>
+      <Typography.Text strong>已选 {selectedCount} 条</Typography.Text>
+      <Space wrap size={8}>
+        {actions.map((action) => (
+          <Button
+            key={action.key}
+            icon={action.icon}
+            danger={action.danger}
+            disabled={action.disabled}
+            loading={action.loading}
+            onClick={action.onClick}
+          >
+            {action.label}
+          </Button>
+        ))}
+        {endpoint && selectedIds.length > 0 && (
+          <Button danger icon={<DeleteOutlined />} onClick={confirmDelete}>
+            删除（{selectedIds.length}）
+          </Button>
+        )}
+      </Space>
+    </div>
   );
 }

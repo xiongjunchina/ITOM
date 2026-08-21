@@ -247,11 +247,14 @@ DELETE /api/problems/batch-delete
 DELETE /api/requirements/tasks/batch-delete
 DELETE /api/task-management/bugs/batch-delete | /work-tasks/batch-delete | /project-tasks/batch-delete
 DELETE /api/trainings/batch-delete
+DELETE /api/projects/{project_id}/wbs/batch-delete
 DELETE /api/cis/batch-delete | /api/ci-relationships/batch-delete
 DELETE /api/catalogs/batch-delete | /api/service-items/batch-delete
 ```
 
-Every batch-delete endpoint accepts `{ids: [...]}` (1–100 records) and returns `{deleted_ids, rejected:[{id, code, message}]}`. Each item runs in an isolated nested transaction and reuses the original single-record deletion checks for authorization, state, references/dependencies, and audit. Only actually deleted records are committed, while rejected records do not block the remaining items. Catalog deletion does not cascade: a catalog still containing service items and a service item still referenced by an active ticket are rejected with their original business error codes.
+Every batch-delete endpoint accepts `{ids: [...]}` (1–100 records) and returns `{deleted_ids, rejected:[{id, code, message}]}`. Each item runs in an isolated nested transaction and reuses the original single-record deletion checks for authorization, state, references/dependencies, and audit. Only actually deleted records are committed, while rejected records do not block the remaining items. WBS batch deletion processes the deepest selected tasks first and the single-delete guard continues to reject completed tasks. Catalog deletion does not cascade: a catalog still containing service items and a service item still referenced by an active ticket are rejected with their original business error codes.
+
+A list displays its batch toolbar only when rows are selected and derives available actions from the page's existing capabilities and the selected records' states. Row-level Action columns render localized Tooltip/`aria-label` icon buttons, and the shared table constrains those columns to the minimum usable width; oversized persisted action-column preferences must not keep meaningless blank space. Batch toolbar buttons retain explicit text labels. WBS uses its dedicated table enhancer for checkbox/select-all, disabling rows whose current completion is 100%, one fixed browser-native bottom scrollbar, and the in-table native fallback; the global horizontal-scroll enhancer must not attach a duplicate control to this table. Its Phase and Action columns have dedicated compact widths. WBS capabilities are derived from current completion, while `completed_at` remains only a first-completion audit fact. After completion is corrected from 100% to a lower value, the frontend must await reload of the WBS list, milestone tracking, and project detail before enabling delete, add-child, and structural controls from the refreshed capabilities.
 
 #### Forbidden tools
 

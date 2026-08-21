@@ -23,9 +23,10 @@ from app.models import (
     ServiceItem,
     WbsTask,
 )
-from app.schemas.common import ok, paginate
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services import process_engine
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.charter import parse_charter
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
@@ -667,24 +668,21 @@ def _wbs_row(t: WbsTask, names: dict, codes: dict | None = None) -> dict:
         # 前置任务按 WBS 号展示（前端用）
         "predecessor_codes": [codes[pid] for pid in (t.predecessor_ids or []) if codes and pid in codes] if codes else [],
         "sort": t.sort,
-        # 已完成任务是项目交付记录，不能删除或改变其树形位置；已经开始的
-        # 任务可继续填写实际信息，但不能参与层级/排序调整。
+        # 当前完成度为 100% 的任务是项目交付记录，不能删除或改变其树形位置。
+        # completed_at 保留首次完成时间作为审计证据；若经授权将完成度修正到
+        # 100% 以下，删除和结构操作应重新开放。
         "completed_locked": _wbs_is_completed(t),
-        "structure_locked": not _wbs_is_unstarted(t),
+        "structure_locked": _wbs_is_completed(t),
     }
 
 
 def _wbs_is_completed(task: WbsTask) -> bool:
-    return (task.progress or 0) >= 100 or task.completed_at is not None
+    """返回任务当前是否处于完成锁定状态。
 
-
-def _wbs_is_unstarted(task: WbsTask) -> bool:
-    return (
-        not _wbs_is_completed(task)
-        and (task.progress or 0) == 0
-        and task.actual_start is None
-        and task.actual_end is None
-    )
+    completed_at 是首次完成审计时间，不能用于判断当前状态；完成度经授权
+    修正到 100% 以下后，结构调整和删除能力应重新开放。
+    """
+    return (task.progress or 0) >= 100
 
 
 def _wbs_children(tasks: list[WbsTask]) -> dict[str | None, list[WbsTask]]:
@@ -746,8 +744,8 @@ def create_wbs(project_id: str, body: WbsIn, db: Session = Depends(get_db), acto
         parent = db.get(WbsTask, body.parent_task_id)
         if not parent or parent.is_deleted or parent.project_id != project_id:
             raise AppError("NOT_FOUND", "父任务不存在", 404)
-        if not _wbs_is_unstarted(parent):
-            raise AppError("WBS_STRUCTURE_LOCKED", "只有未开始的父任务可新增子任务")
+        if _wbs_is_completed(parent):
+            raise AppError("WBS_STRUCTURE_LOCKED", "当前完成度为 100% 的父任务不能新增子任务")
     task = WbsTask(**body.model_dump(), project_id=project_id, wbs_code="0",
                    sort=db.query(WbsTask).filter(WbsTask.project_id == project_id).count())
     db.add(task)
@@ -816,10 +814,12 @@ def update_wbs(task_id: str, body: WbsUpdate, db: Session = Depends(get_db), use
     return ok(_wbs_row(task, names))
 
 
-@router.delete("/api/wbs/{task_id}")
-def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+def _delete_wbs_one(task_id: str, db: Session, actor, *, expected_project_id: str | None = None) -> WbsTask:
+    """按单条删除的完整领域规则软删除一个 WBS 任务，不提交事务。"""
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "任务不存在", 404)
+    if expected_project_id and task.project_id != expected_project_id:
         raise AppError("NOT_FOUND", "任务不存在", 404)
     project = db.get(Project, task.project_id)
     ensure_example_delete_allowed(project, db, actor)
@@ -844,6 +844,48 @@ def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(requir
     if progress_changed:
         summary["progress_updated_task_ids"] = [item.id for item in progress_changed]
     audit(db, "wbs_task", task.id, "delete", actor, summary)
+    return task
+
+
+@router.delete("/api/projects/{project_id}/wbs/batch-delete")
+def batch_delete_wbs(
+    project_id: str,
+    body: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("projects", "edit")),
+):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+
+    # 同时选择父子任务时必须先删最深层子项，否则父项会被 HAS_CHILDREN
+    # 拒绝。未知/跨项目 ID 仍交由逐条领域校验返回明确拒绝原因。
+    selected = (
+        db.query(WbsTask)
+        .filter(WbsTask.id.in_(body.ids), WbsTask.project_id == project_id, WbsTask.is_deleted.is_(False))
+        .all()
+    )
+    known_ids = {task.id for task in selected}
+    ordered_ids = [
+        task.id
+        for task in sorted(
+            selected,
+            key=lambda item: (item.wbs_code.count("."), item.wbs_code, item.created_at),
+            reverse=True,
+        )
+    ]
+    ordered_ids.extend(entity_id for entity_id in body.ids if entity_id not in known_ids)
+
+    return ok(execute_batch_delete(
+        db,
+        ordered_ids,
+        lambda task_id: _delete_wbs_one(task_id, db, actor, expected_project_id=project_id),
+    ))
+
+
+@router.delete("/api/wbs/{task_id}")
+def delete_wbs(task_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    task = _delete_wbs_one(task_id, db, actor)
     db.commit()
     return ok({"id": task.id})
 
@@ -855,10 +897,10 @@ def move_wbs(
     db: Session = Depends(get_db),
     actor=Depends(require_perm("projects", "edit")),
 ):
-    """调整未开始 WBS 的父级和同级顺序。
+    """调整当前未完成 WBS 的父级和同级顺序。
 
-    操作只允许发生在全部尚未启动的受影响分组中，避免重排已启动或已完成
-    任务的顺序/WBS 编号，保证交付基线与审计记录保持可追溯。
+    当前完成度为 100% 的任务保持交付锁定；经授权修正到 100% 以下后，
+    可重新调整层级和同级顺序，首次完成时间继续保留用于审计。
     """
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
@@ -873,8 +915,8 @@ def move_wbs(
     )
     by_id = {item.id: item for item in tasks}
     children = _wbs_children(tasks)
-    if not _wbs_is_unstarted(task):
-        raise AppError("WBS_STRUCTURE_LOCKED", "只有未开始的 WBS 任务可调整层级或排序")
+    if _wbs_is_completed(task):
+        raise AppError("WBS_STRUCTURE_LOCKED", "当前完成度为 100% 的 WBS 任务不能调整层级或排序")
 
     new_parent = None
     if body.parent_task_id:
@@ -883,8 +925,8 @@ def move_wbs(
             raise AppError("NOT_FOUND", "目标父任务不存在", 404)
         if new_parent.id == task.id or new_parent.id in _wbs_descendant_ids(task.id, children):
             raise AppError("WBS_CYCLE", "不能将任务移动到自身或其子任务下")
-        if not _wbs_is_unstarted(new_parent):
-            raise AppError("WBS_STRUCTURE_LOCKED", "目标父任务已开始或已完成，不能调整其层级")
+        if _wbs_is_completed(new_parent):
+            raise AppError("WBS_STRUCTURE_LOCKED", "目标父任务当前完成度为 100%，不能调整其层级")
 
     if body.before_task_id:
         before = by_id.get(body.before_task_id)
@@ -898,14 +940,14 @@ def move_wbs(
     affected_parent_ids = {task.parent_task_id, body.parent_task_id}
     for parent_id in affected_parent_ids:
         sibling_rows = children.get(parent_id, [])
-        if any(not _wbs_is_unstarted(item) for item in sibling_rows if item.id != task.id):
+        if any(_wbs_is_completed(item) for item in sibling_rows if item.id != task.id):
             raise AppError(
                 "WBS_STRUCTURE_LOCKED",
-                "该层级存在已开始或已完成任务，不能调整顺序或层级以免改变交付基线",
+                "该层级存在当前完成度为 100% 的任务，不能调整顺序或层级",
             )
     descendant_ids = _wbs_descendant_ids(task.id, children)
-    if any(not _wbs_is_unstarted(by_id[item_id]) for item_id in descendant_ids):
-        raise AppError("WBS_STRUCTURE_LOCKED", "任务包含已开始或已完成的子任务，不能调整层级")
+    if any(_wbs_is_completed(by_id[item_id]) for item_id in descendant_ids):
+        raise AppError("WBS_STRUCTURE_LOCKED", "任务包含当前完成度为 100% 的子任务，不能调整层级")
 
     old_parent_id, old_sort, old_code = task.parent_task_id, task.sort, task.wbs_code
     old_siblings = [item for item in children.get(old_parent_id, []) if item.id != task.id]

@@ -11,7 +11,8 @@ approval boundaries.
 
 ## Start before implementation
 
-1. Complete the repository Git synchronization gate.
+1. Inspect the local worktree and branch. GitHub synchronization is not a
+   prerequisite; pushing remains a separate user-approved action.
 2. Read the required architecture baseline and restate architecture, security,
    migration, and open decisions when required by `AGENTS.md`.
 3. Start the ledger:

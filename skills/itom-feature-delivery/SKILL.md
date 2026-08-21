@@ -10,8 +10,8 @@ delivery or as permission to access production data, credentials, or callbacks.
 
 ## Start the feature track
 
-1. Complete the repository Git synchronization and architecture confirmation
-   gates.
+1. Inspect the local worktree/branch and complete the architecture confirmation
+   gates. GitHub synchronization is not a prerequisite for local development.
 2. Start the ledger with `--track feature-local`, recording grade, scope, and
    an acceptance matrix that separates focused tests, local Docker UAT, CI, and
    IDC acceptance.
@@ -30,7 +30,8 @@ English mirrors. Freeze the candidate and run full CI once.
 After CI passes, record `local-candidate-ready` with the local business-UAT
 evidence. Report the commit, migrations, configuration impact, test evidence,
 known boundaries, proposed immutable image tag, rollback point, and IDC
-acceptance matrix. Do not build release images or write to IDC yet.
+acceptance matrix. Do not push to GitHub, build release images, or write to IDC
+until the user separately approves the applicable action.
 
 ## Require a separate release decision
 

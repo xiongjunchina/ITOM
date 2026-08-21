@@ -547,6 +547,63 @@ html[data-theme='dark'] .help-breadcrumb-link:focus-visible { color: #cfe0ff !im
 .table-standard-toolbar__count { font-variant-numeric: tabular-nums; white-space: nowrap; }
 html[data-theme='dark'] .table-standard-toolbar__count,
 .workbench-c--dark .table-standard-toolbar__count { color: #aab4c2; }
+.batch-operation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: 1px solid #b7cdfd;
+  border-radius: 8px;
+  background: #f3f7ff;
+}
+.sortable-table__action-icon-button {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 !important;
+  border-radius: 6px;
+  line-height: 28px;
+  text-align: center;
+}
+
+/* 操作列只承载图标按钮：压缩单元格内边距和按钮间距，避免业务宽表
+   在右侧留下与操作数量无关的大块空白。 */
+.sortable-table__action-cell.ant-table-cell {
+  padding-inline: 2px !important;
+  white-space: nowrap;
+}
+
+.sortable-table__action-cell .ant-space {
+  column-gap: 0 !important;
+}
+
+/* WBS 使用 StickyTable，不能依赖 SortableTable 的操作列转换；阶段列和
+   四个图标操作保持最小必要宽度，避免固定列两侧出现无意义留白。 */
+.wbs-table__stage-cell.ant-table-cell {
+  padding-inline: 4px !important;
+  white-space: nowrap;
+}
+
+.wbs-table__action-cell.ant-table-cell {
+  padding-inline: 2px !important;
+  white-space: nowrap;
+}
+
+.wbs-table__action-cell .ant-space {
+  column-gap: 0 !important;
+  flex-wrap: nowrap;
+}
+html[data-theme='dark'] .batch-operation-toolbar,
+.workbench-c--dark .batch-operation-toolbar {
+  border-color: #31528f;
+  background: #17243a;
+}
 
 /* 宽表操作：使用浏览器原生的唯一底部横向滚动条，并保留表内原生条作故障兜底。 */
 .responsive-table__bottom-scroll {
@@ -608,10 +665,9 @@ html[data-theme='dark'] .table-standard-toolbar__count,
 .sticky-table__body .ant-table-wrapper { overflow: visible; }
 .sticky-table__body .ant-table-body,
 .sticky-table__body .ant-table-content {
-  /* WBS 横向滚动交给 antd sticky-scroll，避免正文再绘制一条横向条。 */
-  overflow-x: hidden !important;
-  scrollbar-width: thin;
-  scrollbar-color: #a8b3c2 #edf1f6;
+  /* 保留真实滚动能力，视觉滚动条统一由 sticky-table__bottom-scroll 提供。 */
+  overflow-x: auto !important;
+  scrollbar-width: none;
 }
 .sticky-table__body .ant-table-body::-webkit-scrollbar,
 .sticky-table__body .ant-table-content::-webkit-scrollbar,
@@ -622,19 +678,35 @@ html[data-theme='dark'] .table-standard-toolbar__count,
   height: 0;
 }
 .sticky-table__body .ant-table-sticky-scroll {
-  display: block;
-  z-index: 6;
-  opacity: 1;
+  display: none !important;
+  pointer-events: none !important;
+}
+.sticky-table__bottom-scroll {
+  position: fixed;
+  z-index: 30;
+  height: 16px;
+  min-height: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-sizing: border-box;
   background: #fff;
-  border-top: 1px solid #dfe4ec;
+  border: 1px solid #dfe4ec;
+  border-radius: 5px 5px 0 0;
+  scrollbar-width: thin;
+  scrollbar-color: #a8b3c2 #edf1f6;
 }
-.sticky-table__body .ant-table-sticky-scroll-bar {
-  height: 10px;
-  background: #a8b3c2;
-  border-radius: 5px;
+.sticky-table__bottom-scroll[data-visible='false'] {
+  visibility: hidden;
+  pointer-events: none;
+  height: 0;
+  min-height: 0;
+  border: 0;
 }
-.sticky-table__body .ant-table-sticky-scroll-bar:hover,
-.sticky-table__body .ant-table-sticky-scroll-bar-active { background: #7f8da1; }
+.sticky-table__bottom-scroll > div { min-width: 100%; height: 1px; }
+.sticky-table__bottom-scroll::-webkit-scrollbar { height: 10px; }
+.sticky-table__bottom-scroll::-webkit-scrollbar-track { background: #edf1f6; border-radius: 5px; }
+.sticky-table__bottom-scroll::-webkit-scrollbar-thumb { background: #a8b3c2; border-radius: 5px; }
+.sticky-table__bottom-scroll::-webkit-scrollbar-thumb:hover { background: #7f8da1; }
 .sticky-table__body .ant-table-sticky-holder { z-index: 6; }
 .sortable-table__header-cell { position: relative !important; overflow: visible !important; }
 .sortable-table__column-resize-handle {
@@ -680,14 +752,8 @@ html[data-theme='dark'] .table-standard-toolbar__count,
 .sticky-table--freeze-columns .ant-table-cell-fix-left { background: #fff; }
 .sticky-table--freeze-columns .ant-table-thead > tr > th.ant-table-cell-fix-left { z-index: 7; }
 .sticky-table--freeze-columns .ant-table-tbody > tr:hover > td.ant-table-cell-fix-left { background: #f5f8ff; }
-html[data-theme='dark'] .sticky-table__body .ant-table-sticky-scroll,
-.workbench-c--dark .sticky-table__body .ant-table-sticky-scroll { background: #171b21; border-top-color: #343b46; }
-html[data-theme='dark'] .sticky-table__body .ant-table-sticky-scroll-bar,
-.workbench-c--dark .sticky-table__body .ant-table-sticky-scroll-bar { background: #596779; }
-html[data-theme='dark'] .sticky-table__body .ant-table-sticky-scroll-bar:hover,
-html[data-theme='dark'] .sticky-table__body .ant-table-sticky-scroll-bar-active,
-.workbench-c--dark .sticky-table__body .ant-table-sticky-scroll-bar:hover,
-.workbench-c--dark .sticky-table__body .ant-table-sticky-scroll-bar-active { background: #7f8da1; }
+html[data-theme='dark'] .sticky-table__bottom-scroll,
+.workbench-c--dark .sticky-table__bottom-scroll { background: #171b21; border-color: #343b46; scrollbar-color: #596779 #252b34; }
 html[data-theme='dark'] .sticky-table__body .ant-table-body,
 html[data-theme='dark'] .sticky-table__body .ant-table-content,
 .workbench-c--dark .sticky-table__body .ant-table-body,

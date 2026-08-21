@@ -123,7 +123,7 @@ def test_wbs_progress_cascade_and_rollup(client, ctx):
 
 
 def test_wbs_structure_move_and_completion_lock(client, ctx):
-    """只允许未开始任务调整层级/排序，且已完成任务不可删除。"""
+    """当前 100% 任务锁定结构；修正回非 100% 后立即解锁且保留完成审计时间。"""
     h = ctx["h"]
     project = client.post("/api/projects", json={
         "name": "M9 WBS 结构调整项目", "pm": ctx["pm"],
@@ -181,3 +181,79 @@ def test_wbs_structure_move_and_completion_lock(client, ctx):
     }, headers=h)
     assert locked_move.status_code == 400
     assert locked_move.json()["error"]["code"] == "WBS_STRUCTURE_LOCKED"
+
+    completed_rows = {
+        row["id"]: row
+        for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]
+    }
+    first_completed_at = completed_rows[child["id"]]["completed_at"]
+    assert first_completed_at is not None
+    assert completed_rows[child["id"]]["completed_locked"] is True
+    assert completed_rows[child["id"]]["structure_locked"] is True
+
+    # 授权修正完成度后，应按当前进度重新开放结构操作；completed_at 只保留
+    # 首次完成的审计证据，不能继续把任务锁死。
+    corrected = client.patch(f"/api/wbs/{child['id']}", json={"progress": 50}, headers=h)
+    assert corrected.status_code == 200
+    corrected_rows = {
+        row["id"]: row
+        for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]
+    }
+    assert corrected_rows[child["id"]]["progress"] == 50
+    assert corrected_rows[child["id"]]["completed_at"] == first_completed_at
+    assert corrected_rows[child["id"]]["completed_locked"] is False
+    assert corrected_rows[child["id"]]["structure_locked"] is False
+
+    grandchild = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "修正后新增子任务", "assignee": ctx["dev"], "parent_task_id": child["id"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=2)),
+    }, headers=h)
+    assert grandchild.status_code == 200
+    assert client.delete(f"/api/wbs/{grandchild.json()['data']['id']}", headers=h).status_code == 200
+
+    unlocked_move = client.post(f"/api/wbs/{child['id']}/move", json={
+        "parent_task_id": root_a["id"], "before_task_id": None,
+    }, headers=h)
+    assert unlocked_move.status_code == 200
+    assert client.delete(f"/api/wbs/{child['id']}", headers=h).status_code == 200
+
+
+def test_wbs_batch_delete_reuses_locks_and_deletes_children_first(client, ctx):
+    """批量删除复用单条约束，并在父子同时选中时按子项优先执行。"""
+    h = ctx["h"]
+    project = client.post("/api/projects", json={
+        "name": "M9 WBS 批量删除项目", "pm": ctx["pm"],
+        "planned_start": str(TODAY), "planned_end": str(TODAY + timedelta(days=30)),
+    }, headers=h).json()["data"]
+    pid = project["id"]
+    parent = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "待删除父任务", "assignee": ctx["pm"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=10)),
+    }, headers=h).json()["data"]
+    child = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "待删除子任务", "assignee": ctx["dev"], "parent_task_id": parent["id"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=5)),
+    }, headers=h).json()["data"]
+    completed = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "已完成保留任务", "assignee": ctx["dev"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=5)),
+    }, headers=h).json()["data"]
+    assert client.patch(f"/api/wbs/{completed['id']}", json={"progress": 100}, headers=h).status_code == 200
+
+    # 故意按父、完成、子顺序提交，服务端仍应先删子项再删父项。
+    response = client.request(
+        "DELETE",
+        f"/api/projects/{pid}/wbs/batch-delete",
+        json={"ids": [parent["id"], completed["id"], child["id"]]},
+        headers=h,
+    )
+    assert response.status_code == 200
+    result = response.json()["data"]
+    assert set(result["deleted_ids"]) == {parent["id"], child["id"]}
+    assert result["rejected"] == [{
+        "id": completed["id"],
+        "code": "WBS_COMPLETED_LOCKED",
+        "message": "已完成的 WBS 任务是项目交付记录，不允许删除",
+    }]
+    remaining = client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]
+    assert [row["id"] for row in remaining] == [completed["id"]]

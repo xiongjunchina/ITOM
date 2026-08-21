@@ -257,7 +257,7 @@ code [C], name, owner FK, year, description, status.
 
 ### 3.3 wbs_task — WBS task
 
-project_id FK, parent_task_id FK self-reference, wbs_code [C] (generated from tree position), task_name, assignee FK, start_date, end_date, status, description, deliverable, predecessors JSONB (array of task ids), progress_pct (integer 0–100%; project roll-up is duration-weighted), sort. `completed_locked` and `structure_locked` are derived API flags rather than persisted fields: a completed task is locked against deletion and structural changes; only an unstarted task/subtree may change `parent_task_id` and sibling `sort`, followed by `wbs_code` recalculation.
+project_id FK, parent_task_id FK self-reference, wbs_code [C] (generated from tree position), task_name, assignee FK, start_date, end_date, status, description, deliverable, predecessors JSONB (array of task ids), progress_pct (integer 0–100%; project roll-up is duration-weighted), sort, completed_at (the first time the task reached 100%; retained as an audit fact after a later completion correction). `completed_locked` and `structure_locked` are derived API flags rather than persisted fields: only the current `progress_pct >= 100` locks deletion, add-child, and structural changes, while historical `completed_at` never creates a permanent lock. An authorized correction below 100% restores the derived capabilities immediately; structural changes still enforce authorization, references, currently completed sibling/descendant protection, and cycle checks, then recalculate affected `parent_task_id`, sibling `sort`, and `wbs_code`.
 
 ### 3.4 milestone — milestone
 

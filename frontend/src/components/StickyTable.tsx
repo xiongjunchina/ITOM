@@ -106,7 +106,7 @@ function readLayout(storageKey: string | undefined): {
 
 /**
  * Excel 式宽表：
- * - 表头与底部横向滚动条相对 app-content 悬浮（底部滚动条由全局增强器提供）；
+ * - 表头与唯一底部原生横向滚动条相对 app-content 悬浮；
  * - freezeColumns 冻结左侧列；
  * - 表头分隔线和行底部分隔线支持鼠标/键盘调整；
  * - 可选 storageKey 保存个人布局。
@@ -120,6 +120,8 @@ export default function StickyTable<T extends object>({
   ...props
 }: StickyTableProps<T>) {
   const tableWrapRef = useRef<HTMLDivElement>(null);
+  const bottomScrollRef = useRef<HTMLDivElement>(null);
+  const bottomScrollInnerRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const initialLayout = useMemo(() => readLayout(storageKey), [storageKey]);
   const [stickyContainer, setStickyContainer] = useState<HTMLElement | null>(null);
@@ -146,6 +148,96 @@ export default function StickyTable<T extends object>({
     if (!wrapper) return;
     // MainLayout 的 app-content 是固定高度后的唯一纵向滚动容器；其他场景退回 window。
     setStickyContainer(wrapper.closest<HTMLElement>('.app-content'));
+  }, []);
+
+  useEffect(() => {
+    const wrapper = tableWrapRef.current;
+    const bottom = bottomScrollRef.current;
+    const bottomInner = bottomScrollInnerRef.current;
+    if (!wrapper || !bottom || !bottomInner) return;
+
+    let source: HTMLElement | null = null;
+    let sourceCleanup: (() => void) | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    let frame = 0;
+    let syncing = false;
+
+    const viewportRect = () => {
+      const appContent = wrapper.closest<HTMLElement>('.app-content');
+      return appContent?.getBoundingClientRect() ?? new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+    };
+    const update = () => {
+      frame = 0;
+      if (!source) return;
+      const rect = wrapper.getBoundingClientRect();
+      const viewport = viewportRect();
+      const left = Math.max(0, Math.max(rect.left, viewport.left));
+      const right = Math.min(window.innerWidth, Math.min(rect.right, viewport.right));
+      const intersects = Math.min(rect.bottom, viewport.bottom) > Math.max(rect.top, viewport.top);
+      const overflow = source.scrollWidth > source.clientWidth + 1;
+      const visible = overflow && intersects && right > left;
+      bottom.dataset.visible = visible ? 'true' : 'false';
+      bottom.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      bottomInner.style.width = `${Math.max(source.scrollWidth, source.clientWidth, 1)}px`;
+      if (visible) {
+        bottom.style.left = `${Math.round(left)}px`;
+        bottom.style.width = `${Math.round(right - left)}px`;
+        bottom.style.bottom = `${Math.max(0, Math.round(window.innerHeight - viewport.bottom))}px`;
+      }
+      if (Math.abs(bottom.scrollLeft - source.scrollLeft) > 1) bottom.scrollLeft = source.scrollLeft;
+    };
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(update);
+    };
+    const sync = (from: HTMLElement, to: HTMLElement) => {
+      if (syncing) return;
+      syncing = true;
+      to.scrollLeft = from.scrollLeft;
+      window.requestAnimationFrame(() => { syncing = false; });
+    };
+    const bindSource = () => {
+      const candidates = Array.from(wrapper.querySelectorAll<HTMLElement>('.ant-table-body, .ant-table-content'));
+      const next = candidates.find((node) => node.scrollWidth > node.clientWidth + 1) ?? candidates[0] ?? null;
+      if (next === source) {
+        scheduleUpdate();
+        return;
+      }
+      sourceCleanup?.();
+      resizeObserver?.disconnect();
+      source = next;
+      if (!source) {
+        bottom.dataset.visible = 'false';
+        return;
+      }
+      const current = source;
+      const onBottomScroll = () => sync(bottom, current);
+      const onSourceScroll = () => sync(current, bottom);
+      bottom.addEventListener('scroll', onBottomScroll, { passive: true });
+      current.addEventListener('scroll', onSourceScroll, { passive: true });
+      sourceCleanup = () => {
+        bottom.removeEventListener('scroll', onBottomScroll);
+        current.removeEventListener('scroll', onSourceScroll);
+      };
+      resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleUpdate) : null;
+      resizeObserver?.observe(wrapper);
+      resizeObserver?.observe(current);
+      scheduleUpdate();
+    };
+
+    bindSource();
+    const mutationObserver = new MutationObserver(bindSource);
+    mutationObserver.observe(wrapper, { childList: true, subtree: true });
+    window.addEventListener('resize', scheduleUpdate);
+    document.addEventListener('scroll', scheduleUpdate, true);
+    return () => {
+      mutationObserver.disconnect();
+      sourceCleanup?.();
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', scheduleUpdate);
+      document.removeEventListener('scroll', scheduleUpdate, true);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   const startColumnResize = useCallback((key: string, event: ReactPointerEvent<HTMLSpanElement>) => {
@@ -239,15 +331,21 @@ export default function StickyTable<T extends object>({
       const key = String(rowProps['data-row-key'] ?? '');
       const height = rowHeights[key];
       const cells = Children.toArray(rowProps.children);
-      const firstCell = cells[0];
-      const decoratedCells = key && isValidElement(firstCell)
-        ? [
-            cloneElement(firstCell as ReactElement<ResizeCellProps>, {
-              className: `${(firstCell.props as ResizeCellProps).className ?? ''} sticky-table__row-resize-cell`,
-              style: { ...(firstCell.props as ResizeCellProps).style, position: 'relative' },
+      // Ant Design 在启用 rowSelection 后会把选择框单元格插入第一列。
+      // 行高拖拽手柄必须挂在第一个业务单元格，不能覆盖选择框原有 children。
+      const resizeCellIndex = cells.findIndex((cell) => (
+        isValidElement<ResizeCellProps>(cell)
+        && !String(cell.props.className ?? '').includes('ant-table-selection-column')
+      ));
+      const decoratedCells = key && resizeCellIndex >= 0
+        ? cells.map((cell, index) => {
+            if (index !== resizeCellIndex || !isValidElement<ResizeCellProps>(cell)) return cell;
+            return cloneElement(cell as ReactElement<ResizeCellProps>, {
+              className: `${cell.props.className ?? ''} sticky-table__row-resize-cell`,
+              style: { ...cell.props.style, position: 'relative' },
               children: (
                 <>
-                  {(firstCell.props as ResizeCellProps).children}
+                  {cell.props.children}
                   <span
                     className="sticky-table__row-resize-handle"
                     role="separator"
@@ -267,9 +365,8 @@ export default function StickyTable<T extends object>({
                   />
                 </>
               ),
-            }),
-            ...cells.slice(1),
-          ]
+            });
+          })
         : cells;
       return (
         <tr {...rowProps} style={{ ...rowProps.style, ...(height ? { height } : {}) }}>
@@ -304,6 +401,15 @@ export default function StickyTable<T extends object>({
           components={components}
           sticky={sticky}
         />
+      </div>
+      <div
+        ref={bottomScrollRef}
+        className="sticky-table__bottom-scroll"
+        aria-label="表格横向滚动条"
+        aria-hidden="true"
+        data-visible="false"
+      >
+        <div ref={bottomScrollInnerRef} aria-hidden="true" />
       </div>
     </div>
   );

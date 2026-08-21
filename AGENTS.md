@@ -83,20 +83,22 @@ Before designing or implementing work on the current branch:
 The frozen Feishu Helpdesk baseline remains recoverable from the annotated tag
 `v1.0.0-feishu-helpdesk` at commit `f13f702`.
 
-## Mandatory pre-development Git synchronization
+## User-controlled Git synchronization
 
-Before starting every new development task or modifying code:
+Before starting a development task, inspect the current worktree and branch so
+that unrelated local changes are not overwritten or mixed accidentally. Do not
+require the local branch to match GitHub before coding, and do not block local
+implementation when GitHub is unavailable or the tips differ.
 
-1. Check the worktree and current branch with `git status` and `git branch`.
-2. If local changes exist, commit them as a separate baseline/version record;
-   never mix those changes with the new task.
-3. Push the current development branch to GitHub and verify that the local
-   `HEAD` equals the remote branch tip.
-4. Only after synchronization succeeds may new implementation changes begin.
+The default delivery order is:
 
-If GitHub synchronization is unavailable or the local and remote tips differ,
-stop before editing code and report the exact blocker. This gate applies to
-every subsequent update, not only large refactors or releases.
+1. Implement and verify the change in the approved local environment.
+2. Present the verified local candidate to the user.
+3. Push to GitHub only after the user explicitly confirms that synchronization.
+4. Release to IDC only after a separate explicit production-release approval.
+
+GitHub synchronization and IDC release are user-controlled actions. Never push,
+create a PR, merge, or deploy merely to satisfy a pre-development gate.
 
 ## Deployment and verification environment
 

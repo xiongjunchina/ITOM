@@ -14,7 +14,6 @@ import {
   Select,
   Space,
   Switch,
-  Table as AntTable,
   Tag,
   Typography,
   Upload,
@@ -465,7 +464,7 @@ export default function BugListPage() {
             )}
           </Space>
           <Divider orientation="left">{t('task.bug.fixTasks')}</Divider>
-          <AntTable<BugFixTaskRow>
+          <Table<BugFixTaskRow>
             rowKey="id" size="small" pagination={false} dataSource={detail.fix_tasks}
             columns={[
               { title: t('task.code'), dataIndex: 'task_code', width: 150, sorter: (a, b) => a.task_code.localeCompare(b.task_code) },

@@ -1452,9 +1452,9 @@ export interface WbsTask {
   /** 前置任务的 WBS 编号（展示用） */
   predecessor_codes: string[];
   sort: number;
-  /** 已完成任务为项目交付记录，禁止直接删除。 */
+  /** 当前完成度为 100% 时作为交付记录锁定删除；修正到 100% 以下后重新开放。 */
   completed_locked: boolean;
-  /** 仅未开始任务可调整层级与同级排序。 */
+  /** 当前完成度为 100% 时锁定层级、排序与新增子任务。 */
   structure_locked: boolean;
 }
 
