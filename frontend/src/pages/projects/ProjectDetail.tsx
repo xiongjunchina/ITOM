@@ -12,6 +12,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Pagination,
   Popconfirm,
   Progress,
   Row,
@@ -60,7 +61,16 @@ import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
 import ReasonModal from './ReasonModal';
 import ProjectEditModal from './ProjectEditModal';
-import { selectHierarchySafeWbsRows, type WbsDisplayLimit } from './wbsDisplayLimit';
+import { selectHierarchySafeWbsPage, type WbsDisplayLimit } from './wbsDisplayLimit';
+import {
+  normalizeWbsMoveRoots,
+  resolveWbsDropDestination,
+  toggleWbsBranchSelection,
+  wbsBranchIds,
+  wbsDropPositionFromRatio,
+  wbsSelectionState,
+  type WbsDropPosition,
+} from './wbsHierarchySelection';
 import type {
   AllowedTransition,
   AttachmentItem,
@@ -272,6 +282,7 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true);
   const [wbs, setWbs] = useState<WbsTask[]>([]);
   const [wbsDisplayLimit, setWbsDisplayLimit] = useState<WbsDisplayLimit>(50);
+  const [wbsPage, setWbsPage] = useState(1);
   const [selectedWbsIds, setSelectedWbsIds] = useState<string[]>([]);
   const [, setMilestones] = useState<Milestone[]>([]);
   const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
@@ -463,12 +474,13 @@ export default function ProjectDetail() {
   const [moveBeforeId, setMoveBeforeId] = useState<string | null>(null);
   const [moveSaving, setMoveSaving] = useState(false);
   const [draggingWbsId, setDraggingWbsId] = useState<string | null>(null);
+  const [wbsDropTarget, setWbsDropTarget] = useState<{ id: string; position: WbsDropPosition } | null>(null);
 
-  const visibleWbs = useMemo(
-    () => selectHierarchySafeWbsRows(wbs, wbsDisplayLimit),
-    [wbs, wbsDisplayLimit],
+  const wbsPageResult = useMemo(
+    () => selectHierarchySafeWbsPage(wbs, wbsDisplayLimit, wbsPage),
+    [wbs, wbsDisplayLimit, wbsPage],
   );
-  const visibleWbsIds = useMemo(() => new Set(visibleWbs.map((task) => task.id)), [visibleWbs]);
+  const visibleWbs = wbsPageResult.rows;
   const wbsTree = useMemo(() => buildWbsTree(visibleWbs), [visibleWbs]);
   const phaseTasks = useMemo(
     () => wbs
@@ -477,15 +489,25 @@ export default function ProjectDetail() {
       .sort((a, b) => a.wbs_code.localeCompare(b.wbs_code, undefined, { numeric: true })),
     [wbs],
   );
+  const wbsStructureLockedTreeIds = useMemo(() => {
+    const byId = new Map(wbs.map((task) => [task.id, task]));
+    const locked = new Set<string>();
+    for (const task of wbs) {
+      if (!task.structure_locked) continue;
+      locked.add(task.id);
+      const visited = new Set<string>();
+      let parentId = task.parent_task_id;
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId);
+        locked.add(parentId);
+        parentId = byId.get(parentId)?.parent_task_id ?? null;
+      }
+    }
+    return locked;
+  }, [wbs]);
   useEffect(() => {
     setExpandedKeys(wbs.map((t) => t.id));
   }, [wbs]);
-  useEffect(() => {
-    setSelectedWbsIds((current) => {
-      const visibleSelection = current.filter((taskId) => visibleWbsIds.has(taskId));
-      return visibleSelection.length === current.length ? current : visibleSelection;
-    });
-  }, [visibleWbsIds]);
 
   const moveDescendantIds = useMemo(() => (moveTask ? wbsDescendantIds(moveTask.id, wbs) : new Set<string>()), [moveTask, wbs]);
   const movableParentOptions = useMemo(
@@ -500,6 +522,15 @@ export default function ProjectDetail() {
       .map((task) => ({ value: task.id, label: `${task.wbs_code} ${task.name}` })),
     [moveParentId, moveTask?.id, wbs],
   );
+  const activeDragRootIds = useMemo(
+    () => (draggingWbsId ? normalizeWbsMoveRoots(wbs, selectedWbsIds, draggingWbsId) : []),
+    [draggingWbsId, selectedWbsIds, wbs],
+  );
+  const activeDragTreeIds = useMemo(() => {
+    const ids = new Set<string>();
+    activeDragRootIds.forEach((rootId) => wbsBranchIds(wbs, rootId).forEach((taskId) => ids.add(taskId)));
+    return ids;
+  }, [activeDragRootIds, wbs]);
 
   const openTaskModal = (mode: 'create' | 'edit', task?: WbsTask, parent?: WbsTask) => {
     taskForm.resetFields();
@@ -606,9 +637,8 @@ export default function ProjectDetail() {
       message.success(t('proj.wbs.moveSaved'));
       setMoveTask(null);
       setDraggingWbsId(null);
-      void loadWbs();
-      void loadMilestoneTracking();
-      void loadDetail();
+      setWbsDropTarget(null);
+      await Promise.all([loadWbs(), loadMilestoneTracking(), loadDetail()]);
     } catch {
       // 已统一提示，服务端会拒绝已开始/已完成、循环引用和跨层级参照。
     } finally {
@@ -616,31 +646,104 @@ export default function ProjectDetail() {
     }
   };
 
+  const moveWbsTasks = async (taskIds: string[], parentTaskId: string | null, beforeTaskId: string | null) => {
+    if (!id || !taskIds.length) return;
+    setMoveSaving(true);
+    try {
+      await api.post(`/projects/${id}/wbs/batch-move`, {
+        task_ids: taskIds,
+        parent_task_id: parentTaskId,
+        before_task_id: beforeTaskId,
+      });
+      await Promise.all([loadWbs(), loadMilestoneTracking(), loadDetail()]);
+      message.success(t('proj.wbs.batchMoveSaved', { count: taskIds.length }));
+    } catch {
+      // 服务端原子校验权限、完成锁、循环关系和目标排序；失败时不会部分移动。
+    } finally {
+      setMoveSaving(false);
+      setDraggingWbsId(null);
+      setWbsDropTarget(null);
+    }
+  };
+
+  const draggedWbsRoots = (draggedId: string): string[] => (
+    draggedId === draggingWbsId ? activeDragRootIds : normalizeWbsMoveRoots(wbs, selectedWbsIds, draggedId)
+  );
+
+  const draggedWbsTreeIds = (draggedId: string): Set<string> => {
+    if (draggedId === draggingWbsId) return activeDragTreeIds;
+    const ids = new Set<string>();
+    for (const rootId of draggedWbsRoots(draggedId)) {
+      wbsBranchIds(wbs, rootId).forEach((taskId) => ids.add(taskId));
+    }
+    return ids;
+  };
+
+  const wbsDropPosition = (event: ReactDragEvent<HTMLTableRowElement>): WbsDropPosition => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = bounds.height > 0 ? (event.clientY - bounds.top) / bounds.height : 0.5;
+    return wbsDropPositionFromRatio(ratio);
+  };
+
+  const canDropWbs = (draggedId: string, target: WbsTask, position: WbsDropPosition): boolean => {
+    const rootIds = draggedWbsRoots(draggedId);
+    const movedTreeIds = draggedWbsTreeIds(draggedId);
+    if (!rootIds.length || movedTreeIds.has(target.id)) return false;
+    if (rootIds.some((taskId) => wbsStructureLockedTreeIds.has(taskId))) return false;
+    const targetParentId = position === 'inside' ? target.id : target.parent_task_id;
+    if (position === 'inside' && wbsStructureLockedTreeIds.has(target.id)) return false;
+    return !wbs.some(
+      (task) => task.parent_task_id === targetParentId && task.structure_locked && !movedTreeIds.has(task.id),
+    );
+  };
+
   const startWbsDrag = (event: ReactDragEvent<HTMLSpanElement>, task: WbsTask) => {
-    if (task.structure_locked || !canEdit || isExample) {
+    if (
+      moveSaving
+      || task.structure_locked
+      || draggedWbsRoots(task.id).some((taskId) => wbsStructureLockedTreeIds.has(taskId))
+      || !canEdit
+      || isExample
+    ) {
       event.preventDefault();
+      message.warning(t('proj.wbs.dragLockedTree'));
       return;
     }
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', task.id);
     setDraggingWbsId(task.id);
+    setWbsDropTarget(null);
   };
 
   const allowWbsDrop = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
-    const source = wbs.find((task) => task.id === draggingWbsId);
-    if (!source || source.id === target.id || source.structure_locked || target.structure_locked || source.parent_task_id !== target.parent_task_id) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'move';
-  };
-
-  const dropWbsBefore = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
-    event.preventDefault();
-    const source = wbs.find((task) => task.id === draggingWbsId);
-    if (!source || source.id === target.id || source.structure_locked || target.structure_locked || source.parent_task_id !== target.parent_task_id) {
-      setDraggingWbsId(null);
+    if (!draggingWbsId || moveSaving) return;
+    const position = wbsDropPosition(event);
+    if (!canDropWbs(draggingWbsId, target, position)) {
+      setWbsDropTarget(null);
       return;
     }
-    void moveWbsTask(source, target.parent_task_id, target.id);
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setWbsDropTarget((current) => (
+      current?.id === target.id && current.position === position ? current : { id: target.id, position }
+    ));
+  };
+
+  const dropWbs = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!draggingWbsId || moveSaving) return;
+    const position = wbsDropTarget?.id === target.id ? wbsDropTarget.position : wbsDropPosition(event);
+    if (!canDropWbs(draggingWbsId, target, position)) {
+      setDraggingWbsId(null);
+      setWbsDropTarget(null);
+      return;
+    }
+    const rootIds = draggedWbsRoots(draggingWbsId);
+    const movedTreeIds = draggedWbsTreeIds(draggingWbsId);
+    const destination = resolveWbsDropDestination(wbs, movedTreeIds, target.id, position);
+    if (!destination) return;
+    void moveWbsTasks(rootIds, destination.parentTaskId, destination.beforeTaskId);
   };
 
   /** 完成度可编辑：有 projects.edit 或本人是任务负责人；示例数据一律只读 */
@@ -989,13 +1092,16 @@ export default function ProjectDetail() {
       render: (v, r) => (
         <Space size={4}>
           {!isExample && canEdit && (
-            <Tooltip title={r.structure_locked ? t('proj.wbs.structureLocked') : t('proj.wbs.dragHandle')}>
+            <Tooltip title={wbsStructureLockedTreeIds.has(r.id) ? t('proj.wbs.structureLocked') : t('proj.wbs.dragHandle')}>
               <span
-                draggable={!r.structure_locked}
+                draggable={!moveSaving && !wbsStructureLockedTreeIds.has(r.id)}
                 aria-label={t('proj.wbs.dragHandle')}
                 onDragStart={(event) => startWbsDrag(event, r)}
-                onDragEnd={() => setDraggingWbsId(null)}
-                style={{ cursor: r.structure_locked ? 'not-allowed' : 'grab', color: '#8c8c8c', display: 'inline-flex' }}
+                onDragEnd={() => {
+                  setDraggingWbsId(null);
+                  setWbsDropTarget(null);
+                }}
+                style={{ cursor: wbsStructureLockedTreeIds.has(r.id) ? 'not-allowed' : 'grab', color: '#8c8c8c', display: 'inline-flex' }}
               >
                 <HolderOutlined />
               </span>
@@ -1299,11 +1405,24 @@ export default function ProjectDetail() {
           rowSelection={{
             selectedRowKeys: selectedWbsIds,
             checkStrictly: true,
-            onChange: (keys) => setSelectedWbsIds(keys.map(String)),
-            getCheckboxProps: (record) => ({
-              disabled: record.completed_locked || !((!isExample && canEdit) || canDeleteExamples),
-              title: record.completed_locked ? t('proj.wbs.completedLocked') : undefined,
-            }),
+            preserveSelectedRowKeys: true,
+            onSelect: (record, selected) => {
+              setSelectedWbsIds((current) => toggleWbsBranchSelection(wbs, current, record.id, selected));
+            },
+            onSelectAll: (selected, _selectedRows, changedRows) => {
+              setSelectedWbsIds((current) => changedRows.reduce(
+                (next, record) => toggleWbsBranchSelection(wbs, next, record.id, selected),
+                current,
+              ));
+            },
+            getCheckboxProps: (record) => {
+              const selectionState = wbsSelectionState(wbs, selectedWbsIds, record.id);
+              return {
+                disabled: record.completed_locked || !((!isExample && canEdit) || canDeleteExamples),
+                indeterminate: selectionState.indeterminate,
+                title: record.completed_locked ? t('proj.wbs.completedLocked') : undefined,
+              };
+            },
           }}
           expandable={{
             expandedRowKeys: expandedKeys,
@@ -1311,8 +1430,14 @@ export default function ProjectDetail() {
           }}
           onRow={(record) => ({
             onDragOver: (event) => allowWbsDrop(event, record),
-            onDrop: (event) => dropWbsBefore(event, record),
+            onDragLeave: (event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWbsDropTarget(null);
+            },
+            onDrop: (event) => dropWbs(event, record),
           })}
+          rowClassName={(record) => (
+            wbsDropTarget?.id === record.id ? `wbs-table__drop-${wbsDropTarget.position}` : ''
+          )}
           locale={{ emptyText: t('proj.emptyWbs') }}
         />
         <div
@@ -1328,7 +1453,18 @@ export default function ProjectDetail() {
           <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
             {t('proj.wbs.displayCount', { shown: visibleWbs.length, total: wbs.length })}
           </Typography.Text>
-          <Space size={8}>
+          <Space size={12} wrap>
+            {wbsDisplayLimit !== 'all' && wbsPageResult.pageCount > 1 && (
+              <Pagination
+                size="small"
+                current={wbsPageResult.page}
+                pageSize={wbsDisplayLimit}
+                total={wbs.length}
+                showSizeChanger={false}
+                showTotal={(total) => t('proj.wbs.paginationTotal', { total })}
+                onChange={setWbsPage}
+              />
+            )}
             <Typography.Text>{t('proj.wbs.displayRows')}</Typography.Text>
             <Select<WbsDisplayLimit>
               value={wbsDisplayLimit}
@@ -1340,7 +1476,10 @@ export default function ProjectDetail() {
                 { value: 200, label: '200' },
                 { value: 'all', label: t('proj.wbs.displayAll') },
               ]}
-              onChange={setWbsDisplayLimit}
+              onChange={(value) => {
+                setWbsDisplayLimit(value);
+                setWbsPage(1);
+              }}
             />
           </Space>
         </div>

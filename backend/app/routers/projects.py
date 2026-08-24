@@ -23,7 +23,7 @@ from app.models import (
     ServiceItem,
     WbsTask,
 )
-from app.schemas.common import BatchDeleteIn, ok, paginate
+from app.schemas.common import ok, paginate
 from app.services import process_engine
 from app.services.audit import audit
 from app.services.batch_delete import execute_batch_delete
@@ -125,6 +125,20 @@ class WbsMoveIn(BaseModel):
 
     parent_task_id: str | None = None
     before_task_id: str | None = None
+
+
+class WbsBatchMoveIn(BaseModel):
+    """一次原子移动多个 WBS 根任务；被选根的后代随树移动。"""
+
+    task_ids: list[str] = Field(min_length=1, max_length=500)
+    parent_task_id: str | None = None
+    before_task_id: str | None = None
+
+
+class WbsBatchIdsIn(BaseModel):
+    """WBS 层级联选可跨页覆盖整棵树，批量操作上限独立放宽。"""
+
+    ids: list[str] = Field(min_length=1, max_length=500)
 
 
 class MilestoneIn(BaseModel):
@@ -704,6 +718,143 @@ def _wbs_descendant_ids(task_id: str, children: dict[str | None, list[WbsTask]])
     return result
 
 
+def _wbs_depth_first(children: dict[str | None, list[WbsTask]]) -> list[WbsTask]:
+    """返回与树表实际渲染一致的深度优先顺序，并安全保留异常孤立行。"""
+    result: list[WbsTask] = []
+    visited: set[str] = set()
+
+    def walk(parent_id: str | None):
+        for item in children.get(parent_id, []):
+            if item.id in visited:
+                continue
+            visited.add(item.id)
+            result.append(item)
+            walk(item.id)
+
+    walk(None)
+    for siblings in children.values():
+        for item in siblings:
+            if item.id not in visited:
+                visited.add(item.id)
+                result.append(item)
+    return result
+
+
+def _move_wbs_roots(
+    project_id: str,
+    requested_task_ids: list[str],
+    parent_task_id: str | None,
+    before_task_id: str | None,
+    db: Session,
+) -> tuple[list[WbsTask], list[WbsTask], dict[str, dict]]:
+    """按一个事务校验并移动 WBS 根任务；调用方负责审计与提交。"""
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(project)
+
+    tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project_id, WbsTask.is_deleted.is_(False))
+        .order_by(WbsTask.sort, WbsTask.created_at)
+        .with_for_update()
+        .all()
+    )
+    by_id = {item.id: item for item in tasks}
+    children = _wbs_children(tasks)
+    unique_ids = list(dict.fromkeys(requested_task_ids))
+    if any(task_id not in by_id for task_id in unique_ids):
+        raise AppError("NOT_FOUND", "待移动任务不存在或不属于当前项目", 404)
+
+    requested_ids = set(unique_ids)
+    # 父子同时选中时，后代天然跟随父级，不再作为第二个移动根重复处理。
+    moved_roots: list[WbsTask] = []
+    for item in _wbs_depth_first(children):
+        if item.id not in requested_ids:
+            continue
+        visited: set[str] = set()
+        ancestor_id = item.parent_task_id
+        has_selected_ancestor = False
+        while ancestor_id and ancestor_id not in visited:
+            if ancestor_id in requested_ids:
+                has_selected_ancestor = True
+                break
+            visited.add(ancestor_id)
+            ancestor_id = by_id.get(ancestor_id).parent_task_id if ancestor_id in by_id else None
+        if not has_selected_ancestor:
+            moved_roots.append(item)
+
+    if not moved_roots:
+        raise AppError("INVALID_WBS_MOVE", "待移动任务的层级关系无效，无法确定移动根")
+
+    moved_root_ids = {item.id for item in moved_roots}
+    moved_tree_ids = set(moved_root_ids)
+    for item in moved_roots:
+        descendants = _wbs_descendant_ids(item.id, children)
+        moved_tree_ids.update(descendants)
+        if _wbs_is_completed(item):
+            raise AppError("WBS_STRUCTURE_LOCKED", "当前完成度为 100% 的 WBS 任务不能调整层级或排序")
+        if any(_wbs_is_completed(by_id[descendant_id]) for descendant_id in descendants):
+            raise AppError("WBS_STRUCTURE_LOCKED", "待移动任务包含当前完成度为 100% 的子任务，不能调整层级")
+
+    if parent_task_id:
+        new_parent = by_id.get(parent_task_id)
+        if not new_parent:
+            raise AppError("NOT_FOUND", "目标父任务不存在", 404)
+        if new_parent.id in moved_tree_ids:
+            raise AppError("WBS_CYCLE", "不能将任务移动到自身或其子任务下")
+        if _wbs_is_completed(new_parent):
+            raise AppError("WBS_STRUCTURE_LOCKED", "目标父任务当前完成度为 100%，不能调整其层级")
+
+    if before_task_id:
+        before = by_id.get(before_task_id)
+        if not before:
+            raise AppError("NOT_FOUND", "排序参照任务不存在", 404)
+        if before.id in moved_tree_ids:
+            raise AppError("INVALID_WBS_MOVE", "排序参照任务不能是待移动任务或其子任务")
+        if before.parent_task_id != parent_task_id:
+            raise AppError("INVALID_WBS_MOVE", "排序参照任务必须位于目标层级")
+
+    affected_parent_ids = {parent_task_id, *(item.parent_task_id for item in moved_roots)}
+    for affected_parent_id in affected_parent_ids:
+        sibling_rows = children.get(affected_parent_id, [])
+        if any(_wbs_is_completed(item) for item in sibling_rows if item.id not in moved_root_ids):
+            raise AppError(
+                "WBS_STRUCTURE_LOCKED",
+                "该层级存在当前完成度为 100% 的任务，不能调整顺序或层级",
+            )
+
+    old_states = {
+        item.id: {
+            "old_parent_task_id": item.parent_task_id,
+            "old_sort": item.sort,
+            "old_wbs_code": item.wbs_code,
+        }
+        for item in moved_roots
+    }
+    reordered: dict[str | None, list[WbsTask]] = {
+        affected_parent_id: [
+            item for item in children.get(affected_parent_id, []) if item.id not in moved_root_ids
+        ]
+        for affected_parent_id in affected_parent_ids
+    }
+    target_siblings = reordered[parent_task_id]
+    if before_task_id:
+        insert_at = next(index for index, item in enumerate(target_siblings) if item.id == before_task_id)
+    else:
+        insert_at = len(target_siblings)
+    target_siblings[insert_at:insert_at] = moved_roots
+
+    for item in moved_roots:
+        item.parent_task_id = parent_task_id
+    for siblings in reordered.values():
+        for index, item in enumerate(siblings):
+            item.sort = index
+    db.flush()
+    rebuild_wbs_codes(db, project_id)
+    return tasks, moved_roots, old_states
+
+
 def _record_wbs_completion(db: Session, task: WbsTask, project: Project):
     """为达到 100% 的任务补齐完成时间及一次性完成事件。"""
     if (task.progress or 0) < 100 or task.completed_at:
@@ -886,7 +1037,7 @@ def _delete_wbs_one(task_id: str, db: Session, actor, *, expected_project_id: st
 @router.delete("/api/projects/{project_id}/wbs/batch-delete")
 def batch_delete_wbs(
     project_id: str,
-    body: BatchDeleteIn,
+    body: WbsBatchIdsIn,
     db: Session = Depends(get_db),
     actor=Depends(require_perm("projects", "edit")),
 ):
@@ -941,87 +1092,78 @@ def move_wbs(
     task = db.get(WbsTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "任务不存在", 404)
-    project = db.get(Project, task.project_id)
-    ensure_not_example(project)
-    tasks = (
-        db.query(WbsTask)
-        .filter(WbsTask.project_id == task.project_id, WbsTask.is_deleted.is_(False))
-        .order_by(WbsTask.sort, WbsTask.created_at)
-        .all()
+    tasks, moved_roots, old_states = _move_wbs_roots(
+        task.project_id,
+        [task_id],
+        body.parent_task_id,
+        body.before_task_id,
+        db,
     )
-    by_id = {item.id: item for item in tasks}
-    children = _wbs_children(tasks)
-    if _wbs_is_completed(task):
-        raise AppError("WBS_STRUCTURE_LOCKED", "当前完成度为 100% 的 WBS 任务不能调整层级或排序")
-
-    new_parent = None
-    if body.parent_task_id:
-        new_parent = by_id.get(body.parent_task_id)
-        if not new_parent:
-            raise AppError("NOT_FOUND", "目标父任务不存在", 404)
-        if new_parent.id == task.id or new_parent.id in _wbs_descendant_ids(task.id, children):
-            raise AppError("WBS_CYCLE", "不能将任务移动到自身或其子任务下")
-        if _wbs_is_completed(new_parent):
-            raise AppError("WBS_STRUCTURE_LOCKED", "目标父任务当前完成度为 100%，不能调整其层级")
-
-    if body.before_task_id:
-        before = by_id.get(body.before_task_id)
-        if not before:
-            raise AppError("NOT_FOUND", "排序参照任务不存在", 404)
-        if before.id == task.id:
-            raise AppError("INVALID_WBS_MOVE", "不能以任务自身作为排序参照")
-        if before.parent_task_id != body.parent_task_id:
-            raise AppError("INVALID_WBS_MOVE", "排序参照任务必须位于目标层级")
-
-    affected_parent_ids = {task.parent_task_id, body.parent_task_id}
-    for parent_id in affected_parent_ids:
-        sibling_rows = children.get(parent_id, [])
-        if any(_wbs_is_completed(item) for item in sibling_rows if item.id != task.id):
-            raise AppError(
-                "WBS_STRUCTURE_LOCKED",
-                "该层级存在当前完成度为 100% 的任务，不能调整顺序或层级",
-            )
-    descendant_ids = _wbs_descendant_ids(task.id, children)
-    if any(_wbs_is_completed(by_id[item_id]) for item_id in descendant_ids):
-        raise AppError("WBS_STRUCTURE_LOCKED", "任务包含当前完成度为 100% 的子任务，不能调整层级")
-
-    old_parent_id, old_sort, old_code = task.parent_task_id, task.sort, task.wbs_code
-    old_siblings = [item for item in children.get(old_parent_id, []) if item.id != task.id]
-    target_siblings = old_siblings if old_parent_id == body.parent_task_id else list(children.get(body.parent_task_id, []))
-    if body.before_task_id:
-        insert_at = next(index for index, item in enumerate(target_siblings) if item.id == body.before_task_id)
-        target_siblings.insert(insert_at, task)
-    else:
-        target_siblings.append(task)
-
-    if old_parent_id != body.parent_task_id:
-        for index, item in enumerate(old_siblings):
-            item.sort = index
-        task.parent_task_id = body.parent_task_id
-    for index, item in enumerate(target_siblings):
-        item.sort = index
-    db.flush()
-    rebuild_wbs_codes(db, task.project_id)
+    moved = moved_roots[0]
+    old_state = old_states[moved.id]
     audit(
         db,
         "wbs_task",
-        task.id,
+        moved.id,
         "move",
         actor,
         {
-            "old_parent_task_id": old_parent_id,
+            **old_state,
             "new_parent_task_id": body.parent_task_id,
-            "old_sort": old_sort,
-            "new_sort": task.sort,
-            "old_wbs_code": old_code,
-            "new_wbs_code": task.wbs_code,
+            "new_sort": moved.sort,
+            "new_wbs_code": moved.wbs_code,
             "before_task_id": body.before_task_id,
         },
     )
     db.commit()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     codes = {item.id: item.wbs_code for item in tasks}
-    return ok(_wbs_row(task, names, codes))
+    return ok(_wbs_row(moved, names, codes))
+
+
+@router.post("/api/projects/{project_id}/wbs/batch-move")
+def batch_move_wbs(
+    project_id: str,
+    body: WbsBatchMoveIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("projects", "edit")),
+):
+    """原子移动一个或多个 WBS 根及其完整子树。"""
+    tasks, moved_roots, old_states = _move_wbs_roots(
+        project_id,
+        body.task_ids,
+        body.parent_task_id,
+        body.before_task_id,
+        db,
+    )
+    moved_root_ids = [item.id for item in moved_roots]
+    batch_anchor_id = moved_root_ids[0]
+    for item in moved_roots:
+        audit(
+            db,
+            "wbs_task",
+            item.id,
+            "move",
+            actor,
+            {
+                **old_states[item.id],
+                "new_parent_task_id": body.parent_task_id,
+                "new_sort": item.sort,
+                "new_wbs_code": item.wbs_code,
+                "before_task_id": body.before_task_id,
+                "batch_move": True,
+                "batch_anchor_id": batch_anchor_id,
+                "batch_size": len(moved_root_ids),
+            },
+        )
+    db.commit()
+    return ok({
+        "requested_task_ids": list(dict.fromkeys(body.task_ids)),
+        "moved_root_ids": moved_root_ids,
+        "parent_task_id": body.parent_task_id,
+        "before_task_id": body.before_task_id,
+        "total": len(tasks),
+    })
 
 
 # ---------- 里程碑跟踪（派生：WBS 中里程碑=是 的行自动汇总，与模板「里程碑跟踪」页一致） ----------

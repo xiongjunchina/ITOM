@@ -130,10 +130,16 @@ test('WBS rows support select-all and contextual batch delete without unlocking 
   assert.match(projectDetail, /endpoint=\{id \? `\/projects\/\$\{id\}\/wbs\/batch-delete` : undefined\}/);
   assert.match(projectDetail, /rowSelection=\{\{/);
   assert.match(projectDetail, /checkStrictly: true/);
+  assert.match(projectDetail, /toggleWbsBranchSelection\(wbs, current, record\.id, selected\)/);
+  assert.match(projectDetail, /preserveSelectedRowKeys: true/);
   assert.match(projectDetail, /disabled: record\.completed_locked/);
-  assert.match(stickyTable, /!String\(cell\.props\.className \?\? ''\)\.includes\('ant-table-selection-column'\)/);
-  assert.match(stickyTable, /cells\.map\(\(cell, index\) =>/);
-  assert.doesNotMatch(stickyTable, /const firstCell = cells\[0\]/);
+  assert.match(projectDetail, /`\/projects\/\$\{id\}\/wbs\/batch-move`/);
+  assert.match(projectDetail, /normalizeWbsMoveRoots\(wbs, selectedWbsIds, draggedId\)/);
+  assert.match(projectDetail, /wbs-table__drop-\$\{wbsDropTarget\.position\}/);
+  assert.match(stickyTable, /const content = originalRender \? originalRender\(value, record, renderIndex\) : value as ReactNode/);
+  assert.match(stickyTable, /className="sticky-table__row-resize-handle"/);
+  assert.match(stickyTable, /\{rowProps\.children\}/);
+  assert.doesNotMatch(stickyTable, /cloneElement\(cell/);
   assert.match(projectDetail, /storageKey=\{`project-wbs-layout-v3:\$\{id\}`\}/);
   assert.match(projectDetail, /dataIndex: 'stage',[\s\S]{0,180}?width: 64[\s\S]{0,100}?wbs-table__stage-cell/);
   assert.match(projectDetail, /title: t\('common\.actions'\),[\s\S]{0,220}?width: 120[\s\S]{0,120}?wbs-table__action-cell/);
@@ -148,7 +154,11 @@ test('WBS rows support select-all and contextual batch delete without unlocking 
 
 test('WBS display sizing and actual-date controls stay integrated with the existing tree table', () => {
   assert.match(projectDetail, /useState<WbsDisplayLimit>\(50\)/);
-  assert.match(projectDetail, /selectHierarchySafeWbsRows\(wbs, wbsDisplayLimit\)/);
+  assert.match(projectDetail, /useState\(1\)/);
+  assert.match(projectDetail, /selectHierarchySafeWbsPage\(wbs, wbsDisplayLimit, wbsPage\)/);
+  assert.match(projectDetail, /<Pagination/);
+  assert.match(projectDetail, /current=\{wbsPageResult\.page\}/);
+  assert.match(projectDetail, /onChange=\{setWbsPage\}/);
   assert.match(projectDetail, /dataSource=\{wbsTree\}/);
   assert.match(projectDetail, /t\('proj\.wbs\.displayCount', \{ shown: visibleWbs\.length, total: wbs\.length \}\)/);
   assert.match(projectDetail, /\{ value: 50, label: '50' \}/);

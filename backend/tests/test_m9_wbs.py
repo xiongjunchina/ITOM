@@ -290,6 +290,137 @@ def test_wbs_structure_move_and_completion_lock(client, ctx):
     assert client.delete(f"/api/wbs/{child['id']}", headers=h).status_code == 200
 
 
+def test_wbs_batch_move_is_atomic_normalizes_subtrees_and_writes_audit(client, ctx):
+    """多选根按树序原子移动；父子重复选择归一，失败不能留下部分排序。"""
+    from app.db import SessionLocal
+    from app.models import AuditLog
+
+    h = ctx["h"]
+    project = client.post("/api/projects", json={
+        "name": "M9 WBS 批量移动项目", "pm": ctx["pm"],
+        "planned_start": str(TODAY), "planned_end": str(TODAY + timedelta(days=30)),
+    }, headers=h).json()["data"]
+    pid = project["id"]
+
+    def create(name, parent_id=None):
+        response = client.post(f"/api/projects/{pid}/wbs", json={
+            "name": name, "assignee": ctx["dev"], "parent_task_id": parent_id,
+            "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=5)),
+        }, headers=h)
+        assert response.status_code == 200, response.text
+        return response.json()["data"]
+
+    root_a = create("批移一级 A")
+    root_b = create("批移一级 B")
+    root_c = create("批移一级 C")
+    child_a1 = create("A 子任务 1", root_a["id"])
+    child_a2 = create("A 子任务 2", root_a["id"])
+    child_b1 = create("B 子任务 1", root_b["id"])
+
+    moved = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [child_a1["id"], child_a2["id"]],
+        "parent_task_id": root_b["id"],
+        "before_task_id": child_b1["id"],
+    }, headers=h)
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["data"]["moved_root_ids"] == [child_a1["id"], child_a2["id"]]
+    rows = {row["id"]: row for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]}
+    assert rows[child_a1["id"]]["parent_task_id"] == root_b["id"]
+    assert rows[child_a2["id"]]["parent_task_id"] == root_b["id"]
+    assert rows[child_a1["id"]]["wbs_code"] == "2.1"
+    assert rows[child_a2["id"]]["wbs_code"] == "2.2"
+    assert rows[child_b1["id"]]["wbs_code"] == "2.3"
+
+    # 同时提交父与后代时只移动父级根，完整子树和内部顺序保持不变。
+    normalized = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [root_b["id"], child_a1["id"]],
+        "parent_task_id": None,
+        "before_task_id": root_a["id"],
+    }, headers=h)
+    assert normalized.status_code == 200, normalized.text
+    assert normalized.json()["data"]["moved_root_ids"] == [root_b["id"]]
+    rows = {row["id"]: row for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]}
+    assert rows[root_b["id"]]["wbs_code"] == "1"
+    assert rows[child_a1["id"]]["wbs_code"] == "1.1"
+    assert rows[child_a2["id"]]["wbs_code"] == "1.2"
+    assert rows[child_b1["id"]]["wbs_code"] == "1.3"
+
+    cycle = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [root_b["id"]],
+        "parent_task_id": child_a1["id"],
+        "before_task_id": None,
+    }, headers=h)
+    assert cycle.status_code == 400
+    assert cycle.json()["error"]["code"] == "WBS_CYCLE"
+
+    # 任一选中任务完成锁定时整批拒绝，另一任务的位置不能被部分修改。
+    assert client.patch(f"/api/wbs/{child_b1['id']}", json={"progress": 100}, headers=h).status_code == 200
+    before_failure = {
+        row["id"]: (row["parent_task_id"], row["wbs_code"], row["sort"])
+        for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]
+    }
+    locked = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [root_a["id"], child_b1["id"]],
+        "parent_task_id": None,
+        "before_task_id": root_c["id"],
+    }, headers=h)
+    assert locked.status_code == 400
+    assert locked.json()["error"]["code"] == "WBS_STRUCTURE_LOCKED"
+    after_failure = {
+        row["id"]: (row["parent_task_id"], row["wbs_code"], row["sort"])
+        for row in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"]
+    }
+    assert after_failure == before_failure
+
+    missing = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [root_a["id"], "01MISSINGWBS00000000000000"],
+        "parent_task_id": None,
+        "before_task_id": None,
+    }, headers=h)
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "NOT_FOUND"
+
+    other_project = client.post("/api/projects", json={
+        "name": "M9 WBS 跨项目拒绝", "pm": ctx["pm"],
+        "planned_start": str(TODAY), "planned_end": str(TODAY + timedelta(days=30)),
+    }, headers=h).json()["data"]
+    other_task = client.post(f"/api/projects/{other_project['id']}/wbs", json={
+        "name": "其他项目任务", "assignee": ctx["dev"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=5)),
+    }, headers=h).json()["data"]
+    cross_project = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [root_a["id"], other_task["id"]],
+        "parent_task_id": None,
+        "before_task_id": None,
+    }, headers=h)
+    assert cross_project.status_code == 404
+    assert cross_project.json()["error"]["code"] == "NOT_FOUND"
+
+    unauthenticated = client.post(f"/api/projects/{pid}/wbs/batch-move", json={
+        "task_ids": [root_a["id"]], "parent_task_id": None, "before_task_id": None,
+    })
+    assert unauthenticated.status_code == 401
+
+    db = SessionLocal()
+    try:
+        audit_row = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.entity_type == "wbs_task",
+                AuditLog.entity_id == child_a1["id"],
+                AuditLog.action == "move",
+            )
+            .order_by(AuditLog.created_at.asc())
+            .first()
+        )
+        assert audit_row is not None
+        assert audit_row.summary["batch_move"] is True
+        assert audit_row.summary["batch_size"] == 2
+        assert audit_row.summary["new_parent_task_id"] == root_b["id"]
+    finally:
+        db.close()
+
+
 def test_wbs_batch_delete_reuses_locks_and_deletes_children_first(client, ctx):
     """批量删除复用单条约束，并在父子同时选中时按子项优先执行。"""
     h = ctx["h"]

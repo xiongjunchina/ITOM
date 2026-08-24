@@ -1,7 +1,4 @@
 import {
-  Children,
-  cloneElement,
-  isValidElement,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -10,11 +7,9 @@ import {
   useState,
 } from 'react';
 import type {
-  CSSProperties,
   HTMLAttributes,
   Key,
   PointerEvent as ReactPointerEvent,
-  ReactElement,
   ReactNode,
 } from 'react';
 import type { ColumnType, ColumnsType, TableProps } from 'antd/es/table';
@@ -43,12 +38,6 @@ type ResizeHeaderCellProps = HTMLAttributes<HTMLTableCellElement> & {
 type ResizeBodyRowProps = HTMLAttributes<HTMLTableRowElement> & {
   'data-row-key'?: Key;
   children?: ReactNode;
-};
-
-type ResizeCellProps = {
-  children?: ReactNode;
-  className?: string;
-  style?: CSSProperties;
 };
 
 function ResizeHeaderCell({ onResizeStart, onResizeStep, children, ...props }: ResizeHeaderCellProps) {
@@ -210,6 +199,13 @@ export default function StickyTable<T extends object>({
 
   useEffect(() => () => resizeCleanupRef.current?.(), []);
 
+  const recordKey = useCallback((record: T): string => {
+    const rowKey = props.rowKey;
+    if (typeof rowKey === 'function') return String(rowKey(record));
+    if (rowKey != null) return String((record as Record<PropertyKey, unknown>)[rowKey as PropertyKey] ?? '');
+    return String((record as { key?: Key }).key ?? '');
+  }, [props.rowKey]);
+
   const tableColumns = useMemo<ColumnsType<T> | undefined>(() => {
     if (!props.columns) return undefined;
     return props.columns.map((column, index) => {
@@ -217,11 +213,55 @@ export default function StickyTable<T extends object>({
       const source = column as ColumnType<T>;
       const key = getColumnKey(source, index);
       const originalHeaderCell = source.onHeaderCell;
+      const originalBodyCell = source.onCell;
+      const originalRender = source.render;
       const next: ColumnType<T> = {
         ...source,
         ...(columnWidths[key] != null ? { width: columnWidths[key] } : {}),
         ...(freezeColumns > index ? { fixed: 'left' as const } : {}),
       };
+      if (rowResizable && index === 0) {
+        // rc-table 的自定义 body.row 收到的是尚未完成内容计算的 Cell 元素。
+        // 在 row 层 cloneElement 并写 children 会覆盖第一业务列原有 render，
+        // WBS 的阶段文字和结构拖拽手柄都会消失。改为包装列 render，在保留
+        // 原内容的同时追加行高调整手柄；row 组件只负责应用持久化高度。
+        next.onCell = (record, rowIndex) => {
+          const original = originalBodyCell?.(record, rowIndex) ?? {};
+          return {
+            ...original,
+            className: `${original.className ?? ''} sticky-table__row-resize-cell`.trim(),
+            style: { ...(original.style ?? {}), position: 'relative' },
+          };
+        };
+        next.render = (value, record, renderIndex) => {
+          const keyForRow = recordKey(record);
+          const content = originalRender ? originalRender(value, record, renderIndex) : value as ReactNode;
+          return (
+            <>
+              {content as ReactNode}
+              {keyForRow && (
+                <span
+                  className="sticky-table__row-resize-handle"
+                  role="separator"
+                  aria-label="调整行高"
+                  aria-orientation="horizontal"
+                  tabIndex={0}
+                  onPointerDown={(event) => startRowResize(keyForRow, event)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      resizeRowBy(keyForRow, -8);
+                    } else if (event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      resizeRowBy(keyForRow, 8);
+                    }
+                  }}
+                />
+              )}
+            </>
+          );
+        };
+      }
       if (resizable) {
         next.onHeaderCell = (columnInfo) => ({
           ...(originalHeaderCell?.(columnInfo) ?? {}),
@@ -231,58 +271,20 @@ export default function StickyTable<T extends object>({
       }
       return next;
     });
-  }, [columnWidths, freezeColumns, props.columns, resizable, resizeColumnBy, startColumnResize]);
+  }, [columnWidths, freezeColumns, props.columns, recordKey, resizable, resizeColumnBy, resizeRowBy, rowResizable, startColumnResize, startRowResize]);
 
   const bodyRow = useMemo(() => {
     if (!rowResizable) return undefined;
     return function ResizableBodyRow(rowProps: ResizeBodyRowProps) {
       const key = String(rowProps['data-row-key'] ?? '');
       const height = rowHeights[key];
-      const cells = Children.toArray(rowProps.children);
-      // Ant Design 在启用 rowSelection 后会把选择框单元格插入第一列。
-      // 行高拖拽手柄必须挂在第一个业务单元格，不能覆盖选择框原有 children。
-      const resizeCellIndex = cells.findIndex((cell) => (
-        isValidElement<ResizeCellProps>(cell)
-        && !String(cell.props.className ?? '').includes('ant-table-selection-column')
-      ));
-      const decoratedCells = key && resizeCellIndex >= 0
-        ? cells.map((cell, index) => {
-            if (index !== resizeCellIndex || !isValidElement<ResizeCellProps>(cell)) return cell;
-            return cloneElement(cell as ReactElement<ResizeCellProps>, {
-              className: `${cell.props.className ?? ''} sticky-table__row-resize-cell`,
-              style: { ...cell.props.style, position: 'relative' },
-              children: (
-                <>
-                  {cell.props.children}
-                  <span
-                    className="sticky-table__row-resize-handle"
-                    role="separator"
-                    aria-label="调整行高"
-                    aria-orientation="horizontal"
-                    tabIndex={0}
-                    onPointerDown={(event) => startRowResize(key, event)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'ArrowUp') {
-                        event.preventDefault();
-                        resizeRowBy(key, -8);
-                      } else if (event.key === 'ArrowDown') {
-                        event.preventDefault();
-                        resizeRowBy(key, 8);
-                      }
-                    }}
-                  />
-                </>
-              ),
-            });
-          })
-        : cells;
       return (
         <tr {...rowProps} style={{ ...rowProps.style, ...(height ? { height } : {}) }}>
-          {decoratedCells}
+          {rowProps.children}
         </tr>
       );
     };
-  }, [resizeRowBy, rowHeights, rowResizable, startRowResize]);
+  }, [rowHeights, rowResizable]);
 
   const components = useMemo(() => ({
     header: resizable ? { cell: ResizeHeaderCell } : undefined,

@@ -718,6 +718,23 @@ html[data-theme='dark'] .ant-table-tbody > tr:hover > .sortable-table__fixed-lef
   column-gap: 0 !important;
   flex-wrap: nowrap;
 }
+
+.wbs-table__drop-before > .ant-table-cell {
+  box-shadow: inset 0 2px 0 #1677ff;
+}
+
+.wbs-table__drop-after > .ant-table-cell {
+  box-shadow: inset 0 -2px 0 #1677ff;
+}
+
+.wbs-table__drop-inside > .ant-table-cell {
+  background: #e6f4ff !important;
+  box-shadow: inset 0 0 0 1px #1677ff;
+}
+
+html[data-theme='dark'] .wbs-table__drop-inside > .ant-table-cell {
+  background: #112545 !important;
+}
 html[data-theme='dark'] .batch-operation-toolbar,
 .workbench-c--dark .batch-operation-toolbar {
   border-color: #31528f;

@@ -400,10 +400,13 @@ PATCH/DELETE /api/wbs/{task_id}
 DELETE /api/projects/{id}/wbs/batch-delete
 GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}；仅未启动子树可调整层级和同级顺序
+POST /api/projects/{id}/wbs/batch-move   # {task_ids:[1..500], parent_task_id?, before_task_id?}；原子移动多个根及完整子树
 GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ```
 
-`PATCH /api/wbs/{task_id}` 接受 `progress`、`actual_start`、`actual_end` 及其它可编辑字段。提交非空 `actual_end` 时，该日期必须不晚于服务端当天且不早于最终 `actual_start`；通过后服务端在同一事务把完成度设为 100%，响应中的派生 `status` 为“已完成”。未来日期返回 `WBS_ACTUAL_END_IN_FUTURE`，结束早于开始返回 `WBS_ACTUAL_DATES_INVALID`。当前完成度已为 100% 时，任何实际日期字段均以 `WBS_ACTUAL_DATES_LOCKED` 拒绝；若同一请求还试图把完成度降到 100% 以下，则返回 `WBS_REOPEN_ACTUAL_DATES_CONFLICT` 及“请先重新打开任务，再修改实际日期”。单独把完成度降到 100% 以下会重新打开当前任务及因层级回算而重新打开的祖先，清空它们的 `actual_end`，但保留首次完成审计 `completed_at`。读取接口继续返回完整 WBS 与真实 `total`；50/100/200/全部及祖先补齐是浏览器显示策略，不改变接口分页或树关系。
+`PATCH /api/wbs/{task_id}` 接受 `progress`、`actual_start`、`actual_end` 及其它可编辑字段。提交非空 `actual_end` 时，该日期必须不晚于服务端当天且不早于最终 `actual_start`；通过后服务端在同一事务把完成度设为 100%，响应中的派生 `status` 为“已完成”。未来日期返回 `WBS_ACTUAL_END_IN_FUTURE`，结束早于开始返回 `WBS_ACTUAL_DATES_INVALID`。当前完成度已为 100% 时，任何实际日期字段均以 `WBS_ACTUAL_DATES_LOCKED` 拒绝；若同一请求还试图把完成度降到 100% 以下，则返回 `WBS_REOPEN_ACTUAL_DATES_CONFLICT` 及“请先重新打开任务，再修改实际日期”。单独把完成度降到 100% 以下会重新打开当前任务及因层级回算而重新打开的祖先，清空它们的 `actual_end`，但保留首次完成审计 `completed_at`。
+
+`POST /api/projects/{id}/wbs/batch-move` 需要 `projects.edit`，接收 1–500 个 `task_ids`；重复 ID 去重，父子同时提交时只保留最高层移动根，根的全部后代随树移动。`parent_task_id=null` 表示一级，`before_task_id=null` 表示目标层级末尾。服务端锁定并校验项目全部有效 WBS 行，拒绝缺失/跨项目任务、无效参照、循环关系、已完成移动根/后代/目标父项以及会扰动已完成同级编码的请求；任一校验失败不提交任何排序变化。成功后重算受影响层级 `sort` 与全树 `wbs_code`，逐根写 `move` 审计并返回 `requested_task_ids`、归一后的 `moved_root_ids`、目标父项/参照和总行数。原单行 `/api/wbs/{task_id}/move` 复用相同验证。读取接口继续返回完整 WBS 与真实 `total`；50/100/200/全部、页码 51–75 等目标切片和祖先补齐均为浏览器显示策略，不改变接口分页或树关系。
 
 ### 4.4 需求
 
