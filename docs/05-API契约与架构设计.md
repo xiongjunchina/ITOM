@@ -395,10 +395,15 @@ GET /api/knowledge/search?q=
 GET/POST/PATCH /api/portfolios
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx 解析 → 草稿预览 → 确认落库(两步)
-GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
+GET/POST /api/projects/{id}/wbs
+PATCH/DELETE /api/wbs/{task_id}
+DELETE /api/projects/{id}/wbs/batch-delete
+GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}；仅未启动子树可调整层级和同级顺序
 GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ```
+
+`PATCH /api/wbs/{task_id}` 接受 `progress`、`actual_start`、`actual_end` 及其它可编辑字段。提交非空 `actual_end` 时，该日期必须不晚于服务端当天且不早于最终 `actual_start`；通过后服务端在同一事务把完成度设为 100%，响应中的派生 `status` 为“已完成”。未来日期返回 `WBS_ACTUAL_END_IN_FUTURE`，结束早于开始返回 `WBS_ACTUAL_DATES_INVALID`。当前完成度已为 100% 时，任何实际日期字段均以 `WBS_ACTUAL_DATES_LOCKED` 拒绝；若同一请求还试图把完成度降到 100% 以下，则返回 `WBS_REOPEN_ACTUAL_DATES_CONFLICT` 及“请先重新打开任务，再修改实际日期”。单独把完成度降到 100% 以下会重新打开当前任务及因层级回算而重新打开的祖先，清空它们的 `actual_end`，但保留首次完成审计 `completed_at`。读取接口继续返回完整 WBS 与真实 `total`；50/100/200/全部及祖先补齐是浏览器显示策略，不改变接口分页或树关系。
 
 ### 4.4 需求
 

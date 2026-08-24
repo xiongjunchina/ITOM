@@ -786,15 +786,49 @@ def update_wbs(task_id: str, body: WbsUpdate, db: Session = Depends(get_db), use
     if not has_perm(db, user, "projects", "edit"):
         if not (is_assignee and set(data) <= {"progress", "actual_start", "actual_end"}):
             raise AppError("FORBIDDEN", "仅任务负责人可更新自己任务的完成度；其他修改需项目编辑权限", 403)
+
+    # 已完成任务是交付记录，实际日期必须先通过单独的“降低完成度”操作解锁。
+    # 不能在同一个请求里同时降低完成度并修改实际日期，避免审计轨迹被绕过。
+    was_completed = _wbs_is_completed(task)
+    actual_fields = {"actual_start", "actual_end"} & set(data)
+    requested_progress = data.get("progress")
+    if was_completed and requested_progress is not None and requested_progress < 100 and actual_fields:
+        raise AppError(
+            "WBS_REOPEN_ACTUAL_DATES_CONFLICT",
+            "请先重新打开任务，再修改实际日期",
+        )
+    if was_completed and actual_fields:
+        raise AppError(
+            "WBS_ACTUAL_DATES_LOCKED",
+            "已完成任务的实际开始和结束日期已锁定；如需修正，请先将完成度调整为低于 100%",
+        )
+
+    next_actual_start = data.get("actual_start", task.actual_start)
+    next_actual_end = data.get("actual_end", task.actual_end)
+    today = date.today()
+    if "actual_end" in data and next_actual_end and next_actual_end > today:
+        raise AppError("WBS_ACTUAL_END_IN_FUTURE", "实际结束日期不能晚于今天")
+    if actual_fields and next_actual_start and next_actual_end and next_actual_end < next_actual_start:
+        raise AppError("WBS_ACTUAL_DATES_INVALID", "实际结束日期不能早于实际开始日期")
+
     requested_progress = data.pop("progress", None)
+    if "actual_end" in data and next_actual_end is not None:
+        # 真实结束日不晚于今天，等同于任务完成；以实际结束日为完成时间。
+        requested_progress = 100
     progress_changed: list[WbsTask] = []
+    reopened_task_ids: list[str] = []
     if requested_progress is not None:
         all_tasks = (
             db.query(WbsTask)
             .filter(WbsTask.project_id == task.project_id, WbsTask.is_deleted.is_(False))
             .all()
         )
+        completed_before = {item.id for item in all_tasks if _wbs_is_completed(item)}
         progress_changed = apply_wbs_progress(all_tasks, task, requested_progress)
+        for item in progress_changed:
+            if item.id in completed_before and not _wbs_is_completed(item):
+                item.actual_end = None
+                reopened_task_ids.append(item.id)
     for k, v in data.items():
         setattr(task, k, v)
     if task.end_date < task.start_date:
@@ -808,6 +842,8 @@ def update_wbs(task_id: str, body: WbsUpdate, db: Session = Depends(get_db), use
     summary = {"fields": [*data.keys(), *(["progress"] if requested_progress is not None else [])]}
     if progress_changed:
         summary["progress_updated_task_ids"] = [item.id for item in progress_changed]
+    if reopened_task_ids:
+        summary["reopened_task_ids"] = reopened_task_ids
     audit(db, "wbs_task", task.id, "update", user, summary)
     db.commit()
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}

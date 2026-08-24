@@ -60,6 +60,7 @@ import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
 import ReasonModal from './ReasonModal';
 import ProjectEditModal from './ProjectEditModal';
+import { selectHierarchySafeWbsRows, type WbsDisplayLimit } from './wbsDisplayLimit';
 import type {
   AllowedTransition,
   AttachmentItem,
@@ -270,6 +271,7 @@ export default function ProjectDetail() {
   const [detail, setDetail] = useState<ProjectDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [wbs, setWbs] = useState<WbsTask[]>([]);
+  const [wbsDisplayLimit, setWbsDisplayLimit] = useState<WbsDisplayLimit>(50);
   const [selectedWbsIds, setSelectedWbsIds] = useState<string[]>([]);
   const [, setMilestones] = useState<Milestone[]>([]);
   const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
@@ -462,7 +464,12 @@ export default function ProjectDetail() {
   const [moveSaving, setMoveSaving] = useState(false);
   const [draggingWbsId, setDraggingWbsId] = useState<string | null>(null);
 
-  const wbsTree = useMemo(() => buildWbsTree(wbs), [wbs]);
+  const visibleWbs = useMemo(
+    () => selectHierarchySafeWbsRows(wbs, wbsDisplayLimit),
+    [wbs, wbsDisplayLimit],
+  );
+  const visibleWbsIds = useMemo(() => new Set(visibleWbs.map((task) => task.id)), [visibleWbs]);
+  const wbsTree = useMemo(() => buildWbsTree(visibleWbs), [visibleWbs]);
   const phaseTasks = useMemo(
     () => wbs
       .filter((task) => !task.parent_task_id)
@@ -473,6 +480,12 @@ export default function ProjectDetail() {
   useEffect(() => {
     setExpandedKeys(wbs.map((t) => t.id));
   }, [wbs]);
+  useEffect(() => {
+    setSelectedWbsIds((current) => {
+      const visibleSelection = current.filter((taskId) => visibleWbsIds.has(taskId));
+      return visibleSelection.length === current.length ? current : visibleSelection;
+    });
+  }, [visibleWbsIds]);
 
   const moveDescendantIds = useMemo(() => (moveTask ? wbsDescendantIds(moveTask.id, wbs) : new Set<string>()), [moveTask, wbs]);
   const movableParentOptions = useMemo(
@@ -500,10 +513,8 @@ export default function ProjectDetail() {
         deliverable: task.deliverable ?? undefined,
         is_milestone: task.is_milestone ?? false,
         remarks: task.remarks ?? undefined,
-        actuals: [
-          task.actual_start ? dayjs(task.actual_start) : null,
-          task.actual_end ? dayjs(task.actual_end) : null,
-        ],
+        actual_start: task.actual_start ? dayjs(task.actual_start) : null,
+        actual_end: task.actual_end ? dayjs(task.actual_end) : null,
         description: task.description ?? undefined,
         predecessor_ids: task.predecessor_ids ?? [],
       });
@@ -530,12 +541,14 @@ export default function ProjectDetail() {
     setTaskSaving(true);
     try {
       if (taskModal.mode === 'edit' && taskModal.task) {
-        const actuals = (v.actuals ?? []) as (Dayjs | null)[];
-        await api.patch(`/wbs/${taskModal.task.id}`, {
+        const payload: Record<string, unknown> = {
           ...base,
-          actual_start: actuals[0] ? actuals[0].format('YYYY-MM-DD') : null,
-          actual_end: actuals[1] ? actuals[1].format('YYYY-MM-DD') : null,
-        });
+        };
+        if (!taskModal.task.completed_locked) {
+          payload.actual_start = v.actual_start ? (v.actual_start as Dayjs).format('YYYY-MM-DD') : null;
+          payload.actual_end = v.actual_end ? (v.actual_end as Dayjs).format('YYYY-MM-DD') : null;
+        }
+        await api.patch(`/wbs/${taskModal.task.id}`, payload);
         message.success(t('proj.taskUpdated'));
       } else {
         await api.post(`/projects/${id}/wbs`, {
@@ -1302,6 +1315,35 @@ export default function ProjectDetail() {
           })}
           locale={{ emptyText: t('proj.emptyWbs') }}
         />
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+            marginTop: 12,
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {t('proj.wbs.displayCount', { shown: visibleWbs.length, total: wbs.length })}
+          </Typography.Text>
+          <Space size={8}>
+            <Typography.Text>{t('proj.wbs.displayRows')}</Typography.Text>
+            <Select<WbsDisplayLimit>
+              value={wbsDisplayLimit}
+              aria-label={t('proj.wbs.displayRows')}
+              style={{ width: 88 }}
+              options={[
+                { value: 50, label: '50' },
+                { value: 100, label: '100' },
+                { value: 200, label: '200' },
+                { value: 'all', label: t('proj.wbs.displayAll') },
+              ]}
+              onChange={setWbsDisplayLimit}
+            />
+          </Space>
+        </div>
       </Card>
     </Space>
   );
@@ -1796,9 +1838,44 @@ export default function ProjectDetail() {
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
           {taskModal?.mode === 'edit' && (
-            <Form.Item name="actuals" label={`${t('proj.actualStart')} ~ ${t('proj.actualEnd')}`}>
-              <DatePicker.RangePicker style={{ width: '100%' }} allowEmpty={[true, true]} />
-            </Form.Item>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item name="actual_start" label={t('proj.actualStart')}>
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    disabled={Boolean(taskModal.task?.completed_locked)}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="actual_end"
+                  label={t('proj.actualEnd')}
+                  dependencies={['actual_start']}
+                  extra={taskModal.task?.completed_locked ? t('proj.wbs.actualDatesLocked') : undefined}
+                  rules={[
+                    {
+                      validator: async (_, value: Dayjs | null) => {
+                        if (!value) return;
+                        if (value.isAfter(dayjs(), 'day')) {
+                          throw new Error(t('proj.wbs.actualEndFuture'));
+                        }
+                        const actualStart = taskForm.getFieldValue('actual_start') as Dayjs | null;
+                        if (actualStart && value.isBefore(actualStart, 'day')) {
+                          throw new Error(t('proj.actualEndBeforeStart'));
+                        }
+                      },
+                    },
+                  ]}
+                >
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    disabled={Boolean(taskModal.task?.completed_locked)}
+                    disabledDate={(current) => current.isAfter(dayjs(), 'day')}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
           )}
           <Form.Item name="wbs_dict" label={t('proj.wbsDict')}>
             <Input.TextArea rows={2} maxLength={1000} placeholder={t('proj.wbsDictPlaceholder')} />

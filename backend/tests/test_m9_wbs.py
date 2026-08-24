@@ -33,13 +33,85 @@ def test_wbs_new_fields_and_computed(client, ctx):
     assert client.patch(f"/api/wbs/{t['id']}", json={"progress": 30}, headers=h).json()["success"]
     assert client.patch(f"/api/wbs/{t['id']}", json={"progress": 101}, headers=h).status_code == 422
 
-    # 置 50 → 仍已延期（已过计划结束）；置 100 + 实际结束晚 2 天 → 已完成、偏差=+2
+    # 置 50 → 仍已延期（已过计划结束）；填写不晚于今天的实际结束后自动完成。
     client.patch(f"/api/wbs/{t['id']}", json={"progress": 50}, headers=h)
     row = next(w for w in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"] if w["id"] == t["id"])
     assert row["status"] == "已延期"
-    client.patch(f"/api/wbs/{t['id']}", json={"progress": 100, "actual_end": str(TODAY + timedelta(days=1))}, headers=h)
+    client.patch(f"/api/wbs/{t['id']}", json={"actual_end": str(TODAY)}, headers=h)
     row = next(w for w in client.get(f"/api/projects/{pid}/wbs", headers=h).json()["data"] if w["id"] == t["id"])
-    assert row["status"] == "已完成" and row["schedule_deviation"] == 2  # 实际结束(计划结束+2) - 计划结束
+    assert row["progress"] == 100 and row["status"] == "已完成"
+    assert row["schedule_deviation"] == 1  # 实际结束(今天) - 计划结束(昨天)
+
+
+def test_wbs_actual_date_completion_lock_and_reopen(client, ctx):
+    """实际结束触发完成；未来日期、完成锁定、重开冲突及日期先后关系均由服务端兜底。"""
+    pid, h = ctx["pid"], ctx["h"]
+    task = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "实际日期规则任务", "assignee": ctx["dev"],
+        "start_date": str(TODAY - timedelta(days=5)), "end_date": str(TODAY + timedelta(days=5)),
+    }, headers=h).json()["data"]
+
+    future = client.patch(
+        f"/api/wbs/{task['id']}",
+        json={"actual_end": str(TODAY + timedelta(days=1))},
+        headers=h,
+    )
+    assert future.status_code == 400
+    assert future.json()["error"]["code"] == "WBS_ACTUAL_END_IN_FUTURE"
+
+    invalid_range = client.patch(
+        f"/api/wbs/{task['id']}",
+        json={"actual_start": str(TODAY), "actual_end": str(TODAY - timedelta(days=1))},
+        headers=h,
+    )
+    assert invalid_range.status_code == 400
+    assert invalid_range.json()["error"]["code"] == "WBS_ACTUAL_DATES_INVALID"
+
+    completed = client.patch(
+        f"/api/wbs/{task['id']}",
+        json={"actual_start": str(TODAY - timedelta(days=2)), "actual_end": str(TODAY)},
+        headers=h,
+    )
+    assert completed.status_code == 200
+    completed_row = completed.json()["data"]
+    assert completed_row["progress"] == 100 and completed_row["status"] == "已完成"
+    assert completed_row["actual_end"] == str(TODAY)
+    first_completed_at = completed_row["completed_at"]
+    assert first_completed_at is not None and completed_row["completed_locked"] is True
+
+    locked = client.patch(
+        f"/api/wbs/{task['id']}",
+        json={"actual_start": str(TODAY - timedelta(days=3))},
+        headers=h,
+    )
+    assert locked.status_code == 400
+    assert locked.json()["error"]["code"] == "WBS_ACTUAL_DATES_LOCKED"
+
+    conflict = client.patch(
+        f"/api/wbs/{task['id']}",
+        json={"progress": 50, "actual_end": str(TODAY - timedelta(days=1))},
+        headers=h,
+    )
+    assert conflict.status_code == 400
+    assert conflict.json()["error"]["code"] == "WBS_REOPEN_ACTUAL_DATES_CONFLICT"
+    assert conflict.json()["error"]["message"] == "请先重新打开任务，再修改实际日期"
+
+    reopened = client.patch(f"/api/wbs/{task['id']}", json={"progress": 50}, headers=h)
+    assert reopened.status_code == 200
+    reopened_row = reopened.json()["data"]
+    assert reopened_row["progress"] == 50 and reopened_row["completed_locked"] is False
+    assert reopened_row["actual_end"] is None
+    assert reopened_row["actual_start"] == str(TODAY - timedelta(days=2))
+    assert reopened_row["completed_at"] == first_completed_at
+
+    recompleted = client.patch(
+        f"/api/wbs/{task['id']}",
+        json={"actual_start": str(TODAY - timedelta(days=3)), "actual_end": str(TODAY - timedelta(days=1))},
+        headers=h,
+    )
+    assert recompleted.status_code == 200
+    assert recompleted.json()["data"]["progress"] == 100
+    assert recompleted.json()["data"]["completed_at"] == first_completed_at
 
 
 def test_milestone_tracking_derived(client, ctx):

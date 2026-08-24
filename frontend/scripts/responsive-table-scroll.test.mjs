@@ -125,6 +125,21 @@ test('WBS rows support select-all and contextual batch delete without unlocking 
   assert.match(projectDetail, /await Promise\.all\(\[loadWbs\(\), loadMilestoneTracking\(\), loadDetail\(\)\]\)/);
 });
 
+test('WBS display sizing and actual-date controls stay integrated with the existing tree table', () => {
+  assert.match(projectDetail, /useState<WbsDisplayLimit>\(50\)/);
+  assert.match(projectDetail, /selectHierarchySafeWbsRows\(wbs, wbsDisplayLimit\)/);
+  assert.match(projectDetail, /dataSource=\{wbsTree\}/);
+  assert.match(projectDetail, /t\('proj\.wbs\.displayCount', \{ shown: visibleWbs\.length, total: wbs\.length \}\)/);
+  assert.match(projectDetail, /\{ value: 50, label: '50' \}/);
+  assert.match(projectDetail, /\{ value: 100, label: '100' \}/);
+  assert.match(projectDetail, /\{ value: 200, label: '200' \}/);
+  assert.match(projectDetail, /\{ value: 'all', label: t\('proj\.wbs\.displayAll'\) \}/);
+  assert.match(projectDetail, /if \(!taskModal\.task\.completed_locked\) \{/);
+  assert.match(projectDetail, /disabled=\{Boolean\(taskModal\.task\?\.completed_locked\)\}/);
+  assert.match(projectDetail, /disabledDate=\{\(current\) => current\.isAfter\(dayjs\(\), 'day'\)\}/);
+  assert.match(projectDetail, /value\.isBefore\(actualStart, 'day'\)/);
+});
+
 test('every page that requests table scroll X enters the shared browser-native scrollbar path', async () => {
   const files = await sourceFiles(fileURLToPath(new URL('../src/pages', import.meta.url)));
   const wideTablePages = await Promise.all(files.map(async (file) => ({

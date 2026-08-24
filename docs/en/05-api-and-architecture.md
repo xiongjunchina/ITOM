@@ -397,10 +397,15 @@ GET /api/knowledge/search?q=
 GET/POST/PATCH /api/portfolios
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx parse → draft preview → confirm and persist (two steps)
-GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
+GET/POST /api/projects/{id}/wbs
+PATCH/DELETE /api/wbs/{task_id}
+DELETE /api/projects/{id}/wbs/batch-delete
+GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}; only an unstarted subtree may change hierarchy or sibling order
 GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + milestones)
 ```
+
+`PATCH /api/wbs/{task_id}` accepts `progress`, `actual_start`, `actual_end`, and the other editable fields. A non-null `actual_end` must be no later than the server's current date and no earlier than the resulting `actual_start`; on success the server sets progress to 100% in the same transaction and the response's derived `status` is Done. A future date returns `WBS_ACTUAL_END_IN_FUTURE`; end-before-start returns `WBS_ACTUAL_DATES_INVALID`. When current progress is already 100%, any submitted actual-date field returns `WBS_ACTUAL_DATES_LOCKED`. If that same request also tries to lower progress below 100%, it returns `WBS_REOPEN_ACTUAL_DATES_CONFLICT` with “Reopen the task first, then edit actual dates.” A separate progress correction below 100% reopens the target and any ancestor reopened by hierarchy roll-up, clearing their `actual_end` while retaining first-completion audit `completed_at`. The list endpoint continues to return the complete WBS and real `total`; the 50/100/200/All control and ancestor completion are browser display behavior and do not change API pagination or tree relationships.
 
 ### 4.4 Requirement
 
