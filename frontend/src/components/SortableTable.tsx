@@ -53,27 +53,43 @@ type SortableTableProps<T extends object> = TableProps<T> & {
   tableKey?: string;
   /** 不允许用户隐藏的字段，例如编号、标题和操作列。 */
   requiredColumnKeys?: string[];
+  /** 宽表默认冻结的业务列数；选择框不计入业务列，默认 2。 */
+  freezeColumns?: number;
 };
 
-type ViewConfig = { visible: string[]; widths: Record<string, number> };
+type ViewConfig = {
+  visible: string[];
+  widths: Record<string, number>;
+  /** 仅记录用户明确拖拽/键盘调整过的列；其余列随当前数据自动计算。 */
+  manual_widths?: string[];
+};
 
 const TABLE_VIEW_KEY_PATTERN = /^[a-z][a-z0-9_.-]{1,63}$/;
 const MIN_COLUMN_WIDTH = 64;
 const MAX_COLUMN_WIDTH = 800;
-const MIN_ACTION_COLUMN_WIDTH = 80;
-const COMPACT_ACTION_COLUMN_WIDTH = 144;
+const MIN_ACTION_COLUMN_WIDTH = 64;
+const MAX_ACTION_COLUMN_WIDTH = 176;
+const ACTION_ICON_WIDTH = 28;
+const ACTION_CELL_PADDING = 8;
 
 function sanitizeViewConfig(value: unknown): ViewConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as { visible?: unknown; widths?: unknown };
+  const raw = value as { visible?: unknown; widths?: unknown; manual_widths?: unknown };
   if (!Array.isArray(raw.visible) || !raw.visible.every((key) => typeof key === 'string')) return null;
   if (!raw.widths || typeof raw.widths !== 'object' || Array.isArray(raw.widths)) return null;
+  if (raw.manual_widths != null && (
+    !Array.isArray(raw.manual_widths) || !raw.manual_widths.every((key) => typeof key === 'string')
+  )) return null;
   const widths = Object.fromEntries(
     Object.entries(raw.widths as Record<string, unknown>)
       .filter(([key, width]) => typeof key === 'string' && Number.isFinite(width) && typeof width === 'number')
       .map(([key, width]) => [key, Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, Math.trunc(width as number)))]),
   );
-  return { visible: raw.visible, widths };
+  return {
+    visible: raw.visible,
+    widths,
+    ...(raw.manual_widths == null ? {} : { manual_widths: Array.from(new Set(raw.manual_widths)) }),
+  };
 }
 
 function sanitizeTableViews(value: unknown): Record<string, ViewConfig> {
@@ -132,13 +148,6 @@ function defaultColumnWidth<T extends object>(column: ColumnType<T>): number {
   return 160;
 }
 
-function compactActionColumnWidth<T extends object>(column: ColumnType<T>): number {
-  const declared = typeof column.width === 'number' && Number.isFinite(column.width)
-    ? Math.round(column.width)
-    : COMPACT_ACTION_COLUMN_WIDTH;
-  return Math.max(MIN_ACTION_COLUMN_WIDTH, Math.min(COMPACT_ACTION_COLUMN_WIDTH, declared));
-}
-
 function ResizableHeaderCell(props: Record<string, unknown>) {
   const { children, className, onResize, onResizeEnd, onResizeStep, width, ...rest } = props as {
     children?: ReactNode;
@@ -159,6 +168,7 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     startWidth: number;
     lastWidth: number;
     columnElements: HTMLTableColElement[];
+    fixedFollowers: Array<{ element: HTMLElement; startLeft: number }>;
   } | null>(null);
   const priorCursorRef = useRef('');
   const mouseListenersRef = useRef<{ move: (event: MouseEvent) => void; up: () => void } | null>(null);
@@ -196,7 +206,10 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     const headerCell = handle.closest('th');
     if (!headerCell) return [];
     const columnIndex = headerCell.cellIndex;
-    const tableRoot = headerCell.closest('.ant-table-container') ?? headerCell.closest('.ant-table') ?? headerCell.closest('table');
+    // sticky 表头、固定列表头和表体可能由 rc-table 渲染成多张 table。必须从
+    // 整个共享 wrapper 收集对应 col，而不能只查当前表头所在 container；否则
+    // 拖动时只动表头，表体仍停留在旧宽度，松手前会出现明显错位。
+    const tableRoot = headerCell.closest('.ant-table-wrapper') ?? headerCell.closest('.ant-table') ?? headerCell.closest('table');
     const tables = tableRoot instanceof HTMLTableElement
       ? [tableRoot]
       : Array.from(tableRoot?.querySelectorAll('table') ?? []);
@@ -204,6 +217,15 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
       const column = table.querySelectorAll<HTMLTableColElement>('colgroup col')[columnIndex];
       return column ? [column] : [];
     });
+  };
+  const fixedFollowersFor = (handle: HTMLSpanElement): Array<{ element: HTMLElement; startLeft: number }> => {
+    const headerCell = handle.closest('th');
+    const tableRoot = headerCell?.closest('.ant-table-wrapper');
+    if (!headerCell || !tableRoot || !headerCell.classList.contains('ant-table-cell-fix-left')) return [];
+    return Array.from(tableRoot.querySelectorAll<HTMLElement>('.ant-table-cell-fix-left'))
+      .filter((cell) => cell instanceof HTMLTableCellElement && cell.cellIndex > headerCell.cellIndex)
+      .map((element) => ({ element, startLeft: Number.parseFloat(getComputedStyle(element).left) }))
+      .filter(({ startLeft }) => Number.isFinite(startLeft));
   };
   const beginResize = (
     kind: 'pointer' | 'mouse',
@@ -213,13 +235,16 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     pointerId?: number,
   ) => {
     if (dragRef.current) return false;
+    const renderedWidth = handle.closest('th')?.getBoundingClientRect().width;
+    const measuredStartWidth = renderedWidth && Number.isFinite(renderedWidth) ? renderedWidth : startWidth;
     dragRef.current = {
       kind,
       pointerId,
       startX,
-      startWidth,
-      lastWidth: startWidth,
+      startWidth: measuredStartWidth,
+      lastWidth: measuredStartWidth,
       columnElements: columnElementsFor(handle),
+      fixedFollowers: fixedFollowersFor(handle),
     };
     priorCursorRef.current = document.body.style.cursor;
     document.body.style.cursor = 'col-resize';
@@ -232,6 +257,10 @@ function ResizableHeaderCell(props: Record<string, unknown>) {
     drag.lastWidth = nextWidth;
     drag.columnElements.forEach((column) => {
       column.style.width = `${nextWidth}px`;
+    });
+    const delta = nextWidth - drag.startWidth;
+    drag.fixedFollowers.forEach(({ element, startLeft }) => {
+      element.style.left = `${startLeft + delta}px`;
     });
   };
   const startPointerResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
@@ -365,15 +394,136 @@ function nodeText(node: unknown): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node).trim();
   if (Array.isArray(node)) return node.map(nodeText).filter(Boolean).join(' ').trim();
   if (isValidElement<ActionElementProps>(node)) return nodeText(node.props.children);
+  if (node && typeof node === 'object' && 'children' in node) {
+    return nodeText((node as { children?: unknown }).children);
+  }
   return '';
+}
+
+let tableTextMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+function measuredTextWidth(text: string, weight: 400 | 600 = 400): number {
+  if (!text) return 0;
+  if (typeof document !== 'undefined') {
+    if (tableTextMeasureContext === undefined) {
+      tableTextMeasureContext = document.createElement('canvas').getContext('2d');
+    }
+    if (tableTextMeasureContext) {
+      tableTextMeasureContext.font = `${weight} 14px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`;
+      return tableTextMeasureContext.measureText(text).width;
+    }
+  }
+  // 非浏览器构建/测试环境的确定性回退；CJK 按全角、ASCII 按平均字宽估算。
+  return Array.from(text).reduce(
+    (width, character) => width + (/^[\u2e80-\u9fff\uff01-\uff60]$/.test(character) ? 14 : 8),
+    0,
+  );
+}
+
+function valueText(value: unknown): string {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint') return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(valueText).filter(Boolean).join(' ');
+  return '';
+}
+
+/** 首帧先用当前数据估算；挂载后的隐藏 DOM 克隆会再给出真实像素宽度。 */
+function estimatedContentColumnWidth<T extends object>(column: ColumnType<T>, rows: T[]): number {
+  const headerWidth = measuredTextWidth(nodeText(column.title), 600) + 56;
+  const bodyWidth = rows.reduce((maximum, row, index) => {
+    const rawValue = valueAt(row, column.dataIndex);
+    let renderedText = '';
+    let rendered: unknown;
+    if (column.render) {
+      try {
+        rendered = column.render(rawValue, row, index);
+        renderedText = nodeText(rendered);
+      } catch {
+        // 列宽估算不能改变业务 render 的正式错误路径。
+      }
+    }
+    const text = renderedText || valueText(rawValue);
+    const visualFallback = rendered != null && !text
+      ? defaultColumnWidth(column)
+      : 0;
+    return Math.max(maximum, measuredTextWidth(text) + 32, visualFallback);
+  }, 0);
+  return Math.max(MIN_COLUMN_WIDTH, Math.ceil(headerWidth), Math.ceil(bodyWidth));
+}
+
+function sameWidths(left: Record<string, number>, right: Record<string, number>): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Math.abs((left[key] ?? 0) - (right[key] ?? 0)) <= 1);
+}
+
+/**
+ * 从真实表头/表体克隆出不受现有列宽约束的隐藏单元格，批量测量当前渲染内容。
+ * 克隆节点不挂事件、不触发请求，只在同一次 layout effect 中存在。
+ */
+function measureRenderedColumnWidths(anchor: HTMLElement, actionKeys: Set<string>): Record<string, number> {
+  const cells = Array.from(anchor.querySelectorAll<HTMLElement>('[data-sortable-column-key]'))
+    .filter((cell) => cell.closest('.sortable-table__viewport-anchor') === anchor)
+    .filter((cell) => !actionKeys.has(cell.dataset.sortableColumnKey ?? ''));
+  if (!cells.length) return {};
+
+  const host = document.createElement('div');
+  host.className = 'sortable-table__measure-host';
+  const measurements = cells.map((cell) => {
+    const clone = cell.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('.sortable-table__column-resize-handle').forEach((handle) => handle.remove());
+    clone.classList.remove(
+      'ant-table-cell-fix-left',
+      'ant-table-cell-fix-left-first',
+      'ant-table-cell-fix-left-last',
+      'ant-table-cell-fix-right',
+      'ant-table-cell-fix-right-first',
+      'ant-table-cell-fix-right-last',
+      'ant-table-cell-ellipsis',
+    );
+    clone.style.cssText = [
+      'position:static',
+      'display:inline-flex',
+      'align-items:center',
+      'width:max-content',
+      'min-width:0',
+      'max-width:none',
+      'left:auto',
+      'right:auto',
+      'overflow:visible',
+      'text-overflow:clip',
+      'white-space:nowrap',
+    ].join(';');
+    // td/th 脱离 table > tr 后不再命中 Ant Design 的层级 padding 规则；把原
+    // 单元格的真实水平 padding 带入克隆，否则每列会被系统性低估约 14px。
+    const computed = getComputedStyle(cell);
+    clone.style.paddingLeft = computed.paddingLeft;
+    clone.style.paddingRight = computed.paddingRight;
+    host.appendChild(clone);
+    return { key: cell.dataset.sortableColumnKey ?? '', clone };
+  });
+  anchor.appendChild(host);
+  try {
+    return measurements.reduce<Record<string, number>>((widths, { key, clone }) => {
+      if (!key) return widths;
+      const width = Math.max(MIN_COLUMN_WIDTH, Math.ceil(clone.getBoundingClientRect().width) + 1);
+      widths[key] = Math.max(widths[key] ?? 0, width);
+      return widths;
+    }, {});
+  } finally {
+    host.remove();
+  }
 }
 
 function isActionColumn<T extends object>(column: ColumnType<T>, key: string): boolean {
   const dataIndex = Array.isArray(column.dataIndex) ? column.dataIndex.join('.') : String(column.dataIndex ?? '');
   const normalized = `${key}|${dataIndex}`.toLocaleLowerCase();
   const title = nodeText(column.title).toLocaleLowerCase();
-  return ['action', 'actions', 'operation', 'operations'].some((token) => normalized.split('|').includes(token))
-    || ['操作', '操作项', 'actions', 'action', 'operations', 'operation'].includes(title);
+  return ['action', 'actions', 'operation', 'operations', 'ops'].some((token) => normalized.split('|').includes(token))
+    || /(?:操作|操作项|actions?|operations?)$/i.test(title);
 }
 
 function actionIcon(label: string): ReactNode {
@@ -441,14 +591,67 @@ function iconifyActionRender(rendered: unknown): unknown {
 }
 
 /**
+ * 操作列宽度必须由当前清单里真正可见的控件数量决定，而不是沿用各页面历史
+ * 写死的 150/180/240px。这里只读取 render 返回的 React 树，不触发点击、请求
+ * 或状态变更；真正的单元格仍由 Ant Design 按原 render 正常渲染。
+ */
+function actionControlCount(node: unknown): number {
+  if (node == null || typeof node === 'boolean') return 0;
+  if (Array.isArray(node)) return node.reduce((total, child) => total + actionControlCount(child), 0);
+  if (typeof node === 'object' && !isValidElement(node) && 'children' in node) {
+    return actionControlCount((node as { children?: unknown }).children);
+  }
+  if (!isValidElement<ActionElementProps>(node)) return 0;
+  const element = node as ReactElement<ActionElementProps>;
+  const isControl = element.type === Button
+    || element.type === 'a'
+    || Boolean(element.props.onClick || element.props.href || element.props.to);
+  if (isControl) return 1;
+  return Children.toArray(element.props.children)
+    .reduce<number>((total, child) => total + actionControlCount(child), 0);
+}
+
+function actionTitleWidth(title: unknown): number {
+  const label = nodeText(title);
+  if (!label) return MIN_ACTION_COLUMN_WIDTH;
+  const textWidth = Array.from(label).reduce(
+    (width, character) => width + (/^[\u2e80-\u9fff]$/.test(character) ? 14 : 8),
+    0,
+  );
+  return textWidth + 28;
+}
+
+function compactActionColumnWidth<T extends object>(column: ColumnType<T>, rows: T[]): number {
+  const controlCount = column.render
+    ? rows.reduce((maximum, row, index) => {
+        try {
+          const rendered = column.render!(valueAt(row, column.dataIndex), row, index);
+          return Math.max(maximum, actionControlCount(rendered));
+        } catch {
+          // 宽度预估不能让业务 render 的异常遮蔽 Ant Design 自己的错误路径。
+          return maximum;
+        }
+      }, 0)
+    : 0;
+  const controlsWidth = controlCount > 0
+    ? controlCount * ACTION_ICON_WIDTH + ACTION_CELL_PADDING
+    : MIN_ACTION_COLUMN_WIDTH;
+  return Math.max(
+    MIN_ACTION_COLUMN_WIDTH,
+    Math.min(MAX_ACTION_COLUMN_WIDTH, Math.max(actionTitleWidth(column.title), controlsWidth)),
+  );
+}
+
+/**
  * 统一表格排序入口。所有业务表只要使用此组件，表头字段即可点击排序，
  * 并且不会覆盖页面已经定义的自定义 sorter。
  */
-export default function SortableTable<T extends object>({ autoSort = true, columns, standardToolbar, dataSource, pagination, tableKey, requiredColumnKeys = [], ...props }: SortableTableProps<T>) {
+export default function SortableTable<T extends object>({ autoSort = true, columns, standardToolbar, dataSource, pagination, tableKey, requiredColumnKeys = [], freezeColumns = 2, ...props }: SortableTableProps<T>) {
   const user = useAuthStore((state) => state.user);
   const setUser = useAuthStore((state) => state.setUser);
   const tableAnchorRef = useRef<HTMLDivElement>(null);
   const [appScrollContainer, setAppScrollContainer] = useState<HTMLElement | null>(null);
+  const [measuredAutoWidths, setMeasuredAutoWidths] = useState<Record<string, number>>({});
   useLayoutEffect(() => {
     // MainLayout 不是由 window 滚动，而是由固定高度的 .app-content 滚动。
     // Ant Design 的 sticky 若仍绑定 window，会同时导致表头无法吸顶、底部横向
@@ -470,21 +673,41 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
     }
     return props.sticky;
   }, [appScrollContainer, props.sticky]);
+  const rows = useMemo(() => (dataSource ?? []) as T[], [dataSource]);
   const leaves = useMemo(() => leafColumns(columns ?? []), [columns]);
   const knownKeys = useMemo(() => leaves.map((item) => item.key), [leaves]);
+  const actionKeys = useMemo(
+    () => new Set(leaves.filter(({ column, key }) => isActionColumn(column, key)).map(({ key }) => key)),
+    [leaves],
+  );
+  const defaultFrozenKeys = useMemo(
+    () => leaves
+      .filter(({ column, key }) => !isActionColumn(column, key) && column.fixed !== 'right')
+      .slice(0, Math.max(0, freezeColumns))
+      .map(({ key }) => key),
+    [freezeColumns, leaves],
+  );
   const legacyTableKey = tableKey ?? routeTableKey(window.location.pathname);
   const resolvedTableKey = tableKey ?? `${legacyTableKey.slice(0, 54)}.${tableSchemaKey(knownKeys)}`;
   const protectedKeys = useMemo(
-    () => new Set(requiredColumnKeys.concat(leaves.filter(({ column }) => column.fixed === 'left' || column.fixed === 'right' || column.key === 'action' || column.key === 'actions').map(({ key }) => key))),
-    [leaves, requiredColumnKeys],
+    () => new Set(requiredColumnKeys.concat(defaultFrozenKeys, leaves.filter(({ column }) => column.fixed === 'left' || column.fixed === 'right' || column.key === 'action' || column.key === 'actions').map(({ key }) => key))),
+    [defaultFrozenKeys, leaves, requiredColumnKeys],
   );
+  const automaticWidths = useMemo(() => Object.fromEntries(leaves.map(({ column, key }) => [
+    key,
+    isActionColumn(column, key)
+      ? compactActionColumnWidth(column, rows)
+      : (measuredAutoWidths[key] ?? estimatedContentColumnWidth(column, rows)),
+  ])), [leaves, measuredAutoWidths, rows]);
+  const legacyDefaultWidths = useMemo(() => Object.fromEntries(leaves.map(({ column, key }) => [
+    key,
+    isActionColumn(column, key) ? compactActionColumnWidth(column, rows) : defaultColumnWidth(column),
+  ])), [leaves, rows]);
   const defaultConfig = useMemo<ViewConfig>(() => ({
     visible: knownKeys,
-    widths: Object.fromEntries(leaves.map(({ column, key }) => [
-      key,
-      isActionColumn(column, key) ? compactActionColumnWidth(column) : defaultColumnWidth(column),
-    ])),
-  }), [knownKeys, leaves]);
+    widths: automaticWidths,
+    manual_widths: [],
+  }), [automaticWidths, knownKeys]);
   const [viewConfig, setViewConfig] = useState<ViewConfig>(defaultConfig);
   const viewConfigRef = useRef(viewConfig);
   useEffect(() => {
@@ -498,11 +721,26 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
       ?? (resolvedTableKey === legacyTableKey ? null : sanitizeViewConfig(storedViews?.[legacyTableKey]));
     const savedVisible = saved?.visible.filter((key) => knownKeys.includes(key)) ?? [];
     const visible = saved ? savedVisible : knownKeys;
+    // 旧版会把所有默认宽度一并保存，无法区分“自动值”和用户拖拽值。迁移时
+    // 只把偏离旧页面默认值的非操作列视为手工宽度，其余列立即进入内容自适应。
+    const manualWidths = saved?.manual_widths != null
+      ? saved.manual_widths.filter((key) => knownKeys.includes(key) && !actionKeys.has(key))
+      : leaves
+        .filter(({ key }) => (
+          !actionKeys.has(key)
+          && saved?.widths[key] != null
+          && Math.abs(saved.widths[key] - (legacyDefaultWidths[key] ?? 0)) > 1
+        ))
+        .map(({ key }) => key);
+    const savedManualWidths = Object.fromEntries(manualWidths.flatMap((key) => (
+      saved?.widths[key] == null ? [] : [[key, saved.widths[key]]]
+    )));
     setViewConfig({
       visible: Array.from(new Set([...visible, ...Array.from(protectedKeys).filter((key) => knownKeys.includes(key))])),
-      widths: { ...defaultConfig.widths, ...(saved?.widths ?? {}) },
+      widths: { ...defaultConfig.widths, ...savedManualWidths },
+      manual_widths: manualWidths,
     });
-  }, [defaultConfig, knownKeys, legacyTableKey, protectedKeys, resolvedTableKey, user?.preferences?.table_views]);
+  }, [actionKeys, defaultConfig, knownKeys, leaves, legacyDefaultWidths, legacyTableKey, protectedKeys, resolvedTableKey, user?.preferences?.table_views]);
 
   const persistViewConfig = async (next: ViewConfig) => {
     viewConfigRef.current = next;
@@ -518,6 +756,26 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
     }
   };
 
+  const manualWidthKeys = useMemo(() => new Set(viewConfig.manual_widths ?? []), [viewConfig.manual_widths]);
+  const displayWidths = useMemo(() => {
+    const visibleLeaves = leaves.filter(({ key }) => viewConfig.visible.includes(key) || protectedKeys.has(key));
+    return Object.fromEntries(visibleLeaves.map(({ column, key }) => [
+      key,
+      isActionColumn(column, key)
+        ? compactActionColumnWidth(column, rows)
+        : (manualWidthKeys.has(key)
+          ? (viewConfig.widths[key] ?? automaticWidths[key] ?? MIN_COLUMN_WIDTH)
+          : (automaticWidths[key] ?? MIN_COLUMN_WIDTH)),
+    ]));
+  }, [automaticWidths, leaves, manualWidthKeys, protectedKeys, rows, viewConfig.visible, viewConfig.widths]);
+  const resolvedScroll = useMemo<TableProps<T>['scroll']>(() => {
+    const measuredWidth = Object.values(displayWidths).reduce((total, width) => total + width, 0)
+      + (props.rowSelection ? 48 : 0);
+    // 页面历史 scroll.x 只是静态估值，会重新制造空白。统一以当前可见列的
+    // 实际宽度总和为唯一横向宽度；超出视口时交给原生横向滚动条访问。
+    return { ...(props.scroll ?? {}), x: Math.max(1, measuredWidth) };
+  }, [displayWidths, props.rowSelection, props.scroll]);
+
   const configuredColumns = useMemo(() => {
     const transform = (sourceColumns: ColumnsType<T>, prefix = ''): ColumnsType<T> => {
       const result: ColumnsType<T> = [];
@@ -531,34 +789,59 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
         const key = columnKey(source, `${prefix}${index}`);
         if (!viewConfig.visible.includes(key) && !protectedKeys.has(key)) return;
         const actionColumn = isActionColumn(source, key);
-        // 操作列沿用页面声明的紧凑宽度，并统一限制在 80-144px；这样既能容纳
-        // 页面实际操作数量，也不会被历史偏好或通用默认值撑出大块空白。
+        const manuallySized = manualWidthKeys.has(key);
+        const fixed = source.fixed ?? (defaultFrozenKeys.includes(key) ? 'left' : undefined);
+        // 操作列按当前结果集中实际可见的最大控件数计算，并统一限制在
+        // 64-176px；这样既能容纳状态相关操作，也不会被历史声明或偏好撑宽。
         const width = actionColumn
-          ? compactActionColumnWidth(source)
-          : (viewConfig.widths[key] ?? defaultColumnWidth(source));
+          ? compactActionColumnWidth(source, rows)
+          : (displayWidths[key] ?? automaticWidths[key] ?? MIN_COLUMN_WIDTH);
         const render = source.render && actionColumn
           ? ((value: unknown, record: T, renderIndex: number) => iconifyActionRender(source.render!(value, record, renderIndex))) as ColumnType<T>['render']
           : source.render;
         result.push({
           ...source,
+          fixed,
           render,
           width,
-          className: [typeof source.className === 'string' ? source.className : '', actionColumn ? 'sortable-table__action-cell' : '']
+          // 自动列宽已容纳当前完整内容，不再保留页面历史的省略号；用户明确
+          // 拖窄某列后才恢复该列原有的 ellipsis 语义。
+          ellipsis: manuallySized ? source.ellipsis : false,
+          className: [
+            typeof source.className === 'string' ? source.className : '',
+            actionColumn ? 'sortable-table__action-cell' : '',
+            !actionColumn && !manuallySized ? 'sortable-table__auto-width-cell' : '',
+            fixed === 'left' ? 'sortable-table__fixed-left-cell' : '',
+            fixed === 'right' ? 'sortable-table__fixed-right-cell' : '',
+          ]
             .filter(Boolean)
             .join(' '),
+          onCell: (record, rowIndex) => ({
+            ...(source.onCell?.(record, rowIndex) ?? {}),
+            'data-sortable-column-key': key,
+          }),
           onHeaderCell: (headerColumn) => ({
             ...(source.onHeaderCell?.(headerColumn) ?? {}),
             width,
+            'data-sortable-column-key': key,
             ...(actionColumn ? {} : {
               onResize: (nextWidth: number) => {
-                const next = { ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } };
+                const next = {
+                  ...viewConfigRef.current,
+                  widths: { ...viewConfigRef.current.widths, [key]: nextWidth },
+                  manual_widths: Array.from(new Set([...(viewConfigRef.current.manual_widths ?? []), key])),
+                };
                 viewConfigRef.current = next;
                 setViewConfig(next);
               },
               onResizeEnd: () => void persistViewConfig(viewConfigRef.current),
               onResizeStep: (delta: number) => {
                 const nextWidth = Math.max(MIN_COLUMN_WIDTH, Math.min(MAX_COLUMN_WIDTH, width + delta));
-                void persistViewConfig({ ...viewConfigRef.current, widths: { ...viewConfigRef.current.widths, [key]: nextWidth } });
+                void persistViewConfig({
+                  ...viewConfigRef.current,
+                  widths: { ...viewConfigRef.current.widths, [key]: nextWidth },
+                  manual_widths: Array.from(new Set([...(viewConfigRef.current.manual_widths ?? []), key])),
+                });
               },
             }),
           }),
@@ -567,9 +850,13 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
       return result;
     };
     return transform(columns ?? []);
-  }, [columns, protectedKeys, viewConfig]);
-  const tableColumnsWithView = autoSort && configuredColumns ? augmentColumns(configuredColumns) : configuredColumns;
-  const rows = (dataSource ?? []) as T[];
+  }, [automaticWidths, columns, defaultFrozenKeys, displayWidths, manualWidthKeys, protectedKeys, rows, viewConfig]);
+  // augmentColumns 会克隆列定义；保持引用稳定，避免筛选、选择或分页等无关
+  // 重渲染重复执行整表 DOM 自然宽度测量。
+  const tableColumnsWithView = useMemo(
+    () => autoSort && configuredColumns ? augmentColumns(configuredColumns) : configuredColumns,
+    [autoSort, configuredColumns],
+  );
   const [query, setQuery] = useState('');
   const [filterField, setFilterField] = useState<string>();
   const [filterValue, setFilterValue] = useState<string>();
@@ -588,6 +875,12 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
       return matchesQuery && matchesFilter;
     });
   }, [columns, filterField, filterValue, query, rows, standardToolbar]);
+  useLayoutEffect(() => {
+    const anchor = tableAnchorRef.current;
+    if (!anchor) return;
+    const nextWidths = measureRenderedColumnWidths(anchor, actionKeys);
+    setMeasuredAutoWidths((current) => sameWidths(current, nextWidths) ? current : nextWidths);
+  }, [actionKeys, filteredRows, rows, tableColumnsWithView, viewConfig.visible]);
   const tablePagination = standardToolbar && pagination && typeof pagination === 'object'
     ? {
       ...pagination,
@@ -648,10 +941,12 @@ export default function SortableTable<T extends object>({ autoSort = true, colum
         <div ref={tableAnchorRef} className="sortable-table__viewport-anchor">
           <Table<T>
             {...props}
+            className={[props.className, 'sortable-table--unified'].filter(Boolean).join(' ')}
             columns={tableColumnsWithView}
             dataSource={standardToolbar ? filteredRows : dataSource}
             pagination={tablePagination}
-            scroll={{ x: 'max-content', ...(props.scroll ?? {}) }}
+            scroll={resolvedScroll}
+            rowSelection={props.rowSelection ? { ...props.rowSelection, fixed: props.rowSelection.fixed ?? true } : undefined}
             sticky={resolvedSticky}
             // 明确固定布局，列宽状态变化才会同步应用到 colgroup，而不是被单元格
             // 内容重新撑回原宽度。

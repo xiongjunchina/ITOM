@@ -223,7 +223,7 @@ export default function SlaBoard() {
 
   const warningColumns: ColumnsType<WarningTicket> = [
     { title: t('itsm.f.code'), dataIndex: 'ticket_code', width: 140, onCell: () => ({ className: 'cell-nowrap' }) },
-    { title: t('itsm.f.title'), dataIndex: 'title', ellipsis: true },
+    { title: t('itsm.f.title'), dataIndex: 'title', width: 360, ellipsis: true },
     {
       title: t('itsm.f.priority'),
       dataIndex: 'priority',
@@ -348,7 +348,7 @@ export default function SlaBoard() {
           dataSource={board?.warning_tickets ?? []}
           pagination={false}
           sticky
-          scroll={{ x: 800 }}
+          scroll={{ x: 980 }}
           onRow={(record) => ({
             onClick: () => navigate(`/itsm/tickets/${record.id}`),
             style: { cursor: 'pointer' },

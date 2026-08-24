@@ -74,8 +74,13 @@ function createController(wrapper: HTMLElement, scroll: HTMLElement, activateTab
     const viewport = getViewportRect(wrapper);
     const viewportLeft = Math.max(0, Math.max(rect.left, viewport.left));
     const viewportRight = Math.min(window.innerWidth, Math.min(rect.right, viewport.right));
+    const viewportTop = Math.max(rect.top, viewport.top);
+    const viewportBottom = Math.min(rect.bottom, viewport.bottom);
     // 仅显示当前可视区域中的活动宽表，防止多张表同时生成滚动条。
-    const visible = overflow && bottom.dataset.active === 'true' && viewportRight > viewportLeft;
+    const visible = overflow
+      && bottom.dataset.active === 'true'
+      && viewportRight > viewportLeft
+      && viewportBottom > viewportTop;
     bottom.dataset.visible = visible ? 'true' : 'false';
     bottom.setAttribute('aria-hidden', visible ? 'false' : 'true');
     // 只有原生悬浮条已完成测量且实际可用时，才隐藏表内重复滚动条。
@@ -140,9 +145,9 @@ export default function ResponsiveTableEnhancer(): null {
 
     const refresh = () => {
       frame = 0;
+      // 普通清单和 StickyTable 共用这一套控制器，避免两份滚动状态互相覆盖。
       const wrappers = Array.from(document.querySelectorAll<HTMLElement>(TABLE_SELECTOR))
-        // StickyTable 自己维护唯一底部原生滚动条；全局增强器不得再为它创建第二条。
-        .filter((wrapper) => !wrapper.closest('.responsive-table__bottom-scroll') && !wrapper.closest('.sticky-table'));
+        .filter((wrapper) => !wrapper.closest('.responsive-table__bottom-scroll'));
       const active = new Set(wrappers);
 
       controllers.forEach((controller, wrapper) => {

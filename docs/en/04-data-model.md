@@ -8,6 +8,8 @@
 
 > M93 implementation-delivery routing adds only nullable/defaulted columns to existing `service_dispatch_rule` and `ticket` tables. It creates/deletes no business table and never backfills, migrates, or rewrites existing records; `business_initial_password` is deployment configuration, not a persisted business field.
 
+> The unified table kernel and local wide-table UAT dataset do not change the database model: no table, column, index, constraint, or migration is added. `preferences.table_views.widths` plus `manual_widths` retain only explicitly resized columns and their markers; every other width is derived in the frontend from the rendered header and currently loaded rows. First-two-business-column freezing, compact natural width for short tables, exact wide-table width, and sticky/body synchronization add no business field. After explicit `--confirm-local`, `app.scripts.seed_table_uat` writes and explicitly commits wholly fictitious records into existing entities with dedicated `UAT-TABLE` codes and the `【本地表格UAT】` marker. Repeated seeding idempotently refreshes those records, while `cleanup` soft-deletes and commits only the same dedicated set. This utility is not a startup seed, production initializer, or IDC data migration.
+
 ## 0. Global Conventions
 
 - Primary key: `id CHAR(26)` GLID, system-generated; not listed per-table below.
@@ -37,7 +39,7 @@
 | initial_password_ciphertext | TEXT | Fernet ciphertext for the M44 provisioning password; cleared after change/reset |
 | initial_password_sent_at | TIMESTAMP | Last administrator-triggered initial-password email time |
 
-Incremental contract: `auth_user.preferences` may contain a `table_views` object keyed by a stable list key. Each value stores a `visible` field list and `widths` map; the API bounds keys, counts, and widths, while protected identifier/title/action columns are always retained. No new business table or destructive migration is required.
+Incremental contract: `auth_user.preferences` may contain a `table_views` object keyed by a stable list key. Each value stores a `visible` field list, a `widths` map, and an optional `manual_widths` list naming explicitly resized fields. The API bounds keys, counts, and widths and requires every manual field to have a width in the same view; protected identifier/title/action columns are always retained. Automatic widths remain runtime-derived. No new business table or destructive migration is required.
 
 Workflow runtime uses the newest non-deleted pending `process_task` as the current-node fact. `process_instance.current_step_seq`, `Requirement.status`, and stage timestamps are compatibility projections/read models; synchronization only moves a stage forward and never rewrites closed/cancelled/on-hold records, historical tasks, or scores. `Requirement.department` remains a legacy-compatible field, but new registration and its template do not require/export it. The import service distinguishes the new registration template from the legacy scored template by headers. Personal todos are calculated from active tasks and domain records on read rather than stored as a snapshot, so they cannot drift from workflow authorization.
 

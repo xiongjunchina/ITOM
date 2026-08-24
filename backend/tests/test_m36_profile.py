@@ -23,11 +23,29 @@ def test_profile_payload_and_preferences(client, admin_headers):
     # 任意调整列宽都会返回 500。
     r = client.patch(
         "/api/auth/me/preferences",
-        json={"table_views": {"requirements": {"visible": ["code", "title"], "widths": {"title": 360}}}},
+        json={"table_views": {"requirements": {
+            "visible": ["code", "title"],
+            "widths": {"code": 160, "title": 360},
+            "manual_widths": ["title", "title"],
+        }}},
         headers=admin_headers,
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["preferences"]["table_views"]["requirements"]["widths"]["title"] == 360
+    table_view = r.json()["data"]["preferences"]["table_views"]["requirements"]
+    assert table_view["widths"]["title"] == 360
+    assert table_view["manual_widths"] == ["title"]
+    # 手工列宽标记必须引用同一视图内已有的宽度，不能写入悬空字段。
+    r = client.patch(
+        "/api/auth/me/preferences",
+        json={"table_views": {"requirements": {
+            "visible": ["code"],
+            "widths": {"code": 160},
+            "manual_widths": ["title"],
+        }}},
+        headers=admin_headers,
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["code"] == "TABLE_VIEW_INVALID"
     # 任何无效列宽都必须作为参数错误返回，不能导致列设置调整时出现 500。
     r = client.patch(
         "/api/auth/me/preferences",

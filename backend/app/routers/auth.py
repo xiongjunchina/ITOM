@@ -68,8 +68,8 @@ class PreferencesIn(BaseModel):
     notification_preferences: dict[str, bool] | None = None
     theme: str | None = Field(default=None, pattern="^(light|dark|system)$")
     density: str | None = Field(default=None, pattern="^(default|compact)$")
-    # 每个清单的列可见性/宽度偏好；仅允许通过当前用户接口写入，服务端
-    # 对数量和宽度做边界校验，避免把任意数据写入偏好 JSON。
+    # 每个清单的列可见性/宽度偏好；manual_widths 只标记用户明确调整的列，
+    # 未标记列由前端按当前数据重新计算。服务端对数量和宽度做边界校验。
     table_views: dict[str, dict] | None = None
 
 
@@ -97,10 +97,17 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
                 raise AppError("TABLE_VIEW_INVALID", "清单视图配置格式不正确", 422)
             visible = view.get("visible", [])
             widths = view.get("widths", {})
+            manual_widths = view.get("manual_widths", [])
             if not isinstance(visible, list) or len(visible) > 128 or not all(isinstance(x, str) for x in visible):
                 raise AppError("TABLE_VIEW_INVALID", "可见字段配置格式不正确", 422)
             if not isinstance(widths, dict) or len(widths) > 128:
                 raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+            if (
+                not isinstance(manual_widths, list)
+                or len(manual_widths) > 128
+                or not all(isinstance(x, str) for x in manual_widths)
+            ):
+                raise AppError("TABLE_VIEW_INVALID", "手工列宽字段配置格式不正确", 422)
             normalized_widths: dict[str, int] = {}
             for key, value in widths.items():
                 # JSON 规范之外的 NaN / Infinity 或极端数值会使 int(value)
@@ -114,9 +121,13 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
                 if not math.isfinite(numeric_value):
                     raise AppError("TABLE_VIEW_INVALID", "列宽配置必须为有限数值", 422)
                 normalized_widths[key] = max(80, min(800, int(numeric_value)))
+            normalized_manual_widths = list(dict.fromkeys(manual_widths))
+            if any(key not in normalized_widths for key in normalized_manual_widths):
+                raise AppError("TABLE_VIEW_INVALID", "手工列宽字段必须存在对应列宽", 422)
             normalized_views[table_key] = {
                 "visible": visible,
                 "widths": normalized_widths,
+                "manual_widths": normalized_manual_widths,
             }
         updates["table_views"] = normalized_views
     for k, v in updates.items():

@@ -282,7 +282,7 @@ function ProjectList() {
         </Space>
       ),
     },
-    { title: t('proj.col.name'), dataIndex: 'name', width: 220, ellipsis: true },
+    { title: t('proj.col.name'), dataIndex: 'name', width: 240, ellipsis: true },
     { title: t('proj.col.portfolio'), dataIndex: 'portfolio_name', width: 140, ellipsis: true, render: (v) => v || '-' },
     { title: t('proj.col.pm'), dataIndex: 'pm_name', width: 100, render: (v) => v || '-' },
     {
@@ -701,7 +701,7 @@ function PortfolioPane() {
     {
       title: t('proj.col.name'),
       dataIndex: 'name',
-      width: 220,
+      width: 200,
       ellipsis: true,
       render: (v: string, r) => (
         <Space size={4}>
@@ -719,7 +719,7 @@ function PortfolioPane() {
       render: (v: number, r) =>
         v > 0 ? <Link to={`/projects?portfolio=${r.id}`}>{v}</Link> : v,
     },
-    { title: t('proj.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.col.desc'), dataIndex: 'description', width: 320, ellipsis: true, render: (v) => v || '-' },
     ...(canEdit || canDelete
       ? [
           {

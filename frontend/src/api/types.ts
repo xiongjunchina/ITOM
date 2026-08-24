@@ -81,10 +81,11 @@ export interface UserPreferences {
   notification_preferences?: Record<'work' | 'workflow' | 'system', boolean>;
   theme?: 'light' | 'dark' | 'system';
   density?: 'default' | 'compact';
-  /** 清单列可见性与宽度，按路由/业务清单标识保存。 */
+  /** 清单列可见性与手工宽度，未手工调整的列按当前数据自动适配。 */
   table_views?: Record<string, {
     visible?: string[];
     widths?: Record<string, number>;
+    manual_widths?: string[];
   }>;
 }
 

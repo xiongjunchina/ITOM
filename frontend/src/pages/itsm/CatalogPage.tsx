@@ -939,9 +939,9 @@ export default function CatalogPage() {
                 onClick={() => selectCatalog(c.id)}
                 style={selectedCatalog === c.id ? { borderColor: '#1677ff' } : undefined}
               >
-                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                  <Space direction="vertical" size={2}>
-                    <Space size={6}>
+                <div className="catalog-management-card__layout">
+                  <div className="catalog-management-card__content">
+                    <div className="catalog-management-card__heading">
                       {canDelete && (!c.is_example || isAdmin) && (
                         <Checkbox
                           aria-label={`选择服务目录 ${c.name}`}
@@ -956,11 +956,11 @@ export default function CatalogPage() {
                           }}
                         />
                       )}
-                      <Typography.Text strong>{c.name}</Typography.Text>
+                      <Typography.Text strong ellipsis={{ tooltip: c.name }} className="catalog-management-card__name">{c.name}</Typography.Text>
                       {c.is_example && <ExampleTag />}
                       <Tag color={TIER_COLORS[c.tier]}>{et.tier(c.tier)}</Tag>
-                    </Space>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    </div>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }} className="catalog-management-card__metadata">
                       {c.code} · {t('itsm.catalog.itemCount', { n: c.item_count })}
                       {' · '}
                       <Badge status={c.status === '上架' ? 'success' : 'default'} text={et.catalogStatus(c.status)} />
@@ -969,8 +969,8 @@ export default function CatalogPage() {
                         上架中 {c.published_item_count ?? 0} · 已下架 {c.unpublished_item_count ?? 0}
                       </Typography.Text>
                     </Typography.Text>
-                  </Space>
-                  <Space size={0}>
+                  </div>
+                  <Space size={0} className="catalog-management-card__actions">
                     {canManage && !c.is_example && (
                       <>
                         <Tooltip title="上架">
@@ -1043,7 +1043,7 @@ export default function CatalogPage() {
                       </Popconfirm>
                     )}
                   </Space>
-                </Space>
+                </div>
               </Card>
             ))}
             {catalogs.length === 0 && !catalogLoading && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
