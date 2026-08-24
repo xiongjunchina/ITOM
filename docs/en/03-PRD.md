@@ -412,9 +412,10 @@ Based on the "Requirement Scoring & Prioritization Standard" (McKinsey strategic
 Four quadrants (x = strategic value (D1+D2)/2, y = total; default thresholds total 3.5 / strategic 4 / viable 3): ⭐ Strategic Bet, ⚡ Quick Win, 📋 Low Priority, 🔄 Re-evaluate.
 Review governance: M10 starts with **single-reviewer consensus scoring** (`requirement_score.is_consensus` backfills the requirement's six scores); multi-party independent scoring + consensus is a later enhancement (the table already reserves reviewer_role/role_weight).
 
-### 7.3 Requirement List & Import
+### 7.3 Requirement List, Export & Import
 
 - Columns by stage (kanban, including an "Evaluating" column) + toggle to table view; filters: business line / priority / **decision** / owner / requester; cards show weighted total and quadrant. During horizontal scroll, the table freezes the left Code and Title columns; the global bottom scrollbar remains available even when filtering leaves only a few rows, so hidden fields and actions remain reachable.
+- **List export**: any user with Requirement view permission can export the Requirement Overview to Excel. Export strictly reuses the active keyword, business-domain, MoSCoW, status, decision, Mine-only filters and server-side data scope, and contains every matching record rather than only the current page. Kanban export does not carry stale status/decision filters that are visible only in table view. Selection and action columns are excluded, and the button remains available even without create permission.
 - **Template import**: the newly downloaded Excel template contains registration-stage fields only (title, type, business domain, description, source, expected date/effect, and operational value); the server generates the requester and code. Six-dimension scores, decisions, PRD/development effort, and channel department are not in the new registration template. Upload detects the legacy 19-column score template by its headers and keeps historical score imports compatible without migrating or deleting old data.
 
 ### 7.4 Acceptance Criteria

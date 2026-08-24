@@ -10,6 +10,8 @@
 
 > The unified table kernel and local wide-table UAT dataset do not change the database model: no table, column, index, constraint, or migration is added. `preferences.table_views.widths` plus `manual_widths` retain only explicitly resized columns and their markers; every other width is derived in the frontend from the rendered header and currently loaded rows. First-two-business-column freezing, compact natural width for short tables, exact wide-table width, and sticky/body synchronization add no business field. After explicit `--confirm-local`, `app.scripts.seed_table_uat` writes and explicitly commits wholly fictitious records into existing entities with dedicated `UAT-TABLE` codes and the `【本地表格UAT】` marker. Repeated seeding idempotently refreshes those records, while `cleanup` soft-deletes and commits only the same dedicated set. This utility is not a startup seed, production initializer, or IDC data migration.
 
+> Requirement Overview Excel export likewise changes no data model. It reads existing requirements, related people/business domains, and derived scoring/task progress only; it adds no export snapshot, field, index, or migration, persists no filters, and never broadens record visibility.
+
 ## 0. Global Conventions
 
 - Primary key: `id CHAR(26)` GLID, system-generated; not listed per-table below.

@@ -159,6 +159,7 @@ export default function Requirements() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // 筛选
   const [q, setQ] = useState('');
@@ -207,6 +208,24 @@ export default function Requirements() {
       setLoading(false);
     }
   }, [view, q, domainId, moscow, status, decision, mineOnly, page, pageSize]);
+
+  const exportAll = async () => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (domainId) params.set('business_domain_id', domainId);
+    if (moscow) params.set('moscow', moscow);
+    if (mineOnly) params.set('scope', 'mine');
+    // 看板不展示状态/决议筛选，不能把切换视图前遗留的隐藏条件带入导出。
+    if (view === 'table' && status) params.set('status', status);
+    if (view === 'table' && decision) params.set('decision', decision);
+    const query = params.toString();
+    setExporting(true);
+    try {
+      await api.download(`/requirements/export${query ? `?${query}` : ''}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     void load();
@@ -578,19 +597,24 @@ export default function Requirements() {
             />
           )}
         </Space>
-        {canCreate && (
-          <Space>
-            <Button icon={<DownloadOutlined />} onClick={() => void api.download('/requirements/template')}>
-              {t('req.downloadTemplate')}
-            </Button>
-            <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
-              {t('req.import')}
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
-              {t('req.register')}
-            </Button>
-          </Space>
-        )}
+        <Space>
+          <Button icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportAll()}>
+            {t('req.exportAll')}
+          </Button>
+          {canCreate && (
+            <>
+              <Button icon={<DownloadOutlined />} onClick={() => void api.download('/requirements/template')}>
+                {t('req.downloadTemplate')}
+              </Button>
+              <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
+                {t('req.import')}
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
+                {t('req.register')}
+              </Button>
+            </>
+          )}
+        </Space>
       </Space>
 
       {view === 'board' ? (

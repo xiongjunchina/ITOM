@@ -411,7 +411,7 @@ GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ### 4.4 需求
 
 ```text
-GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
+GET/POST /api/requirements | GET /api/requirements/export | GET/PATCH /api/requirements/{id}
 GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
 POST /api/requirements/{id}/to-dev       # {}；固定使用需求评分规则 dev_leader，并写入开发路径快照
@@ -420,6 +420,8 @@ GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
 # P1：仅 BDO/授权 IT 角色复用 requirements.create/view；Aily/MCP 强制本人范围，网页 BDO 范围为本人需求及其被配置为业务 BDO 的服务域需求；不新增第二套需求实体
 ```
+
+`GET /api/requirements/export` 要求 `requirements.view`，接受与需求总览一致的 `q`、`business_domain_id`、`moscow`、`status`、`decision`、`scope` 参数，并与 `GET /api/requirements` 共用同一授权查询。服务端按清单默认顺序导出当前账号数据范围内全部匹配行，不接受或应用分页参数；Excel 输出清单业务列，不包含选择框、能力字段和操作列。网页看板调用时不发送只在表格视图可见的状态/决议条件。
 
 ### 4.5 流程
 

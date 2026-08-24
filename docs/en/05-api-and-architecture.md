@@ -413,7 +413,7 @@ GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + mi
 ### 4.4 Requirement
 
 ```text
-GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
+GET/POST /api/requirements | GET /api/requirements/export | GET/PATCH /api/requirements/{id}
 GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # Registration→Analysis→Implementation→Closure/On-Hold/Cancelled, carrying stage fields
 POST /api/requirements/{id}/to-dev       # {}; fixed Requirement Scoring Rules dev_leader and an in-house-dev route snapshot
@@ -422,6 +422,8 @@ GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # validate all acceptance criteria checked → may carry {legacy_problem, knowledge_draft}
 # P1: Aily/MCP keeps BDO requirement scope owner-only; the authenticated ITOM web module additionally permits requirements in domains where the person is configured as business BDO; no second requirement entity
 ```
+
+`GET /api/requirements/export` requires `requirements.view`, accepts the Requirement Overview's `q`, `business_domain_id`, `moscow`, `status`, `decision`, and `scope` parameters, and shares the exact authorized query with `GET /api/requirements`. The server exports every matching row in the current account's data scope using the list's default order; pagination parameters are neither accepted nor applied. The workbook contains business columns only, excluding selection, capability, and action fields. A kanban-view request omits status/decision filters that are visible only in table view.
 
 ### 4.5 Process
 

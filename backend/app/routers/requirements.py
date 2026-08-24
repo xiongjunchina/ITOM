@@ -2,7 +2,7 @@
 from datetime import date as _date
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, Response, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -218,12 +218,18 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
     }
 
 
-@router.get("")
-def list_requirements(
-    page: int = 1, page_size: int = 50, q: str = "", status: str = "",
-    business_domain_id: str = "", moscow: str = "", decision: str = "", scope: str = "",
-    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view")),
+def _requirement_query(
+    db: Session,
+    user: AuthUser,
+    *,
+    q: str = "",
+    status: str = "",
+    business_domain_id: str = "",
+    moscow: str = "",
+    decision: str = "",
+    scope: str = "",
 ):
+    """Build the authorized requirement-list query shared by list and export."""
     query = db.query(Requirement).filter(Requirement.is_deleted.is_(False))
     if scope == "mine":
         if is_business_portal_only(db, user):
@@ -243,6 +249,25 @@ def list_requirements(
         query = query.filter(Requirement.moscow == moscow)
     if decision:
         query = query.filter(Requirement.decision == decision)
+    return query
+
+
+@router.get("")
+def list_requirements(
+    page: int = 1, page_size: int = 50, q: str = "", status: str = "",
+    business_domain_id: str = "", moscow: str = "", decision: str = "", scope: str = "",
+    db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "view")),
+):
+    query = _requirement_query(
+        db,
+        user,
+        q=q,
+        status=status,
+        business_domain_id=business_domain_id,
+        moscow=moscow,
+        decision=decision,
+        scope=scope,
+    )
     items, total = paginate(query.order_by(Requirement.is_example.desc(), Requirement.created_at.desc()), page, page_size)
     pend = process_engine.pending_steps_map(db, ["requirement"], [x.id for x in items], user)
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
@@ -263,6 +288,83 @@ def list_requirements(
             "workflow_edit_locked_reason": edit_access.reason,
         })
     return ok(rows, total=total, page=page)
+
+
+@router.get("/export")
+def export_requirements(
+    q: str = "",
+    status: str = "",
+    business_domain_id: str = "",
+    moscow: str = "",
+    decision: str = "",
+    scope: str = "",
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_perm("requirements", "view")),
+):
+    """Export every authorized requirement matching the current list filters."""
+    from urllib.parse import quote
+
+    from app.services.excel_io import Col, Sheet, build_export
+
+    query = _requirement_query(
+        db,
+        user,
+        q=q,
+        status=status,
+        business_domain_id=business_domain_id,
+        moscow=moscow,
+        decision=decision,
+        scope=scope,
+    )
+    names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    domains = {d.id: d.name for d in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False))}
+    status_map = status_names(db, "requirement")
+    cfg = requirement_scoring.get_config(db)
+    rows = []
+    for requirement in query.order_by(Requirement.is_example.desc(), Requirement.created_at.desc()).all():
+        row = _row(requirement, db, names, domains, status_map, cfg)
+        rows.append({
+            "requirement_code": row["requirement_code"],
+            "title": row["title"],
+            "requester_name": row["requester_name"],
+            "req_type": row["req_type"],
+            "business_domain_name": row["business_domain_name"],
+            "moscow": row["moscow"],
+            "weighted_total": row["weighted_total"],
+            "quadrant": row["quadrant"],
+            "decision": row["decision"],
+            "route": row["route"],
+            "owner_name": row["owner_name"],
+            "status_name": row["status_name"],
+            "target_date": row["target_date"],
+            "progress": row["progress"],
+            "lead_days": row["lead_days"],
+        })
+    sheet = Sheet("需求总览", [
+        Col("requirement_code", "需求编号"),
+        Col("title", "标题"),
+        Col("requester_name", "提出人"),
+        Col("req_type", "类型"),
+        Col("business_domain_name", "业务域"),
+        Col("moscow", "MoSCoW"),
+        Col("weighted_total", "加权总分", kind="float"),
+        Col("quadrant", "象限"),
+        Col("decision", "决议"),
+        Col("route", "实现路径"),
+        Col("owner_name", "负责人"),
+        Col("status_name", "状态"),
+        Col("target_date", "目标日期", kind="date"),
+        Col("progress", "进度（%）", kind="float"),
+        Col("lead_days", "交付周期（天）", kind="float"),
+    ])
+    filename = "需求总览.xlsx"
+    return Response(
+        content=build_export(sheet, rows),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=requirements.xlsx; filename*=UTF-8''{quote(filename)}",
+        },
+    )
 
 
 def _current_process_task(db: Session, requirement_id: str):

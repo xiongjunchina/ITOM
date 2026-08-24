@@ -62,6 +62,52 @@ def test_bdo_scope(client, ctx):
     assert client.get(f"/api/requirements/{other['id']}", headers=ctx["req"]).status_code == 403
 
 
+def test_requirement_export_returns_all_filtered_rows_and_preserves_scope(client, ctx):
+    """需求总览导出复用清单筛选和数据范围，并覆盖当前分页之外的全部匹配行。"""
+    prefix = "需求导出跨页验证"
+    created = [
+        _register(client, ctx["bp"], ctx["domain"], title=f"{prefix}-{index}")
+        for index in range(1, 4)
+    ]
+    first_page = client.get(
+        "/api/requirements",
+        params={"q": prefix, "status": "evaluating", "page": 1, "page_size": 1},
+        headers=ctx["bp"],
+    ).json()
+    assert first_page["total"] == 3
+    assert len(first_page["data"]) == 1
+
+    exported = client.get(
+        "/api/requirements/export",
+        params={"q": prefix, "status": "evaluating", "business_domain_id": ctx["domain"]},
+        headers=ctx["bp"],
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "filename*=UTF-8''" in exported.headers["content-disposition"]
+    workbook = load_workbook(BytesIO(exported.content), data_only=True)
+    sheet = workbook["需求总览"]
+    assert [cell.value for cell in sheet[1]][:5] == ["需求编号", "标题", "提出人", "类型", "业务域"]
+    rows = list(sheet.iter_rows(min_row=3, values_only=True))
+    assert {row[0] for row in rows} == {item["requirement_code"] for item in created}
+    assert {row[1] for row in rows} == {f"{prefix}-{index}" for index in range(1, 4)}
+
+    scoped_prefix = "需求导出范围验证"
+    mine = _register(client, ctx["req"], ctx["domain"], title=f"{scoped_prefix}-本人")
+    _register(client, ctx["bp"], ctx["domain"], title=f"{scoped_prefix}-他人")
+    scoped_export = client.get(
+        "/api/requirements/export",
+        params={"q": scoped_prefix},
+        headers=ctx["req"],
+    )
+    assert scoped_export.status_code == 200, scoped_export.text
+    scoped_sheet = load_workbook(BytesIO(scoped_export.content), data_only=True)["需求总览"]
+    scoped_rows = list(scoped_sheet.iter_rows(min_row=3, values_only=True))
+    assert [(row[0], row[1]) for row in scoped_rows] == [(mine["requirement_code"], f"{scoped_prefix}-本人")]
+
+
 def test_requirement_draft_attachments_bind_atomically(client, ctx, monkeypatch, tmp_path):
     """需求补充信息的附件在提交前不可读取，提交时随需求在同一事务中绑定。"""
     monkeypatch.setattr("app.core.config.settings.upload_dir", str(tmp_path))
