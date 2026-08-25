@@ -116,6 +116,7 @@ ENTITY_LINKS = {
     "requirement": "/requirements/{id}",
     "project": "/projects/{id}",
     "bug": "/task-management/development?tab=bug&bug_id={id}",
+    "report": "/reports?report_id={id}",
 }
 
 
@@ -199,6 +200,11 @@ def _requester_person(db: Session, entity_type: str, entity_id: str) -> str | No
 
         problem = db.get(Problem, entity_id)
         uid = problem.reporter if problem else None
+    elif entity_type == "report":
+        from app.models import ReportInstance
+
+        report = db.get(ReportInstance, entity_id)
+        uid = report.created_by if report else None
     if not uid:
         return None
     u = db.get(AuthUser, uid)

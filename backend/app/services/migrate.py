@@ -35,6 +35,22 @@ ENSURE_COLUMNS = {
     ],
     "org_settings": [
         ("digital_team_member_ids", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("reporting_timezone", "VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai'"),
+        ("reporting_week_start", "INTEGER NOT NULL DEFAULT 1"),
+        ("fiscal_year_start_month", "INTEGER NOT NULL DEFAULT 1"),
+        ("workday_hours", "DOUBLE PRECISION NOT NULL DEFAULT 8"),
+        ("report_min_group_size", "INTEGER NOT NULL DEFAULT 3"),
+        ("report_role_rates", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+    ],
+    "cost_entry": [
+        ("wbs_task_id", "VARCHAR(26)"),
+        ("amount_cny", "NUMERIC(18,2)"),
+        ("category", "VARCHAR(32) NOT NULL DEFAULT 'legacy'"),
+        ("cost_type", "VARCHAR(16) NOT NULL DEFAULT 'incurred'"),
+        ("supplier", "VARCHAR(128)"),
+    ],
+    "report_instance": [
+        ("published_version", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "business_domain": [
         # M95：语义不同于历史 backup_owner_id，只增列、不复制，避免把旧 IT
@@ -243,6 +259,19 @@ def ensure_columns(db: Session):
             if name not in existing:
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                 logger.info("added column %s.%s", table, name)
+    db.commit()
+
+
+def backfill_report_center_amounts(db: Session):
+    """把旧万元金额精确换算为人民币元；不伪造任何历史人天投入。"""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    changed = db.execute(text(
+        "UPDATE cost_entry SET amount_cny = ROUND(amount_10k::numeric * 10000, 2) "
+        "WHERE amount_cny IS NULL"
+    )).rowcount
+    if changed:
+        logger.info("backfilled %d cost_entry amount_cny rows", changed)
     db.commit()
 
 
@@ -1150,6 +1179,7 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    backfill_report_center_amounts(db)
     backfill_development_task_codes(db)
     # M97：需求开发任务允许先登记、后关联需求。仅放宽约束，不删除、不改写
     # 任何既有任务及其关联关系。

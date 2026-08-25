@@ -28,7 +28,24 @@ from app.models.itsm_assets import (
     Vendor,
 )
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
-from app.models.project import CostEntry, Milestone, Portfolio, Project, Risk, WbsTask
+from app.models.project import (
+    CostEntry,
+    Milestone,
+    Portfolio,
+    Project,
+    ProjectBudgetItem,
+    ProjectEffortEntry,
+    Risk,
+    WbsTask,
+)
+from app.models.report import (
+    ReportAudience,
+    ReportGenerationJob,
+    ReportInstance,
+    ReportSchedule,
+    ReportTemplate,
+    ReportVersion,
+)
 from app.models.requirement import (
     Requirement,
     RequirementScore,
@@ -116,6 +133,8 @@ __all__ = [
     "CampaignTask",
     "Ci",
     "CostEntry",
+    "ProjectBudgetItem",
+    "ProjectEffortEntry",
     "CiRelationship",
     "Contract",
     "KnowledgeArticle",
@@ -156,6 +175,12 @@ __all__ = [
     "Portfolio",
     "Position",
     "Project",
+    "ReportAudience",
+    "ReportGenerationJob",
+    "ReportInstance",
+    "ReportSchedule",
+    "ReportTemplate",
+    "ReportVersion",
     "Requirement",
     "RequirementScore",
     "RequirementScoringConfig",

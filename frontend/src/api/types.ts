@@ -1502,7 +1502,42 @@ export interface CostEntry {
   id: string;
   entry_date: string;
   amount_10k: number;
+  amount_cny: string;
+  category: 'software' | 'hardware' | 'service' | 'labor' | 'other' | 'legacy';
+  cost_type: 'incurred' | 'committed';
+  supplier: string | null;
+  wbs_task_id: string | null;
   note: string | null;
+}
+
+export interface ProjectBudgetItem {
+  id: string;
+  category: 'software' | 'hardware' | 'service' | 'labor' | 'other';
+  name: string;
+  amount_cny: string;
+  note: string | null;
+}
+
+export interface ProjectEffortEntry {
+  id: string;
+  person_id: string;
+  person_name: string | null;
+  work_date: string;
+  effort_days: string;
+  role_type: 'design' | 'development' | 'testing' | 'implementation' | 'pm' | 'operations' | 'other';
+  standard_rate_cny_per_day: string | null;
+  wbs_task_id: string | null;
+  note: string | null;
+}
+
+export interface ProjectInvestmentSummary {
+  budget_cny: string;
+  incurred_cost_cny: string;
+  committed_cost_cny: string;
+  effort_days: string;
+  effort_cost_cny: string;
+  budget_execution_rate: number | null;
+  categories: Array<{ category: string; budget_cny: string; actual_cny: string }>;
 }
 
 /** 章程解析：WBS 草稿行 */

@@ -401,6 +401,11 @@ GET/POST /api/projects/{id}/wbs
 PATCH/DELETE /api/wbs/{task_id}
 DELETE /api/projects/{id}/wbs/batch-delete
 GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
+GET/POST /api/projects/{id}/budget-items
+DELETE /api/project-budget-items/{item_id}
+GET/POST /api/projects/{id}/effort-entries
+DELETE /api/project-effort-entries/{entry_id}
+GET /api/projects/{id}/investment-summary
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}; only an unstarted subtree may change hierarchy or sibling order
 POST /api/projects/{id}/wbs/batch-move   # {task_ids:[1..500], parent_task_id?, before_task_id?}; atomically move multiple roots and complete subtrees
 GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + milestones)
@@ -409,6 +414,8 @@ GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + mi
 `PATCH /api/wbs/{task_id}` accepts `progress`, `actual_start`, `actual_end`, and the other editable fields. A non-null `actual_end` must be no later than the server's current date and no earlier than the resulting `actual_start`; on success the server sets progress to 100% in the same transaction and the response's derived `status` is Done. A future date returns `WBS_ACTUAL_END_IN_FUTURE`; end-before-start returns `WBS_ACTUAL_DATES_INVALID`. When current progress is already 100%, any submitted actual-date field returns `WBS_ACTUAL_DATES_LOCKED`. If that same request also tries to lower progress below 100%, it returns `WBS_REOPEN_ACTUAL_DATES_CONFLICT` with “Reopen the task first, then edit actual dates.” A separate progress correction below 100% reopens the target and any ancestor reopened by hierarchy roll-up, clearing their `actual_end` while retaining first-completion audit `completed_at`.
 
 `POST /api/projects/{id}/wbs/batch-move` requires `projects.edit` and accepts 1–500 `task_ids`. Duplicate IDs are removed; when a parent and descendant are both submitted only the highest root remains, and every descendant follows that root. `parent_task_id=null` means top level and `before_task_id=null` means the end of the target layer. The server locks and validates every active WBS row in the project, rejecting missing/cross-project rows, invalid anchors, cycles, completed moved roots/descendants/target parent, and requests that would destabilize completed sibling codes. Any failure commits no order change. Success recalculates affected sibling `sort` and whole-tree `wbs_code`, writes one `move` audit per root, and returns `requested_task_ids`, normalized `moved_root_ids`, target parent/anchor, and total rows. The single-row `/api/wbs/{task_id}/move` reuses the same validation. The list endpoint still returns the complete WBS and real `total`; 50/100/200/All, page targets such as rows 51–75, and ancestor completion remain browser display behavior and do not change API pagination or tree relationships.
+
+Project-investment endpoints return CNY and person-days as decimal strings to avoid JSON floating-point loss. A cost write prefers `amount_cny` while old clients may still send `amount_10k`; exact CNY is authoritative if both appear. Budget and effort facts are soft-deletable. If an effort request omits the rate, the service reads `org_settings.report_role_rates[role_type]` and snapshots it on that fact. `investment-summary` returns budget, incurred/committed cost, person-days, standard-rate effort cost, budget execution, and category mix. Standard-rate cost never writes into cost detail or personal salary.
 
 ### 4.4 Requirement
 
@@ -493,6 +500,31 @@ GET /api/dashboard    # a single endpoint returning all data for the four panels
 ```
 
 When the account has task-module view permission, the response also contains a read-only `task` aggregate with `open_total`, `open_bugs`, `open_bug_fix_tasks`, `open_delegated_tasks`, and `open_requirement_tasks`. These are live counts of non-terminal tasks and do not change existing Dashboard fields.
+
+### 4.8 Unified Report Center (B2)
+
+```text
+GET  /api/reports/metrics
+POST /api/reports/query
+GET  /api/reports/drilldown/{metric_code}
+GET/POST /api/reports/templates
+PATCH /api/reports/templates/{template_id}
+GET/POST /api/reports
+GET  /api/reports/{report_id}
+POST /api/reports/{report_id}/generate        # Idempotency-Key required
+PATCH /api/reports/{report_id}/narrative
+POST /api/reports/{report_id}/submit-review
+POST /api/reports/{report_id}/publish
+GET  /api/reports/{report_id}/versions
+GET  /api/reports/{report_id}/export
+GET/PATCH /api/admin/org-settings             # timezone/week/fiscal/person-day/role-rate conventions
+```
+
+The fixed metric registry declares each code's domain, source-module permission, sensitive permission, formula version, data-quality semantics, and optional drill-down. `POST /query` accepts 1–50 registered metrics, an inclusive date interval, and only `project_id/portfolio_id/business_domain_id/ticket_type/priority` filters; an unknown filter or unauthorized metric fails closed. Project, Requirement, ITSM, Task, and Process metrics query their own domain facts and never read `report_version` as a replacement source of truth. Task metrics aggregate only task modules the current user can actually view, and Requirement metrics retain record-level data scope. Drill-down repeats the authorization with `limit ≤ 200`.
+
+Periods support week/month/quarter/half_year/year/custom. Defaults are Asia/Shanghai, Monday-first weeks, calendar year, and eight hours per person-day. The Requirement timeliness cohort uses `Requirement.created_at` in the period; lead time and P50/P90 include only rows with `closed_at`, stage ageing reads current stage timestamps, and on-time rate uses only closed rows with a target date. A count with no rows returns `value=0, quality=ok`; a missing denominator returns `value=null, quality=no_data`.
+
+Formal generation has a unique actor + Idempotency-Key and canonical request digest. Same key/request returns its first version, while a different request returns 409. Each version stores metric snapshot, formula versions, quality, narrative, generation fact, and checksum. Draft narrative may change and recomputes the checksum; review prevents regeneration. The `report_flow` approval callback marks the instance/current version approved, while rejection returns to draft. Publication requires `reports_publish`, stores user/role/group audiences, and locks the current version/instance. Detail, version list, and Excel export require creator/publication-management authority or a matching published audience, and recheck any finance/people/platform sensitive permissions found in the version. `report_schedule` is a disabled reserved model in this release and has no automatic-run API.
 
 ## 5. Domain Event List
 

@@ -2,8 +2,8 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on PRD v1.2 and the approved Aily + MCP baseline. P2 code maps **81 tables**: Support 29, ITSM 16, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 added form-version and dispatch-rule tables; P2 adds one ticket-rating detail table.
-> Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
+> Based on PRD v1.2 and the approved Aily + MCP baseline. This document maintains the core contracts by domain; SQLAlchemy models and incremental migration code are authoritative for the current table count.
+> Compared with SN-AOM's 106 tables, live metrics have no manually maintained pre-computed statistics table. Process, performance, configuration, and explicitly generated formal-report snapshots exist only for auditable, reproducible history.
 > This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, dispatch, and rating-detail models are implemented. Database facts must be checked against real models and migrations.
 
 > M93 implementation-delivery routing adds only nullable/defaulted columns to existing `service_dispatch_rule` and `ticket` tables. It creates/deletes no business table and never backfills, migrates, or rewrites existing records; `business_initial_password` is deployment configuration, not a persisted business field.
@@ -242,7 +242,7 @@ article_id + person, UNIQUE composite. Triggers the "marked helpful" points.
 
 ---
 
-## 3. Project Domain (6 tables)
+## 3. Project Domain (8 tables)
 
 ### 3.1 portfolio — portfolio
 
@@ -273,7 +273,15 @@ project_id FK, title, probability (High/Medium/Low), impact (High/Medium/Low), r
 
 ### 3.6 cost_entry — cost detail
 
-project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_by [C].
+project_id FK, nullable wbs_task_id FK, entry_date, authoritative `amount_cny NUMERIC(18,2)`, legacy compatibility projection `amount_10k`, category (software/hardware/service/labour/other/legacy), cost_type (incurred/committed), supplier, note, and created_by [C]. Upgrade backfills only missing `amount_cny` as exact `amount_10k × 10000` and never overwrites an existing exact amount.
+
+### 3.7 project_budget_item — project budget line
+
+project_id FK, category (software/hardware/service/labour/other), name, `amount_cny NUMERIC(18,2)`, note, and created_by [C]. When active lines exist their sum is the budget total; otherwise reads remain compatible with `project.budget_10k`.
+
+### 3.8 project_effort_entry — project effort fact
+
+project_id FK, nullable wbs_task_id FK, person_id FK, work_date, `effort_days NUMERIC(8,2)`, role_type (design/development/testing/implementation/pm/operations/other), nullable `standard_rate_cny_per_day NUMERIC(12,2)`, note, and created_by [C]. Registration snapshots the explicit rate or configured role-standard daily rate. It is a management-cost convention and never stores or derives personal salary. Upgrade never fabricates effort or role rates from historical tasks, hours, or people.
 
 ---
 
@@ -408,6 +416,38 @@ period_id FK, person FK, version, business_role_score, professional_role_score, 
 
 ---
 
+## 6A. Unified Report Center (6 tables)
+
+Live metrics exist only in the `services/reporting.py` registry and query responses; they are not persisted as monthly or quarterly statistic rows. These tables store only explicitly created templates, formal reports, immutable versions, audiences, idempotent generation facts, and reserved scheduling configuration.
+
+### 6A.1 report_template
+
+Unique code, name, description, domains JSONB, metric_codes JSONB, default_filters JSONB, default_period_type (week/month/quarter/half_year/year/custom), is_system, active, and created_by. A template may reference only server-registered metrics the current operator may use.
+
+### 6A.2 report_instance
+
+template_id FK, title, period_type, period_start/end, filters JSONB, status (draft/review/approved/published/locked), current_version, published_version, created_by FK, process_instance_id FK, published_at, and locked_at. Period and filters form the instance contract; publication points to a generated version and never overwrites history.
+
+### 6A.3 report_version
+
+Unique report_instance_id FK + version, status, metric_snapshot JSONB, narrative JSONB, formula_versions JSONB, data_quality JSONB, checksum, generated_by, generated_at, and locked_at. A snapshot is created only by explicit formal-report generation. Publication locks it; later revisions increment version and do not edit an old row.
+
+### 6A.4 report_audience
+
+Unique report_instance_id FK + subject_type (user/role/group) + subject_id. It limits published-report audiences and never grants a source-module or sensitive-metric permission.
+
+### 6A.5 report_generation_job
+
+report_instance_id FK, actor_id FK, idempotency_key, request_digest, status, version_id FK, error_code, and completed_at; actor_id + idempotency_key is unique. The same key/digest restores its first version, while the same key with a different digest conflicts.
+
+### 6A.6 report_schedule
+
+template_id FK, name, period_type, enabled, next_run_at, audience JSONB, and created_by. B2 reserves this disabled model but exposes no execution API or scheduler, so it is not evidence that automatic weekly/monthly generation is enabled.
+
+### 6A.7 Organization-level reporting conventions
+
+`org_settings` adds `reporting_timezone` (Asia/Shanghai), `reporting_week_start` (1=Monday), `fiscal_year_start_month` (1), `workday_hours` (8), `report_min_group_size` (3), and `report_role_rates` JSONB. Rates are management conventions rather than personal salary. The grouping threshold is reserved for future person-group aggregates; current person detail remains explicitly protected by `reports_people`.
+
 ## 7. Core Relationship Diagram
 
 ```mermaid
@@ -427,6 +467,8 @@ erDiagram
     project ||--o{ milestone : ""
     project ||--o{ risk : ""
     project ||--o{ cost_entry : ""
+    project ||--o{ project_budget_item : "budget lines"
+    project ||--o{ project_effort_entry : "effort facts"
     requirement ||--o{ requirement_task : "task breakdown"
     requirement }o--|| project : "implementation attach"
     requirement ||--o{ problem : "legacy hand-off"
@@ -441,13 +483,17 @@ erDiagram
     auth_user ||--o{ external_identity : "external identity"
     auth_user ||--o{ mcp_operation_intent : "confirmation"
     auth_user ||--o{ mcp_tool_call : "tool audit"
+    report_template ||--o{ report_instance : "instantiates"
+    report_instance ||--o{ report_version : "immutable versions"
+    report_instance ||--o{ report_audience : "published audiences"
+    report_instance ||--o{ report_generation_job : "idempotent generation"
 ```
 
 ## 8. Reconciliation Against the Design Principles
 
 | Principle | How it is realized |
 | --- | --- |
-| No pre-computed tables | Not one of the 43 tables is a statistics/snapshot table; project's three computed columns and performance_score are "system-maintained computation results," not manual data |
+| No pre-computed live-metric tables | Business analysis has no manual statistics table; Project computed columns and performance_score are system-maintained results. `report_version` contains only an explicitly generated formal-report audit snapshot and never feeds back into live metrics or becomes a source-domain fact |
 | Minimal entry | Each table's "required on creation" group has ≤ 5 fields |
 | Event-driven | notification_outbox + point_entry are written by the same domain-event outlet |
 | Duplicate-proof | idea_like / knowledge_vote unique constraints |
@@ -460,7 +506,7 @@ erDiagram
 `ui_branding_asset` stores controlled brand images with kind, path, MIME type, byte size, dimensions and uploader. Only PNG/JPEG/WebP/ICO up to 5 MB and 4096×4096 are accepted; SVG and arbitrary HTML/CSS/JS or remote fonts are intentionally unsupported.
 ### Org governance settings (M42)
 
-`org_settings` is a singleton containing `digital_team_department_ids`, `digital_team_member_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. The effective digital team is the union of active people in the expanded department scope and active individually selected people; selecting an individual never includes their colleagues. The settings remain separate from credentials so the internal digital-team definition survives an organization-source change.
+`org_settings` is a singleton containing `digital_team_department_ids`, `digital_team_member_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. The effective digital team is the union of active people in the expanded department scope and active individually selected people; selecting an individual never includes their colleagues. It also stores `reporting_timezone`, `reporting_week_start`, `fiscal_year_start_month`, `workday_hours`, `report_min_group_size`, and `report_role_rates` for shared reporting conventions and role-standard daily rates. The settings remain separate from credentials so organization-source changes do not lose the digital-team or reporting definitions.
 
 ### System integration settings (M44)
 

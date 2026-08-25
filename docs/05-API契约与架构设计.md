@@ -399,6 +399,11 @@ GET/POST /api/projects/{id}/wbs
 PATCH/DELETE /api/wbs/{task_id}
 DELETE /api/projects/{id}/wbs/batch-delete
 GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
+GET/POST /api/projects/{id}/budget-items
+DELETE /api/project-budget-items/{item_id}
+GET/POST /api/projects/{id}/effort-entries
+DELETE /api/project-effort-entries/{entry_id}
+GET /api/projects/{id}/investment-summary
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}；仅未启动子树可调整层级和同级顺序
 POST /api/projects/{id}/wbs/batch-move   # {task_ids:[1..500], parent_task_id?, before_task_id?}；原子移动多个根及完整子树
 GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
@@ -407,6 +412,8 @@ GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 `PATCH /api/wbs/{task_id}` 接受 `progress`、`actual_start`、`actual_end` 及其它可编辑字段。提交非空 `actual_end` 时，该日期必须不晚于服务端当天且不早于最终 `actual_start`；通过后服务端在同一事务把完成度设为 100%，响应中的派生 `status` 为“已完成”。未来日期返回 `WBS_ACTUAL_END_IN_FUTURE`，结束早于开始返回 `WBS_ACTUAL_DATES_INVALID`。当前完成度已为 100% 时，任何实际日期字段均以 `WBS_ACTUAL_DATES_LOCKED` 拒绝；若同一请求还试图把完成度降到 100% 以下，则返回 `WBS_REOPEN_ACTUAL_DATES_CONFLICT` 及“请先重新打开任务，再修改实际日期”。单独把完成度降到 100% 以下会重新打开当前任务及因层级回算而重新打开的祖先，清空它们的 `actual_end`，但保留首次完成审计 `completed_at`。
 
 `POST /api/projects/{id}/wbs/batch-move` 需要 `projects.edit`，接收 1–500 个 `task_ids`；重复 ID 去重，父子同时提交时只保留最高层移动根，根的全部后代随树移动。`parent_task_id=null` 表示一级，`before_task_id=null` 表示目标层级末尾。服务端锁定并校验项目全部有效 WBS 行，拒绝缺失/跨项目任务、无效参照、循环关系、已完成移动根/后代/目标父项以及会扰动已完成同级编码的请求；任一校验失败不提交任何排序变化。成功后重算受影响层级 `sort` 与全树 `wbs_code`，逐根写 `move` 审计并返回 `requested_task_ids`、归一后的 `moved_root_ids`、目标父项/参照和总行数。原单行 `/api/wbs/{task_id}/move` 复用相同验证。读取接口继续返回完整 WBS 与真实 `total`；50/100/200/全部、页码 51–75 等目标切片和祖先补齐均为浏览器显示策略，不改变接口分页或树关系。
+
+项目投入接口统一以十进制字符串返回人民币元和人天，避免 JSON 浮点误差。成本写入优先接受 `amount_cny`，旧客户端仍可传 `amount_10k`；两者同时出现时精确人民币元为权威。预算分项与人天记录支持软删除；人天未显式传费率时读取 `org_settings.report_role_rates[role_type]` 并在记录中形成快照。`investment-summary` 返回预算、已发生、已承诺、投入人天、标准费率成本、预算执行率及分类结构；标准费率成本不会写回成本明细或个人薪酬。
 
 ### 4.4 需求
 
@@ -495,6 +502,31 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 ```
 
 当账号具有任务模块查看权限时，响应额外包含 `task` 聚合块：`open_total`、`open_bugs`、`open_bug_fix_tasks`、`open_delegated_tasks` 和 `open_requirement_tasks`。该块只读、按当前非终态任务实时统计，不改变原有 Dashboard 字段。
+
+### 4.8 统一报表中心（B2）
+
+```text
+GET  /api/reports/metrics
+POST /api/reports/query
+GET  /api/reports/drilldown/{metric_code}
+GET/POST /api/reports/templates
+PATCH /api/reports/templates/{template_id}
+GET/POST /api/reports
+GET  /api/reports/{report_id}
+POST /api/reports/{report_id}/generate        # Idempotency-Key 必填
+PATCH /api/reports/{report_id}/narrative
+POST /api/reports/{report_id}/submit-review
+POST /api/reports/{report_id}/publish
+GET  /api/reports/{report_id}/versions
+GET  /api/reports/{report_id}/export
+GET/PATCH /api/admin/org-settings             # 统一时区/周起始/月历/人天/角色费率口径
+```
+
+指标注册表以固定 code 声明领域、源模块权限、敏感权限、公式版本、数据质量语义和可选穿透器。`POST /query` 接受 1–50 个已注册指标、闭区间日期及白名单筛选 `project_id/portfolio_id/business_domain_id/ticket_type/priority`；未知筛选或越权指标失败关闭。项目、需求、ITSM、任务与流程均直接查询本域事实，不读取 `report_version` 反向充当业务事实。任务指标只聚合当前用户实际拥有查看权的任务模块；需求指标继续应用其记录级可见范围。穿透明细再次执行相同授权且 `limit ≤ 200`。
+
+周期支持 week/month/quarter/half_year/year/custom；默认口径为 Asia/Shanghai、周一开始、自然年、8 小时/人天。需求时效队列以周期内 `Requirement.created_at` 为准，完成时长只计算存在 `closed_at` 的记录，P50/P90 使用该样本；阶段停留读取当前阶段打点，按期率仅以存在目标日期的已关闭需求为分母。计数无行返回 `value=0, quality=ok`；没有分母返回 `value=null, quality=no_data`。
+
+正式报告生成采用“操作者 + Idempotency-Key”唯一约束和规范请求摘要。同键同参返回首次版本，同键异参返回 409；每版保存指标快照、公式版本、质量、管理说明、生成事实和校验和。草稿说明可编辑并重算校验和；提交审核后不可重新生成。`report_flow` 批准回调把实例/当前版本置为 approved，驳回回到 draft；发布要求 `reports_publish`，写入 user/role/group 受众并把当前版本/实例锁定。查看、版本列表和 Excel 导出按创建人/发布管理权限或已发布受众判定，同时重新检查版本中涉及的 finance/people/platform 敏感权限。`report_schedule` 本轮仅为禁用预留模型，不存在自动运行 API。
 
 ## 5. 领域事件清单
 

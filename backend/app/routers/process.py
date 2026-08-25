@@ -26,6 +26,7 @@ PROCESS_DISPLAY_ORDER = {
     "project": 50,
     "requirement": 60,
     "bug": 70,
+    "report": 80,
 }
 
 
@@ -176,6 +177,19 @@ def _after_task_advanced(db: Session, instance: ProcessInstance, user: AuthUser)
                 content="关键节点流程已全部完成，请确认项目是否收尾关闭（关闭需填写理由）。",
                 link=f"/projects/{p.id}",
             )
+    elif instance.entity_type == "report" and instance.status == "completed":
+        from app.models import ReportInstance, ReportVersion
+
+        report = db.get(ReportInstance, instance.entity_id)
+        if report and not report.is_deleted and report.current_version:
+            report.status = "approved"
+            version = db.query(ReportVersion).filter(
+                ReportVersion.report_instance_id == report.id,
+                ReportVersion.version == report.current_version,
+                ReportVersion.is_deleted.is_(False),
+            ).first()
+            if version:
+                version.status = "approved"
 
 
 @router.post("/api/process-tasks/{task_id}/complete")
@@ -300,6 +314,20 @@ def reject(task_id: str, body: RejectIn, db: Session = Depends(get_db), user: Au
         instance = process_engine.reject_task(db, task_id, user, body.reason)
         selected = None
         audit(db, "process_task", task_id, "reject", user, {"reason": body.reason})
+        if instance.entity_type == "report":
+            from app.models import ReportInstance, ReportVersion
+
+            report = db.get(ReportInstance, instance.entity_id)
+            if report and not report.is_deleted:
+                report.status = "draft"
+                report.process_instance_id = None
+                version = db.query(ReportVersion).filter(
+                    ReportVersion.report_instance_id == report.id,
+                    ReportVersion.version == report.current_version,
+                    ReportVersion.is_deleted.is_(False),
+                ).first()
+                if version and not version.locked_at:
+                    version.status = "draft"
     db.commit()
     return ok({
         "instance_id": instance.id,

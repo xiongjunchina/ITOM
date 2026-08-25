@@ -1,7 +1,7 @@
 """支撑域模型（docs/04 §1）+ 岗位表（人员主数据依赖）。"""
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -490,3 +490,11 @@ class OrgSettings(GlidBase):
     feishu_auto_sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     feishu_auto_sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=1440)
     feishu_auto_sync_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    reporting_timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
+    reporting_week_start: Mapped[int] = mapped_column(Integer, default=1, comment="1=周一")
+    fiscal_year_start_month: Mapped[int] = mapped_column(Integer, default=1)
+    workday_hours: Mapped[float] = mapped_column(Float, default=8.0)
+    report_min_group_size: Mapped[int] = mapped_column(Integer, default=3)
+    report_role_rates: Mapped[dict] = mapped_column(
+        JsonCol, default=dict, comment="角色标准日费率（管理口径，不是个人薪酬）"
+    )

@@ -79,6 +79,9 @@ import type {
   Milestone,
   MilestoneTrackingRow,
   ProjectDetail as ProjectDetailData,
+  ProjectBudgetItem,
+  ProjectEffortEntry,
+  ProjectInvestmentSummary,
   ProjectOrgEntry,
   Risk,
   RiskGrade,
@@ -288,6 +291,9 @@ export default function ProjectDetail() {
   const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
   const [risks, setRisks] = useState<Risk[]>([]);
   const [costs, setCosts] = useState<CostEntry[]>([]);
+  const [budgetItems, setBudgetItems] = useState<ProjectBudgetItem[]>([]);
+  const [effortEntries, setEffortEntries] = useState<ProjectEffortEntry[]>([]);
+  const [investmentSummary, setInvestmentSummary] = useState<ProjectInvestmentSummary>();
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
 
@@ -349,6 +355,22 @@ export default function ProjectDetail() {
     }
   }, [id]);
 
+  const loadInvestment = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [budgets, efforts, summary] = await Promise.all([
+        api.getList<ProjectBudgetItem>(`/projects/${id}/budget-items`),
+        api.getList<ProjectEffortEntry>(`/projects/${id}/effort-entries`),
+        api.get<ProjectInvestmentSummary>(`/projects/${id}/investment-summary`),
+      ]);
+      setBudgetItems(budgets.items);
+      setEffortEntries(efforts.items);
+      setInvestmentSummary(summary);
+    } catch {
+      // 已统一提示
+    }
+  }, [id]);
+
   const loadAttachments = useCallback(async () => {
     if (!id) return;
     try {
@@ -369,9 +391,10 @@ export default function ProjectDetail() {
       loadMilestoneTracking(),
       loadRisks(),
       loadCosts(),
+      loadInvestment(),
       loadAttachments(),
     ]).finally(() => setLoading(false));
-  }, [loadDetail, loadWbs, loadMilestones, loadMilestoneTracking, loadRisks, loadCosts, loadAttachments]);
+  }, [loadDetail, loadWbs, loadMilestones, loadMilestoneTracking, loadRisks, loadCosts, loadInvestment, loadAttachments]);
   useProcessTaskView(detail?.process, user, loadDetail);
 
   useEffect(() => {
@@ -754,6 +777,11 @@ export default function ProjectDetail() {
   const [costModalOpen, setCostModalOpen] = useState(false);
   const [costSaving, setCostSaving] = useState(false);
   const [costForm] = Form.useForm();
+  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
+  const [budgetForm] = Form.useForm();
+  const [effortModalOpen, setEffortModalOpen] = useState(false);
+  const [effortForm] = Form.useForm();
+  const [investmentSaving, setInvestmentSaving] = useState(false);
 
   const submitCost = async () => {
     const v = await costForm.validateFields();
@@ -761,13 +789,17 @@ export default function ProjectDetail() {
     try {
       await api.post(`/projects/${id}/costs`, {
         entry_date: (v.entry_date as Dayjs).format('YYYY-MM-DD'),
-        amount_10k: v.amount_10k,
+        amount_cny: v.amount_cny,
+        category: v.category,
+        cost_type: v.cost_type,
+        supplier: v.supplier || null,
         note: v.note || null,
       });
       message.success(t('proj.costAdded'));
       setCostModalOpen(false);
       void loadCosts();
       void loadDetail();
+      void loadInvestment();
     } catch {
       // 已统一提示
     } finally {
@@ -781,9 +813,52 @@ export default function ProjectDetail() {
       message.success(t('proj.costDeleted'));
       void loadCosts();
       void loadDetail();
+      void loadInvestment();
     } catch {
       // 已统一提示
     }
+  };
+
+  const submitBudgetItem = async () => {
+    const values = await budgetForm.validateFields();
+    setInvestmentSaving(true);
+    try {
+      await api.post(`/projects/${id}/budget-items`, values);
+      message.success(t('proj.investment.saved'));
+      setBudgetModalOpen(false);
+      void loadInvestment();
+    } finally {
+      setInvestmentSaving(false);
+    }
+  };
+
+  const submitEffortEntry = async () => {
+    const values = await effortForm.validateFields();
+    setInvestmentSaving(true);
+    try {
+      await api.post(`/projects/${id}/effort-entries`, {
+        ...values,
+        work_date: (values.work_date as Dayjs).format('YYYY-MM-DD'),
+        standard_rate_cny_per_day: values.standard_rate_cny_per_day ?? null,
+      });
+      message.success(t('proj.investment.saved'));
+      setEffortModalOpen(false);
+      void loadInvestment();
+    } finally {
+      setInvestmentSaving(false);
+    }
+  };
+
+  const deleteBudgetItem = async (row: ProjectBudgetItem) => {
+    await api.delete(`/project-budget-items/${row.id}`);
+    message.success(t('proj.investment.deleted'));
+    void loadInvestment();
+  };
+
+  const deleteEffortEntry = async (row: ProjectEffortEntry) => {
+    await api.delete(`/project-effort-entries/${row.id}`);
+    message.success(t('proj.investment.deleted'));
+    void loadInvestment();
   };
 
   // ---------- 风险 ----------
@@ -1488,9 +1563,14 @@ export default function ProjectDetail() {
   );
 
   // ----- 成本 -----
+  const fmtCny = (value: string | number | null | undefined): string =>
+    value == null ? '-' : new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', maximumFractionDigits: 2 }).format(Number(value));
   const costColumns: ColumnsType<CostEntry> = [
     { title: t('proj.cost.col.date'), dataIndex: 'entry_date', width: 130, onCell: () => ({ className: 'cell-nowrap' }) },
-    { title: t('proj.cost.col.amountWan'), dataIndex: 'amount_10k', width: 130 },
+    { title: t('proj.investment.category'), dataIndex: 'category', width: 110, render: (value) => t(`proj.investment.category.${value}`) },
+    { title: t('proj.investment.amountCny'), dataIndex: 'amount_cny', width: 160, render: fmtCny },
+    { title: t('proj.investment.costType'), dataIndex: 'cost_type', width: 110, render: (value) => t(`proj.investment.costType.${value}`) },
+    { title: t('proj.investment.supplier'), dataIndex: 'supplier', width: 180, render: (v) => v || '-' },
     { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit || canDeleteExamples
       ? [
@@ -1511,39 +1591,74 @@ export default function ProjectDetail() {
       : []),
   ];
 
+  const budgetColumns: ColumnsType<ProjectBudgetItem> = [
+    { title: t('proj.investment.category'), dataIndex: 'category', width: 120, render: (value) => t(`proj.investment.category.${value}`) },
+    { title: t('proj.investment.name'), dataIndex: 'name', width: 240 },
+    { title: t('proj.investment.amountCny'), dataIndex: 'amount_cny', width: 180, render: fmtCny },
+    { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (value) => value || '-' },
+    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 80, render: (_: unknown, row: ProjectBudgetItem) => (
+      <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteBudgetItem(row)}>
+        <Button type="link" size="small" danger>{t('common.delete')}</Button>
+      </Popconfirm>
+    ) } as ColumnsType<ProjectBudgetItem>[number]] : []),
+  ];
+
+  const effortColumns: ColumnsType<ProjectEffortEntry> = [
+    { title: t('proj.investment.workDate'), dataIndex: 'work_date', width: 130 },
+    { title: t('proj.investment.person'), dataIndex: 'person_name', width: 150, render: (value) => value || '-' },
+    { title: t('proj.investment.roleType'), dataIndex: 'role_type', width: 140, render: (value) => t(`proj.investment.role.${value}`) },
+    { title: t('proj.investment.effort'), dataIndex: 'effort_days', width: 100 },
+    { title: t('proj.investment.rate'), dataIndex: 'standard_rate_cny_per_day', width: 170, render: fmtCny },
+    { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (value) => value || '-' },
+    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 80, render: (_: unknown, row: ProjectEffortEntry) => (
+      <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteEffortEntry(row)}>
+        <Button type="link" size="small" danger>{t('common.delete')}</Button>
+      </Popconfirm>
+    ) } as ColumnsType<ProjectEffortEntry>[number]] : []),
+  ];
+
   const costTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Row gutter={16}>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title={t('proj.budgetWan')} value={detail.budget_10k ?? '-'} />
+            <Statistic title={t('proj.investment.budgetCny')} value={fmtCny(investmentSummary?.budget_cny)} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title={t('proj.stat.actualCostWan')} value={detail.actual_cost_10k} />
+            <Statistic title={t('proj.investment.incurredCny')} value={fmtCny(investmentSummary?.incurred_cost_cny)} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic
-              title={t('proj.d.budgetUsageRate')}
-              value={detail.budget_usage ?? '-'}
-              suffix={detail.budget_usage != null ? '%' : undefined}
-              valueStyle={detail.budget_usage != null && detail.budget_usage > 100 ? { color: '#ff4d4f' } : undefined}
-            />
+            <Statistic title={t('proj.investment.committedCny')} value={fmtCny(investmentSummary?.committed_cost_cny)} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
             <Statistic
-              title="CPI"
-              value={detail.cpi ?? '-'}
-              valueStyle={detail.cpi != null && detail.cpi < 1 ? { color: '#ff4d4f' } : undefined}
+              title={t('proj.investment.budgetExecution')}
+              value={investmentSummary?.budget_execution_rate ?? '-'}
+              suffix={investmentSummary?.budget_execution_rate != null ? '%' : undefined}
+              valueStyle={investmentSummary?.budget_execution_rate != null && investmentSummary.budget_execution_rate > 100 ? { color: '#ff4d4f' } : undefined}
             />
           </Card>
         </Col>
       </Row>
+
+      <Row gutter={16}>
+        <Col xs={12} md={6}><Card size="small"><Statistic title={t('proj.investment.effortDays')} value={investmentSummary?.effort_days ?? '-'} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title={t('proj.investment.effortCostCny')} value={fmtCny(investmentSummary?.effort_cost_cny)} /></Card></Col>
+      </Row>
+
+      <Card title={t('proj.investment.budgetItems')} size="small" extra={canEdit && (
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => { budgetForm.resetFields(); setBudgetModalOpen(true); }}>
+          {t('proj.investment.addBudget')}
+        </Button>
+      )}>
+        <Table<ProjectBudgetItem> size="small" rowKey="id" columns={budgetColumns} dataSource={budgetItems} pagination={false} scroll={{ x: 'max-content' }} />
+      </Card>
 
       <Card
         title={t('proj.costDetail')}
@@ -1571,7 +1686,16 @@ export default function ProjectDetail() {
           dataSource={costs}
           pagination={false}
           locale={{ emptyText: t('proj.emptyCost') }}
+          scroll={{ x: 'max-content' }}
         />
+      </Card>
+
+      <Card title={t('proj.investment.effortEntries')} size="small" extra={canEdit && (
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => { effortForm.resetFields(); setEffortModalOpen(true); }}>
+          {t('proj.investment.addEffort')}
+        </Button>
+      )}>
+        <Table<ProjectEffortEntry> size="small" rowKey="id" columns={effortColumns} dataSource={effortEntries} pagination={false} scroll={{ x: 'max-content' }} />
       </Card>
     </Space>
   );
@@ -2062,15 +2186,64 @@ export default function ProjectDetail() {
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
-            name="amount_10k"
-            label={t('proj.cost.col.amountWan')}
+            name="amount_cny"
+            label={t('proj.investment.amountCny')}
             rules={[{ required: true, message: t('proj.cost.amountRequired') }]}
           >
-            <InputNumber min={0.0001} precision={4} style={{ width: '100%' }} placeholder={t('proj.cost.amountPlaceholder')} />
+            <InputNumber min={0.01} precision={2} style={{ width: '100%' }} placeholder={t('proj.cost.amountPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="category" label={t('proj.investment.category')} initialValue="other" rules={[{ required: true }]}>
+            <Select options={['software', 'hardware', 'service', 'labor', 'other'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="cost_type" label={t('proj.investment.costType')} initialValue="incurred" rules={[{ required: true }]}>
+            <Select options={['incurred', 'committed'].map((value) => ({ value, label: t(`proj.investment.costType.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="supplier" label={t('proj.investment.supplier')}>
+            <Input maxLength={128} />
           </Form.Item>
           <Form.Item name="note" label={t('proj.cost.col.note')}>
             <Input maxLength={200} />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('proj.investment.addBudget')}
+        open={budgetModalOpen}
+        onOk={() => void submitBudgetItem()}
+        confirmLoading={investmentSaving}
+        onCancel={() => setBudgetModalOpen(false)}
+        destroyOnClose
+      >
+        <Form form={budgetForm} layout="vertical" preserve={false}>
+          <Form.Item name="category" label={t('proj.investment.category')} initialValue="software" rules={[{ required: true }]}>
+            <Select options={['software', 'hardware', 'service', 'labor', 'other'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="name" label={t('proj.investment.name')} rules={[{ required: true }]}><Input maxLength={128} /></Form.Item>
+          <Form.Item name="amount_cny" label={t('proj.investment.amountCny')} rules={[{ required: true }]}><InputNumber min={0.01} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="note" label={t('proj.cost.col.note')}><Input.TextArea rows={2} maxLength={500} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('proj.investment.addEffort')}
+        open={effortModalOpen}
+        onOk={() => void submitEffortEntry()}
+        confirmLoading={investmentSaving}
+        onCancel={() => setEffortModalOpen(false)}
+        destroyOnClose
+      >
+        <Form form={effortForm} layout="vertical" preserve={false}>
+          <Form.Item name="person_id" label={t('proj.investment.person')} rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={members.map((row) => ({ value: row.id, label: row.name }))} />
+          </Form.Item>
+          <Form.Item name="work_date" label={t('proj.investment.workDate')} rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="role_type" label={t('proj.investment.roleType')} initialValue="implementation" rules={[{ required: true }]}>
+            <Select options={['design', 'development', 'testing', 'implementation', 'pm', 'operations', 'other'].map((value) => ({ value, label: t(`proj.investment.role.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="effort_days" label={t('proj.investment.effort')} rules={[{ required: true }]}><InputNumber min={0.01} max={31} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="standard_rate_cny_per_day" label={t('proj.investment.rate')}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="note" label={t('proj.cost.col.note')}><Input.TextArea rows={2} maxLength={500} /></Form.Item>
         </Form>
       </Modal>
 

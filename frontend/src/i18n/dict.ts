@@ -123,6 +123,11 @@ const zh: Dict = {
   'module.contracts': '合同管理',
   'module.knowledge': '知识库',
   'module.projects': '项目管理（项目列表/项目组合）',
+  'module.reports': '统一报表中心',
+  'module.reports_publish': '报表发布与版本锁定',
+  'module.reports_finance': '财务与成本指标',
+  'module.reports_people': '人员投入明细',
+  'module.reports_platform': '平台运行敏感指标',
   'module.requirements': '需求总览（登记/评审/方案）',
   'module.req_tasks': '任务跟踪',
   'module.req_scoring': '需求评分规则',
@@ -157,6 +162,7 @@ const zh: Dict = {
   'group.总览': '总览',
   'group.ITSM': 'ITSM',
   'group.项目管理': '项目管理',
+  'group.报表中心': '报表中心',
   'group.需求管理': '需求管理',
   'group.流程中心': '流程中心',
   'group.团队管理': '团队管理',
@@ -179,6 +185,7 @@ const zh: Dict = {
   'menu.projects': '项目管理',
   'menu./projects/list': '项目列表',
   'menu./projects/portfolios': '项目组合',
+  'menu./reports': '报表中心',
   'menu./requirements': '需求管理',
   'menu.requirements': '需求管理',
   'menu./requirements/overview': '需求总览',
@@ -324,6 +331,11 @@ const en: Dict = {
   'module.contracts': 'Contract Management',
   'module.knowledge': 'Knowledge Base',
   'module.projects': 'Project Management',
+  'module.reports': 'Unified Report Center',
+  'module.reports_publish': 'Report Publishing and Version Lock',
+  'module.reports_finance': 'Finance and Cost Metrics',
+  'module.reports_people': 'People Investment Details',
+  'module.reports_platform': 'Sensitive Platform Metrics',
   'module.requirements': 'Requirement Management',
   'module.process_definitions': 'Process Definitions',
   'module.process_monitor': 'Process Monitor',
@@ -354,6 +366,7 @@ const en: Dict = {
   'group.总览': 'Dashboard',
   'group.ITSM': 'ITSM',
   'group.项目管理': 'Projects',
+  'group.报表中心': 'Reports',
   'group.需求管理': 'Requirements',
   'group.流程中心': 'Process',
   'group.团队管理': 'Team',
@@ -375,6 +388,7 @@ const en: Dict = {
   'menu.projects': 'Projects',
   'menu./projects/list': 'Project List',
   'menu./projects/portfolios': 'Portfolios',
+  'menu./reports': 'Report Center',
   'menu./requirements': 'Requirements',
   'menu.requirements': 'Requirements',
   'menu./requirements/overview': 'Overview',
@@ -417,8 +431,9 @@ import * as components from './locales/components';
 import * as profile from './locales/profile';
 import * as taskManagement from './locales/taskManagement';
 import * as assistant from './locales/assistant';
+import * as reports from './locales/reports';
 
-const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement, assistant];
+const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement, assistant, reports];
 
 export const DICT: Record<'zh' | 'en', Dict> = {
   zh: Object.assign({}, zh, ...domains.map((d) => d.zh)),

@@ -161,6 +161,12 @@ class OrgSettingsUpdate(BaseModel):
     digital_team_include_children: bool | None = None
     feishu_auto_sync_enabled: bool | None = None
     feishu_auto_sync_interval_minutes: int | None = Field(default=None, ge=15, le=10080)
+    reporting_timezone: str | None = Field(default=None, min_length=1, max_length=64)
+    reporting_week_start: int | None = Field(default=None, ge=1, le=7)
+    fiscal_year_start_month: int | None = Field(default=None, ge=1, le=12)
+    workday_hours: float | None = Field(default=None, gt=0, le=24)
+    report_min_group_size: int | None = Field(default=None, ge=3, le=100)
+    report_role_rates: dict[str, float] | None = None
 
 
 def _org_settings_payload(settings) -> dict:
@@ -171,6 +177,12 @@ def _org_settings_payload(settings) -> dict:
         "feishu_auto_sync_enabled": settings.feishu_auto_sync_enabled,
         "feishu_auto_sync_interval_minutes": settings.feishu_auto_sync_interval_minutes,
         "feishu_auto_sync_last_attempt_at": settings.feishu_auto_sync_last_attempt_at,
+        "reporting_timezone": settings.reporting_timezone,
+        "reporting_week_start": settings.reporting_week_start,
+        "fiscal_year_start_month": settings.fiscal_year_start_month,
+        "workday_hours": settings.workday_hours,
+        "report_min_group_size": settings.report_min_group_size,
+        "report_role_rates": settings.report_role_rates or {},
     }
 
 
@@ -205,6 +217,11 @@ def update_org_settings(body: OrgSettingsUpdate, db: Session = Depends(get_db), 
         if set(member_ids) - valid_members:
             raise AppError("INVALID_MEMBER", "数字化团队范围包含不存在或已删除的人员")
         data["digital_team_member_ids"] = member_ids
+    role_rates = data.get("report_role_rates")
+    if role_rates is not None:
+        if any(not key.strip() or value < 0 or value > 100000 for key, value in role_rates.items()):
+            raise AppError("INVALID_REPORT_ROLE_RATE", "角色标准日费率必须在 0 到 100000 元之间")
+        data["report_role_rates"] = {key.strip(): round(value, 2) for key, value in role_rates.items()}
     for key, value in data.items():
         setattr(settings, key, value)
     audit(db, "org_settings", settings.id, "update", actor, {"fields": list(data)})

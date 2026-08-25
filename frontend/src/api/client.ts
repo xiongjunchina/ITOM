@@ -95,6 +95,10 @@ export const api = {
     const env = await request<T>({ method: 'post', url, data });
     return env.data;
   },
+  async postWithHeaders<T>(url: string, data: unknown, headers: Record<string, string>): Promise<T> {
+    const env = await request<T>({ method: 'post', url, data, headers });
+    return env.data;
+  },
   async patch<T>(url: string, data?: unknown): Promise<T> {
     const env = await request<T>({ method: 'patch', url, data });
     return env.data;

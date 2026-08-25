@@ -129,6 +129,9 @@ def run_seed(db: Session):
         if not exists:
             db.add(MasterData(category=category, code=code, name=name, sort=sort))
     db.commit()
+    from app.services.reporting import seed_report_center
+
+    seed_report_center(db)
 
 
 def run_seed_perf(db):

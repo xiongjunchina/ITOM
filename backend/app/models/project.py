@@ -1,7 +1,9 @@
 """项目域模型（docs/04 §3，PRD §6）：6 表，派生数据（进度/健康度/SPI/实际成本）全部计算不落库。"""
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
+from decimal import Decimal
+
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -101,7 +103,51 @@ class CostEntry(GlidBase):
     __tablename__ = "cost_entry"
 
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    wbs_task_id: Mapped[str | None] = mapped_column(ForeignKey("wbs_task.id"), index=True)
     entry_date: Mapped[date] = mapped_column(Date)
     amount_10k: Mapped[float] = mapped_column(Float, comment="金额(万元)")
+    amount_cny: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2), comment="精确金额（人民币元）；历史记录由 amount_10k 换算"
+    )
+    category: Mapped[str] = mapped_column(
+        String(32), default="legacy", comment="software/hardware/service/labor/other/legacy"
+    )
+    cost_type: Mapped[str] = mapped_column(
+        String(16), default="incurred", comment="incurred/committed"
+    )
+    supplier: Mapped[str | None] = mapped_column(String(128))
     note: Mapped[str | None] = mapped_column(String(200))
+    created_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class ProjectBudgetItem(GlidBase):
+    """项目投入预算分项；预算总额仍可兼容 project.budget_10k。"""
+
+    __tablename__ = "project_budget_item"
+
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    category: Mapped[str] = mapped_column(String(32), comment="software/hardware/service/labor/other")
+    name: Mapped[str] = mapped_column(String(128))
+    amount_cny: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    note: Mapped[str | None] = mapped_column(String(500))
+    created_by: Mapped[str | None] = mapped_column(String(26))
+
+
+class ProjectEffortEntry(GlidBase):
+    """项目人天投入事实；标准费率是管理口径，不保存或推导个人薪酬。"""
+
+    __tablename__ = "project_effort_entry"
+
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), index=True)
+    wbs_task_id: Mapped[str | None] = mapped_column(ForeignKey("wbs_task.id"), index=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("org_member.id"), index=True)
+    work_date: Mapped[date] = mapped_column(Date, index=True)
+    effort_days: Mapped[Decimal] = mapped_column(Numeric(8, 2), comment="人天；1 人天默认 8 小时")
+    role_type: Mapped[str] = mapped_column(
+        String(32), comment="design/development/testing/implementation/pm/operations/other"
+    )
+    standard_rate_cny_per_day: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 2), comment="角色标准日费率快照；不是个人薪酬"
+    )
+    note: Mapped[str | None] = mapped_column(String(500))
     created_by: Mapped[str | None] = mapped_column(String(26))

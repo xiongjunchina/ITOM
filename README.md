@@ -2,12 +2,11 @@
 
 > 项目代号 `ITOM`（曾用名 New_AOM，2026-07-14 更名；基于 SN-AOM 简化重构）。内部技术标识（数据库名 new_aom、日志前缀 aom.*、前端存储键 aom-*）沿用不变。中英双语文档；中文为准，English section below.
 
-面向 IT 团队的轻量运营管理平台，覆盖 6 个域：**总览 / ITSM 服务 / 项目管理 / 需求管理 / 流程引擎 / 团队管理**。
-核心设计原则：创建表单必填 ≤5、派生数据零录入（无预计算表）、事件驱动（积分 + 通知同一出口）。
+面向 IT 团队的轻量运营管理平台，覆盖**总览 / ITSM 服务 / 项目管理 / 需求管理 / 流程引擎 / 团队管理**，并提供跨域的**统一报表中心**。
+核心设计原则：创建表单必填 ≤5、派生数据零录入（实时指标不手工维护）、事件驱动（积分 + 通知同一出口）。
 
-A lightweight operations-management platform for IT teams, covering 6 domains:
-**Dashboard / ITSM / Projects / Requirements / Process engine / Team management**.
-Design principles: ≤5 required fields per create form, zero manual entry for derived data, event-driven (points + notifications share one outbox).
+A lightweight operations-management platform for IT teams covering **Dashboard / ITSM / Projects / Requirements / Process engine / Team management**, with a cross-domain **Report Center**.
+Design principles: ≤5 required fields per create form, zero manual entry for live derived metrics, and event-driven processing (points + notifications share one outbox).
 
 ---
 
@@ -28,7 +27,7 @@ IDC Ingress :30443 → Nginx frontend:80 ── 静态托管 dist + 反代 /api�
    ▼
 FastAPI（Kubernetes Service backend:6800，uvicorn）
    ├─ routers/   一域一文件（权限守卫 require_perm / 流程守卫）
-   ├─ services/  领域逻辑（权限矩阵、流程引擎、SLA、评分、org_sync、seed、migrate）
+   ├─ services/  领域逻辑（权限矩阵、流程引擎、SLA、评分、实时指标/正式报告、org_sync、seed、migrate）
    ├─ mcp/       Aily JWT、外部身份映射、Streamable HTTP 与工具审计
    ├─ events/    事件总线 + 通知（站内 + 通用 ITOM 飞书可靠发件箱）
    └─ lifespan   启动顺序：建表 → 增量迁移 → 幂等种子 → MCP 会话 → 调度器
@@ -130,6 +129,7 @@ deploy/          docker-compose、Nginx、备份
 ### 关键概念
 - **统一响应包**：`{success, data, total?, page?, error?}`；错误经 `AppError(code, message, status)` 返回中文提示。
 - **权限三层**：① 功能矩阵（`role_permission` 表，模块 × 动作 view/create/edit/delete，`require_perm` 守卫，admin 隐式全权）；② 数据范围（业务代码内置，如 requester 仅见自己的服务请求；BDO 在网页需求模块可见本人需求及其被配置为业务 BDO 的服务域需求，Aily/MCP 仍仅见本人需求）；③ 流程权限（状态机 `allowed_roles` + 流程步骤 `default_role`）。
+- **统一报表中心（B2）**：项目、需求、ITSM、任务和流程指标始终从各领域事实实时计算；支持周/月/季/半年/年及自定义周期、受控筛选与逐指标穿透。项目投入按人民币元精确登记软件/硬件/服务/人力等预算和已发生/已承诺成本，并按人天与角色标准费率形成管理成本，标准费率不是个人薪酬。需求时效按周期内登记的需求队列计算平均值、P50/P90、阶段停留和按时率；无分母显示 `N/A`，真实零保持 `0`。只有用户生成的正式报告保存不可变指标快照、公式版本、数据质量、说明和校验和，经过 `草稿 → 审核 → 发布 → 锁定` 后按用户/角色/组受众开放；查看实时指标仍需源模块权限，敏感财务/人员/平台指标和穿透明细会再次授权。当前版本支持 Excel 导出；自动调度模型已预留但未开放执行入口。
 - **流程驱动状态**：现有 ITOM 仍按 M23–M31 自动同步；P2 已将服务请求的“IT 人员标记已解决”和“提交人确认关闭”拆开，未解决时重回处理中。重开后再次解决会采用本轮最新有效处理说明，避免向用户展示上一轮未生效的旧方案。只有提交人本人可通过网页或 Aily 确认，管理员不能代确认。事件仍为 IT 内部/监控来源，普通用户不能创建。
 - **流程节点语义**：每个节点可配置为处理节点或审批节点，并分别配置处理人与知会人。审批节点支持详情右上角“同意/驳回”或流程图“完成此步骤”同意；同意理由可选，驳回理由必填并留痕。需求审批的驳回是可审计退回：默认最近已到达前序节点，也可选择任一已到达前序节点或“登记人补充”；不复活旧实例、不覆盖历史，关闭/取消/搁置仍是独立动作。其他单据保留各自状态机语义。任一当前待办的处理人或管理员可把该待办转派给另一名在岗且具有有效系统账号的人员；转派只更新当前任务处理人，不改变流程节点、单据状态或历史 RACI 快照，并记录原处理人、目标处理人、理由、审计和通知。流程已有实例后，节点顺序/类型、处理人、自治级别和 SLA 仍须另存新版本；仅知会人可直接维护，且只影响保存后首次激活的节点，既有任务继续使用创建时的 RACI 快照，已发通知不补发、不回写。WBS 任务完成度支持管理员/负责人直接录入 0–100% 整数；显式将父项设为 100% 会向下级联，子项修改后父项按直接子项平均值递归回算，项目进度仅按末级任务工期加权汇总。
 - **流程单据回改窗口**：服务请求、事件、变更、问题、需求、项目和 Bug 均使用同一规则。当前节点处理人首次实际打开详情或执行处理时，系统写入“已查阅”事实；在此之前，首节点仅创建人可更正内容并删除，后续节点仅上一节点的实际处理人可更正内容。回改不能改派处理人或改动会改变流程路由的字段；管理员保留系统级编辑/删除权。清单浏览、通知、管理员仅查看详情以及管理员在未处理前的改派均不算下游查阅。历史待办默认不追溯获得该窗口。
@@ -176,7 +176,7 @@ deploy/          docker-compose、Nginx、备份
 - `release/feishu-helpdesk-v1` 与标签 `v1.0.0-feishu-helpdesk`：飞书服务台版本的冻结基线；标签固定在提交 `f13f702`，不得重写。
 - `feature/aily-agent-mcp`：已封存的 Aily + MCP 开发线，只保留历史记录，不再接收提交。
 - `feature/AI-agent-version`：继承 Aily + MCP 能力的 Web Agent 唯一开发线；方案背景、架构边界和新会话启动要求见 [`docs/10-Aily-MCP版本交接与决策上下文.md`](docs/10-Aily-MCP版本交接与决策上下文.md)，完成后由用户确认并通过 Pull Request 合入 `main`。
-- **开发前同步门禁**：每次开始新的开发任务前，必须先检查工作区；有本地变更时先单独提交版本记录，再推送当前开发分支并确认本地 `HEAD` 与 GitHub 分支指针一致。同步失败或分支不一致时，停止编辑代码，不得把旧变更与新任务混在一起。
+- **用户控制同步**：开发前先检查工作区并保护无关本地改动；本地与 GitHub 指针无需一致后才可编码。先实现并验证用户批准的本地候选，提交/推送/PR 与 IDC 发布分别由用户另行确认。
 - 首次 clone 后启用钩子：`git config core.hooksPath scripts/git-hooks`。
 - 提交前自检：后端 `pytest -q` 全绿、前端 `npm run build` 零错误；按改动影响同步更新 `README.md`、`docs/03–06` 及对应英文译本。
 - **交付完成定义**：代码实现、测试与受影响说明文档必须相互一致；功能、接口、数据模型、配置、部署、权限或用户流程发生变化但文档未同步时，不得视为完整交付。仓库级执行规则见 [`AGENTS.md`](AGENTS.md)。
@@ -206,7 +206,7 @@ IDC Ingress :30443 → Nginx frontend:80 ── serves dist + proxies /api and /
    ▼
 FastAPI (Kubernetes Service backend:6800, uvicorn)
    ├─ routers/   one file per domain (require_perm / process guards)
-   ├─ services/  domain logic (permission matrix, process engine, SLA, scoring, org_sync, seed, migrate)
+   ├─ services/  domain logic (permission matrix, process engine, SLA, scoring, live metrics/formal reports, org_sync, seed, migrate)
    ├─ mcp/       Aily JWT, external identity, Streamable HTTP, and tool audit
    ├─ events/    event bus + notifier (in-app + generic reliable Aily-bot outbox)
    └─ lifespan   startup: create tables → migrate → seed → MCP session → scheduler
@@ -312,6 +312,7 @@ deploy/          docker-compose, Nginx, backups
 ### Key concepts
 - **Response envelope**: `{success, data, total?, page?, error?}`; errors are raised as `AppError(code, message, status)`.
 - **Three permission layers**: (1) functional matrix (`role_permission` table, module × action view/create/edit/delete, guarded by `require_perm`; `admin` is implicitly all-powerful); (2) data scope (baked into business code: a `requester` sees only own service requests; the web Requirement module gives a BDO own requirements plus every requirement in domains where that person is the configured business BDO, while Aily/MCP remains owner-only); (3) process permissions (state-machine `allowed_roles` + process-step `default_role`).
+- **Unified Report Center (B2)**: project, requirement, ITSM, task, and process metrics are computed live from their source-domain facts. It supports weekly, monthly, quarterly, half-yearly, annual, and custom periods, controlled filters, and per-metric drill-down. Project investment records exact CNY budget and incurred/committed software, hardware, service, labour, and other costs; effort uses person-days and role-standard management rates, never personal salary. Requirement timeliness uses the cohort registered in the period and reports average/P50/P90 lead time, stage ageing, and on-time rate; missing denominators render `N/A` while a real zero stays `0`. Only user-generated formal reports persist immutable metric snapshots, formula versions, data quality, narrative, and checksum. They follow `Draft → Review → Publish → Locked` and are shared to user/role/group audiences; live metrics still require source-module access, while finance/people/platform metrics and drill-down are re-authorized. Excel export is available; the schedule model is reserved but no automatic-run entry point is enabled in this release.
 - **Process-driven status**: current ITOM still follows M23–M31 automation. P2 now separates “resolved by IT” from “closed after requester confirmation” for service requests; rejection returns the request to processing. A resolution after reopen adopts the latest active handling note, rather than exposing the failed prior attempt as the current solution. Only the submitter can confirm through web or Aily; administrators cannot confirm on the submitter's behalf. Incidents remain IT/monitoring-originated and cannot be created by normal users.
 - **Process-node semantics**: each node can be configured as processing or approval with separate handler and CC parties. Approval nodes support approve/reject from the detail-page actions or approve through the flow diagram; approval comments are optional, rejection reasons are mandatory and retained. The current pending handler or an administrator may reassign that task to another active, in-position person with an active ITOM account; reassignment changes neither node nor business state/RACI snapshot, and is audited and notified. Requirement rejection is an auditable return: it defaults to the nearest reached prior node, may select any reached prior node or Requester supplement, never resurrects an obsolete instance, and keeps Close/Cancel/On Hold separate. Other record types retain their own state-machine semantics. WBS task completion accepts an integer percentage from 0–100; explicitly setting a parent to 100% cascades to all descendants, child changes roll up as direct-child averages, and project progress is duration-weighted over leaf tasks only.
 - **Workflow-record correction window**: service requests, incidents, changes, problems, requirements, projects, and Bugs share one rule. The first real detail open or handling action by the current handler writes a view fact; before that, the creator at the first node may correct content and delete, while at later nodes only the actual previous handler may correct content. A correction cannot reassign a handler or change a routing field; administrators retain system-level edit/delete authority. List/notification reads, an administrator's passive detail inspection, and a pre-handling administrator reassignment are not downstream views. Historical pending tasks do not gain the window retrospectively.

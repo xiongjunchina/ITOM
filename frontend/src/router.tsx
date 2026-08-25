@@ -45,6 +45,7 @@ import ProjectDetail from './pages/projects/ProjectDetail';
 import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
 import UserManual from './pages/UserManual';
+import ReportCenter from './pages/reports/ReportCenter';
 
 /** M19 首页落点：菜单序第一个有权限的页面（业务用户关掉总览后落到服务请求） */
 function HomeRedirect() {
@@ -77,6 +78,14 @@ function AdminAiGate() {
   const allowed = user.permissions ? hasPermission(user, 'admin_ai', 'view') : user.roles.includes('admin');
   if (!allowed) return <Navigate to={firstAccessiblePath(user)} replace />;
   return <AiAssistant />;
+}
+
+function ReportGate() {
+  const user = useAuthStore((s) => s.user);
+  if (!user) return null;
+  const allowed = user.permissions ? hasPermission(user, 'reports', 'view') : !user.roles.every((role) => role === 'requester' || role === 'bdo');
+  if (!allowed) return <Navigate to={firstAccessiblePath(user)} replace />;
+  return <ReportCenter />;
 }
 
 /** M17 旧地址兼容：/projects?tab=portfolios、/requirements?tab=tasks|scoring → 新二级菜单路径 */
@@ -129,6 +138,9 @@ export const router = createBrowserRouter([
       { path: 'projects/list', element: <Projects pane="list" /> },
       { path: 'projects/portfolios', element: <Projects pane="portfolios" /> },
       { path: 'projects/:id', element: <ProjectDetail /> },
+
+      // 统一报表中心（B2）：实时指标、正式报告版本与发布受众。
+      { path: 'reports', element: <ReportGate /> },
 
       // 需求管理（M5 交付）
       { path: 'requirements', element: <LegacyRequirementsRedirect /> },

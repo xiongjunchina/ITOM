@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   ApartmentOutlined,
+  BarChartOutlined,
   CustomerServiceOutlined,
   DashboardOutlined,
   FileTextOutlined,
@@ -72,6 +73,14 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
       { key: '/requirements/scoring', path: '/requirements/scoring', label: '需求评分规则', module: 'req_scoring' },
     ],
+  },
+  {
+    key: '/reports',
+    path: '/reports',
+    label: '报表中心',
+    icon: <BarChartOutlined />,
+    module: 'reports',
+    roles: STAFF,
   },
   {
     key: 'task-management',

@@ -33,6 +33,11 @@ MODULES = [
     ("contracts", "合同管理", "ITSM"),
     ("knowledge", "知识库", "ITSM"),
     ("projects", "项目管理（项目列表/项目组合）", "项目管理"),
+    ("reports", "统一报表中心", "报表中心"),
+    ("reports_publish", "报表发布与版本锁定", "报表中心"),
+    ("reports_finance", "财务与成本指标", "报表中心"),
+    ("reports_people", "人员投入明细", "报表中心"),
+    ("reports_platform", "平台运行敏感指标", "报表中心"),
     # 需求域按菜单页独立授权；只有 BDO/授权 IT 角色可登记需求，不能查看任务跟踪/评分规则。
     ("requirements", "需求总览（登记/评审/方案）", "需求管理"),
     ("req_tasks", "任务跟踪", "需求管理"),
@@ -94,7 +99,7 @@ MODULE_PAGES = {
 # 动作缩写：v=view c=create e=edit d=delete
 _BUSINESS_VIEW = [
     "dashboard", "ticket_sr", "ticket_incident", "ticket_change", "catalog", "cmdb", "sla",
-    "problems", "vendors", "contracts", "knowledge", "projects", "requirements",
+    "problems", "vendors", "contracts", "knowledge", "projects", "reports", "requirements",
     "req_tasks", "req_scoring", "team_overview", "activities", "ideas", "charter",
     "task_development", "task_bug", "task_delegated",
 ]
@@ -133,8 +138,9 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "task_development": "vce",
                                              "task_bug": "vce", "task_delegated": "vce",
                                              "process_monitor": "v", "performance_review": "vce"}),
-    "it_pm": _merge(_staff_base(), {"projects": "ce"}),
-    "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
+    "it_pm": _merge(_staff_base(), {"projects": "ce", "reports": "ce", "reports_finance": "v", "reports_people": "v"}),
+    "it_pmo": _merge(_staff_base(), {"projects": "ce", "reports": "ce", "reports_finance": "v", "reports_people": "v",
+                                        "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
     "it_op_leader": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce",
                                            "contracts": "ce", "sla": "e", "process_monitor": "v", "performance_review": "vce"}),
@@ -146,15 +152,19 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
         "ideas": "e", "charter": "e", "sla": "e",
         "performance": "vce", "performance_review": "vce", "performance_external": "vced",
         "performance_admin": "vce", "process_definitions": "v", "process_monitor": "v",
+        "reports": "vce", "reports_publish": "vce", "reports_finance": "v",
+        "reports_people": "v", "reports_platform": "v",
         "admin_business_domains": "vce", "admin_members": "vced", "admin_audit": "v",
     }),
     "it_bm": _merge(_staff_base(), {
         "requirements": "e", "projects": "ce", "admin_business_domains": "v",
         "performance": "vce", "performance_review": "vce", "process_monitor": "v",
+        "reports": "vce", "reports_finance": "v",
     }),
     "it_tm": _merge(_staff_base(), {
         "activities": "e", "charter": "e", "performance": "vce", "performance_review": "vce",
         "learning_growth": "vced", "ideas": "e", "process_monitor": "v", "admin_members": "vce",
+        "reports": "vce", "reports_people": "v",
     }),
 }
 
