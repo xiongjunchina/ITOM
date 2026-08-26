@@ -130,7 +130,7 @@ Process Definitions configure versions, processing/approval node types, handlers
 
 ## 9. Report Center and unified investment ledger
 
-Report Center is the last item in the left navigation. It analyzes demand, project, operations, and people capacity under one measurement contract and produces weekly, monthly, quarterly, half-year, and annual reports. Record demand-stage investment in Requirement Detail, build-stage investment in the Project Cost tab, and run-stage investment in ITSM Ticket Detail. Record operations investment that cannot be attributed to one object under **Report Center → Operations Investment → Shared Operations**.
+Report Center is the last item in the left navigation. It analyzes demand, project, operations, and people capacity under one measurement contract and produces weekly, monthly, quarterly, half-year, and annual reports. Record demand-stage investment in Requirement Detail, build-stage investment in the Project Cost tab, and run-stage investment in ITSM Ticket Detail. The Requirement and Ticket investment ledgers are both at the bottom of their detail pages after the original business content. Record operations investment that cannot be attributed to one object under **Report Center → Operations Investment → Shared Operations**.
 
 - **Budget** records planned limits for hardware, software, licences, cloud/telecom, and external services. A contract amount remains a commitment/reference and never becomes actual cost automatically.
 - **Cost** records incurred amount by occurrence date, category, and payment state. Paid is a subset of incurred cost and must not be added to incurred cost again.

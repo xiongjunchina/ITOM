@@ -39,6 +39,28 @@ test('B-OPS ledger is available from demand and ticket details with guarded actu
   assert.match(requirement, /lifecycleStage="demand"/);
   assert.match(ticket, /subjectType="ticket"/);
   assert.match(ticket, /lifecycleStage="run"/);
+
+  const requirementPanelIndex = requirement.indexOf('<InvestmentPanel');
+  const requirementVisibleEndIndex = requirement.indexOf('{/* 编辑基本信息 Modal */}');
+  assert.ok(
+    requirementPanelIndex > requirement.lastIndexOf('{/* 关闭收尾'),
+    'requirement investment panel must follow every pre-existing visible detail section',
+  );
+  assert.ok(
+    requirementPanelIndex < requirementVisibleEndIndex,
+    'requirement investment panel must remain visible page content rather than modal content',
+  );
+
+  const ticketPanelIndex = ticket.indexOf('<InvestmentPanel');
+  const ticketVisibleEndIndex = ticket.indexOf('{/* 状态流转 Modal */}');
+  assert.ok(
+    ticketPanelIndex > ticket.lastIndexOf('{(detail.solution || detail.root_cause) && ('),
+    'ticket investment panel must follow every pre-existing visible detail section',
+  );
+  assert.ok(
+    ticketPanelIndex < ticketVisibleEndIndex,
+    'ticket investment panel must remain visible page content rather than modal content',
+  );
 });
 
 test('project cost tab captures precise budget, categorized cost, and effort entries', () => {

@@ -1299,13 +1299,6 @@ export default function RequirementDetail() {
         onDone={() => void load()}
       />
 
-      <InvestmentPanel
-        subjectType="requirement"
-        subjectId={detail.id}
-        lifecycleStage="demand"
-        readOnly={isExample}
-      />
-
       {/* 登记信息 */}
       <Card
         title={t('req.registrationInfo')}
@@ -1709,6 +1702,13 @@ export default function RequirementDetail() {
           </Typography.Paragraph>
         </Card>
       )}
+
+      <InvestmentPanel
+        subjectType="requirement"
+        subjectId={detail.id}
+        lifecycleStage="demand"
+        readOnly={isExample}
+      />
 
       {/* 编辑基本信息 Modal */}
       <Modal

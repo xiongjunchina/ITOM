@@ -494,13 +494,6 @@ export default function TicketDetail() {
 
       <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
 
-      <InvestmentPanel
-        subjectType="ticket"
-        subjectId={detail.id}
-        lifecycleStage="run"
-        readOnly={isExample}
-      />
-
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>
           <Descriptions.Item label={t('itsm.f.serviceItem')}>{detail.service_item_name ?? '-'}</Descriptions.Item>
@@ -691,6 +684,13 @@ export default function TicketDetail() {
           </Descriptions>
         </Card>
       )}
+
+      <InvestmentPanel
+        subjectType="ticket"
+        subjectId={detail.id}
+        lifecycleStage="run"
+        readOnly={isExample}
+      />
 
       {/* 状态流转 Modal */}
       <Modal
