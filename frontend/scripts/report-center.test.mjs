@@ -4,11 +4,14 @@ import test from 'node:test';
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-test('report center keeps the five-domain metric, snapshot, approval, publication and export workflow', () => {
+test('report center keeps the unified seven-domain metric, snapshot, approval, publication and export workflow', () => {
   const page = read('../src/pages/reports/ReportCenter.tsx');
   assert.match(page, /'itsm\.ticket_count'/);
   assert.match(page, /'project\.active_count'/);
   assert.match(page, /'requirement\.avg_lead_days'/);
+  assert.match(page, /'operations\.incurred_cost_cny'/);
+  assert.match(page, /'operations\.effort_days'/);
+  assert.match(page, /'people\.effort_days'/);
   assert.match(page, /'task\.completed_count'/);
   assert.match(page, /'process\.avg_cycle_hours'/);
   assert.match(page, /api\.postWithHeaders\(`\/reports\/\$\{created\.id\}\/generate`/);
@@ -17,6 +20,25 @@ test('report center keeps the five-domain metric, snapshot, approval, publicatio
   assert.match(page, /api\.download\(`\/reports\/\$\{row\.id\}\/export`\)/);
   assert.match(page, /Table<ReportRow>/);
   assert.match(page, /scroll=\{\{ x: 'max-content' \}\}/);
+  assert.match(page, /subjectType="shared_operations"/);
+  assert.match(page, /lifecycleStage="run"/);
+});
+
+test('B-OPS ledger is available from demand and ticket details with guarded actual dates and daily effort', () => {
+  const panel = read('../src/components/investment/InvestmentPanel.tsx');
+  const requirement = read('../src/pages/requirements/RequirementDetail.tsx');
+  const ticket = read('../src/pages/itsm/TicketDetail.tsx');
+  assert.match(panel, /'\/investments\/summary'/);
+  assert.match(panel, /'\/investments\/budgets'/);
+  assert.match(panel, /'\/investments\/costs'/);
+  assert.match(panel, /'\/investments\/worklogs'/);
+  assert.match(panel, /current\.isAfter\(dayjs\(\), 'day'\)/);
+  assert.match(panel, /max=\{2\}/);
+  assert.match(panel, /management_total_cny == null/);
+  assert.match(requirement, /subjectType="requirement"/);
+  assert.match(requirement, /lifecycleStage="demand"/);
+  assert.match(ticket, /subjectType="ticket"/);
+  assert.match(ticket, /lifecycleStage="run"/);
 });
 
 test('project cost tab captures precise budget, categorized cost, and effort entries', () => {

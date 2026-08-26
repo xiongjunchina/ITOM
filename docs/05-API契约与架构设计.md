@@ -503,9 +503,18 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 
 当账号具有任务模块查看权限时，响应额外包含 `task` 聚合块：`open_total`、`open_bugs`、`open_bug_fix_tasks`、`open_delegated_tasks` 和 `open_requirement_tasks`。该块只读、按当前非终态任务实时统计，不改变原有 Dashboard 字段。
 
-### 4.8 统一报表中心（B2）
+### 4.8 统一投入台账与报表中心（B2 + B-OPS）
 
 ```text
+GET  /api/investments/summary
+GET/POST /api/investments/budgets
+GET/POST /api/investments/costs
+GET/POST /api/investments/worklogs
+GET/POST /api/investments/allocations
+DELETE /api/investments/budgets/{id}
+DELETE /api/investments/costs/{id}
+DELETE /api/investments/worklogs/{id}
+DELETE /api/investments/allocations/{id}
 GET  /api/reports/metrics
 POST /api/reports/query
 GET  /api/reports/drilldown/{metric_code}
@@ -522,11 +531,17 @@ GET  /api/reports/{report_id}/export
 GET/PATCH /api/admin/org-settings             # 统一时区/周起始/月历/人天/角色费率口径
 ```
 
-指标注册表以固定 code 声明领域、源模块权限、敏感权限、公式版本、数据质量语义和可选穿透器。`POST /query` 接受 1–50 个已注册指标、闭区间日期及白名单筛选 `project_id/portfolio_id/business_domain_id/ticket_type/priority`；未知筛选或越权指标失败关闭。项目、需求、ITSM、任务与流程均直接查询本域事实，不读取 `report_version` 反向充当业务事实。任务指标只聚合当前用户实际拥有查看权的任务模块；需求指标继续应用其记录级可见范围。穿透明细再次执行相同授权且 `limit ≤ 200`。
+投入 API 使用 `subject_type/subject_id` 归属对象，shared_operations 的 subject_id 必须为空；`lifecycle_stage` 为 demand/build/run，`investment_intent` 为 run/grow/transform。预算周期结束日不得早于开始日；已发生/已支付费用和实际工时禁止未来日期；同一人员单日有效工时合计不得超过 2 人天；WBS 仅能引用同一项目任务。分摊写入前校验来源存在、目标可见、不能分摊回直接归属对象，且同一来源有效比例合计不得超过 100%。所有新增/删除均软删除并写审计。
+
+`GET /api/investments/summary` 返回预算、已承诺、已发生、已支付、实际人天、标准人力成本、管理总投入、未分类人力费用、财务/管理预算执行率、费用分类、活动人天与数据质量。paid 已包含在 incurred 中，仅另列支付进度；管理总投入在未分类人力费用非零时返回 null。服务项/CI 汇总可通过账本引用归集其工单投入；显式分摊按比例加权。合同金额和工单处理时长均不自动进入台账。
+
+项目原 `/api/projects/{id}/budget-items|costs|effort-entries|investment-summary` 保持兼容，但新写入只落统一台账。PostgreSQL 启动迁移把旧项目预算、费用和人天按 `source_type/source_id` 幂等复制；旧表不删除，统一台账不双写。创建项目显式预算分项时软删除旧总预算兜底行。
+
+指标注册表以固定 code 声明领域、源模块权限、敏感权限、公式版本、数据质量语义和可选穿透器。`POST /query` 接受 1–50 个已注册指标、闭区间日期及白名单筛选 `project_id/portfolio_id/business_domain_id/ticket_type/priority/service_item_id/ci_id/contract_id/requirement_id/ticket_id/problem_id/subject_type/subject_id`；未知筛选或越权指标失败关闭。项目、需求、运维、人力、ITSM、任务与流程均直接查询领域事实或统一投入台账，不读取 `report_version` 反向充当业务事实。运维指标限定 lifecycle=run；人力指标按 demand/build/run 和角色聚合。任务指标只聚合当前用户实际拥有查看权的任务模块；需求指标继续应用其记录级可见范围。穿透明细再次执行相同授权且 `limit ≤ 200`。
 
 周期支持 week/month/quarter/half_year/year/custom；默认口径为 Asia/Shanghai、周一开始、自然年、8 小时/人天。需求时效队列以周期内 `Requirement.created_at` 为准，完成时长只计算存在 `closed_at` 的记录，P50/P90 使用该样本；阶段停留读取当前阶段打点，按期率仅以存在目标日期的已关闭需求为分母。计数无行返回 `value=0, quality=ok`；没有分母返回 `value=null, quality=no_data`。
 
-正式报告生成采用“操作者 + Idempotency-Key”唯一约束和规范请求摘要。同键同参返回首次版本，同键异参返回 409；每版保存指标快照、公式版本、质量、管理说明、生成事实和校验和。草稿说明可编辑并重算校验和；提交审核后不可重新生成。`report_flow` 批准回调把实例/当前版本置为 approved，驳回回到 draft；发布要求 `reports_publish`，写入 user/role/group 受众并把当前版本/实例锁定。查看、版本列表和 Excel 导出按创建人/发布管理权限或已发布受众判定，同时重新检查版本中涉及的 finance/people/platform 敏感权限。`report_schedule` 本轮仅为禁用预留模型，不存在自动运行 API。
+正式报告生成采用“操作者 + Idempotency-Key”唯一约束和规范请求摘要。同键同参返回首次版本，同键异参返回 409；每版保存指标快照、公式版本、质量、管理说明、生成事实和校验和。系统模板包括运营周报、管理月报、项目投入、需求时效、运维投入和 IT 人力容量与投向；启动时只更新系统模板，不覆盖自定义模板。草稿说明可编辑并重算校验和；提交审核后不可重新生成。`report_flow` 批准回调把实例/当前版本置为 approved，驳回回到 draft；发布要求 `reports_publish`，写入 user/role/group 受众并把当前版本/实例锁定。查看、版本列表和 Excel 导出按创建人/发布管理权限或已发布受众判定，同时重新检查版本中涉及的 finance/people/platform 敏感权限。`report_schedule` 本轮仅为禁用预留模型，不存在自动运行 API。
 
 ## 5. 领域事件清单
 

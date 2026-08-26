@@ -5,6 +5,7 @@ M3.5：org_member 的 dept/team 自由文本列 → department 表 / 用户组�
 import logging
 import re
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -1180,6 +1181,7 @@ def migrate_m35_org(db: Session):
     widen_department_sort_m341(db)
     ensure_columns(db)
     backfill_report_center_amounts(db)
+    backfill_unified_investments(db)
     backfill_development_task_codes(db)
     # M97：需求开发任务允许先登记、后关联需求。仅放宽约束，不删除、不改写
     # 任何既有任务及其关联关系。
@@ -1278,6 +1280,106 @@ def migrate_m35_org(db: Session):
         logger.info("migrated org_member.team -> user_group (%d rows)", len(rows))
 
     db.commit()
+
+
+def backfill_unified_investments(db: Session):
+    """把旧项目投入事实幂等复制到 B-OPS 统一账本。
+
+    旧表不删除、不改写，保留为一个发布周期的回滚依据。唯一来源键保证重复
+    启动不会复制金额或人天；迁移不会为历史任务虚构日期、费率或分摊。
+    """
+    from app.models import (
+        CostEntry,
+        InvestmentBudgetItem,
+        InvestmentCostEntry,
+        InvestmentWorklog,
+        Project,
+        ProjectBudgetItem,
+        ProjectEffortEntry,
+    )
+
+    existing_budget = {
+        (row.source_type, row.source_id)
+        for row in db.query(InvestmentBudgetItem).filter(InvestmentBudgetItem.source_type.is_not(None)).all()
+    }
+    existing_cost = {
+        (row.source_type, row.source_id)
+        for row in db.query(InvestmentCostEntry).filter(InvestmentCostEntry.source_type.is_not(None)).all()
+    }
+    existing_worklog = {
+        (row.source_type, row.source_id)
+        for row in db.query(InvestmentWorklog).filter(InvestmentWorklog.source_type.is_not(None)).all()
+    }
+    projects = {row.id: row for row in db.query(Project).all()}
+    explicit_budget_projects: set[str] = set()
+
+    for old in db.query(ProjectBudgetItem).all():
+        project = projects.get(old.project_id)
+        if not project:
+            continue
+        explicit_budget_projects.add(old.project_id)
+        source = ("legacy_project_budget_item", old.id)
+        if source in existing_budget:
+            continue
+        db.add(InvestmentBudgetItem(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=old.project_id,
+            period_start=project.planned_start, period_end=project.planned_end,
+            category=old.category, cost_nature="capex", name=old.name,
+            amount_cny=old.amount_cny, note=old.note,
+            source_type=source[0], source_id=source[1], created_by=old.created_by,
+            is_deleted=old.is_deleted, is_example=old.is_example,
+        ))
+    for project in projects.values():
+        source = ("legacy_project_budget_total", project.id)
+        if project.id in explicit_budget_projects or project.budget_10k is None or source in existing_budget:
+            continue
+        db.add(InvestmentBudgetItem(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=project.id,
+            period_start=project.planned_start, period_end=project.planned_end,
+            category="legacy", cost_nature="capex", name="历史项目预算总额",
+            amount_cny=Decimal(str(project.budget_10k)) * Decimal("10000"),
+            note="由 project.budget_10k 兼容迁移；未拆分预算类别",
+            source_type=source[0], source_id=source[1], created_by=project.created_by,
+            is_deleted=project.is_deleted, is_example=project.is_example,
+        ))
+    for old in db.query(CostEntry).all():
+        source = ("legacy_project_cost", old.id)
+        if source in existing_cost:
+            continue
+        amount = old.amount_cny if old.amount_cny is not None else Decimal(str(old.amount_10k)) * Decimal("10000")
+        db.add(InvestmentCostEntry(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=old.project_id,
+            recognition_date=old.entry_date, amount_cny=amount,
+            cost_status=old.cost_type if old.cost_type in {"committed", "incurred"} else "incurred",
+            category=old.category or "legacy", cost_nature="capex",
+            labor_nature="unclassified" if old.category == "labor" else "none",
+            recurrence="one_time", activity_type="implementation",
+            project_id=old.project_id, wbs_task_id=old.wbs_task_id,
+            supplier_snapshot=old.supplier, note=old.note,
+            source_type=source[0], source_id=source[1], created_by=old.created_by,
+            is_deleted=old.is_deleted, is_example=old.is_example,
+        ))
+    for old in db.query(ProjectEffortEntry).all():
+        source = ("legacy_project_effort", old.id)
+        if source in existing_worklog:
+            continue
+        db.add(InvestmentWorklog(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=old.project_id,
+            person_id=old.person_id, work_date=old.work_date, effort_days=old.effort_days,
+            role_type=old.role_type, activity_type=(
+                old.role_type if old.role_type in {"design", "development", "testing", "implementation", "pm"}
+                else "other"
+            ),
+            standard_rate_cny_per_day=old.standard_rate_cny_per_day,
+            project_id=old.project_id, wbs_task_id=old.wbs_task_id, note=old.note,
+            source_type=source[0], source_id=source[1], created_by=old.created_by,
+            is_deleted=old.is_deleted, is_example=old.is_example,
+        ))
+    db.flush()
 
 
 def run_migrations(db: Session):

@@ -283,6 +283,18 @@ project_id FK, category (software/hardware/service/labour/other), name, `amount_
 
 project_id FK, nullable wbs_task_id FK, person_id FK, work_date, `effort_days NUMERIC(8,2)`, role_type (design/development/testing/implementation/pm/operations/other), nullable `standard_rate_cny_per_day NUMERIC(12,2)`, note, and created_by [C]. Registration snapshots the explicit rate or configured role-standard daily rate. It is a management-cost convention and never stores or derives personal salary. Upgrade never fabricates effort or role rates from historical tasks, hours, or people.
 
+### 3.9 B-OPS unified investment ledger (4 tables)
+
+`investment_budget_item`: `lifecycle_stage` (demand/build/run), `investment_intent` (run/grow/transform), `subject_type/subject_id`, `period_start/period_end`, category (software/hardware/cloud/network/security/service/outsourcing/telecom/facility/labor/other/legacy), `cost_nature` (capex/opex), name, `amount_cny NUMERIC(18,2)`, note, `source_type/source_id`, and created_by. `(source_type, source_id)` is unique for idempotent historical backfill. Legacy `project.budget_10k` becomes a `legacy_project_budget_total` fallback row and is excluded once that project has an explicit budget item.
+
+`investment_cost_entry`: in addition to lifecycle, intent, and subject, stores `recognition_date`, `amount_cny NUMERIC(18,2)`, `cost_status` (committed/incurred/paid), category, `cost_nature`, `labor_nature` (none/internal/external/unclassified), `recurrence` (one_time/recurring), activity_type, optional Project/Requirement/Service Item/CI/Ticket/Problem/Contract/Vendor/WBS references, supplier snapshot, note, unique source key, and created_by. Paid is a payment subset of incurred: incurred aggregation includes paid and paid is also shown separately, but they are never added. Contract `amount_10k` is never backfilled here.
+
+`investment_worklog`: stores lifecycle, intent, subject, person_id, work_date, `effort_days NUMERIC(8,2)`, role_type, activity_type, `standard_rate_cny_per_day NUMERIC(12,2)` snapshot, optional Project/Requirement/Service Item/CI/Ticket/Problem/WBS references, note, unique source key, and created_by. Future actual dates are rejected, and all active entries for one person/date cannot exceed two person-days. Ticket `actual_resolution_hours` and task estimates never backfill this table.
+
+`investment_allocation`: `source_kind` (budget/cost/worklog), source_id, target_type/target_id, `percentage NUMERIC(5,2)`, allocation_method, note, and created_by. A source/target pair is unique, and all active percentages for one source cannot exceed 100%. Allocation applies a read-time target weight and never copies the budget, cost, or worklog fact.
+
+Supported subjects are project/requirement/service_item/ci/ticket/problem/contract/business_domain/work_task/shared_operations. New Project, Requirement, Ticket, and Shared Operations writes use the unified tables only; legacy `project_budget_item/cost_entry/project_effort_entry` remain for one rollback cycle and receive no new writes. Historical facts are copied idempotently by unique source key without deleting legacy data. Financial actual equals incurred including paid; standard labor valuation equals person-days times entry-time rate; management total equals financial actual plus standard labor valuation, but is unavailable when incurred `category=labor AND labor_nature=unclassified` could be double-counted.
+
 ---
 
 ## 4. Requirement and task domain (5 tables)

@@ -30,15 +30,16 @@ import {
 import dayjs, { type Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import Table from '../../components/SortableTable';
+import InvestmentPanel from '../../components/investment/InvestmentPanel';
 import { useT } from '../../i18n';
 import { useLangStore } from '../../i18n/store';
 import { ALL_ROLES, ROLE_LABELS, type Role } from '../../api/types';
 
-type ReportTab = 'overview' | 'project' | 'requirement' | 'library' | 'catalog';
+type ReportTab = 'overview' | 'project' | 'requirement' | 'operations' | 'people' | 'library' | 'catalog';
 
 interface MetricDefinition {
   code: string;
-  domain: 'itsm' | 'project' | 'requirement' | 'task' | 'process';
+  domain: 'itsm' | 'project' | 'requirement' | 'operations' | 'people' | 'task' | 'process';
   name_zh: string;
   name_en: string;
   unit: string;
@@ -110,11 +111,15 @@ const TAB_DOMAINS: Record<Exclude<ReportTab, 'library' | 'catalog'>, MetricDefin
   overview: null,
   project: ['project'],
   requirement: ['requirement'],
+  operations: ['operations'],
+  people: ['people'],
 };
 
 const OVERVIEW_CODES = [
   'itsm.ticket_count', 'itsm.sla_resolution_rate', 'project.active_count',
-  'requirement.avg_lead_days', 'task.completed_count', 'process.avg_cycle_hours',
+  'requirement.avg_lead_days', 'operations.incurred_cost_cny',
+  'operations.effort_days', 'people.effort_days', 'task.completed_count',
+  'process.avg_cycle_hours',
 ];
 
 const statusColor: Record<string, string> = {
@@ -359,6 +364,8 @@ export default function ReportCenter() {
     { key: 'overview', label: t('report.tab.overview') },
     { key: 'project', label: t('report.tab.project') },
     { key: 'requirement', label: t('report.tab.requirement') },
+    { key: 'operations', label: t('report.tab.operations') },
+    { key: 'people', label: t('report.tab.people') },
     { key: 'library', label: t('report.tab.library') },
     { key: 'catalog', label: t('report.tab.catalog') },
   ];
@@ -391,7 +398,16 @@ export default function ReportCenter() {
         ) : tab === 'catalog' ? (
           <Table<MetricDefinition> rowKey="code" columns={catalogColumns} dataSource={catalog} scroll={{ x: 'max-content' }} pagination={{ pageSize: 20 }} />
         ) : (
-          <MetricCards metrics={queryResult?.metrics ?? []} onDrilldown={(metric) => void openDrilldown(metric)} />
+          <Space direction="vertical" size={16} style={{ width: '100%' }}>
+            <MetricCards metrics={queryResult?.metrics ?? []} onDrilldown={(metric) => void openDrilldown(metric)} />
+            {tab === 'operations' && (
+              <InvestmentPanel
+                subjectType="shared_operations"
+                lifecycleStage="run"
+                title={t('report.sharedOperationsLedger')}
+              />
+            )}
+          </Space>
         )}
       </Space>
 

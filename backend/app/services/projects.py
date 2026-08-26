@@ -3,7 +3,7 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.models import CostEntry, Milestone, Project, Risk, WbsTask
+from app.models import InvestmentCostEntry, Milestone, Project, Risk, WbsTask
 
 STATUS_PROGRESS = {"未开始": 0.0, "进行中": 0.5, "已完成": 1.0}
 
@@ -243,8 +243,12 @@ def compute_metrics(db: Session, project: Project) -> dict:
     milestone_tasks = [t for t in tasks if t.is_milestone]  # 里程碑=WBS 勾选「是」的行（派生）
     risks = db.query(Risk).filter(Risk.project_id == project.id, Risk.is_deleted.is_(False)).all()
     actual_cost = sum(
-        float(c.amount_cny) / 10000 if c.amount_cny is not None else c.amount_10k
-        for c in db.query(CostEntry).filter(CostEntry.project_id == project.id, CostEntry.is_deleted.is_(False))
+        float(c.amount_cny) / 10000
+        for c in db.query(InvestmentCostEntry).filter(
+            InvestmentCostEntry.project_id == project.id,
+            InvestmentCostEntry.cost_status.in_(("incurred", "paid")),
+            InvestmentCostEntry.is_deleted.is_(False),
+        )
     )
 
     progress_tasks = leaf_wbs_tasks(tasks)

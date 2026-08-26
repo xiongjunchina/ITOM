@@ -27,6 +27,12 @@ from app.models.itsm_assets import (
     ProblemTicket,
     Vendor,
 )
+from app.models.investment import (
+    InvestmentAllocation,
+    InvestmentBudgetItem,
+    InvestmentCostEntry,
+    InvestmentWorklog,
+)
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.project import (
     CostEntry,
@@ -147,6 +153,10 @@ __all__ = [
     "ExternalIdentity",
     "Idea",
     "IdeaLike",
+    "InvestmentAllocation",
+    "InvestmentBudgetItem",
+    "InvestmentCostEntry",
+    "InvestmentWorklog",
     "LearningGrowthGoal",
     "InAppNotification",
     "FeishuConfig",

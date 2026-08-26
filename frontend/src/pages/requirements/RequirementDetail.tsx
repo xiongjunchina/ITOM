@@ -49,6 +49,7 @@ import DocumentTypeHint from '../../components/DocumentTypeHint';
 import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
+import InvestmentPanel from '../../components/investment/InvestmentPanel';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
 import type { FlowDiagramStep } from '../../components/FlowDiagram';
@@ -1296,6 +1297,13 @@ export default function RequirementDetail() {
         step={completingStep}
         onClose={() => setCompletingStep(null)}
         onDone={() => void load()}
+      />
+
+      <InvestmentPanel
+        subjectType="requirement"
+        subjectId={detail.id}
+        lifecycleStage="demand"
+        readOnly={isExample}
       />
 
       {/* 登记信息 */}

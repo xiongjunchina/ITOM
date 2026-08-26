@@ -128,11 +128,26 @@ Process Definitions configure versions, processing/approval node types, handlers
 - **Interface & Branding**: configure names, descriptions, logos, favicon, theme, density, sidebar, landing pages, announcements, and environment markers. Images are cropped before saving.
 - **Audit Log**: search changes by entity, action, actor, and time.
 
-## 9. Profile center
+## 9. Report Center and unified investment ledger
+
+Report Center is the last item in the left navigation. It analyzes demand, project, operations, and people capacity under one measurement contract and produces weekly, monthly, quarterly, half-year, and annual reports. Record demand-stage investment in Requirement Detail, build-stage investment in the Project Cost tab, and run-stage investment in ITSM Ticket Detail. Record operations investment that cannot be attributed to one object under **Report Center → Operations Investment → Shared Operations**.
+
+- **Budget** records planned limits for hardware, software, licences, cloud/telecom, and external services. A contract amount remains a commitment/reference and never becomes actual cost automatically.
+- **Cost** records incurred amount by occurrence date, category, and payment state. Paid is a subset of incurred cost and must not be added to incurred cost again.
+- **Worklog** records person, work date, and person-days. Future dates are rejected, and one person's total across all subjects is capped at 2 person-days per date. Labor value uses the management standard rate snapshotted at entry time; it is not salary data.
+- **Shared allocation** distributes shared operations cost or effort to service items, configuration items, tickets, problems, or business domains. Allocations for one source cannot exceed 100%; the remainder stays in the shared pool and is not duplicated in subject totals.
+
+Financial actual cost equals incurred cost. Management total investment equals incurred cost plus rate-valued worklogs. If a cost row has not declared whether labor is already included, the management total is withheld and a data-quality warning is shown to prevent double counting. Ticket elapsed duration is a timeliness measure, not actual effort.
+
+**Metric Catalog** documents demand, project, operations, people, and governance measures. **Operations Analysis** shows run investment by service item, CI, ticket, and related objects; **People Capacity** compares registered effort with available capacity. Generate a draft report from a period and template, review metric snapshots, exceptions, and data quality, and only then publish it. A published report retains its measurement version and snapshot instead of silently changing with later ledger edits.
+
+Cost maintenance requires `investment_costs`; users maintain their own worklogs unless granted `investment_worklogs` management capability. Viewing person-level detail also requires the people-report permission. Create, update, and delete actions are audited.
+
+## 10. Profile center
 
 Profile provides basic information, security, notification preferences, activity records, Feishu binding, theme, and content density. Password changes clear the administrator-held initial-password ciphertext. Activity records are limited to the current user.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 - Missing menu or people: check role/module permission and digital-team scope, then sign in again.
 - Disabled workflow action: check current assignee, claim state, terminal state, and active process version.

@@ -16,15 +16,15 @@ from app.core.errors import AppError
 from app.models import (
     AuthUser,
     BugFixTask,
-    CostEntry,
+    InvestmentBudgetItem,
+    InvestmentCostEntry,
+    InvestmentWorklog,
     ProcessInstance,
     ProcessTask,
     ProcessDefinition,
     ProcessStep,
     Project,
-    ProjectBudgetItem,
     ProjectDevelopmentTask,
-    ProjectEffortEntry,
     ReportAudience,
     ReportGenerationJob,
     ReportInstance,
@@ -38,13 +38,17 @@ from app.models import (
     UserGroupMember,
     WorkTask,
 )
+from app.services.investment import summary as investment_summary
 from app.services.permissions import TICKET_TYPE_MODULE, has_perm
 from app.services.rbac import effective_roles
 from app.services.requirement_access import business_portal_requirement_filter, is_business_portal_only
 
 
 REPORT_PERIOD_TYPES = {"week", "month", "quarter", "half_year", "year", "custom"}
-COST_CATEGORIES = {"software", "hardware", "service", "labor", "other", "legacy"}
+COST_CATEGORIES = {
+    "software", "hardware", "cloud", "network", "security", "service",
+    "outsourcing", "telecom", "facility", "labor", "other", "legacy",
+}
 
 
 @dataclass(frozen=True)
@@ -75,6 +79,22 @@ METRICS = [
     MetricDefinition("project.effort_days", "project", "实施人天", "Project effort", "days", sensitivity="people", source_module="projects"),
     MetricDefinition("project.effort_cost_cny", "project", "标准人天成本", "Standard effort cost", "CNY", sensitivity="finance", source_module="projects"),
     MetricDefinition("project.budget_execution_rate", "project", "预算执行率", "Budget execution rate", "percent", sensitivity="finance", source_module="projects"),
+    MetricDefinition("operations.budget_cny", "operations", "运维预算", "Operations budget", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.committed_cost_cny", "operations", "运维已承诺费用", "Committed operations cost", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.incurred_cost_cny", "operations", "运维已发生费用", "Incurred operations cost", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.paid_cost_cny", "operations", "运维已支付费用", "Paid operations cost", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.effort_days", "operations", "运维实际人天", "Operations effort", "days", sensitivity="people", source_module="reports"),
+    MetricDefinition("operations.effort_cost_cny", "operations", "运维标准人力成本", "Operations standard labor cost", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.management_total_cny", "operations", "运维管理总投入", "Operations management total", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.cost_by_category", "operations", "运维费用构成", "Operations cost by category", "CNY", kind="series", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.effort_by_activity", "operations", "运维人天活动构成", "Operations effort by activity", "days", kind="series", sensitivity="people", source_module="reports"),
+    MetricDefinition("operations.budget_execution_rate", "operations", "运维财务预算执行率", "Operations financial budget execution", "percent", sensitivity="finance", source_module="reports"),
+    MetricDefinition("operations.ticket_worklog_coverage", "operations", "工单工时登记覆盖率", "Ticket worklog coverage", "percent", sensitivity="people", source_module="reports"),
+    MetricDefinition("operations.cost_per_resolved_ticket", "operations", "单已解决工单费用", "Cost per resolved ticket", "CNY", sensitivity="finance", source_module="reports"),
+    MetricDefinition("people.effort_days", "people", "IT 总投入人天", "Total IT effort", "days", sensitivity="people", source_module="reports"),
+    MetricDefinition("people.effort_by_lifecycle", "people", "人天生命周期构成", "Effort by lifecycle", "days", kind="series", sensitivity="people", source_module="reports"),
+    MetricDefinition("people.effort_by_role", "people", "人天角色构成", "Effort by role", "days", kind="series", sensitivity="people", source_module="reports"),
+    MetricDefinition("people.rate_coverage", "people", "标准费率覆盖率", "Standard rate coverage", "percent", sensitivity="people", source_module="reports"),
     MetricDefinition("requirement.count", "requirement", "需求总数", "Requirement count", "count", source_module="requirements"),
     MetricDefinition("requirement.closed_count", "requirement", "已关闭需求", "Closed requirements", "count", source_module="requirements"),
     MetricDefinition("requirement.avg_lead_days", "requirement", "平均处理时长", "Average lead time", "days", source_module="requirements"),
@@ -94,10 +114,12 @@ METRIC_MAP = {item.code: item for item in METRICS}
 
 
 SYSTEM_TEMPLATES = [
-    ("weekly_operations", "IT 运营周报", "Weekly IT Operations", ["itsm", "requirement", "task", "process"], "week"),
-    ("monthly_management", "IT 管理月报", "Monthly IT Management", ["itsm", "project", "requirement", "task", "process"], "month"),
+    ("weekly_operations", "IT 运营周报", "Weekly IT Operations", ["itsm", "operations", "requirement", "task", "process"], "week"),
+    ("monthly_management", "IT 管理月报", "Monthly IT Management", ["itsm", "project", "operations", "people", "requirement", "task", "process"], "month"),
     ("project_investment", "项目投入分析", "Project Investment", ["project"], "month"),
     ("requirement_timeliness", "需求处理时效", "Requirement Timeliness", ["requirement"], "month"),
+    ("operations_investment", "运维投入分析", "Operations Investment", ["operations"], "month"),
+    ("it_capacity", "IT 人力容量与投向", "IT Capacity and Allocation", ["people"], "month"),
 ]
 
 
@@ -200,6 +222,10 @@ def _ticket_rows(db: Session, actor: AuthUser, start: date, end: date, filters: 
         query = query.filter(Ticket.ticket_type == filters["ticket_type"])
     if filters.get("priority"):
         query = query.filter(Ticket.priority == filters["priority"])
+    if filters.get("service_item_id"):
+        query = query.filter(Ticket.service_item_id == filters["service_item_id"])
+    if filters.get("ci_id"):
+        query = query.filter(Ticket.ci_id == filters["ci_id"])
     return query.all()
 
 
@@ -227,33 +253,23 @@ def _project_metrics(db: Session, start: date, end: date, filters: dict | None =
     if filters.get("portfolio_id"):
         query = query.filter(Project.portfolio_id == filters["portfolio_id"])
     projects = query.all()
-    project_ids = [row.id for row in projects]
-    budgets = db.query(ProjectBudgetItem).filter(
-        ProjectBudgetItem.is_deleted.is_(False), ProjectBudgetItem.project_id.in_(project_ids or ["-"])
-    ).all()
-    costs = db.query(CostEntry).filter(
-        CostEntry.is_deleted.is_(False), CostEntry.project_id.in_(project_ids or ["-"]),
-        CostEntry.entry_date >= start, CostEntry.entry_date <= end,
-    ).all()
-    efforts = db.query(ProjectEffortEntry).filter(
-        ProjectEffortEntry.is_deleted.is_(False), ProjectEffortEntry.project_id.in_(project_ids or ["-"]),
-        ProjectEffortEntry.work_date >= start, ProjectEffortEntry.work_date <= end,
-    ).all()
-    explicit_budget_ids = {row.project_id for row in budgets}
-    budget = sum((row.amount_cny for row in budgets), Decimal("0"))
-    budget += sum((Decimal(str(row.budget_10k)) * Decimal("10000") for row in projects if row.id not in explicit_budget_ids and row.budget_10k is not None), Decimal("0"))
-    category_totals = {category: Decimal("0") for category in sorted(COST_CATEGORIES)}
-    actual_cost = Decimal("0")
-    committed_cost = Decimal("0")
-    for row in costs:
-        amount = row.amount_cny if row.amount_cny is not None else Decimal(str(row.amount_10k)) * Decimal("10000")
-        if row.cost_type == "committed":
-            committed_cost += amount
-        else:
-            actual_cost += amount
-            category_totals[row.category if row.category in category_totals else "other"] += amount
-    effort_days = sum((row.effort_days for row in efforts), Decimal("0"))
-    effort_cost = sum(((row.effort_days * row.standard_rate_cny_per_day) for row in efforts if row.standard_rate_cny_per_day is not None), Decimal("0"))
+    summaries = [
+        investment_summary(
+            db, subject_type="project", subject_id=row.id, lifecycle_stage="build",
+            period_start=start, period_end=end,
+        )
+        for row in projects
+    ]
+    budget = sum((Decimal(item["budget_cny"]) for item in summaries), Decimal("0"))
+    actual_cost = sum((Decimal(item["incurred_cost_cny"]) for item in summaries), Decimal("0"))
+    committed_cost = sum((Decimal(item["committed_cost_cny"]) for item in summaries), Decimal("0"))
+    effort_days = sum((Decimal(item["effort_days"]) for item in summaries), Decimal("0"))
+    effort_cost = sum((Decimal(item["effort_cost_cny"]) for item in summaries), Decimal("0"))
+    category_totals: dict[str, Decimal] = {category: Decimal("0") for category in sorted(COST_CATEGORIES)}
+    for item in summaries:
+        for category in item["categories"]:
+            key = category["category"] if category["category"] in COST_CATEGORIES else "other"
+            category_totals[key] += Decimal(category["actual_cny"])
     return {
         "project.count": len(projects),
         "project.active_count": sum(1 for row in projects if row.status not in {"completed", "closed", "已完成", "已关闭"}),
@@ -263,7 +279,120 @@ def _project_metrics(db: Session, start: date, end: date, filters: dict | None =
         "project.cost_by_category": [{"key": key, "value": _json_value(value)} for key, value in category_totals.items() if value],
         "project.effort_days": effort_days,
         "project.effort_cost_cny": effort_cost,
-        "project.budget_execution_rate": _percent(actual_cost + committed_cost + effort_cost, budget),
+        # 项目财务预算执行率仅使用费用账本；标准人力估值另列，避免与未分类人力费用重复。
+        "project.budget_execution_rate": _percent(actual_cost + committed_cost, budget),
+    }
+
+
+def _investment_subject_from_filters(filters: dict | None) -> tuple[str | None, str | None]:
+    filters = filters or {}
+    if filters.get("subject_type"):
+        return filters["subject_type"], filters.get("subject_id")
+    for key in ("service_item_id", "ci_id", "contract_id", "requirement_id", "project_id", "ticket_id", "problem_id"):
+        if filters.get(key):
+            return key.removesuffix("_id"), filters[key]
+    return None, None
+
+
+def _apply_investment_subject_filter(query, model, filters: dict | None):
+    subject_type, subject_id = _investment_subject_from_filters(filters)
+    if not subject_type or not subject_id:
+        return query
+    reference_column = getattr(model, f"{subject_type}_id", None)
+    direct = (model.subject_type == subject_type) & (model.subject_id == subject_id)
+    return query.filter(or_(direct, reference_column == subject_id)) if reference_column is not None else query.filter(direct)
+
+
+def _operations_metrics(
+    db: Session,
+    start: date,
+    end: date,
+    tickets: list[Ticket],
+    resolved: list[Ticket],
+    filters: dict | None = None,
+) -> dict[str, Any]:
+    subject_type, subject_id = _investment_subject_from_filters(filters)
+    values = investment_summary(
+        db, subject_type=subject_type, subject_id=subject_id,
+        lifecycle_stage="run", period_start=start, period_end=end,
+    )
+    ticket_ids = {row.id for row in tickets}
+    logged_ticket_ids = set()
+    if ticket_ids:
+        logged_ticket_ids = {
+            row.ticket_id for row in db.query(InvestmentWorklog).filter(
+                InvestmentWorklog.is_deleted.is_(False),
+                InvestmentWorklog.lifecycle_stage == "run",
+                InvestmentWorklog.ticket_id.in_(ticket_ids),
+                InvestmentWorklog.work_date >= start,
+                InvestmentWorklog.work_date <= end,
+            ).all()
+        }
+    incurred = Decimal(values["incurred_cost_cny"])
+    return {
+        "operations.budget_cny": Decimal(values["budget_cny"]),
+        "operations.committed_cost_cny": Decimal(values["committed_cost_cny"]),
+        "operations.incurred_cost_cny": incurred,
+        "operations.paid_cost_cny": Decimal(values["paid_cost_cny"]),
+        "operations.effort_days": Decimal(values["effort_days"]),
+        "operations.effort_cost_cny": Decimal(values["effort_cost_cny"]),
+        "operations.management_total_cny": (
+            Decimal(values["management_total_cny"])
+            if values["management_total_cny"] is not None else None
+        ),
+        "operations.cost_by_category": [
+            {"key": item["category"], "value": item["actual_cny"]}
+            for item in values["categories"] if Decimal(item["actual_cny"])
+        ],
+        "operations.effort_by_activity": [
+            {"key": item["activity_type"], "value": item["effort_days"]}
+            for item in values["activity_effort"] if Decimal(item["effort_days"])
+        ],
+        "operations.budget_execution_rate": values["financial_budget_execution_rate"],
+        "operations.ticket_worklog_coverage": _percent(len(logged_ticket_ids), len(ticket_ids)),
+        "operations.cost_per_resolved_ticket": (
+            (incurred / len(resolved)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            if resolved else None
+        ),
+    }
+
+
+def _people_metrics(db: Session, start: date, end: date, filters: dict | None = None) -> dict[str, Any]:
+    query = db.query(InvestmentWorklog).filter(
+        InvestmentWorklog.is_deleted.is_(False), InvestmentWorklog.work_date >= start,
+        InvestmentWorklog.work_date <= end,
+    )
+    filters = filters or {}
+    subject_type, subject_id = _investment_subject_from_filters(filters)
+    if subject_type and subject_id:
+        reference_column = getattr(InvestmentWorklog, f"{subject_type}_id", None)
+        if reference_column is not None:
+            query = query.filter(or_(
+                (InvestmentWorklog.subject_type == subject_type) & (InvestmentWorklog.subject_id == subject_id),
+                reference_column == subject_id,
+            ))
+        else:
+            query = query.filter(
+                InvestmentWorklog.subject_type == subject_type,
+                InvestmentWorklog.subject_id == subject_id,
+            )
+    rows = query.all()
+    lifecycle: dict[str, Decimal] = {}
+    roles: dict[str, Decimal] = {}
+    for row in rows:
+        lifecycle[row.lifecycle_stage] = lifecycle.get(row.lifecycle_stage, Decimal("0")) + row.effort_days
+        roles[row.role_type] = roles.get(row.role_type, Decimal("0")) + row.effort_days
+    return {
+        "people.effort_days": sum((row.effort_days for row in rows), Decimal("0")),
+        "people.effort_by_lifecycle": [
+            {"key": key, "value": _json_value(value)} for key, value in sorted(lifecycle.items())
+        ],
+        "people.effort_by_role": [
+            {"key": key, "value": _json_value(value)} for key, value in sorted(roles.items())
+        ],
+        "people.rate_coverage": _percent(
+            sum(1 for row in rows if row.standard_rate_cny_per_day is not None), len(rows)
+        ),
     }
 
 
@@ -362,6 +491,8 @@ def _raw_metrics(db: Session, actor: AuthUser, start: date, end: date, filters: 
     }
     raw.update(_project_metrics(db, start, end, filters))
     raw.update(_task_metrics(db, actor, start, end))
+    raw.update(_operations_metrics(db, start, end, tickets, resolved, filters))
+    raw.update(_people_metrics(db, start, end, filters))
     return raw
 
 
@@ -369,7 +500,11 @@ def query_metrics(db: Session, actor: AuthUser, metric_codes: list[str], start: 
     if end < start or (end - start).days > 731:
         raise AppError("REPORT_PERIOD_INVALID", "报告周期无效或超过两年上限", 400)
     filters = filters or {}
-    allowed_filters = {"project_id", "portfolio_id", "business_domain_id", "ticket_type", "priority"}
+    allowed_filters = {
+        "project_id", "portfolio_id", "business_domain_id", "ticket_type", "priority",
+        "service_item_id", "ci_id", "contract_id", "requirement_id", "ticket_id",
+        "problem_id", "subject_type", "subject_id",
+    }
     unknown_filters = sorted(set(filters) - allowed_filters)
     if unknown_filters:
         raise AppError("REPORT_FILTER_UNKNOWN", f"未知筛选条件：{', '.join(unknown_filters)}", 400)
@@ -420,32 +555,38 @@ def drilldown_metric(db: Session, actor: AuthUser, code: str, start: date, end: 
     if definition.domain == "project" and code == "project.effort_days":
         if not has_perm(db, actor, "reports_people", "view"):
             raise AppError("REPORT_METRIC_FORBIDDEN", "无权查看人员投入明细", 403)
-        query = db.query(ProjectEffortEntry).filter(
-            ProjectEffortEntry.is_deleted.is_(False), ProjectEffortEntry.work_date >= start,
-            ProjectEffortEntry.work_date <= end,
+        query = db.query(InvestmentWorklog).filter(
+            InvestmentWorklog.is_deleted.is_(False), InvestmentWorklog.work_date >= start,
+            InvestmentWorklog.work_date <= end, InvestmentWorklog.lifecycle_stage == "build",
         )
         if filters.get("project_id"):
-            query = query.filter(ProjectEffortEntry.project_id == filters["project_id"])
-        rows = query.order_by(ProjectEffortEntry.work_date.desc()).limit(limit).all()
+            query = query.filter(InvestmentWorklog.project_id == filters["project_id"])
+        rows = query.order_by(InvestmentWorklog.work_date.desc()).limit(limit).all()
         return [{
             "id": row.id, "project_id": row.project_id, "person_id": row.person_id,
             "work_date": _json_value(row.work_date), "effort_days": _json_value(row.effort_days),
             "role_type": row.role_type,
         } for row in rows]
     if definition.domain == "project" and code == "project.budget_cny":
-        query = db.query(ProjectBudgetItem).filter(ProjectBudgetItem.is_deleted.is_(False))
-        if filters.get("project_id"):
-            query = query.filter(ProjectBudgetItem.project_id == filters["project_id"])
-        rows = query.order_by(ProjectBudgetItem.created_at.desc()).limit(limit).all()
-        return [{"id": row.id, "project_id": row.project_id, "category": row.category,
-                 "name": row.name, "amount_cny": _json_value(row.amount_cny)} for row in rows]
-    if definition.domain == "project" and code == "project.effort_cost_cny":
-        query = db.query(ProjectEffortEntry).filter(
-            ProjectEffortEntry.is_deleted.is_(False), ProjectEffortEntry.work_date >= start,
-            ProjectEffortEntry.work_date <= end,
+        query = db.query(InvestmentBudgetItem).filter(
+            InvestmentBudgetItem.is_deleted.is_(False),
+            InvestmentBudgetItem.lifecycle_stage == "build",
+            InvestmentBudgetItem.subject_type == "project",
+            InvestmentBudgetItem.period_end >= start,
+            InvestmentBudgetItem.period_start <= end,
         )
         if filters.get("project_id"):
-            query = query.filter(ProjectEffortEntry.project_id == filters["project_id"])
+            query = query.filter(InvestmentBudgetItem.subject_id == filters["project_id"])
+        rows = query.order_by(InvestmentBudgetItem.created_at.desc()).limit(limit).all()
+        return [{"id": row.id, "project_id": row.subject_id, "category": row.category,
+                 "name": row.name, "amount_cny": _json_value(row.amount_cny)} for row in rows]
+    if definition.domain == "project" and code == "project.effort_cost_cny":
+        query = db.query(InvestmentWorklog).filter(
+            InvestmentWorklog.is_deleted.is_(False), InvestmentWorklog.work_date >= start,
+            InvestmentWorklog.work_date <= end, InvestmentWorklog.lifecycle_stage == "build",
+        )
+        if filters.get("project_id"):
+            query = query.filter(InvestmentWorklog.project_id == filters["project_id"])
         rows = query.all()
         totals: dict[str, dict[str, Decimal]] = {}
         for row in rows:
@@ -456,16 +597,71 @@ def drilldown_metric(db: Session, actor: AuthUser, code: str, start: date, end: 
         return [{"id": role, "role_type": role, "effort_days": _json_value(values["effort_days"]),
                  "cost_cny": _json_value(values["cost_cny"])} for role, values in totals.items()]
     if definition.domain == "project" and definition.sensitivity == "finance":
-        query = db.query(CostEntry).filter(
-            CostEntry.is_deleted.is_(False), CostEntry.entry_date >= start, CostEntry.entry_date <= end,
+        query = db.query(InvestmentCostEntry).filter(
+            InvestmentCostEntry.is_deleted.is_(False),
+            InvestmentCostEntry.lifecycle_stage == "build",
+            InvestmentCostEntry.recognition_date >= start,
+            InvestmentCostEntry.recognition_date <= end,
         )
         if filters.get("project_id"):
-            query = query.filter(CostEntry.project_id == filters["project_id"])
-        rows = query.order_by(CostEntry.entry_date.desc()).limit(limit).all()
+            query = query.filter(InvestmentCostEntry.project_id == filters["project_id"])
+        rows = query.order_by(InvestmentCostEntry.recognition_date.desc()).limit(limit).all()
         return [{
-            "id": row.id, "project_id": row.project_id, "entry_date": _json_value(row.entry_date),
-            "amount_cny": _json_value(row.amount_cny if row.amount_cny is not None else Decimal(str(row.amount_10k)) * Decimal("10000")),
-            "category": row.category, "cost_type": row.cost_type, "supplier": row.supplier,
+            "id": row.id, "project_id": row.project_id,
+            "entry_date": _json_value(row.recognition_date),
+            "amount_cny": _json_value(row.amount_cny),
+            "category": row.category, "cost_type": row.cost_status,
+            "supplier": row.supplier_snapshot,
+        } for row in rows]
+    if definition.domain == "operations" and code == "operations.budget_cny":
+        query = db.query(InvestmentBudgetItem).filter(
+            InvestmentBudgetItem.is_deleted.is_(False),
+            InvestmentBudgetItem.lifecycle_stage == "run",
+            InvestmentBudgetItem.period_end >= start,
+            InvestmentBudgetItem.period_start <= end,
+        )
+        rows = _apply_investment_subject_filter(query, InvestmentBudgetItem, filters).order_by(
+            InvestmentBudgetItem.period_start.desc()
+        ).limit(limit).all()
+        return [{
+            "id": row.id, "subject_type": row.subject_type, "subject_id": row.subject_id,
+            "category": row.category, "name": row.name,
+            "amount_cny": _json_value(row.amount_cny),
+        } for row in rows]
+    if definition.domain in {"operations", "people"} and (
+        definition.sensitivity == "people" or definition.domain == "people"
+    ):
+        query = db.query(InvestmentWorklog).filter(
+            InvestmentWorklog.is_deleted.is_(False), InvestmentWorklog.work_date >= start,
+            InvestmentWorklog.work_date <= end,
+        )
+        if definition.domain == "operations":
+            query = query.filter(InvestmentWorklog.lifecycle_stage == "run")
+        rows = _apply_investment_subject_filter(query, InvestmentWorklog, filters).order_by(
+            InvestmentWorklog.work_date.desc()
+        ).limit(limit).all()
+        return [{
+            "id": row.id, "subject_type": row.subject_type, "subject_id": row.subject_id,
+            "person_id": row.person_id, "work_date": _json_value(row.work_date),
+            "effort_days": _json_value(row.effort_days), "role_type": row.role_type,
+            "activity_type": row.activity_type,
+        } for row in rows]
+    if definition.domain == "operations" and definition.sensitivity == "finance":
+        query = db.query(InvestmentCostEntry).filter(
+            InvestmentCostEntry.is_deleted.is_(False),
+            InvestmentCostEntry.lifecycle_stage == "run",
+            InvestmentCostEntry.recognition_date >= start,
+            InvestmentCostEntry.recognition_date <= end,
+        )
+        rows = _apply_investment_subject_filter(query, InvestmentCostEntry, filters).order_by(
+            InvestmentCostEntry.recognition_date.desc()
+        ).limit(limit).all()
+        return [{
+            "id": row.id, "subject_type": row.subject_type, "subject_id": row.subject_id,
+            "entry_date": _json_value(row.recognition_date),
+            "amount_cny": _json_value(row.amount_cny), "category": row.category,
+            "cost_status": row.cost_status, "activity_type": row.activity_type,
+            "supplier": row.supplier_snapshot,
         } for row in rows]
     if definition.domain == "project":
         query = db.query(Project).filter(
@@ -510,9 +706,17 @@ def drilldown_metric(db: Session, actor: AuthUser, code: str, start: date, end: 
 
 def seed_report_center(db: Session):
     for code, name, description, domains, period_type in SYSTEM_TEMPLATES:
-        if db.query(ReportTemplate).filter(ReportTemplate.code == code).first():
-            continue
         metric_codes = [metric.code for metric in METRICS if metric.domain in domains]
+        existing = db.query(ReportTemplate).filter(ReportTemplate.code == code).first()
+        if existing:
+            if existing.is_system:
+                existing.name = name
+                existing.description = description
+                existing.domains = domains
+                existing.metric_codes = metric_codes
+                existing.default_period_type = period_type
+                existing.active = True
+            continue
         db.add(ReportTemplate(
             code=code, name=name, description=description, domains=domains,
             metric_codes=metric_codes, default_filters={}, default_period_type=period_type,

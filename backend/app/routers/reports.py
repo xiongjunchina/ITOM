@@ -144,11 +144,17 @@ def query(body: QueryIn, db: Session = Depends(get_db), actor: AuthUser = Depend
 @router.get("/drilldown/{metric_code}")
 def drilldown(metric_code: str, period_start: date, period_end: date, limit: int = 200,
               project_id: str = "", portfolio_id: str = "", business_domain_id: str = "",
-              ticket_type: str = "", priority: str = "",
+              ticket_type: str = "", priority: str = "", service_item_id: str = "",
+              ci_id: str = "", contract_id: str = "", requirement_id: str = "",
+              ticket_id: str = "", problem_id: str = "", subject_type: str = "",
+              subject_id: str = "",
               db: Session = Depends(get_db), actor: AuthUser = Depends(require_perm("reports", "view"))):
     filters = {key: value for key, value in {
         "project_id": project_id, "portfolio_id": portfolio_id, "business_domain_id": business_domain_id,
-        "ticket_type": ticket_type, "priority": priority,
+        "ticket_type": ticket_type, "priority": priority, "service_item_id": service_item_id,
+        "ci_id": ci_id, "contract_id": contract_id, "requirement_id": requirement_id,
+        "ticket_id": ticket_id, "problem_id": problem_id, "subject_type": subject_type,
+        "subject_id": subject_id,
     }.items() if value}
     return ok(drilldown_metric(db, actor, metric_code, period_start, period_end, limit, filters))
 

@@ -14,13 +14,13 @@ from app.events import notifier
 from app.events.bus import publish
 from app.models import (
     AuthUser,
-    CostEntry,
+    InvestmentBudgetItem,
+    InvestmentCostEntry,
+    InvestmentWorklog,
     Milestone,
     OrgMember,
     Portfolio,
     Project,
-    ProjectBudgetItem,
-    ProjectEffortEntry,
     RecordRelation,
     Risk,
     ServiceItem,
@@ -33,6 +33,7 @@ from app.services.batch_delete import execute_batch_delete
 from app.services.charter import parse_charter
 from app.services.codes import gen_code
 from app.services.permissions import has_perm
+from app.services.investment import money, summary as investment_domain_summary
 from app.services.projects import apply_wbs_progress, compute_metrics, recalculate_wbs_hierarchy, rebuild_wbs_codes
 from app.services.team_scope import digital_team_scope_configured, is_it_member, require_it_member_if_configured
 from app.services.workflow import allowed_targets, status_names
@@ -169,8 +170,8 @@ class CostIn(BaseModel):
     entry_date: date
     amount_cny: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
     amount_10k: float | None = Field(default=None, gt=0)
-    category: str = Field(default="other", pattern="^(software|hardware|service|labor|other|legacy)$")
-    cost_type: str = Field(default="incurred", pattern="^(incurred|committed)$")
+    category: str = Field(default="other", pattern="^(software|hardware|cloud|network|security|service|outsourcing|telecom|facility|labor|other|legacy)$")
+    cost_type: str = Field(default="incurred", pattern="^(incurred|committed|paid)$")
     supplier: str | None = Field(default=None, max_length=128)
     wbs_task_id: str | None = None
     note: str | None = None
@@ -183,7 +184,7 @@ class CostIn(BaseModel):
 
 
 class BudgetItemIn(BaseModel):
-    category: str = Field(pattern="^(software|hardware|service|labor|other)$")
+    category: str = Field(pattern="^(software|hardware|cloud|network|security|service|outsourcing|telecom|facility|labor|other)$")
     name: str = Field(min_length=1, max_length=128)
     amount_cny: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
@@ -192,7 +193,7 @@ class BudgetItemIn(BaseModel):
 class EffortEntryIn(BaseModel):
     person_id: str
     work_date: date
-    effort_days: Decimal = Field(gt=0, le=31, max_digits=8, decimal_places=2)
+    effort_days: Decimal = Field(gt=0, le=2, max_digits=8, decimal_places=2)
     role_type: str = Field(pattern="^(design|development|testing|implementation|pm|operations|other)$")
     standard_rate_cny_per_day: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     wbs_task_id: str | None = None
@@ -520,13 +521,16 @@ def delete_project(project_id: str, db: Session = Depends(get_db), actor=Depends
         m.is_deleted = True
         wbs_ids.append(m.id)  # 旧里程碑积分 source_ref 兼容
         stats["milestones"] += 1
-    for c in db.query(CostEntry).filter(CostEntry.project_id == p.id, CostEntry.is_deleted.is_(False)):
+    for c in db.query(InvestmentCostEntry).filter(InvestmentCostEntry.project_id == p.id, InvestmentCostEntry.is_deleted.is_(False)):
         c.is_deleted = True
         stats["costs"] += 1
-    for item in db.query(ProjectBudgetItem).filter(ProjectBudgetItem.project_id == p.id, ProjectBudgetItem.is_deleted.is_(False)):
+    for item in db.query(InvestmentBudgetItem).filter(
+        InvestmentBudgetItem.subject_type == "project", InvestmentBudgetItem.subject_id == p.id,
+        InvestmentBudgetItem.is_deleted.is_(False),
+    ):
         item.is_deleted = True
         stats["budget_items"] += 1
-    for entry in db.query(ProjectEffortEntry).filter(ProjectEffortEntry.project_id == p.id, ProjectEffortEntry.is_deleted.is_(False)):
+    for entry in db.query(InvestmentWorklog).filter(InvestmentWorklog.project_id == p.id, InvestmentWorklog.is_deleted.is_(False)):
         entry.is_deleted = True
         stats["effort_entries"] += 1
     for r in db.query(Risk).filter(Risk.project_id == p.id, Risk.is_deleted.is_(False)):
@@ -1334,15 +1338,15 @@ def update_risk(risk_id: str, body: RiskUpdate, db: Session = Depends(get_db), a
 @router.get("/api/projects/{project_id}/costs")
 def list_costs(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = (
-        db.query(CostEntry)
-        .filter(CostEntry.project_id == project_id, CostEntry.is_deleted.is_(False))
-        .order_by(CostEntry.entry_date.desc())
+        db.query(InvestmentCostEntry)
+        .filter(InvestmentCostEntry.project_id == project_id, InvestmentCostEntry.is_deleted.is_(False))
+        .order_by(InvestmentCostEntry.recognition_date.desc())
         .all()
     )
     return ok([
-        {"id": c.id, "entry_date": c.entry_date, "amount_10k": c.amount_10k,
-         "amount_cny": str(c.amount_cny if c.amount_cny is not None else Decimal(str(c.amount_10k)) * Decimal("10000")),
-         "category": c.category, "cost_type": c.cost_type, "supplier": c.supplier,
+        {"id": c.id, "entry_date": c.recognition_date, "amount_10k": float(c.amount_cny / Decimal("10000")),
+         "amount_cny": money(c.amount_cny),
+         "category": c.category, "cost_type": c.cost_status, "supplier": c.supplier_snapshot,
          "wbs_task_id": c.wbs_task_id, "note": c.note}
         for c in rows
     ], total=len(rows))
@@ -1361,22 +1365,28 @@ def create_cost(project_id: str, body: CostIn, db: Session = Depends(get_db), ac
     amount_cny = body.amount_cny
     if amount_cny is None:
         amount_cny = (Decimal(str(body.amount_10k)) * Decimal("10000")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    amount_10k = body.amount_10k if body.amount_10k is not None else float(amount_cny / Decimal("10000"))
-    data = body.model_dump(exclude={"amount_cny", "amount_10k"})
-    c = CostEntry(**data, amount_cny=amount_cny, amount_10k=amount_10k,
-                  project_id=project_id, created_by=actor.id)
+    c = InvestmentCostEntry(
+        lifecycle_stage="build", investment_intent="transform",
+        subject_type="project", subject_id=project_id, project_id=project_id,
+        recognition_date=body.entry_date, amount_cny=amount_cny,
+        cost_status=body.cost_type, category=body.category, cost_nature="capex",
+        labor_nature="unclassified" if body.category == "labor" else "none",
+        recurrence="one_time", activity_type="implementation", supplier_snapshot=body.supplier,
+        wbs_task_id=body.wbs_task_id, note=body.note, created_by=actor.id,
+    )
     db.add(c)
     db.flush()
-    audit(db, "cost_entry", c.id, "create", actor, {"amount_cny": str(amount_cny), "category": c.category})
+    audit(db, "investment_cost_entry", c.id, "create", actor, {"amount_cny": money(amount_cny), "category": c.category})
     db.commit()
     return ok({"id": c.id})
 
 
 @router.get("/api/projects/{project_id}/budget-items")
 def list_budget_items(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
-    rows = db.query(ProjectBudgetItem).filter(
-        ProjectBudgetItem.project_id == project_id, ProjectBudgetItem.is_deleted.is_(False)
-    ).order_by(ProjectBudgetItem.created_at).all()
+    rows = db.query(InvestmentBudgetItem).filter(
+        InvestmentBudgetItem.subject_type == "project", InvestmentBudgetItem.subject_id == project_id,
+        InvestmentBudgetItem.is_deleted.is_(False)
+    ).order_by(InvestmentBudgetItem.created_at).all()
     return ok([{"id": row.id, "category": row.category, "name": row.name,
                 "amount_cny": str(row.amount_cny), "note": row.note} for row in rows], total=len(rows))
 
@@ -1387,31 +1397,45 @@ def create_budget_item(project_id: str, body: BudgetItemIn, db: Session = Depend
     if not project or project.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_not_example(project)
-    row = ProjectBudgetItem(project_id=project_id, created_by=actor.id, **body.model_dump())
+    # 旧 project.budget_10k 迁移行是“无分项时兜底”，新增第一条显式预算后退出汇总。
+    for fallback in db.query(InvestmentBudgetItem).filter(
+        InvestmentBudgetItem.subject_type == "project",
+        InvestmentBudgetItem.subject_id == project_id,
+        InvestmentBudgetItem.source_type == "legacy_project_budget_total",
+        InvestmentBudgetItem.is_deleted.is_(False),
+    ):
+        fallback.is_deleted = True
+    row = InvestmentBudgetItem(
+        lifecycle_stage="build", investment_intent="transform", subject_type="project",
+        subject_id=project_id, period_start=project.planned_start, period_end=project.planned_end,
+        cost_nature="capex", created_by=actor.id, **body.model_dump(),
+    )
     db.add(row)
     db.flush()
-    audit(db, "project_budget_item", row.id, "create", actor, {"amount_cny": str(row.amount_cny), "category": row.category})
+    audit(db, "investment_budget_item", row.id, "create", actor, {"amount_cny": money(row.amount_cny), "category": row.category})
     db.commit()
     return ok({"id": row.id})
 
 
 @router.delete("/api/project-budget-items/{item_id}")
 def delete_budget_item(item_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
-    row = db.get(ProjectBudgetItem, item_id)
+    row = db.get(InvestmentBudgetItem, item_id)
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "预算分项不存在", 404)
-    ensure_not_example(db.get(Project, row.project_id))
+    if row.subject_type != "project":
+        raise AppError("NOT_FOUND", "预算分项不存在", 404)
+    ensure_not_example(db.get(Project, row.subject_id))
     row.is_deleted = True
-    audit(db, "project_budget_item", row.id, "delete", actor, {"amount_cny": str(row.amount_cny)})
+    audit(db, "investment_budget_item", row.id, "delete", actor, {"amount_cny": money(row.amount_cny)})
     db.commit()
     return ok({"id": row.id})
 
 
 @router.get("/api/projects/{project_id}/effort-entries")
 def list_effort_entries(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
-    rows = db.query(ProjectEffortEntry).filter(
-        ProjectEffortEntry.project_id == project_id, ProjectEffortEntry.is_deleted.is_(False)
-    ).order_by(ProjectEffortEntry.work_date.desc()).all()
+    rows = db.query(InvestmentWorklog).filter(
+        InvestmentWorklog.project_id == project_id, InvestmentWorklog.is_deleted.is_(False)
+    ).order_by(InvestmentWorklog.work_date.desc()).all()
     names = {row.id: row.name for row in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
     return ok([{"id": row.id, "person_id": row.person_id, "person_name": names.get(row.person_id),
                 "work_date": row.work_date, "effort_days": str(row.effort_days), "role_type": row.role_type,
@@ -1425,7 +1449,18 @@ def create_effort_entry(project_id: str, body: EffortEntryIn, db: Session = Depe
     if not project or project.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
     ensure_not_example(project)
+    if body.work_date > date.today():
+        raise AppError("INVESTMENT_WORKLOG_FUTURE_DATE", "实际工时不能登记未来日期", 400)
     require_it_member_if_configured(db, body.person_id, "投入人员")
+    existing_days = sum((
+        item.effort_days for item in db.query(InvestmentWorklog).filter(
+            InvestmentWorklog.person_id == body.person_id,
+            InvestmentWorklog.work_date == body.work_date,
+            InvestmentWorklog.is_deleted.is_(False),
+        )
+    ), Decimal("0"))
+    if existing_days + body.effort_days > Decimal("2"):
+        raise AppError("INVESTMENT_WORKLOG_DAILY_LIMIT", "同一人员单日累计投入不能超过 2 人天", 409)
     if body.wbs_task_id:
         wbs = db.get(WbsTask, body.wbs_task_id)
         if not wbs or wbs.is_deleted or wbs.project_id != project_id:
@@ -1436,13 +1471,17 @@ def create_effort_entry(project_id: str, body: EffortEntryIn, db: Session = Depe
 
         configured = (get_org_settings(db).report_role_rates or {}).get(body.role_type)
         rate = Decimal(str(configured)) if configured is not None else None
-    data = body.model_dump(exclude={"standard_rate_cny_per_day"})
-    row = ProjectEffortEntry(
-        project_id=project_id, created_by=actor.id, standard_rate_cny_per_day=rate, **data
+    row = InvestmentWorklog(
+        lifecycle_stage="build", investment_intent="transform", subject_type="project",
+        subject_id=project_id, project_id=project_id, person_id=body.person_id,
+        work_date=body.work_date, effort_days=body.effort_days, role_type=body.role_type,
+        activity_type=body.role_type if body.role_type in {"design", "development", "testing", "implementation", "pm"} else "other",
+        standard_rate_cny_per_day=rate, wbs_task_id=body.wbs_task_id, note=body.note,
+        created_by=actor.id,
     )
     db.add(row)
     db.flush()
-    audit(db, "project_effort_entry", row.id, "create", actor, {
+    audit(db, "investment_worklog", row.id, "create", actor, {
         "effort_days": str(row.effort_days), "role_type": row.role_type,
         "standard_rate_used": rate is not None,
     })
@@ -1452,12 +1491,12 @@ def create_effort_entry(project_id: str, body: EffortEntryIn, db: Session = Depe
 
 @router.delete("/api/project-effort-entries/{entry_id}")
 def delete_effort_entry(entry_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
-    row = db.get(ProjectEffortEntry, entry_id)
+    row = db.get(InvestmentWorklog, entry_id)
     if not row or row.is_deleted:
         raise AppError("NOT_FOUND", "人天投入记录不存在", 404)
     ensure_not_example(db.get(Project, row.project_id))
     row.is_deleted = True
-    audit(db, "project_effort_entry", row.id, "delete", actor, {"effort_days": str(row.effort_days)})
+    audit(db, "investment_worklog", row.id, "delete", actor, {"effort_days": money(row.effort_days)})
     db.commit()
     return ok({"id": row.id})
 
@@ -1467,50 +1506,17 @@ def investment_summary(project_id: str, db: Session = Depends(get_db), _=Depends
     project = db.get(Project, project_id)
     if not project or project.is_deleted:
         raise AppError("NOT_FOUND", "项目不存在", 404)
-    budgets = db.query(ProjectBudgetItem).filter(
-        ProjectBudgetItem.project_id == project_id, ProjectBudgetItem.is_deleted.is_(False)
-    ).all()
-    costs = db.query(CostEntry).filter(CostEntry.project_id == project_id, CostEntry.is_deleted.is_(False)).all()
-    efforts = db.query(ProjectEffortEntry).filter(
-        ProjectEffortEntry.project_id == project_id, ProjectEffortEntry.is_deleted.is_(False)
-    ).all()
-    categories = {key: {"budget_cny": Decimal("0"), "actual_cny": Decimal("0")} for key in ("software", "hardware", "service", "labor", "other", "legacy")}
-    for row in budgets:
-        categories[row.category]["budget_cny"] += row.amount_cny
-    budget_total = sum((row.amount_cny for row in budgets), Decimal("0"))
-    if not budgets and project.budget_10k is not None:
-        budget_total = Decimal(str(project.budget_10k)) * Decimal("10000")
-    actual_total = Decimal("0")
-    committed_total = Decimal("0")
-    for row in costs:
-        amount = row.amount_cny if row.amount_cny is not None else Decimal(str(row.amount_10k)) * Decimal("10000")
-        categories[row.category if row.category in categories else "other"]["actual_cny"] += amount
-        if row.cost_type == "committed":
-            committed_total += amount
-        else:
-            actual_total += amount
-    effort_days = sum((row.effort_days for row in efforts), Decimal("0"))
-    effort_cost = sum((row.effort_days * row.standard_rate_cny_per_day for row in efforts if row.standard_rate_cny_per_day is not None), Decimal("0"))
-    def decimal_2(value: Decimal) -> str:
-        return str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-
-    return ok({
-        "budget_cny": decimal_2(budget_total), "incurred_cost_cny": decimal_2(actual_total),
-        "committed_cost_cny": decimal_2(committed_total), "effort_days": decimal_2(effort_days),
-        "effort_cost_cny": decimal_2(effort_cost),
-        "budget_execution_rate": round(float((actual_total + committed_total + effort_cost) * 100 / budget_total), 2) if budget_total else None,
-        "categories": [{"category": key, "budget_cny": decimal_2(value["budget_cny"]), "actual_cny": decimal_2(value["actual_cny"])} for key, value in categories.items()],
-    })
+    return ok(investment_domain_summary(db, subject_type="project", subject_id=project_id, lifecycle_stage="build"))
 
 
 @router.delete("/api/costs/{cost_id}")
 def delete_cost(cost_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
-    c = db.get(CostEntry, cost_id)
+    c = db.get(InvestmentCostEntry, cost_id)
     if not c or c.is_deleted:
         raise AppError("NOT_FOUND", "成本记录不存在", 404)
     ensure_example_delete_allowed(db.get(Project, c.project_id), db, actor)
     c.is_deleted = True
-    audit(db, "cost_entry", c.id, "delete", actor, {"amount_10k": c.amount_10k})
+    audit(db, "investment_cost_entry", c.id, "delete", actor, {"amount_cny": money(c.amount_cny)})
     db.commit()
     return ok({"id": c.id})
 

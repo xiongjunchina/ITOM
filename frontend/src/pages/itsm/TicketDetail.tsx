@@ -28,6 +28,7 @@ import DocumentTypeHint from '../../components/DocumentTypeHint';
 import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
+import InvestmentPanel from '../../components/investment/InvestmentPanel';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useGoBack } from '../../utils/nav';
@@ -492,6 +493,13 @@ export default function TicketDetail() {
       )}
 
       <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
+
+      <InvestmentPanel
+        subjectType="ticket"
+        subjectId={detail.id}
+        lifecycleStage="run"
+        readOnly={isExample}
+      />
 
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>

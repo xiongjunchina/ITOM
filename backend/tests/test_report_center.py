@@ -57,7 +57,7 @@ def test_project_investment_precise_amounts_and_effort(client, admin_headers):
     })
     assert cost.status_code == 200, cost.text
     effort = client.post(f"/api/projects/{project_id}/effort-entries", headers=admin_headers, json={
-        "person_id": person_id, "work_date": str(TODAY), "effort_days": "2.50",
+        "person_id": person_id, "work_date": str(TODAY), "effort_days": "2.00",
         "role_type": "implementation", "standard_rate_cny_per_day": "1200.00",
     })
     assert effort.status_code == 200, effort.text
@@ -67,8 +67,8 @@ def test_project_investment_precise_amounts_and_effort(client, admin_headers):
     data = summary.json()["data"]
     assert data["budget_cny"] == "200000.00"
     assert data["incurred_cost_cny"] == "12345.67"
-    assert data["effort_days"] == "2.50"
-    assert data["effort_cost_cny"] == "3000.00"
+    assert data["effort_days"] == "2.00"
+    assert data["effort_cost_cny"] == "2400.00"
 
     metrics = client.post("/api/reports/query", headers=admin_headers, json={
         "metric_codes": ["project.budget_cny", "project.actual_cost_cny", "project.effort_days", "project.effort_cost_cny"],
@@ -79,8 +79,8 @@ def test_project_investment_precise_amounts_and_effort(client, admin_headers):
     values = {row["code"]: row["value"] for row in metrics.json()["data"]["metrics"]}
     assert values["project.budget_cny"] == "200000.00"
     assert values["project.actual_cost_cny"] == "12345.67"
-    assert values["project.effort_days"] == "2.50"
-    assert values["project.effort_cost_cny"] == "3000.00"
+    assert values["project.effort_days"] == "2.00"
+    assert values["project.effort_cost_cny"] == "2400.00"
 
 
 def test_requirement_timeliness_metrics(client, admin_headers):

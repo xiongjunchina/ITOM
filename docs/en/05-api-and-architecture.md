@@ -501,9 +501,18 @@ GET /api/dashboard    # a single endpoint returning all data for the four panels
 
 When the account has task-module view permission, the response also contains a read-only `task` aggregate with `open_total`, `open_bugs`, `open_bug_fix_tasks`, `open_delegated_tasks`, and `open_requirement_tasks`. These are live counts of non-terminal tasks and do not change existing Dashboard fields.
 
-### 4.8 Unified Report Center (B2)
+### 4.8 Unified Investment Ledger and Report Center (B2 + B-OPS)
 
 ```text
+GET  /api/investments/summary
+GET/POST /api/investments/budgets
+GET/POST /api/investments/costs
+GET/POST /api/investments/worklogs
+GET/POST /api/investments/allocations
+DELETE /api/investments/budgets/{id}
+DELETE /api/investments/costs/{id}
+DELETE /api/investments/worklogs/{id}
+DELETE /api/investments/allocations/{id}
 GET  /api/reports/metrics
 POST /api/reports/query
 GET  /api/reports/drilldown/{metric_code}
@@ -520,11 +529,17 @@ GET  /api/reports/{report_id}/export
 GET/PATCH /api/admin/org-settings             # timezone/week/fiscal/person-day/role-rate conventions
 ```
 
-The fixed metric registry declares each code's domain, source-module permission, sensitive permission, formula version, data-quality semantics, and optional drill-down. `POST /query` accepts 1–50 registered metrics, an inclusive date interval, and only `project_id/portfolio_id/business_domain_id/ticket_type/priority` filters; an unknown filter or unauthorized metric fails closed. Project, Requirement, ITSM, Task, and Process metrics query their own domain facts and never read `report_version` as a replacement source of truth. Task metrics aggregate only task modules the current user can actually view, and Requirement metrics retain record-level data scope. Drill-down repeats the authorization with `limit ≤ 200`.
+Investment APIs use `subject_type/subject_id`; Shared Operations requires an empty subject_id. `lifecycle_stage` is demand/build/run and `investment_intent` is run/grow/transform. Budget end cannot precede start; incurred/paid cost and actual worklog reject future dates; one person's active entries for a day cannot exceed two person-days; and WBS must belong to the same Project. Allocation validates source, visible target, non-redundant direct ownership, and an active percentage total no greater than 100%. Every create/delete is soft-deleted and audited.
+
+`GET /api/investments/summary` returns budget, committed, incurred, paid, actual person-days, standard labor valuation, management total, unclassified labor, financial/management budget execution, category composition, activity effort, and quality. Paid is included in incurred and exposed separately only as payment progress; management total is null while unclassified labor is nonzero. Service Item/CI summaries can roll up referenced Ticket facts, and explicit allocation applies percentage weight. Contract amount and ticket elapsed time never enter the ledger automatically.
+
+Legacy `/api/projects/{id}/budget-items|costs|effort-entries|investment-summary` endpoints remain compatible, but new writes target unified tables only. PostgreSQL startup migration idempotently copies legacy Project budget, cost, and effort by `source_type/source_id`; it does not delete legacy tables and does not dual-write. Creating an explicit Project budget item soft-deletes the old total-budget fallback row.
+
+The fixed metric registry declares each code's domain, source-module permission, sensitive permission, formula version, data-quality semantics, and optional drill-down. `POST /query` accepts 1–50 registered metrics, an inclusive date interval, and only `project_id/portfolio_id/business_domain_id/ticket_type/priority/service_item_id/ci_id/contract_id/requirement_id/ticket_id/problem_id/subject_type/subject_id` filters; an unknown filter or unauthorized metric fails closed. Project, Requirement, Operations, People, ITSM, Task, and Process metrics query domain facts or the unified ledger and never read `report_version` as a replacement source of truth. Operations metrics are limited to lifecycle=run; People metrics aggregate demand/build/run and role. Task metrics include only modules the current user may view, and Requirement metrics retain record-level data scope. Drill-down repeats authorization with `limit ≤ 200`.
 
 Periods support week/month/quarter/half_year/year/custom. Defaults are Asia/Shanghai, Monday-first weeks, calendar year, and eight hours per person-day. The Requirement timeliness cohort uses `Requirement.created_at` in the period; lead time and P50/P90 include only rows with `closed_at`, stage ageing reads current stage timestamps, and on-time rate uses only closed rows with a target date. A count with no rows returns `value=0, quality=ok`; a missing denominator returns `value=null, quality=no_data`.
 
-Formal generation has a unique actor + Idempotency-Key and canonical request digest. Same key/request returns its first version, while a different request returns 409. Each version stores metric snapshot, formula versions, quality, narrative, generation fact, and checksum. Draft narrative may change and recomputes the checksum; review prevents regeneration. The `report_flow` approval callback marks the instance/current version approved, while rejection returns to draft. Publication requires `reports_publish`, stores user/role/group audiences, and locks the current version/instance. Detail, version list, and Excel export require creator/publication-management authority or a matching published audience, and recheck any finance/people/platform sensitive permissions found in the version. `report_schedule` is a disabled reserved model in this release and has no automatic-run API.
+Formal generation has a unique actor + Idempotency-Key and canonical request digest. Same key/request returns its first version, while a different request returns 409. Each version stores metric snapshot, formula versions, quality, narrative, generation fact, and checksum. System templates cover Operations Weekly, Management Monthly, Project Investment, Requirement Timeliness, Operations Investment, and IT Capacity/Allocation; startup updates system templates only and never overwrites custom templates. Draft narrative may change and recomputes the checksum; review prevents regeneration. The `report_flow` approval callback marks the instance/current version approved, while rejection returns to draft. Publication requires `reports_publish`, stores user/role/group audiences, and locks the current version/instance. Detail, version list, and Excel export require creator/publication-management authority or a matching published audience, and recheck any finance/people/platform sensitive permissions found in the version. `report_schedule` is a disabled reserved model in this release and has no automatic-run API.
 
 ## 5. Domain Event List
 

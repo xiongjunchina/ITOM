@@ -2,10 +2,12 @@ import type { Dict } from '../dict';
 
 export const zh: Dict = {
   'report.title': '统一报表中心',
-  'report.subtitle': '以现有业务事实为准，统一分析 IT 服务、项目、需求、任务与流程；正式发布版本保留审计快照。',
+  'report.subtitle': '以统一投入台账和现有业务事实为准，分析需求、项目、运维费用与 IT 人力投向；正式发布版本保留审计快照。',
   'report.tab.overview': '经营概览',
   'report.tab.project': '项目投入',
   'report.tab.requirement': '需求时效',
+  'report.tab.operations': '运维投入',
+  'report.tab.people': '人力投向',
   'report.tab.library': '报告库',
   'report.tab.catalog': '指标目录',
   'report.period': '统计周期',
@@ -46,14 +48,17 @@ export const zh: Dict = {
   'report.catalog.sensitivity': '敏感级别',
   'report.catalog.formula': '公式版本',
   'report.filtersApplied': '当前筛选条件会一并固化到正式报告版本。',
+  'report.sharedOperationsLedger': '共享运维成本池与工时台账',
 };
 
 export const en: Dict = {
   'report.title': 'Unified Report Center',
-  'report.subtitle': 'Analyze IT services, projects, requirements, tasks, and processes from source-of-record facts. Published versions retain auditable snapshots.',
+  'report.subtitle': 'Analyze demand, projects, operations cost, and IT capacity from the unified investment ledger and source-of-record facts. Published versions retain auditable snapshots.',
   'report.tab.overview': 'Management Overview',
   'report.tab.project': 'Project Investment',
   'report.tab.requirement': 'Requirement Timeliness',
+  'report.tab.operations': 'Operations Investment',
+  'report.tab.people': 'People Allocation',
   'report.tab.library': 'Report Library',
   'report.tab.catalog': 'Metric Catalog',
   'report.period': 'Period',
@@ -94,4 +99,5 @@ export const en: Dict = {
   'report.catalog.sensitivity': 'Sensitivity',
   'report.catalog.formula': 'Formula Version',
   'report.filtersApplied': 'Current filters are frozen into the formal report version.',
+  'report.sharedOperationsLedger': 'Shared Operations Cost Pool and Worklog Ledger',
 };
