@@ -36,6 +36,12 @@ test('report navigation, permissions and bilingual copy stay synchronized', () =
   const locale = read('../src/i18n/locales/reports.ts');
   assert.match(menu, /key: '\/reports'/);
   assert.match(menu, /module: 'reports'/);
+  const adminIndex = menu.indexOf("key: 'admin'");
+  const reportIndex = menu.indexOf("key: '/reports'");
+  const menuTreeEnd = menu.indexOf('\n];', reportIndex);
+  assert.ok(adminIndex >= 0 && reportIndex > adminIndex, 'Report Center must follow System Management');
+  assert.ok(menuTreeEnd > reportIndex, 'Report Center must remain inside MENU_TREE');
+  assert.doesNotMatch(menu.slice(reportIndex, menuTreeEnd), /\n\s{4}key:/, 'Report Center must be the final top-level menu item');
   assert.match(router, /path: 'reports', element: <ReportGate \/>/);
   assert.match(locale, /'report\.title': '统一报表中心'/);
   assert.match(locale, /'report\.title': 'Unified Report Center'/);

@@ -121,7 +121,7 @@ The state transitions of each record type are driven by state-machine configurat
 
 ### 3.4 Page Inventory
 
-Login, Overview, Profile Center (account/security/preferences/activity), Service Request / Incident Management / Change Management (three entry points into the same ticket domain by type; shared detail page), Service Catalog, CMDB, Problem, Vendor, Contract, Knowledge Base, Project Management, Project Detail, Requirement List / Detail, Process Definition, Process Monitoring, Team Overview, Performance Scoring, Position & Headcount, Learning & Growth (with **Training Development** and **Learning Tasks** tabs), Activity Points, Team Culture, Unified Report Center, and System Management.
+Login, Overview, Profile Center (account/security/preferences/activity), Service Request / Incident Management / Change Management (three entry points into the same ticket domain by type; shared detail page), Service Catalog, CMDB, Problem, Vendor, Contract, Knowledge Base, Project Management, Project Detail, Requirement List / Detail, Process Definition, Process Monitoring, Team Overview, Performance Scoring, Position & Headcount, Learning & Growth (with **Training Development** and **Learning Tasks** tabs), Activity Points, Team Culture, System Management, and the Unified Report Center at the bottom of the sidebar.
 
 ---
 

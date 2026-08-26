@@ -75,14 +75,6 @@ export const MENU_TREE: MenuNode[] = [
     ],
   },
   {
-    key: '/reports',
-    path: '/reports',
-    label: '报表中心',
-    icon: <BarChartOutlined />,
-    module: 'reports',
-    roles: STAFF,
-  },
-  {
     key: 'task-management',
     label: '任务管理',
     icon: <ScheduleOutlined />,
@@ -149,6 +141,14 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/admin/ui-branding', path: '/admin/ui-branding', label: '界面与品牌', module: 'admin_ui_branding', roles: ['admin'] },
       { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', module: 'admin_audit', roles: ['admin', 'is_mgr'] },
     ],
+  },
+  {
+    key: '/reports',
+    path: '/reports',
+    label: '报表中心',
+    icon: <BarChartOutlined />,
+    module: 'reports',
+    roles: STAFF,
   },
 ];
 
