@@ -1110,13 +1110,6 @@ export default function ProjectDetail() {
         )}
       </Card>
 
-      <RecordRelationsPanel
-        entityType="project"
-        entityId={detail.id}
-        excludeRelationTypes={['converted_to_project']}
-        hideWhenEmpty
-      />
-
       <Card title={t('proj.progress')} size="small">
         {detail.progress == null ? (
           <Typography.Text type="secondary">{t('proj.noWbsProgress')}</Typography.Text>
@@ -1131,6 +1124,13 @@ export default function ProjectDetail() {
           </>
         )}
       </Card>
+
+      <RecordRelationsPanel
+        entityType="project"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
     </Space>
   );
 

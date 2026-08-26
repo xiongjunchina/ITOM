@@ -443,8 +443,6 @@ export default function ProblemDetail() {
         </Descriptions>
       </Card>
 
-      <RecordRelationsPanel entityType="problem" entityId={detail.id} />
-
       <Card title={t('itsm.problem.rootCauseCard')} size="small">
         <Descriptions column={1} size="small" bordered>
           <Descriptions.Item label={t('itsm.ticket.rootCause')}>
@@ -488,6 +486,8 @@ export default function ProblemDetail() {
           locale={{ emptyText: t('itsm.noLinkedTickets') }}
         />
       </Card>
+
+      <RecordRelationsPanel entityType="problem" entityId={detail.id} />
 
       {/* 状态流转 Modal：根因 + 规避 */}
       <Modal

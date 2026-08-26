@@ -1394,13 +1394,6 @@ export default function RequirementDetail() {
         )}
       </Card>
 
-      <RecordRelationsPanel
-        entityType="requirement"
-        entityId={detail.id}
-        excludeRelationTypes={['converted_to_project']}
-        hideWhenEmpty
-      />
-
       {/* 评估评分（登记/评估阶段或已有评分时显示） */}
       {id && (evaluationIsCurrent || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
         <EvaluationPanel
@@ -1702,6 +1695,13 @@ export default function RequirementDetail() {
           </Typography.Paragraph>
         </Card>
       )}
+
+      <RecordRelationsPanel
+        entityType="requirement"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
 
       <InvestmentPanel
         subjectType="requirement"

@@ -492,8 +492,6 @@ export default function TicketDetail() {
         </Card>
       )}
 
-      <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
-
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>
           <Descriptions.Item label={t('itsm.f.serviceItem')}>{detail.service_item_name ?? '-'}</Descriptions.Item>
@@ -684,6 +682,8 @@ export default function TicketDetail() {
           </Descriptions>
         </Card>
       )}
+
+      <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
 
       <InvestmentPanel
         subjectType="ticket"
