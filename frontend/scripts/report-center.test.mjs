@@ -42,6 +42,11 @@ test('report navigation, permissions and bilingual copy stay synchronized', () =
   assert.ok(adminIndex >= 0 && reportIndex > adminIndex, 'Report Center must follow System Management');
   assert.ok(menuTreeEnd > reportIndex, 'Report Center must remain inside MENU_TREE');
   assert.doesNotMatch(menu.slice(reportIndex, menuTreeEnd), /\n\s{4}key:/, 'Report Center must be the final top-level menu item');
+  assert.match(
+    menu,
+    /if \(user\?\.permissions\) return mods\.some\(\(m\) => hasPermission\(user, m, 'view'\)\)/,
+    'users without reports.view must continue to lose the Report Center entry',
+  );
   assert.match(router, /path: 'reports', element: <ReportGate \/>/);
   assert.match(locale, /'report\.title': '统一报表中心'/);
   assert.match(locale, /'report\.title': 'Unified Report Center'/);
