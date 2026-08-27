@@ -27,6 +27,8 @@ export interface ProjectEditModalProject {
   resource_note: string | null;
   org_members: ProjectOrgEntry[];
   stakeholders: ProjectOrgEntry[];
+  /** 上游回改窗口：只能更正内容，不能变更流程路由所依赖的项目经理。 */
+  workflow_edit_mode?: string | null;
 }
 
 /** Form.List 行值（Input 产出 string；初值可能带 undefined） */
@@ -75,6 +77,7 @@ export default function ProjectEditModal({
   onSaved: () => void;
 }) {
   const t = useT();
+  const isUpstreamCorrection = project?.workflow_edit_mode?.startsWith('upstream_') === true;
   const [form] = Form.useForm<ProjectEditFormValues>();
   const [saving, setSaving] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
@@ -138,7 +141,6 @@ export default function ProjectEditModal({
     try {
       await api.patch(`/projects/${project.id}`, {
         name: v.name,
-        pm: v.pm,
         planned_start: v.planned[0].format('YYYY-MM-DD'),
         planned_end: v.planned[1].format('YYYY-MM-DD'),
         portfolio_id: v.portfolio_id ?? null,
@@ -154,6 +156,8 @@ export default function ProjectEditModal({
         resource_note: v.resource_note || null,
         org_members: toOrgPayload(v.org_members),
         stakeholders: toOrgPayload(v.stakeholders),
+        // 回改窗口中不能变更项目经理，避免绕过当前节点的办理/路由职责。
+        ...(isUpstreamCorrection ? {} : { pm: v.pm }),
       });
       message.success(t('proj.projectUpdated'));
       onSaved();
@@ -228,16 +232,18 @@ export default function ProjectEditModal({
         >
           <Input maxLength={200} />
         </Form.Item>
-        <Form.Item name="pm" label={t('proj.pm')} rules={[{ required: true, message: t('proj.pmRequired') }]}>
-          <Select
-            showSearch
-            optionFilterProp="label"
-            options={members.map((m) => ({
-              value: m.id,
-              label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-            }))}
-          />
-        </Form.Item>
+        {!isUpstreamCorrection && (
+          <Form.Item name="pm" label={t('proj.pm')} rules={[{ required: true, message: t('proj.pmRequired') }]}>
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={members.map((m) => ({
+                value: m.id,
+                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+              }))}
+            />
+          </Form.Item>
+        )}
         <Form.Item name="planned" label={t('proj.planned')} rules={[{ required: true, message: t('proj.plannedRequired') }]}>
           <DatePicker.RangePicker style={{ width: '100%' }} />
         </Form.Item>

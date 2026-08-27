@@ -123,9 +123,16 @@ const zh: Dict = {
   'module.contracts': '合同管理',
   'module.knowledge': '知识库',
   'module.projects': '项目管理（项目列表/项目组合）',
+  'module.reports': '统一报表中心',
+  'module.reports_publish': '报表发布与版本锁定',
+  'module.reports_finance': '财务与成本指标',
+  'module.reports_people': '人员投入明细',
+  'module.reports_platform': '平台运行敏感指标',
+  'module.investment_costs': '投入预算、费用与分摊',
+  'module.investment_worklogs': '投入工时登记',
   'module.requirements': '需求总览（登记/评审/方案）',
   'module.req_tasks': '任务跟踪',
-  'module.req_scoring': '评分规则',
+  'module.req_scoring': '需求评分规则',
   'module.process_definitions': '流程定义',
   'module.process_monitor': '流程监控',
   'module.team_overview': '团队总览',
@@ -145,6 +152,7 @@ const zh: Dict = {
   'module.admin_master_data': '数据字典',
   'module.admin_workflow': '状态机配置',
   'module.admin_feishu': '系统集成',
+  'module.admin_ai': 'AI 智能体',
   'module.admin_audit': '审计日志',
   'module.admin_ui_branding': '界面与品牌',
   // 权限配置：菜单页小标题（合并页）
@@ -156,6 +164,7 @@ const zh: Dict = {
   'group.总览': '总览',
   'group.ITSM': 'ITSM',
   'group.项目管理': '项目管理',
+  'group.报表中心': '报表中心',
   'group.需求管理': '需求管理',
   'group.流程中心': '流程中心',
   'group.团队管理': '团队管理',
@@ -178,11 +187,12 @@ const zh: Dict = {
   'menu.projects': '项目管理',
   'menu./projects/list': '项目列表',
   'menu./projects/portfolios': '项目组合',
+  'menu./reports': '报表中心',
   'menu./requirements': '需求管理',
   'menu.requirements': '需求管理',
   'menu./requirements/overview': '需求总览',
   'menu./requirements/tasks': '任务跟踪',
-  'menu./requirements/scoring': '评分规则',
+  'menu./requirements/scoring': '需求评分规则',
   'menu.team': '团队管理',
   'menu./team/overview': '团队总览',
   'menu./team/performance': '人效评分',
@@ -203,6 +213,7 @@ const zh: Dict = {
   'menu./admin/workflow-config': '状态机配置',
   'menu./admin/feishu': '飞书集成',
   'menu./admin/integrations': '系统集成',
+  'menu./admin/ai-assistant': 'AI 智能体',
   'menu./admin/audit-logs': '审计日志',
   'menu./admin/ui-branding': '界面与品牌',
 };
@@ -322,6 +333,13 @@ const en: Dict = {
   'module.contracts': 'Contract Management',
   'module.knowledge': 'Knowledge Base',
   'module.projects': 'Project Management',
+  'module.reports': 'Unified Report Center',
+  'module.reports_publish': 'Report Publishing and Version Lock',
+  'module.reports_finance': 'Finance and Cost Metrics',
+  'module.reports_people': 'People Investment Details',
+  'module.reports_platform': 'Sensitive Platform Metrics',
+  'module.investment_costs': 'Investment Budgets, Costs and Allocations',
+  'module.investment_worklogs': 'Investment Worklogs',
   'module.requirements': 'Requirement Management',
   'module.process_definitions': 'Process Definitions',
   'module.process_monitor': 'Process Monitor',
@@ -342,6 +360,7 @@ const en: Dict = {
   'module.admin_master_data': 'Data Dictionary',
   'module.admin_workflow': 'State Machine',
   'module.admin_feishu': 'System Integrations',
+  'module.admin_ai': 'AI Agent',
   'module.admin_audit': 'Audit Log',
   'module.admin_ui_branding': 'Interface & Branding',
   'permPage.admin_org': 'Organization',
@@ -351,6 +370,7 @@ const en: Dict = {
   'group.总览': 'Dashboard',
   'group.ITSM': 'ITSM',
   'group.项目管理': 'Projects',
+  'group.报表中心': 'Reports',
   'group.需求管理': 'Requirements',
   'group.流程中心': 'Process',
   'group.团队管理': 'Team',
@@ -372,11 +392,12 @@ const en: Dict = {
   'menu.projects': 'Projects',
   'menu./projects/list': 'Project List',
   'menu./projects/portfolios': 'Portfolios',
+  'menu./reports': 'Report Center',
   'menu./requirements': 'Requirements',
   'menu.requirements': 'Requirements',
   'menu./requirements/overview': 'Overview',
   'menu./requirements/tasks': 'Task Tracking',
-  'menu./requirements/scoring': 'Scoring Rules',
+  'menu./requirements/scoring': 'Requirement Scoring Rules',
   'menu.team': 'Team',
   'menu./team/overview': 'Team Overview',
   'menu./team/performance': 'Performance',
@@ -397,6 +418,7 @@ const en: Dict = {
   'menu./admin/workflow-config': 'State Machine',
   'menu./admin/feishu': 'Feishu Integration',
   'menu./admin/integrations': 'System Integrations',
+  'menu./admin/ai-assistant': 'AI Agent',
   'menu./admin/audit-logs': 'Audit Log',
   'menu./admin/ui-branding': 'Interface & Branding',
 };
@@ -412,8 +434,10 @@ import * as dashboard from './locales/dashboard';
 import * as components from './locales/components';
 import * as profile from './locales/profile';
 import * as taskManagement from './locales/taskManagement';
+import * as assistant from './locales/assistant';
+import * as reports from './locales/reports';
 
-const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement];
+const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement, assistant, reports];
 
 export const DICT: Record<'zh' | 'en', Dict> = {
   zh: Object.assign({}, zh, ...domains.map((d) => d.zh)),

@@ -63,6 +63,7 @@ export const zh: Dict = {
   'dash.task.bugFixes': '修复任务',
   'dash.task.delegated': '委派任务',
   'dash.task.requirements': '需求开发任务',
+  'dash.task.projects': '项目开发任务',
 };
 
 export const en: Dict = {
@@ -127,4 +128,5 @@ export const en: Dict = {
   'dash.task.bugFixes': 'Fix tasks',
   'dash.task.delegated': 'Delegated',
   'dash.task.requirements': 'Requirement dev tasks',
+  'dash.task.projects': 'Project dev tasks',
 };

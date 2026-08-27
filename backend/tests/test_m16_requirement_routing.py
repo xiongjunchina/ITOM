@@ -57,7 +57,7 @@ def test_review_assignment_and_solution_review(client, ctx):
 
 
 def test_route_dev_under_threshold(client, ctx):
-    """二次开发 + 人天<20 → 转开发实现(指派开发负责人+通知) → 任务登记并在任务跟踪呈现。"""
+    """二次开发 + 人天<20 → 固定指派评分配置开发负责人；无任务不能完成实现交付。"""
     r = _register(client, ctx["admin"], ctx["domain"], "小改造需求")
     _approve(client, ctx["admin"], r["id"])
     client.patch(f"/api/requirements/{r['id']}",
@@ -68,12 +68,19 @@ def test_route_dev_under_threshold(client, ctx):
     # 转项目动作被拒（不满足条件）
     resp = client.post(f"/api/requirements/{r['id']}/to-project", json={"pm_id": ctx["pm"]}, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "ROUTE_NOT_PROJECT"
-    # 转开发实现：指派开发负责人 → implementing；流程「实现交付」任务指派该负责人
-    resp = client.post(f"/api/requirements/{r['id']}/to-dev", json={"owner_id": ctx["dev"]}, headers=ctx["admin"])
+    # 单据操作人不能改选其他开发人员，必须使用评分规则的开发负责人。
+    denied = client.post(f"/api/requirements/{r['id']}/to-dev", json={"owner_id": ctx["dev"]}, headers=ctx["admin"])
+    assert denied.status_code == 409 and denied.json()["error"]["code"] == "DEV_LEADER_FIXED"
+    # 转开发实现：固定使用评分规则的开发负责人 → implementing；流程「实现交付」任务指派该负责人。
+    resp = client.post(f"/api/requirements/{r['id']}/to-dev", json={}, headers=ctx["admin"])
     assert resp.json()["data"]["status"] == "implementing", resp.text
     proc = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
     step3 = next(st for st in proc["steps"] if "实现交付" in st["name"])
-    assert proc["current_step_seq"] == step3["seq"] and step3["assignee_name"] == "开发小王M16"
+    assert proc["current_step_seq"] == step3["seq"] and step3["assignee_name"] == "开发Leader M16"
+    assert client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["implementation_route"] == "需求开发实现"
+    # 实现交付不能跳过开发任务登记。
+    blocked = client.post(f"/api/process-tasks/{step3['task_id']}/complete", json={"comment": "直接交付"}, headers=ctx["admin"])
+    assert blocked.status_code == 409 and blocked.json()["error"]["code"] == "REQUIREMENT_TASK_REQUIRED"
     # 登记任务 → 任务跟踪呈现（按总分排序）
     client.post(f"/api/requirements/{r['id']}/tasks", json={
         "name": "接口改造", "description": "评价数据接入", "assignee": ctx["dev"], "plan_effort": 3,
@@ -81,13 +88,37 @@ def test_route_dev_under_threshold(client, ctx):
     tasks = client.get("/api/requirements/tasks/active", headers=ctx["admin"]).json()["data"]
     mine = next(x for x in tasks if x["requirement_id"] == r["id"])
     assert mine["name"] == "接口改造" and mine["weighted_total"] is not None
+    delivered = client.post(f"/api/process-tasks/{step3['task_id']}/complete", json={"comment": "开发任务已排期"}, headers=ctx["admin"])
+    assert delivered.status_code == 200, delivered.text
 
     # 反向守卫：开发路径不可走转项目、转开发亦拒新购
     r2 = _register(client, ctx["admin"], ctx["domain"], "新购需求守卫")
     _approve(client, ctx["admin"], r2["id"])
     client.patch(f"/api/requirements/{r2['id']}", json={"solution_type": "新购系统"}, headers=ctx["admin"])
-    resp = client.post(f"/api/requirements/{r2['id']}/to-dev", json={"owner_id": ctx["dev"]}, headers=ctx["admin"])
+    resp = client.post(f"/api/requirements/{r2['id']}/to-dev", json={}, headers=ctx["admin"])
     assert resp.json()["error"]["code"] == "ROUTE_NOT_DEV"
+
+
+def test_manual_review_then_score_does_not_skip_solution_or_implementation(client, ctx):
+    """回归 RQ-202608-0014：第一步已完成后补评分，只能停在方案评估；路径决定仅推进到实现交付。"""
+    r = _register(client, ctx["admin"], ctx["domain"], "人工评审后补评分")
+    first = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    step1 = next(st for st in first["steps"] if st["seq"] == first["current_step_seq"])
+    completed = client.post(f"/api/process-tasks/{step1['task_id']}/complete", json={"comment": "业务域评审完成"}, headers=ctx["admin"])
+    assert completed.status_code == 200, completed.text
+
+    scored = _approve(client, ctx["admin"], r["id"])
+    assert scored.status_code == 200, scored.text
+    after_score = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    solution = next(st for st in after_score["steps"] if st["seq"] == after_score["current_step_seq"])
+    assert "方案评估" in solution["name"] and solution["assignee_name"] == "产品Leader M16"
+
+    client.patch(f"/api/requirements/{r['id']}", json={"solution_type": "二次开发", "dev_effort": 1}, headers=ctx["admin"])
+    routed = client.post(f"/api/requirements/{r['id']}/to-dev", json={}, headers=ctx["admin"])
+    assert routed.status_code == 200, routed.text
+    after_route = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]["process"]
+    implementation = next(st for st in after_route["steps"] if st["seq"] == after_route["current_step_seq"])
+    assert "实现交付" in implementation["name"] and implementation["assignee_name"] == "开发Leader M16"
 
 
 def test_route_project_and_auto_close_loop(client, ctx):

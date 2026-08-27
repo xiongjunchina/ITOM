@@ -8,6 +8,15 @@ from app.models.itsm import (
     Ticket,
     TicketSatisfaction,
 )
+from app.models.assistant import (
+    AiAction,
+    AiAgentProfile,
+    AiAgentProfileVersion,
+    AiConversation,
+    AiMessage,
+    AiProviderCall,
+    AiProviderConfig,
+)
 from app.models.itsm_assets import (
     Ci,
     CiRelationship,
@@ -18,15 +27,38 @@ from app.models.itsm_assets import (
     ProblemTicket,
     Vendor,
 )
+from app.models.investment import (
+    InvestmentAllocation,
+    InvestmentBudgetItem,
+    InvestmentCostEntry,
+    InvestmentWorklog,
+)
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
-from app.models.project import CostEntry, Milestone, Portfolio, Project, Risk, WbsTask
+from app.models.project import (
+    CostEntry,
+    Milestone,
+    Portfolio,
+    Project,
+    ProjectBudgetItem,
+    ProjectEffortEntry,
+    Risk,
+    WbsTask,
+)
+from app.models.report import (
+    ReportAudience,
+    ReportGenerationJob,
+    ReportInstance,
+    ReportSchedule,
+    ReportTemplate,
+    ReportVersion,
+)
 from app.models.requirement import (
     Requirement,
     RequirementScore,
     RequirementScoringConfig,
     RequirementTask,
 )
-from app.models.tasks import Bug, BugFixTask, WorkTask
+from app.models.tasks import Bug, BugFixTask, ProjectDevelopmentTask, TaskProgressEntry, WorkTask
 from app.models.team import (
     ActivityCampaign,
     CampaignTask,
@@ -85,6 +117,13 @@ from app.models.support import (
 )
 
 __all__ = [
+    "AiAction",
+    "AiAgentProfile",
+    "AiAgentProfileVersion",
+    "AiConversation",
+    "AiMessage",
+    "AiProviderCall",
+    "AiProviderConfig",
     "ActivityCampaign",
     "Attachment",
     "BusinessDomain",
@@ -100,6 +139,8 @@ __all__ = [
     "CampaignTask",
     "Ci",
     "CostEntry",
+    "ProjectBudgetItem",
+    "ProjectEffortEntry",
     "CiRelationship",
     "Contract",
     "KnowledgeArticle",
@@ -112,6 +153,10 @@ __all__ = [
     "ExternalIdentity",
     "Idea",
     "IdeaLike",
+    "InvestmentAllocation",
+    "InvestmentBudgetItem",
+    "InvestmentCostEntry",
+    "InvestmentWorklog",
     "LearningGrowthGoal",
     "InAppNotification",
     "FeishuConfig",
@@ -140,12 +185,20 @@ __all__ = [
     "Portfolio",
     "Position",
     "Project",
+    "ReportAudience",
+    "ReportGenerationJob",
+    "ReportInstance",
+    "ReportSchedule",
+    "ReportTemplate",
+    "ReportVersion",
     "Requirement",
     "RequirementScore",
     "RequirementScoringConfig",
     "RequirementTask",
     "Bug",
     "BugFixTask",
+    "ProjectDevelopmentTask",
+    "TaskProgressEntry",
     "WorkTask",
     "ProcessDefinition",
     "ProcessInstance",

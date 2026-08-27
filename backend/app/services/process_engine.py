@@ -1,5 +1,7 @@
 """流程引擎最小版（PRD §8）：单据触发实例，任务按步骤推进，默认角色指派。"""
 import logging
+import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -16,7 +18,10 @@ from app.models import (
     UserGroup,
     UserGroupMember,
     Ticket,
+    Requirement,
+    RequirementTask,
 )
+from app.services.requirement_scoring import ROUTE_DEV
 from app.services.rbac import GROUP_PREFIX
 
 logger = logging.getLogger("aom.process")
@@ -111,6 +116,7 @@ ENTITY_LINKS = {
     "requirement": "/requirements/{id}",
     "project": "/projects/{id}",
     "bug": "/task-management/development?tab=bug&bug_id={id}",
+    "report": "/reports?report_id={id}",
 }
 
 
@@ -194,6 +200,11 @@ def _requester_person(db: Session, entity_type: str, entity_id: str) -> str | No
 
         problem = db.get(Problem, entity_id)
         uid = problem.reporter if problem else None
+    elif entity_type == "report":
+        from app.models import ReportInstance
+
+        report = db.get(ReportInstance, entity_id)
+        uid = report.created_by if report else None
     if not uid:
         return None
     u = db.get(AuthUser, uid)
@@ -217,7 +228,15 @@ def _notify_assignee(db: Session, instance: ProcessInstance, step: ProcessStep, 
     )
 
 
-def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, preferred: str | None):
+def _spawn_task(
+    db: Session,
+    instance: ProcessInstance,
+    step: ProcessStep,
+    preferred: str | None,
+    *,
+    force_unassigned: bool = False,
+    notify: bool = True,
+) -> ProcessTask:
     now = datetime.now()
     # 项目流程中的 IT PM 节点必须跟随项目主数据指定的项目经理，不能从所有
     # it_pm 角色持有人中任取一人。这样章程导入/手工创建、后续推进与流程回退
@@ -227,13 +246,16 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
 
         project = db.get(Project, instance.entity_id)
         preferred = project.pm if project and step.default_role == "it_pm" else None
-    if step.default_role == "requester":
+    if force_unassigned:
+        # 服务目录明确配置「人工队列」时，不得再静默按节点默认角色挑选一人。
+        # 任务保留为待处理，满足节点角色的 IT 人员可按既有认领机制处理。
+        assignee = None
+    elif step.default_role == "requester":
         # 「用户确认」类步骤：指派该单据的提交人本人，而非任意业务用户
         assignee = _requester_person(db, instance.entity_type, instance.entity_id) or _resolve_assignee(db, step, preferred)
     else:
         assignee = _resolve_assignee(db, step, preferred)
-    db.add(
-        ProcessTask(
+    task = ProcessTask(
             instance_id=instance.id,
             step_id=step.id,
             definition_version=instance.definition.version,
@@ -247,9 +269,14 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
             assignee=assignee,
             status="待处理",
             started_at=now,
+            # This is intentionally explicit rather than relying only on the
+            # model default: the production migration keeps historical pending
+            # tasks disabled while every task spawned after this release opts in.
+            upstream_correction_enabled=True,
             due_at=now + timedelta(hours=step.sla_hours) if step.sla_hours else None,
         )
-    )
+    db.add(task)
+    db.flush()
     # 流程任务才是“系统分派”的权威来源。工单创建时 Ticket.assignee 可能为空，
     # 但服务请求的首个节点仍会按默认角色解析出实际处理人；领域事件供站内通知
     # 和后续可靠机器人发件箱消费，不改变流程与派单事实。
@@ -267,8 +294,10 @@ def _spawn_task(db: Session, instance: ProcessInstance, step: ProcessStep, prefe
                 "step_name": step.name,
             },
         )
-    _notify_assignee(db, instance, step, assignee)
-    _notify_cc(db, instance, step, assignee)
+    if notify:
+        _notify_assignee(db, instance, step, assignee)
+        _notify_cc(db, instance, step, assignee)
+    return task
 
 
 def _live_steps(definition: ProcessDefinition) -> list[ProcessStep]:
@@ -283,6 +312,7 @@ def start_instance(
     entity_attrs: dict,
     preferred_assignee: str | None = None,
     definition_id: str | None = None,
+    force_unassigned: bool = False,
 ) -> ProcessInstance | None:
     definition = resolve_definition(db, entity_type, entity_attrs, definition_id)
     if not definition or not _live_steps(definition):
@@ -296,28 +326,94 @@ def start_instance(
     )
     db.add(instance)
     db.flush()
-    _spawn_task(db, instance, _live_steps(definition)[0], preferred_assignee)
+    _spawn_task(
+        db,
+        instance,
+        _live_steps(definition)[0],
+        preferred_assignee,
+        force_unassigned=force_unassigned,
+    )
     return instance
 
 
-def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") -> ProcessInstance:
+def _require_requirement_implementation_tasks(
+    db: Session,
+    instance: ProcessInstance | None,
+    task: ProcessTask,
+):
+    """需求开发实现的「实现交付」节点至少要有一条开发任务。
+
+    该校验放在流程引擎而不是前端或单一路由，确保网页、API 和后续自动化调用
+    都不能绕过它。仅约束写入 implementation_route 快照后的新记录，存量需求
+    保持原有行为，避免上线时影响正在处理的历史单据。
+    """
+    if not instance or instance.entity_type != "requirement":
+        return
+    step = db.get(ProcessStep, task.step_id)
+    if not step or "实现交付" not in (step.name or ""):
+        return
+    requirement = db.get(Requirement, instance.entity_id)
+    if (
+        not requirement
+        or requirement.is_deleted
+        or requirement.implementation_route != ROUTE_DEV
+    ):
+        return
+    has_task = (
+        db.query(RequirementTask.id)
+        .filter(
+            RequirementTask.requirement_id == requirement.id,
+            RequirementTask.is_deleted.is_(False),
+        )
+        .first()
+    )
+    if not has_task:
+        raise AppError(
+            "REQUIREMENT_TASK_REQUIRED",
+            "需求开发实现须先在“实现”区域创建至少一条开发任务后，才能完成实现交付",
+            409,
+        )
+
+
+def complete_task(
+    db: Session,
+    task_id: str,
+    actor: AuthUser,
+    comment: str = "",
+    *,
+    next_preferred_assignee: str | None = None,
+    force_next_unassigned: bool = False,
+) -> ProcessInstance:
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
         raise AppError("NOT_FOUND", "流程任务不存在", 404)
     if task.status != "待处理":
         raise AppError("TASK_DONE", "该任务已处理")
+    instance = db.get(ProcessInstance, task.instance_id)
+    _require_requirement_implementation_tasks(db, instance, task)
+    # Any completion is necessarily an actual handling action.  Direct domain
+    # service calls (for example Bug/Problem orchestration) therefore close the
+    # upstream correction window even when they do not pass through HTTP /view.
+    if task.viewed_at is None:
+        task.viewed_at = datetime.now()
+        task.viewed_by = actor.person_id
     task.status = "已完成"
     task.completed_at = datetime.now()
     task.completed_by = actor.person_id
     task.comment = comment or task.comment
 
-    instance = db.get(ProcessInstance, task.instance_id)
     steps = _live_steps(instance.definition)
     current_idx = next(i for i, s in enumerate(steps) if s.id == task.step_id)
     if current_idx + 1 < len(steps):
         next_step = steps[current_idx + 1]
         instance.current_step_seq = next_step.seq
-        _spawn_task(db, instance, next_step, None)
+        _spawn_task(
+            db,
+            instance,
+            next_step,
+            next_preferred_assignee,
+            force_unassigned=force_next_unassigned,
+        )
     else:
         instance.status = "completed"
         instance.completed_at = datetime.now()
@@ -342,7 +438,15 @@ def complete_task(db: Session, task_id: str, actor: AuthUser, comment: str = "")
     return instance
 
 
-def approve_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") -> ProcessInstance:
+def approve_task(
+    db: Session,
+    task_id: str,
+    actor: AuthUser,
+    comment: str = "",
+    *,
+    next_preferred_assignee: str | None = None,
+    force_next_unassigned: bool = False,
+) -> ProcessInstance:
     """审批节点同意：审批节点专用入口，理由可选，复用正常完成推进。"""
     task = db.get(ProcessTask, task_id)
     if not task or task.is_deleted:
@@ -359,7 +463,14 @@ def approve_task(db: Session, task_id: str, actor: AuthUser, comment: str = "") 
             do_transition(db, ticket, "pending_approval", {}, actor, system=True)
         elif ticket and ticket.status == "pending_approval":
             do_transition(db, ticket, "approved", {"approval_comment": comment}, actor, system=True)
-    return complete_task(db, task_id, actor, comment)
+    return complete_task(
+        db,
+        task_id,
+        actor,
+        comment,
+        next_preferred_assignee=next_preferred_assignee,
+        force_next_unassigned=force_next_unassigned,
+    )
 
 
 def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> ProcessInstance:
@@ -375,8 +486,12 @@ def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> Proc
         raise AppError("REASON_REQUIRED", "驳回理由至少 5 个字")
     instance = db.get(ProcessInstance, task.instance_id)
     now = datetime.now()
+    if task.viewed_at is None:
+        task.viewed_at = now
+        task.viewed_by = actor.person_id
     task.status = "已驳回"
     task.completed_at = now
+    task.completed_by = actor.person_id
     task.comment = f"[驳回] {reason.strip()}"
     # 变更单已有明确的「已拒绝」终态；其他实体保留业务状态，由流程实例状态表达驳回结果。
     if instance.entity_type == "ticket_change":
@@ -401,6 +516,177 @@ def reject_task(db: Session, task_id: str, actor: AuthUser, reason: str) -> Proc
             content=f"驳回理由：{reason.strip()}", link=link,
         )
     return instance
+
+
+def requirement_return_targets(
+    db: Session,
+    instance: ProcessInstance,
+    current_step: ProcessStep,
+) -> list[dict]:
+    """需求审批可退回的历史节点；0 表示登记人补充后重新提交。"""
+    if instance.entity_type != "requirement":
+        return []
+    reached_step_ids = {
+        row[0]
+        for row in (
+            db.query(ProcessTask.step_id)
+            .filter(
+                ProcessTask.instance_id == instance.id,
+                ProcessTask.is_deleted.is_(False),
+            )
+            .distinct()
+            .all()
+        )
+    }
+    previous = [
+        step
+        for step in _live_steps(instance.definition)
+        if step.seq < current_step.seq and step.id in reached_step_ids
+    ]
+    targets = [
+        {"seq": step.seq, "name": step.name, "kind": "process_step"}
+        for step in sorted(previous, key=lambda item: item.seq, reverse=True)
+    ]
+    targets.append({"seq": 0, "name": "登记人补充", "kind": "requester_supplement"})
+    return targets
+
+
+def _previous_task_assignee(db: Session, instance: ProcessInstance, target: ProcessStep) -> str | None:
+    """回到历史节点时优先交还该节点上次的实际处理人。"""
+    previous = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.step_id == target.id,
+            ProcessTask.status.in_(["已完成", "已驳回"]),
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.completed_at.desc(), ProcessTask.created_at.desc())
+        .first()
+    )
+    return (previous.completed_by or previous.assignee) if previous else None
+
+
+def _activate_requirement_return(
+    db: Session,
+    instance: ProcessInstance,
+    current_step: ProcessStep,
+    target_seq: int | None,
+    *,
+    notify: bool = True,
+) -> tuple[int, ProcessTask | None]:
+    targets = requirement_return_targets(db, instance, current_step)
+    valid = {int(item["seq"]): item for item in targets}
+    if not valid:
+        raise AppError("RETURN_TARGET_UNAVAILABLE", "当前节点没有可退回位置", 409)
+    selected = target_seq if target_seq is not None else int(targets[0]["seq"])
+    if selected not in valid:
+        raise AppError("INVALID_RETURN_TARGET", "只能退回已到达的历史节点", 400)
+
+    instance.status = "returned" if selected == 0 else "running"
+    instance.completed_at = None
+    if selected == 0:
+        # 登记并非流程定义中的审批节点；不创建伪任务，由需求登记人补充并重新提交。
+        instance.current_step_seq = _live_steps(instance.definition)[0].seq
+        return selected, None
+
+    target = next(step for step in _live_steps(instance.definition) if step.seq == selected)
+    instance.current_step_seq = target.seq
+    preferred = _previous_task_assignee(db, instance, target)
+    return selected, _spawn_task(db, instance, target, preferred, notify=notify)
+
+
+def return_requirement_task(
+    db: Session,
+    task_id: str,
+    actor: AuthUser,
+    reason: str,
+    target_seq: int | None = None,
+) -> tuple[ProcessInstance, int]:
+    """驳回需求审批：保留当前任务历史，并激活选定的历史节点。"""
+    task = db.get(ProcessTask, task_id)
+    if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    if task.status != "待处理":
+        raise AppError("TASK_DONE", "该任务已处理")
+    if not task.step or task.step.node_type != "approval":
+        raise AppError("NOT_APPROVAL_STEP", "当前节点不是审批节点")
+    if len(reason.strip()) < 5:
+        raise AppError("REASON_REQUIRED", "驳回理由至少 5 个字")
+    instance = db.get(ProcessInstance, task.instance_id)
+    if not instance or instance.entity_type != "requirement":
+        raise AppError("RETURN_NOT_SUPPORTED", "当前单据不支持选择历史节点退回", 409)
+
+    now = datetime.now()
+    if task.viewed_at is None:
+        task.viewed_at = now
+        task.viewed_by = actor.person_id
+    selected, _ = _activate_requirement_return(db, instance, task.step, target_seq)
+    target_name = next(
+        item["name"]
+        for item in requirement_return_targets(db, instance, task.step)
+        if item["seq"] == selected
+    )
+    task.status = "已驳回"
+    task.completed_at = now
+    task.completed_by = actor.person_id
+    task.comment = f"[驳回→{target_name}] {reason.strip()}"
+
+    if selected == 0:
+        requester = _requester_person(db, instance.entity_type, instance.entity_id)
+        if requester:
+            from app.events import notifier
+
+            notifier.notify(
+                db,
+                "requirement.returned_to_requester",
+                "requirement",
+                instance.entity_id,
+                [requester],
+                f"需求已退回补充：{instance.definition.name}",
+                content=f"驳回理由：{reason.strip()}。请补充后重新提交。",
+                link=ENTITY_LINKS["requirement"].format(id=instance.entity_id),
+            )
+    return instance, selected
+
+
+def resubmit_returned_requirement(
+    db: Session,
+    instance: ProcessInstance,
+    preferred_assignee: str | None = None,
+) -> ProcessTask:
+    """登记人补充完成后，在同一实例重新生成首个审批任务。"""
+    if instance.entity_type != "requirement" or instance.status != "returned":
+        raise AppError("REQUIREMENT_NOT_RETURNED", "当前需求不在待补充状态", 409)
+    first = _live_steps(instance.definition)[0]
+    instance.status = "running"
+    instance.current_step_seq = first.seq
+    instance.completed_at = None
+    return _spawn_task(db, instance, first, preferred_assignee)
+
+
+def restore_rejected_requirement_instance(
+    db: Session,
+    instance: ProcessInstance,
+    target_seq: int | None = None,
+) -> int | None:
+    """幂等恢复旧版误终止的需求实例，默认退回驳回节点的上一位置。"""
+    if instance.entity_type != "requirement" or instance.status != "rejected":
+        return None
+    rejected = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "已驳回",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.completed_at.desc(), ProcessTask.created_at.desc())
+        .first()
+    )
+    if not rejected or not rejected.step:
+        return None
+    selected, _ = _activate_requirement_return(db, instance, rejected.step, target_seq, notify=False)
+    return selected
 
 
 def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: int,
@@ -439,7 +725,13 @@ def rewind_to_step(db: Session, entity_type: str, entity_id: str, target_seq: in
     return instance
 
 
-def current_pending_task(db: Session, entity_type: str, entity_id: str) -> ProcessTask | None:
+def current_pending_task(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    *,
+    for_update: bool = False,
+) -> ProcessTask | None:
     """最新活跃流程实例的当前待处理任务；无实例或流程已完成返回 None。"""
     db.flush()  # Session autoflush=False：先落刚生成的实例/任务再查
     instance = (
@@ -458,7 +750,7 @@ def current_pending_task(db: Session, entity_type: str, entity_id: str) -> Proce
     # 不使用已经加载过的 instance.tasks 集合：完成当前节点后，_spawn_task
     # 会在同一 Session 新增下一节点任务，懒加载集合可能仍保留旧快照，导致
     # 流程服务误判为“没有当前任务”。直接查询保证同事务内看到最新任务。
-    return (
+    query = (
         db.query(ProcessTask)
         .filter(
             ProcessTask.instance_id == instance.id,
@@ -466,8 +758,278 @@ def current_pending_task(db: Session, entity_type: str, entity_id: str) -> Proce
             ProcessTask.is_deleted.is_(False),
         )
         .order_by(ProcessTask.created_at.desc())
+    )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
+
+
+@dataclass(frozen=True)
+class WorkflowEditAccess:
+    """The single authorization decision for a running workflow record.
+
+    ``mode`` is kept deliberately small so routes can audit a correction without
+    disclosing field values: normal permission, current-node handler, admin, or
+    a narrowly scoped upstream correction.
+    """
+
+    allowed: bool
+    mode: str | None = None
+    reason: str | None = None
+    task: ProcessTask | None = None
+
+
+def entity_creator_user_id(db: Session, entity_type: str, entity_id: str) -> str | None:
+    """Return the immutable creator user for workflow correction authorization."""
+    if entity_type in {"ticket", "ticket_change"}:
+        ticket = db.get(Ticket, entity_id)
+        return ticket.submitter if ticket else None
+    if entity_type == "requirement":
+        from app.models import Requirement
+
+        requirement = db.get(Requirement, entity_id)
+        return requirement.requester if requirement else None
+    if entity_type == "problem":
+        from app.models import Problem
+
+        problem = db.get(Problem, entity_id)
+        return problem.reporter if problem else None
+    if entity_type == "project":
+        from app.models import Project
+
+        project = db.get(Project, entity_id)
+        return project.created_by if project else None
+    if entity_type == "bug":
+        from app.models import Bug
+
+        bug = db.get(Bug, entity_id)
+        return bug.reporter_id if bug else None
+    return None
+
+
+def _is_admin(db: Session, user: AuthUser) -> bool:
+    from app.core.rbac import ADMIN
+    from app.services.rbac import actor_keys
+
+    return ADMIN in actor_keys(db, user)
+
+
+def upstream_correction_access(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    *,
+    for_update: bool = False,
+) -> WorkflowEditAccess:
+    """Check the short upstream correction window without changing task state.
+
+    First node: the record creator can correct or delete before the next handler
+    has viewed the generated task.  Later nodes: only the actual completer of the
+    immediately previous node can correct before the next handler has viewed it.
+    Historical pending tasks have ``upstream_correction_enabled=false`` by the
+    release migration and therefore never receive a retroactive grant.
+    """
+    task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
+    if not task:
+        return WorkflowEditAccess(False, reason="流程当前没有待处理节点")
+    if not task.upstream_correction_enabled:
+        return WorkflowEditAccess(False, reason="该历史流程任务不适用上游更正窗口", task=task)
+    if task.viewed_at is not None:
+        return WorkflowEditAccess(False, reason="当前节点已被查阅或处理", task=task)
+    if not task.step:
+        return WorkflowEditAccess(False, reason="当前流程任务缺少节点定义", task=task)
+
+    steps = _live_steps(db.get(ProcessInstance, task.instance_id).definition)
+    first_seq = steps[0].seq if steps else 1
+    if task.step.seq == first_seq:
+        creator_id = entity_creator_user_id(db, entity_type, entity_id)
+        if creator_id and creator_id == user.id:
+            return WorkflowEditAccess(True, mode="upstream_creator", task=task)
+        return WorkflowEditAccess(False, reason="仅创建人可在首节点未查阅前更正", task=task)
+
+    previous = (
+        db.query(ProcessTask)
+        .join(ProcessStep, ProcessStep.id == ProcessTask.step_id)
+        .filter(
+            ProcessTask.instance_id == task.instance_id,
+            ProcessTask.status.in_(["已完成", "已驳回"]),
+            ProcessTask.completed_at.is_not(None),
+            ProcessTask.is_deleted.is_(False),
+            ProcessStep.seq < task.step.seq,
+        )
+        .order_by(ProcessStep.seq.desc(), ProcessTask.completed_at.desc())
         .first()
     )
+    if previous and user.person_id and previous.completed_by == user.person_id:
+        return WorkflowEditAccess(True, mode="upstream_handler", task=task)
+    return WorkflowEditAccess(False, reason="仅上一节点实际处理人可在本节点未查阅前更正", task=task)
+
+
+def workflow_edit_access(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+    *,
+    for_update: bool = False,
+) -> WorkflowEditAccess:
+    """Authorise content editing without allowing a live workflow to be bypassed."""
+    from app.services.permissions import has_perm
+
+    if _is_admin(db, user):
+        return WorkflowEditAccess(True, mode="admin")
+    task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
+    if not task:
+        if entity_type == "requirement":
+            instance = (
+                db.query(ProcessInstance)
+                .filter(
+                    ProcessInstance.entity_type == entity_type,
+                    ProcessInstance.entity_id == entity_id,
+                    ProcessInstance.is_deleted.is_(False),
+                )
+                .order_by(ProcessInstance.created_at.desc())
+                .first()
+            )
+            if instance and instance.status == "returned" and entity_creator_user_id(db, entity_type, entity_id) == user.id:
+                return WorkflowEditAccess(True, mode="returned_requester")
+        return WorkflowEditAccess(
+            has_perm(db, user, module, "edit"),
+            mode="module_permission" if has_perm(db, user, module, "edit") else None,
+            reason="当前角色无编辑权限",
+        )
+    if has_perm(db, user, module, "edit") and can_act_on_task(db, user, task):
+        return WorkflowEditAccess(True, mode="current_handler", task=task)
+    correction = upstream_correction_access(db, user, entity_type, entity_id, for_update=for_update)
+    if correction.allowed:
+        return correction
+    return WorkflowEditAccess(False, reason=correction.reason or "当前流程节点不允许编辑", task=task)
+
+
+def require_workflow_edit(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+) -> WorkflowEditAccess:
+    """Raise a stable error for routes that modify a workflow record."""
+    access = workflow_edit_access(db, user, entity_type, entity_id, module, for_update=True)
+    if not access.allowed:
+        raise AppError("WORKFLOW_EDIT_LOCKED", access.reason or "当前流程节点不允许编辑", 403)
+    return access
+
+
+def require_safe_correction_fields(access: WorkflowEditAccess, data: dict, forbidden: set[str]) -> None:
+    """Upstream correction never changes the task routing or current assignee."""
+    if access.mode not in {"upstream_creator", "upstream_handler", "returned_requester"}:
+        return
+    unsafe = sorted(set(data) & forbidden)
+    if unsafe:
+        raise AppError(
+            "WORKFLOW_CORRECTION_FIELD_FORBIDDEN",
+            "上游更正窗口仅可修改单据内容，不能改变当前流程处理人或路由字段",
+            403,
+        )
+
+
+def workflow_delete_access(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+    *,
+    for_update: bool = False,
+) -> WorkflowEditAccess:
+    """Deletion is intentionally narrower: only the creator can delete at node 1."""
+    from app.services.permissions import has_perm
+
+    if _is_admin(db, user):
+        return WorkflowEditAccess(True, mode="admin")
+    task = current_pending_task(db, entity_type, entity_id, for_update=for_update)
+    if not task:
+        return WorkflowEditAccess(
+            has_perm(db, user, module, "delete"),
+            mode="module_permission" if has_perm(db, user, module, "delete") else None,
+            reason="当前角色无删除权限",
+        )
+    correction = upstream_correction_access(db, user, entity_type, entity_id, for_update=for_update)
+    if correction.allowed and correction.mode == "upstream_creator":
+        return correction
+    # Bug registration is modelled as an automatically completed first step so
+    # the Product Manager immediately receives a confirmation task.  Preserve
+    # the same create-before-first-review deletion experience for its reporter.
+    if (
+        correction.allowed
+        and entity_type == "bug"
+        and entity_creator_user_id(db, entity_type, entity_id) == user.id
+    ):
+        return WorkflowEditAccess(True, mode="upstream_creator", task=correction.task)
+    return WorkflowEditAccess(False, reason=correction.reason or "仅创建人可在首节点未查阅前删除", task=task)
+
+
+def require_workflow_delete(
+    db: Session,
+    user: AuthUser,
+    entity_type: str,
+    entity_id: str,
+    module: str,
+) -> WorkflowEditAccess:
+    access = workflow_delete_access(db, user, entity_type, entity_id, module, for_update=True)
+    if not access.allowed:
+        raise AppError("WORKFLOW_DELETE_LOCKED", access.reason or "当前流程节点不允许删除", 403)
+    return access
+
+
+def mark_task_viewed(
+    db: Session,
+    user: AuthUser,
+    task_id: str,
+    *,
+    handling_action: bool = False,
+) -> tuple[ProcessTask, bool]:
+    """Persist a first *actual handler* view with a row lock.
+
+    An administrator may inspect any detail or dispatch a task.  That passive
+    observation is not the downstream handler's read and must not consume the
+    upstream correction window.  An administrator who actually completes,
+    approves or rejects the task is, however, handling it and is recorded.
+    """
+    task = (
+        db.query(ProcessTask)
+        .filter(ProcessTask.id == task_id, ProcessTask.is_deleted.is_(False))
+        .with_for_update()
+        .first()
+    )
+    if not task:
+        raise AppError("NOT_FOUND", "流程任务不存在", 404)
+    if task.status != "待处理":
+        raise AppError("TASK_DONE", "该任务已处理")
+    if not can_act_on_task(db, user, task):
+        raise AppError("FORBIDDEN", "仅该任务的当前处理人可确认查阅", 403)
+    if _is_admin(db, user) and task.assignee != user.person_id and not handling_action:
+        # Do not turn a system administrator's passive inspection into a
+        # downstream-view fact.  The UI normally avoids this request; keeping
+        # the server behaviour safe protects direct API callers as well.
+        return task, False
+    # A role-routed task can be unassigned when no preferred person existed at
+    # spawn time.  The first eligible person who opens it becomes its concrete
+    # handler, preventing a second role holder from racing the correction lock.
+    if task.assignee is None and user.person_id:
+        task.assignee = user.person_id
+        instance = db.get(ProcessInstance, task.instance_id)
+        if instance and instance.entity_type in {"ticket", "ticket_change"}:
+            ticket = db.get(Ticket, instance.entity_id)
+            if ticket and not ticket.is_deleted:
+                ticket.assignee = user.person_id
+    newly_viewed = task.viewed_at is None
+    if newly_viewed:
+        task.viewed_at = datetime.now()
+        task.viewed_by = user.person_id
+    return task, newly_viewed
 
 
 def can_act_on_task(db: Session, user: AuthUser, task: ProcessTask) -> bool:
@@ -508,9 +1070,26 @@ def pending_steps_map(db: Session, entity_types: list[str], entity_ids: list[str
         .all()
     )
     names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    # Do not use ``inst.tasks`` here.  The relationship may have been loaded
+    # before the current node was spawned in the same Session, which makes
+    # list-page pending badges lag behind the actual workflow node.
+    pending_tasks = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id.in_([inst.id for inst in instances]),
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.created_at.desc())
+        .all()
+    )
+    pending_by_instance: dict[str, ProcessTask] = {}
+    for task in pending_tasks:
+        pending_by_instance.setdefault(task.instance_id, task)
+
     out: dict = {}
     for inst in instances:
-        task = next((t for t in inst.tasks if t.status == "待处理" and not t.is_deleted), None)
+        task = pending_by_instance.get(inst.id)
         if not task:
             continue
         mine = is_admin or bool(user.person_id and task.assignee == user.person_id)
@@ -583,6 +1162,41 @@ def filter_targets_by_flow(db: Session, user: AuthUser, entity_type: str, entity
         if rule and (rule.allowed_roles or []):
             kept.append(code)
     return kept
+
+
+def archive_instances(db: Session, entity_type: str, entity_id: str, note: str) -> int:
+    """终止并软删除单据的流程实例与任务，避免删除后仍留下运行中待办。
+
+    已投递到外部通道的历史消息无法撤回，但其关联流程不得继续显示为
+    ``running`` 或 ``待处理``。保留完成时间和删除标记，可使审计同时看清
+    原流程已被单据删除终止。
+    """
+    instances = (
+        db.query(ProcessInstance)
+        .filter(
+            ProcessInstance.entity_type == entity_type,
+            ProcessInstance.entity_id == entity_id,
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .all()
+    )
+    if not instances:
+        return 0
+    now = datetime.now()
+    for instance in instances:
+        for task in instance.tasks:
+            if task.is_deleted:
+                continue
+            if task.status == "待处理":
+                task.status = "已完成"
+                task.completed_at = now
+                task.comment = note
+            task.is_deleted = True
+        instance.status = "completed"
+        instance.completed_at = now
+        instance.is_deleted = True
+    logger.info("process %s/%s archived: %s", entity_type, entity_id, note)
+    return len(instances)
 
 
 def finalize_instance(db: Session, entity_type: str, entity_id: str, note: str) -> ProcessInstance | None:
@@ -669,31 +1283,95 @@ def instance_view(db: Session, entity_type: str, entity_id: str) -> dict | None:
     if not instance:
         return None
     member_names = {m.id: m.name for m in db.query(OrgMember).all()}
-    tasks_by_step = {t.step_id: t for t in instance.tasks if not t.is_deleted}  # 回退作废的任务不算现状
+    # A workflow instance can have more than one task row for a step after a
+    # rewind or correction.  Always use a fresh query and keep the newest
+    # non-deleted task for the step; the relationship collection can be stale
+    # after _spawn_task() adds the next node in the same transaction.
+    tasks = (
+        db.query(ProcessTask)
+        .filter(ProcessTask.instance_id == instance.id, ProcessTask.is_deleted.is_(False))
+        .order_by(ProcessTask.created_at.asc())
+        .all()
+    )
+    tasks_by_step: dict[str, ProcessTask] = {}
+    for task in tasks:
+        tasks_by_step[task.step_id] = task
+    current_task = (
+        db.query(ProcessTask)
+        .filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.created_at.desc())
+        .first()
+    )
+    # The active pending task is the runtime source of truth.  The persisted
+    # sequence remains a compatibility fallback for completed/legacy instances
+    # that intentionally have no pending task.
+    effective_current_step_seq = (
+        current_task.step.seq if current_task and current_task.step else instance.current_step_seq
+    )
+    step_rows = []
+    for step in _live_steps(instance.definition):
+        task = tasks_by_step.get(step.id)
+        snapshot = task.raci_snapshot if task and isinstance(task.raci_snapshot, dict) else {}
+        informed = snapshot.get("informed")
+        # A process definition may later adjust its non-blocking CC rule.  A
+        # task that already exists must continue to show its own RACI snapshot,
+        # including an intentionally empty CC list; a not-yet-started step uses
+        # the latest definition and will snapshot it when activated.
+        cc_roles = list(informed) if isinstance(informed, list) else (step.cc_roles or [])
+        step_rows.append({
+            "seq": step.seq,
+            "step_code": step.step_code or f"step_{step.seq}",
+            "name": step.name,
+            "description": step.description,
+            "node_type": step.node_type or "processing",
+            "default_role": step.default_role,
+            "cc_roles": cc_roles,
+            "autonomy_level": step.autonomy_level,
+            "task_id": task.id if task else None,
+            "task_status": task.status if task else "未开始",
+            "assignee": task.assignee if task else None,
+            "assignee_name": member_names.get(task.assignee) if task and task.assignee else None,
+            "due_at": task.due_at if task else None,
+            "viewed_at": task.viewed_at if task else None,
+            "viewed_by": task.viewed_by if task else None,
+            "viewed_by_name": member_names.get(task.viewed_by) if task and task.viewed_by else None,
+            "completed_at": task.completed_at if task else None,
+            "raci_snapshot": task.raci_snapshot if task else None,
+        })
+    return_targets = (
+        requirement_return_targets(db, instance, current_task.step)
+        if current_task and current_task.step and current_task.step.node_type == "approval"
+        else []
+    )
+    latest_rejection = next((task for task in reversed(tasks) if task.status == "已驳回"), None)
+    latest_rejection_reason = None
+    if latest_rejection and latest_rejection.comment:
+        latest_rejection_reason = re.sub(
+            r"^\[驳回(?:→[^\]]+)?\]\s*",
+            "",
+            latest_rejection.comment,
+        )
     return {
         "id": instance.id,
         "definition_name": instance.definition.name,
         "definition_version": instance.definition.version,
         "status": instance.status,
-        "current_step_seq": instance.current_step_seq,
-        "steps": [
-            {
-                "seq": s.seq,
-                "step_code": s.step_code or f"step_{s.seq}",
-                "name": s.name,
-                "description": s.description,
-                "node_type": s.node_type or "processing",
-                "default_role": s.default_role,
-                "cc_roles": s.cc_roles or [],
-                "autonomy_level": s.autonomy_level,
-                "task_id": tasks_by_step[s.id].id if s.id in tasks_by_step else None,
-                "task_status": tasks_by_step[s.id].status if s.id in tasks_by_step else "未开始",
-                "assignee": tasks_by_step[s.id].assignee if s.id in tasks_by_step else None,
-                "assignee_name": member_names.get(tasks_by_step[s.id].assignee) if s.id in tasks_by_step and tasks_by_step[s.id].assignee else None,
-                "due_at": tasks_by_step[s.id].due_at if s.id in tasks_by_step else None,
-                "completed_at": tasks_by_step[s.id].completed_at if s.id in tasks_by_step else None,
-                "raci_snapshot": tasks_by_step[s.id].raci_snapshot if s.id in tasks_by_step else None,
-            }
-            for s in _live_steps(instance.definition)
-        ],
+        "current_step_seq": effective_current_step_seq,
+        "current_step_code": (
+            current_task.step.step_code if current_task and current_task.step and current_task.step.step_code
+            else (f"step_{effective_current_step_seq}" if effective_current_step_seq is not None else None)
+        ),
+        "current_step_name": current_task.step.name if current_task and current_task.step else None,
+        "steps": step_rows,
+        "return_targets": return_targets,
+        "return_info": {
+            "reason": latest_rejection_reason,
+            "returned_at": latest_rejection.completed_at,
+            "returned_by": latest_rejection.completed_by,
+            "returned_by_name": member_names.get(latest_rejection.completed_by),
+        } if latest_rejection else None,
     }

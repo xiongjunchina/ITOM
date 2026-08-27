@@ -9,9 +9,20 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import AuthUser, Bug, BugFixTask, Ci, OrgMember, WorkTask
-from app.schemas.common import ok, paginate
+from app.models import (
+    AuthUser,
+    Bug,
+    BugFixTask,
+    Ci,
+    OrgMember,
+    Project,
+    ProjectDevelopmentTask,
+    WbsTask,
+    WorkTask,
+)
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services import task_management
+from app.services.batch_delete import execute_batch_delete
 
 router = APIRouter(prefix="/api/task-management", tags=["task-management"])
 
@@ -34,6 +45,7 @@ class BugUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=2, max_length=200)
     description: str | None = None
     priority: str | None = None
+    ci_id: str | None = None
     reproduction: str | None = None
     expected_result: str | None = None
     actual_result: str | None = None
@@ -119,6 +131,53 @@ class WorkTaskTransitionIn(BaseModel):
     reason: str = ""
 
 
+class TaskProgressIn(BaseModel):
+    progress_percent: int | None = Field(default=None, ge=0, le=100)
+    comment: str = Field(min_length=1, max_length=2000)
+
+
+class ProjectTaskProgressIn(TaskProgressIn):
+    """项目开发进度；完成任务必须由调用方明确表达。"""
+
+    complete: bool = False
+
+
+class ProjectTaskCreate(BaseModel):
+    project_id: str
+    wbs_task_id: str | None = None
+    title: str = Field(min_length=2, max_length=200)
+    description: str = Field(min_length=1)
+    acceptance_criteria: str | None = None
+    task_type: str = "开发"
+    assignee: str | None = None
+    priority: str = "P3"
+    environment: str | None = None
+    version: str | None = None
+    plan_start: date | None = None
+    plan_date: date | None = None
+    plan_effort: float | None = None
+
+
+class ProjectTaskUpdate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    project_id: str | None = None
+    wbs_task_id: str | None = None
+    title: str | None = Field(default=None, min_length=2, max_length=200)
+    description: str | None = None
+    acceptance_criteria: str | None = None
+    task_type: str | None = None
+    assignee: str | None = None
+    priority: str | None = None
+    environment: str | None = None
+    version: str | None = None
+    plan_start: date | None = None
+    plan_date: date | None = None
+    plan_effort: float | None = None
+    actual_effort: float | None = None
+    status: str | None = None
+
+
 @router.get("/reference/cis")
 def list_bug_ci_references(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     """Bug 登记的所属系统只读选项：复用 CMDB 配置项，不要求用户具备 CMDB 管理权限。"""
@@ -161,6 +220,13 @@ def _get_work_task(db: Session, task_id: str) -> WorkTask:
     return task
 
 
+def _get_project_task(db: Session, task_id: str) -> ProjectDevelopmentTask:
+    task = db.get(ProjectDevelopmentTask, task_id)
+    if not task or task.is_deleted:
+        raise AppError("NOT_FOUND", "项目开发任务不存在", 404)
+    return task
+
+
 @router.get("/bugs")
 def list_bugs(q: str = "", status: str = "", scope: str = "", db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     task_management._require_module(db, user, "task_bug", "view")
@@ -182,6 +248,15 @@ def create_bug(body: BugCreate, db: Session = Depends(get_db), user: AuthUser = 
     return ok(task_management._bug_row(db, bug, user))
 
 
+@router.delete("/bugs/batch-delete")
+def batch_delete_bugs(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """批量删除仍逐条执行 Bug 流程撤回和级联修复任务清理规则。"""
+    def delete_one(bug_id: str) -> None:
+        task_management.delete_bug(db, _get_bug(db, bug_id), user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
 @router.get("/bugs/{bug_id}")
 def get_bug(bug_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     task_management._require_module(db, user, "task_bug", "view")
@@ -193,6 +268,14 @@ def update_bug(bug_id: str, body: BugUpdate, db: Session = Depends(get_db), user
     bug = task_management.update_bug(db, _get_bug(db, bug_id), body.model_dump(exclude_unset=True), user)
     db.commit()
     return ok(task_management._bug_row(db, bug, user))
+
+
+@router.delete("/bugs/{bug_id}")
+def delete_bug(bug_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    bug = _get_bug(db, bug_id)
+    stats = task_management.delete_bug(db, bug, user)
+    db.commit()
+    return ok({"id": bug.id, "deleted": True, "cascade": stats})
 
 
 @router.post("/bugs/{bug_id}/confirm")
@@ -251,6 +334,15 @@ def create_work_task(body: WorkTaskCreate, db: Session = Depends(get_db), user: 
     return ok(task_management._work_row(db, task, user))
 
 
+@router.delete("/work-tasks/batch-delete")
+def batch_delete_work_tasks(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """逐条沿用委派任务的登记人、分配状态与管理员删除规则。"""
+    def delete_one(task_id: str) -> None:
+        task_management.delete_work_task(db, _get_work_task(db, task_id), user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
 @router.get("/work-tasks/{task_id}")
 def get_work_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     task_management._require_module(db, user, "task_delegated", "view")
@@ -271,9 +363,137 @@ def transition_work_task(task_id: str, body: WorkTaskTransitionIn, db: Session =
     return ok(task_management._work_row(db, task, user))
 
 
+@router.post("/work-tasks/{task_id}/progress")
+def add_work_task_progress(
+    task_id: str,
+    body: TaskProgressIn,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    task = task_management.add_work_task_progress(
+        db, _get_work_task(db, task_id), body.progress_percent, body.comment, user,
+    )
+    db.commit()
+    return ok(task_management._work_row(db, task, user))
+
+
 @router.delete("/work-tasks/{task_id}")
 def delete_work_task(task_id: str, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
     task = _get_work_task(db, task_id)
     task_management.delete_work_task(db, task, user)
+    db.commit()
+    return ok({"id": task.id, "deleted": True})
+
+
+@router.get("/reference/projects")
+def list_project_references(db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    task_management._require_module(db, user, "task_development", "view")
+    rows = (
+        db.query(Project)
+        .filter(Project.is_deleted.is_(False))
+        .order_by(Project.project_code.desc())
+        .all()
+    )
+    return ok([
+        {"id": row.id, "project_code": row.project_code, "name": row.name, "status": row.status}
+        for row in rows
+    ], total=len(rows), page=1)
+
+
+@router.get("/reference/projects/{project_id}/wbs")
+def list_project_wbs_references(
+    project_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    task_management._require_module(db, user, "task_development", "view")
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "所属项目不存在", 404)
+    rows = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project_id, WbsTask.is_deleted.is_(False))
+        .order_by(WbsTask.wbs_code)
+        .all()
+    )
+    return ok([
+        {"id": row.id, "wbs_code": row.wbs_code, "name": row.name}
+        for row in rows
+    ], total=len(rows), page=1)
+
+
+@router.get("/project-tasks")
+def list_project_tasks(
+    q: str = "", status: str = "", scope: str = "",
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    rows, total = task_management.list_project_tasks(db, user, q, status, scope)
+    return ok(rows, total=total, page=1)
+
+
+@router.post("/project-tasks")
+def create_project_task(
+    body: ProjectTaskCreate,
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    task = task_management.create_project_task(db, body.model_dump(), user)
+    db.commit()
+    return ok(task_management._project_task_row(db, task, user))
+
+
+@router.delete("/project-tasks/batch-delete")
+def batch_delete_project_tasks(body: BatchDeleteIn, db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user)):
+    """逐条沿用项目开发任务的状态及管理员删除限制。"""
+    def delete_one(task_id: str) -> None:
+        task_management.delete_project_task(db, _get_project_task(db, task_id), user)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.get("/project-tasks/{task_id}")
+def get_project_task(
+    task_id: str,
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    task_management._require_module(db, user, "task_development", "view")
+    return ok(task_management._project_task_row(db, _get_project_task(db, task_id), user))
+
+
+@router.patch("/project-tasks/{task_id}")
+def update_project_task(
+    task_id: str, body: ProjectTaskUpdate,
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    task = task_management.update_project_task(
+        db, _get_project_task(db, task_id), body.model_dump(exclude_unset=True), user,
+    )
+    db.commit()
+    return ok(task_management._project_task_row(db, task, user))
+
+
+@router.post("/project-tasks/{task_id}/progress")
+def add_project_task_progress(
+    task_id: str, body: ProjectTaskProgressIn,
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    task = task_management.add_project_task_progress(
+        db,
+        _get_project_task(db, task_id),
+        body.progress_percent,
+        body.comment,
+        user,
+        complete=body.complete,
+    )
+    db.commit()
+    return ok(task_management._project_task_row(db, task, user))
+
+
+@router.delete("/project-tasks/{task_id}")
+def delete_project_task(
+    task_id: str,
+    db: Session = Depends(get_db), user: AuthUser = Depends(get_current_user),
+):
+    task = _get_project_task(db, task_id)
+    task_management.delete_project_task(db, task, user)
     db.commit()
     return ok({"id": task.id, "deleted": True})

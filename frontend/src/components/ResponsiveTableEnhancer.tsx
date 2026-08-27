@@ -44,13 +44,11 @@ function createController(wrapper: HTMLElement, scroll: HTMLElement, activateTab
   bottom.dataset.visible = 'false';
   bottomInner.setAttribute('aria-hidden', 'true');
   bottom.appendChild(bottomInner);
-  // 挂到 body，避免滚动到表格末尾后受卡片/app-content 边界约束而消失。
-  // 位置由 update() 根据当前表格的可视区域动态计算。
+  // 挂到 body，避免滚动到表格末尾后受卡片或 app-content 边界约束而消失。
+  // 它本身是浏览器原生滚动容器，不依赖 rc-table 的模拟拖拽事件。
   document.body.appendChild(bottom);
 
   wrapper.classList.add('responsive-table--enhanced');
-  const needsNativeStickyHeader = !wrapper.querySelector('.ant-table-sticky-holder');
-  wrapper.classList.toggle('responsive-table--native-header', needsNativeStickyHeader);
 
   let syncing = false;
   const sync = (source: HTMLElement, target: HTMLElement) => {
@@ -76,12 +74,18 @@ function createController(wrapper: HTMLElement, scroll: HTMLElement, activateTab
     const viewport = getViewportRect(wrapper);
     const viewportLeft = Math.max(0, Math.max(rect.left, viewport.left));
     const viewportRight = Math.min(window.innerWidth, Math.min(rect.right, viewport.right));
-    // visible 由外层统一选择当前表格，避免多个表格同时绘制悬浮滚动条。
-    // 即使表格已经滚到视口上方，只要它仍是当前活动表格，滚动条也继续保留，
-    // 这样用户在页面底部仍可横向查看最后几行的隐藏列。
-    const visible = overflow && bottom.dataset.active === 'true' && viewportRight > viewportLeft;
+    const viewportTop = Math.max(rect.top, viewport.top);
+    const viewportBottom = Math.min(rect.bottom, viewport.bottom);
+    // 仅显示当前可视区域中的活动宽表，防止多张表同时生成滚动条。
+    const visible = overflow
+      && bottom.dataset.active === 'true'
+      && viewportRight > viewportLeft
+      && viewportBottom > viewportTop;
     bottom.dataset.visible = visible ? 'true' : 'false';
     bottom.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    // 只有原生悬浮条已完成测量且实际可用时，才隐藏表内重复滚动条。
+    // 若 MutationObserver、尺寸测量或浏览器环境异常，表内原生条仍是可靠入口。
+    wrapper.classList.toggle('responsive-table--floating-scroll-active', visible);
     if (visible) {
       bottom.style.left = `${Math.round(viewportLeft)}px`;
       bottom.style.width = `${Math.round(viewportRight - viewportLeft)}px`;
@@ -124,15 +128,14 @@ function createController(wrapper: HTMLElement, scroll: HTMLElement, activateTab
       document.removeEventListener('scroll', scheduleUpdate, true);
       if (positionFrame) window.cancelAnimationFrame(positionFrame);
       bottom.remove();
-      wrapper.classList.remove('responsive-table--enhanced', 'responsive-table--native-header');
-      wrapper.style.removeProperty('--responsive-table-sticky-offset');
+      wrapper.classList.remove('responsive-table--enhanced', 'responsive-table--floating-scroll-active');
     },
   };
 }
 
 /**
- * 为所有 antd 表格补齐统一的宽表交互：表格超宽时提供底部悬浮横向滚动条，
- * 表头在内容区纵向滚动时保持可见；WBS 也复用同一条底部悬浮滚动条。
+ * 为全部 Ant Design 宽表提供一个可由浏览器原生拖拽的底部横向滚动条。
+ * 只在确有横向溢出时接管；表格自身的原生滚动条始终作为兜底。
  */
 export default function ResponsiveTableEnhancer(): null {
   useEffect(() => {
@@ -142,22 +145,10 @@ export default function ResponsiveTableEnhancer(): null {
 
     const refresh = () => {
       frame = 0;
+      // 普通清单和 StickyTable 共用这一套控制器，避免两份滚动状态互相覆盖。
       const wrappers = Array.from(document.querySelectorAll<HTMLElement>(TABLE_SELECTOR))
         .filter((wrapper) => !wrapper.closest('.responsive-table__bottom-scroll'));
       const active = new Set(wrappers);
-
-      // 只在确实存在横向溢出的表格之间选择活动表，避免普通窄表抢走唯一滚动条。
-      const wideWrappers = wrappers.filter((wrapper) => {
-        const scroll = findScrollElement(wrapper);
-        return Boolean(scroll && scroll.scrollWidth > scroll.clientWidth + 1);
-      });
-      // 选择当前视口中占比最大的宽表；滚出视口后保留该活动表格，直到另一张宽表进入视口。
-      const visibleWrapper = wideWrappers
-        .map((wrapper) => ({ wrapper, area: getIntersectionArea(wrapper) }))
-        .filter((entry) => entry.area > 0)
-        .sort((left, right) => right.area - left.area)[0]?.wrapper;
-      if (visibleWrapper) activeWrapper = visibleWrapper;
-      if (activeWrapper && !active.has(activeWrapper)) activeWrapper = visibleWrapper ?? null;
 
       controllers.forEach((controller, wrapper) => {
         if (!active.has(wrapper) || !document.body.contains(wrapper)) {
@@ -170,12 +161,7 @@ export default function ResponsiveTableEnhancer(): null {
         const scroll = findScrollElement(wrapper);
         if (!scroll) return;
         const current = controllers.get(wrapper);
-        if (current && current.scroll === scroll) {
-          current.bottom.dataset.active = activeWrapper === wrapper ? 'true' : 'false';
-          current.bottom.dataset.visible = activeWrapper === wrapper ? 'true' : 'false';
-          current.update();
-          return;
-        }
+        if (current?.scroll === scroll) return;
         current?.cleanup();
         controllers.set(wrapper, createController(wrapper, scroll, (nextWrapper) => {
           activeWrapper = nextWrapper;
@@ -183,9 +169,21 @@ export default function ResponsiveTableEnhancer(): null {
         }));
       });
 
+      const wideWrappers = wrappers.filter((wrapper) => {
+        const controller = controllers.get(wrapper);
+        return Boolean(controller && controller.scroll.scrollWidth > controller.scroll.clientWidth + 1);
+      });
+      const visibleWrapper = wideWrappers
+        .map((wrapper) => ({ wrapper, area: getIntersectionArea(wrapper) }))
+        .filter((entry) => entry.area > 0)
+        .sort((left, right) => right.area - left.area)[0]?.wrapper;
+      if (visibleWrapper) activeWrapper = visibleWrapper;
+      if (!activeWrapper || !active.has(activeWrapper) || !wideWrappers.includes(activeWrapper)) {
+        activeWrapper = visibleWrapper ?? wideWrappers[0] ?? null;
+      }
+
       controllers.forEach((controller, wrapper) => {
         controller.bottom.dataset.active = activeWrapper === wrapper ? 'true' : 'false';
-        controller.bottom.dataset.visible = activeWrapper === wrapper ? 'true' : 'false';
         controller.update();
       });
     };

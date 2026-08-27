@@ -18,6 +18,8 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
+import ImportButtons from '../../components/ImportButtons';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import { api } from '../../api/client';
 import { useT } from '../../i18n';
@@ -28,6 +30,7 @@ import type { ActiveTaskRow, Member, RequirementRow, RequirementTaskStatus } fro
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import { REQ_TASK_STATUSES, REQ_TASK_STATUS_COLORS } from '../../api/types';
 import { QuadrantTag, ReqStatusBadge } from './shared';
+import { isRequirementDevelopmentTaskCandidate } from './developmentTaskOptions';
 
 /** 计划/实际工天展示：形如「计划5·实际3」，均空显示 - */
 function effortText(
@@ -48,48 +51,45 @@ export default function ActiveTaskList() {
   const et = useEnums();
 
   const user = useAuthStore((st) => st.user);
-  const canEdit = user?.permissions
-    ? hasPermission(user, 'requirements', 'edit') || hasPermission(user, 'req_tasks', 'edit')
-    : true;
-  const [canAddTasks, setCanAddTasks] = useState(canEdit);
+  // 后端 task_development 是最终授权依据；角色回退仅覆盖旧会话未刷新 permissions 的短暂窗口。
+  const canMaintainDevelopmentTasks = Boolean(
+    user && (
+      hasPermission(user, 'task_development', 'create')
+      || user.roles.some((role) => role === 'cio' || role === 'is_mgr' || role.startsWith('it_'))
+    ),
+  );
 
   const [rows, setRows] = useState<ActiveTaskRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<RequirementTaskStatus | undefined>();
   const [mineOnly, setMineOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // 登记任务（M16.2）：开发 leader 在本页直接给实现中的需求录任务清单
+  // 登记任务：内置 IT 类角色可在本页为实现中的需求维护任务清单。
   const [addOpen, setAddOpen] = useState(false);
   const [addSaving, setAddSaving] = useState(false);
   const [addForm] = Form.useForm();
   const [reqOptions, setReqOptions] = useState<{ value: string; label: string }[]>([]);
   const [memberOptions, setMemberOptions] = useState<{ value: string; label: string }[]>([]);
 
-  useEffect(() => {
-    if (canEdit || !user?.person_id) {
-      setCanAddTasks(canEdit);
-      return;
-    }
-    api
-      .getList<RequirementRow>('/requirements', { status: 'implementing', scope: 'mine', page: 1, page_size: 200 })
-      .then((res) => setCanAddTasks(res.items.some((r) => r.can_manage_tasks === true && !r.project_id)))
-      .catch(() => setCanAddTasks(false));
-  }, [canEdit, user?.person_id]);
+  const loadTaskOptions = async () => {
+    const [reqs, members] = await Promise.all([
+      api.getList<RequirementRow>('/requirements', { status: 'implementing', page: 1, page_size: 200 }),
+      api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }),
+    ]);
+    setReqOptions(
+      reqs.items
+        .filter(isRequirementDevelopmentTaskCandidate)
+        .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
+    );
+    setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+  };
 
   const openAdd = async () => {
     addForm.resetFields();
     setAddOpen(true);
     try {
-      const [reqs, members] = await Promise.all([
-        api.getList<RequirementRow>('/requirements', { status: 'implementing', page: 1, page_size: 200 }),
-        api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' }),
-      ]);
-      setReqOptions(
-        reqs.items
-          .filter((r) => !r.is_example && !r.project_id && (canEdit || r.can_manage_tasks === true))  // 转项目的需求由项目侧交付，不在此录任务
-          .map((r) => ({ value: r.id, label: `${r.requirement_code} ${r.title}` })),
-      );
-      setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+      await loadTaskOptions();
     } catch {
       // 已统一提示
     }
@@ -99,7 +99,8 @@ export default function ActiveTaskList() {
     const v = await addForm.validateFields();
     setAddSaving(true);
     try {
-      await api.post(`/requirements/${v.requirement_id}/tasks`, {
+      await api.post('/requirements/tasks', {
+        requirement_id: v.requirement_id || null,
         name: v.name,
         description: v.description || undefined,
         assignee: v.assignee,
@@ -135,22 +136,22 @@ export default function ActiveTaskList() {
     void load();
   }, [load]);
 
-  // 编辑/删除（M16.3：开发 leader 与管理员维护任务清单；权限=requirements.edit）
+  // 逐行编辑/删除能力由服务端根据角色、需求阶段和任务状态返回。
   const [editing, setEditing] = useState<ActiveTaskRow | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editForm] = Form.useForm();
 
   const openEdit = async (row: ActiveTaskRow) => {
     setEditing(row);
-    if (memberOptions.length === 0) {
+    if (memberOptions.length === 0 || reqOptions.length === 0) {
       try {
-        const members = await api.getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' });
-        setMemberOptions(members.items.map((m) => ({ value: m.id, label: m.name })));
+        await loadTaskOptions();
       } catch {
         // 已统一提示
       }
     }
     editForm.setFieldsValue({
+      requirement_id: row.requirement_id ?? undefined,
       name: row.name,
       description: row.description ?? undefined,
       assignee: row.assignee,
@@ -167,6 +168,7 @@ export default function ActiveTaskList() {
     setEditSaving(true);
     try {
       await api.patch(`/requirements/tasks/${editing.id}`, {
+        requirement_id: v.requirement_id || null,
         name: v.name,
         description: v.description || null,
         assignee: v.assignee,
@@ -201,6 +203,12 @@ export default function ActiveTaskList() {
 
   const columns: ColumnsType<ActiveTaskRow> = [
     {
+      title: t('task.code'),
+      dataIndex: 'task_code',
+      width: 150,
+      sorter: (a, b) => a.task_code.localeCompare(b.task_code),
+    },
+    {
       title: t('req.activeTask.col.name'),
       dataIndex: 'name',
       width: 200,
@@ -223,6 +231,19 @@ export default function ActiveTaskList() {
         ),
     },
     {
+      title: t('task.registrar'),
+      dataIndex: 'registrar_name',
+      width: 110,
+      render: (v: string | null) => v || '-',
+    },
+    {
+      title: t('task.registeredAt'),
+      dataIndex: 'created_at',
+      width: 155,
+      sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(),
+      render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm'),
+    },
+    {
       title: t('req.activeTask.col.owner'),
       dataIndex: 'assignee_name',
       width: 110,
@@ -232,7 +253,7 @@ export default function ActiveTaskList() {
       title: t('req.activeTask.col.relReq'),
       key: 'req',
       width: 240,
-      render: (_, r) => (
+      render: (_, r) => r.requirement_id ? (
         <Link to={`/requirements/${r.requirement_id}`}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {r.requirement_code}
@@ -243,7 +264,7 @@ export default function ActiveTaskList() {
             </Typography.Text>
           </div>
         </Link>
-      ),
+      ) : <Typography.Text type="secondary">{t('req.activeTask.unlinked')}</Typography.Text>,
     },
     {
       // M16：清单已按所属需求加权总分降序返回，列标题 Tooltip 说明排序依据
@@ -261,7 +282,9 @@ export default function ActiveTaskList() {
       title: t('req.activeTask.col.reqStage'),
       key: 'reqStage',
       width: 110,
-      render: (_, r) => <ReqStatusBadge status={r.requirement_status} name={r.requirement_status_name} />,
+      render: (_, r) => r.requirement_status
+        ? <ReqStatusBadge status={r.requirement_status} name={r.requirement_status_name || r.requirement_status} />
+        : '-',
     },
     {
       title: t('req.activeTask.col.quadrant'),
@@ -288,7 +311,7 @@ export default function ActiveTaskList() {
       width: 100,
       render: (v: RequirementTaskStatus) => <Tag color={REQ_TASK_STATUS_COLORS[v]}>{et.reqTaskStatus(v)}</Tag>,
     },
-    ...(canEdit || rows.some((row) => row.can_manage_tasks)
+    ...(rows.some((row) => row.can_edit || row.can_delete)
       ? [
           {
             title: t('common.actions'),
@@ -297,12 +320,12 @@ export default function ActiveTaskList() {
             fixed: 'right' as const,
             render: (_: unknown, row: ActiveTaskRow) => (
               <span style={{ whiteSpace: 'nowrap' }}>
-                {(canEdit || row.can_manage_tasks) && (
+                {row.can_edit && (
                   <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => void openEdit(row)}>
                     {t('common.edit')}
                   </Button>
                 )}
-                {canEdit && (
+                {row.can_delete && (
                   <Button type="link" size="small" danger style={{ paddingInline: 4 }} onClick={() => removeTask(row)}>
                     {t('common.delete')}
                   </Button>
@@ -331,12 +354,29 @@ export default function ActiveTaskList() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
-        {canAddTasks && (
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => void openAdd()}>
-            {t('req.activeTask.add')}
-          </Button>
+        {canMaintainDevelopmentTasks && (
+          <>
+            <ImportButtons
+              templateUrl="/requirements/tasks/template"
+              importUrl="/requirements/tasks/import"
+              onDone={() => void load()}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => void openAdd()}>
+              {t('req.activeTask.add')}
+            </Button>
+          </>
         )}
       </Space>
+
+      <BatchDeleteToolbar
+        endpoint="/requirements/tasks/batch-delete"
+        selectedIds={selectedIds}
+        entityName="需求开发任务"
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
 
       <Modal
         title={t('req.activeTask.add')}
@@ -351,10 +391,9 @@ export default function ActiveTaskList() {
           <Form.Item
             name="requirement_id"
             label={t('req.activeTask.pickReq')}
-            rules={[{ required: true, message: t('req.activeTask.pickReqRequired') }]}
             extra={t('req.activeTask.pickReqHint')}
           >
-            <Select showSearch optionFilterProp="label" options={reqOptions} placeholder={t('req.activeTask.pickReq')} />
+            <Select allowClear showSearch optionFilterProp="label" options={reqOptions} placeholder={t('req.activeTask.pickReqOptional')} />
           </Form.Item>
           <Form.Item name="name" label={t('req.activeTask.col.name')} rules={[{ required: true, message: t('req.activeTask.nameRequired') }]}>
             <Input maxLength={200} />
@@ -385,10 +424,10 @@ export default function ActiveTaskList() {
         destroyOnClose
         width={560}
       >
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          {editing ? `${editing.requirement_code} ${editing.requirement_title}` : ''}
-        </Typography.Paragraph>
         <Form form={editForm} layout="vertical" preserve={false}>
+          <Form.Item name="requirement_id" label={t('req.activeTask.pickReq')} extra={t('req.activeTask.pickReqHint')}>
+            <Select allowClear showSearch optionFilterProp="label" options={reqOptions} placeholder={t('req.activeTask.pickReqOptional')} />
+          </Form.Item>
           <Form.Item name="name" label={t('req.activeTask.col.name')} rules={[{ required: true, message: t('req.activeTask.nameRequired') }]}>
             <Input maxLength={200} />
           </Form.Item>
@@ -422,6 +461,11 @@ export default function ActiveTaskList() {
         loading={loading}
         columns={columns}
         dataSource={rows}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({ disabled: !row.can_delete }),
+        }}
         standardToolbar={{ exportFileName: '需求活动任务', searchPlaceholder: '搜索需求、任务、负责人或状态' }}
         sticky
         scroll={{ x: 1460 }}

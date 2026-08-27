@@ -29,11 +29,11 @@ export const zh: Dict = {
   'proc.deleted': '流程已删除',
   'proc.emptyDefs': '暂无流程定义',
   'proc.instanceCount': '实例数：{n}',
-  'proc.stepsLocked': '步骤已锁定',
+  'proc.stepsLocked': '节点已锁定（知会人可编辑）',
   'proc.triggerLabel': '触发条件：',
   'proc.triggerNone': '（无）',
 
-  // 流程定义：锁定步骤只读表列
+  // 流程定义：节点字段
   'proc.col.name': '名称',
   'proc.col.nodeType': '节点类型',
   'proc.col.defaultAssign': '默认指派',
@@ -43,8 +43,8 @@ export const zh: Dict = {
   'proc.col.desc': '说明',
 
   // 流程定义：抽屉告警
-  'proc.lockedAlertMsg': '该流程已有 {n} 个实例，步骤已锁定',
-  'proc.lockedAlertDesc': '如需调整步骤，请使用“另存新版本”。',
+  'proc.lockedAlertMsg': '该流程已有 {n} 个实例，节点与处理人已锁定',
+  'proc.lockedAlertDesc': '知会人仍可维护；变更节点顺序、节点类型、处理人、自治级别或 SLA 请使用“另存新版本”。保存后的知会人仅在后续节点激活时生效，既有任务和已发送通知保持不变。',
   'proc.newVersionAlert': '将基于 v{version} 创建新版本（code 自动变更，如 {code}@v{next}），并停用旧版本',
 
   // 流程定义：表单
@@ -81,7 +81,7 @@ export const zh: Dict = {
   'proc.stepDescPlaceholder': '说明',
   'proc.addStep': '添加步骤',
   'proc.stepHint':
-    '步骤顺序即执行顺序（保存时自动按当前顺序编号）。自治级别：L1 全自动 ~ L4 纯人工。「知会人」在步骤激活时仅发送站内通知，不产生任务、不阻塞流程。',
+    '步骤顺序即执行顺序（保存时自动按当前顺序编号）。自治级别：L1 全自动 ~ L4 纯人工。「知会人」在步骤激活时仅发送站内通知，不产生任务、不阻塞流程。已有实例的流程仅可编辑知会人，且只影响后续激活的节点。',
 
   // 流程监控
   'proc.monitorTitle': '流程监控',
@@ -124,11 +124,11 @@ export const en: Dict = {
   'proc.deleted': 'Process deleted',
   'proc.emptyDefs': 'No process definitions',
   'proc.instanceCount': 'Instances: {n}',
-  'proc.stepsLocked': 'Steps locked',
+  'proc.stepsLocked': 'Nodes locked; CC editable',
   'proc.triggerLabel': 'Trigger: ',
   'proc.triggerNone': '(none)',
 
-  // Process definitions: locked step table columns
+  // Process definitions: node fields
   'proc.col.name': 'Name',
   'proc.col.nodeType': 'Node Type',
   'proc.col.defaultAssign': 'Default Assignee',
@@ -138,8 +138,8 @@ export const en: Dict = {
   'proc.col.desc': 'Description',
 
   // Process definitions: drawer alerts
-  'proc.lockedAlertMsg': 'This process already has {n} instance(s); steps are locked',
-  'proc.lockedAlertDesc': 'To adjust steps, use "Save as New Version".',
+  'proc.lockedAlertMsg': 'This process already has {n} instance(s); nodes and handlers are locked',
+  'proc.lockedAlertDesc': 'CC recipients remain editable. To change node order, node type, handler, autonomy, or SLA, use "Save as New Version". Updated CC recipients apply only when a later node activates; existing tasks and sent notifications remain unchanged.',
   'proc.newVersionAlert': 'A new version will be created from v{version} (code changes automatically, e.g. {code}@v{next}) and the old version deactivated',
 
   // Process definitions: form
@@ -176,7 +176,7 @@ export const en: Dict = {
   'proc.stepDescPlaceholder': 'Description',
   'proc.addStep': 'Add Step',
   'proc.stepHint':
-    'Step order is the execution order (auto-numbered by current order on save). Autonomy: L1 fully automated ~ L4 manual. CC recipients only receive in-app notifications when a step activates; they create no task and do not block the process.',
+    'Step order is the execution order (auto-numbered by current order on save). Autonomy: L1 fully automated ~ L4 manual. CC recipients only receive in-app notifications when a step activates; they create no task and do not block the process. For a process with instances, only CC recipients are editable and they affect only future node activations.',
 
   // Process monitor
   'proc.monitorTitle': 'Process Monitor',

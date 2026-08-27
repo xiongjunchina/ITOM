@@ -128,6 +128,7 @@ function ProjectList() {
         resource_note: d.resource_note,
         org_members: d.org_members ?? [],
         stakeholders: d.stakeholders ?? [],
+        workflow_edit_mode: d.workflow_edit_mode,
       });
     } catch {
       // 已统一提示
@@ -281,7 +282,7 @@ function ProjectList() {
         </Space>
       ),
     },
-    { title: t('proj.col.name'), dataIndex: 'name', width: 220, ellipsis: true },
+    { title: t('proj.col.name'), dataIndex: 'name', width: 240, ellipsis: true },
     { title: t('proj.col.portfolio'), dataIndex: 'portfolio_name', width: 140, ellipsis: true, render: (v) => v || '-' },
     { title: t('proj.col.pm'), dataIndex: 'pm_name', width: 100, render: (v) => v || '-' },
     {
@@ -340,7 +341,7 @@ function ProjectList() {
         <PendingStepCell pending={(r as ProjectRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/projects/${r.id}`)} />
       ),
     },
-    ...(canEdit || canDelete
+    ...(canEdit || canDelete || items.some((item) => item.can_edit || item.can_delete)
       ? [
           {
             title: t('common.actions'),
@@ -374,12 +375,12 @@ function ProjectList() {
               };
               return (
                 <span style={{ whiteSpace: 'nowrap' }}>
-                  {!r.is_example && canEdit && linkBtn(t('common.edit'), !isFinal, () => void openRowEdit(r), t('proj.editFinalTooltip'))}
+                  {!r.is_example && (r.can_edit ?? canEdit) && linkBtn(t('common.edit'), !isFinal, () => void openRowEdit(r), t('proj.editFinalTooltip'))}
                   {!r.is_example && canEdit && linkBtn(t('proj.op.pause'), st === 'active', () => runTransition(r, 'paused', t('proj.op.pause')), t('proj.op.onlyActive'))}
                   {!r.is_example && canEdit && (isAdmin || r.pm === user?.person_id) &&
                     linkBtn(t('proj.op.close'), ['active', 'paused', 'completed'].includes(st), () => runTransition(r, 'closed', t('proj.op.close')), t('proj.op.closeDisabled'))}
                   {!r.is_example && canEdit && linkBtn(t('proj.op.restart'), ['paused', 'closed', 'completed'].includes(st), () => runTransition(r, 'active', t('proj.op.restart')), t('proj.op.restartDisabled'))}
-                  {canDelete && linkBtn(t('common.delete'), true, () => runDelete(r), '', true)}
+                  {(r.can_delete ?? canDelete) && linkBtn(t('common.delete'), true, () => runDelete(r), '', true)}
                 </span>
               );
             },
@@ -700,7 +701,7 @@ function PortfolioPane() {
     {
       title: t('proj.col.name'),
       dataIndex: 'name',
-      width: 220,
+      width: 200,
       ellipsis: true,
       render: (v: string, r) => (
         <Space size={4}>
@@ -718,7 +719,7 @@ function PortfolioPane() {
       render: (v: number, r) =>
         v > 0 ? <Link to={`/projects?portfolio=${r.id}`}>{v}</Link> : v,
     },
-    { title: t('proj.col.desc'), dataIndex: 'description', ellipsis: true, render: (v) => v || '-' },
+    { title: t('proj.col.desc'), dataIndex: 'description', width: 320, ellipsis: true, render: (v) => v || '-' },
     ...(canEdit || canDelete
       ? [
           {

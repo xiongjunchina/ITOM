@@ -20,18 +20,51 @@ metadata:
   labels: { app: itom-frontend }
 spec:
   replicas: 2
+  # Required host anti-affinity leaves exactly two eligible hosts. The default
+  # surge rollout would need a third host while an old replica still occupies
+  # one of them, so replace one eligible-host replica at a time instead.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels: { app: itom-frontend }
   template:
     metadata:
       labels: { app: itom-frontend }
     spec:
-      # Temporary production workaround: the Flannel/CNI path on k8s-01/02 is
-      # intermittently unable to resolve/reach the backend Service, which makes
-      # nginx return 502. Keep the frontend with backend + DB on healthy k8s-03
-      # until the cluster network incident is resolved.
-      nodeSelector:
-        kubernetes.io/hostname: sn-prod-k8s-03
+      # A manual recovery may have pinned this Deployment with nodeName.
+      # Keep the desired template explicitly unpinned so apply clears that
+      # temporary override and the scheduler can enforce the rules below.
+      nodeName: ""
+      # Node 02 is a normal eligible production node. Node 03 is excluded
+      # for frontend placement; hard anti-affinity below spreads replicas
+      # across nodes 01 and 02.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - sn-prod-k8s-01
+                      - sn-prod-k8s-02
+        # Keep the two web replicas on different eligible hosts whenever both
+        # are available. This prevents a replacement from silently sharing a
+        # node with the surviving replica during recovery from node 03.
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: itom-frontend }
+              topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: itom-frontend }
       imagePullSecrets:
         - name: harbor-isa
       containers:

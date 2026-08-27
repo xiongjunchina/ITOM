@@ -1,21 +1,23 @@
 import { useState } from 'react';
-import { Button, Input, Modal, Space, message } from 'antd';
+import { Button, Input, Modal, Select, Space, Typography, message } from 'antd';
 import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import { canHandleTask, useAuthStore } from '../stores/auth';
 import { useT } from '../i18n';
 import type { FlowDiagramStep } from './FlowDiagram';
+import ProcessReassignButton from './ProcessReassignButton';
 
 /**
- * 审批节点右上角动作：同意理由可选，驳回理由必填。
- * 处理节点不显示这些按钮，统一使用流程图中的「完成此步骤」。
+ * 当前流程节点动作：所有节点均可转派；审批节点额外显示同意与驳回。
  */
 export default function ProcessActionButtons({
   step,
+  returnTargets = [],
   disabled = false,
   onDone,
 }: {
   step: FlowDiagramStep | null | undefined;
+  returnTargets?: { seq: number; name: string; kind: 'process_step' | 'requester_supplement' }[];
   disabled?: boolean;
   onDone: () => void;
 }) {
@@ -23,6 +25,7 @@ export default function ProcessActionButtons({
   const user = useAuthStore((s) => s.user);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
+  const [returnTarget, setReturnTarget] = useState<number | undefined>();
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [approvalComment, setApprovalComment] = useState('');
   const [saving, setSaving] = useState(false);
@@ -31,11 +34,12 @@ export default function ProcessActionButtons({
     disabled ||
     !step?.task_id ||
     step.task_status !== '待处理' ||
-    step.node_type !== 'approval' ||
     !canHandleTask(user, step)
   ) {
     return null;
   }
+
+  const isApproval = step.node_type === 'approval';
 
   const approve = async () => {
     setSaving(true);
@@ -59,10 +63,14 @@ export default function ProcessActionButtons({
     }
     setSaving(true);
     try {
-      await api.post(`/process-tasks/${step.task_id}/reject`, { reason: rejectReason.trim() });
+      await api.post(`/process-tasks/${step.task_id}/reject`, {
+        reason: rejectReason.trim(),
+        ...(returnTargets.length > 0 ? { target_seq: returnTarget ?? returnTargets[0]?.seq } : {}),
+      });
       message.success(t('comp.flow.rejected'));
       setRejectOpen(false);
       setRejectReason('');
+      setReturnTarget(undefined);
       onDone();
     } catch {
       // 统一错误拦截器已提示
@@ -74,12 +82,24 @@ export default function ProcessActionButtons({
   return (
     <>
       <Space wrap>
-        <Button type="primary" icon={<CheckOutlined />} onClick={() => setApprovalOpen(true)}>
-          {t('comp.flow.approve')}
-        </Button>
-        <Button danger icon={<CloseOutlined />} onClick={() => setRejectOpen(true)}>
-          {t('comp.flow.reject')}
-        </Button>
+        {isApproval && (
+          <>
+            <Button type="primary" icon={<CheckOutlined />} onClick={() => setApprovalOpen(true)}>
+              {t('comp.flow.approve')}
+            </Button>
+            <Button
+              danger
+              icon={<CloseOutlined />}
+              onClick={() => {
+                setReturnTarget(returnTargets[0]?.seq);
+                setRejectOpen(true);
+              }}
+            >
+              {t('comp.flow.reject')}
+            </Button>
+          </>
+        )}
+        <ProcessReassignButton step={step} onDone={onDone} />
       </Space>
       <Modal
         title={t('comp.flow.approveTitle')}
@@ -106,13 +126,26 @@ export default function ProcessActionButtons({
         onCancel={() => setRejectOpen(false)}
         destroyOnClose
       >
-        <Input.TextArea
-          rows={4}
-          maxLength={500}
-          value={rejectReason}
-          onChange={(e) => setRejectReason(e.target.value)}
-          placeholder={t('comp.flow.rejectReasonPlaceholder')}
-        />
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          {returnTargets.length > 0 && (
+            <div>
+              <Typography.Text strong>{t('comp.flow.returnTarget')}</Typography.Text>
+              <Select
+                style={{ width: '100%', marginTop: 6 }}
+                value={returnTarget}
+                onChange={setReturnTarget}
+                options={returnTargets.map((target) => ({ value: target.seq, label: target.name }))}
+              />
+            </div>
+          )}
+          <Input.TextArea
+            rows={4}
+            maxLength={500}
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            placeholder={t('comp.flow.rejectReasonPlaceholder')}
+          />
+        </Space>
       </Modal>
     </>
   );

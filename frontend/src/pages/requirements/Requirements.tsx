@@ -8,6 +8,7 @@ import {
   DatePicker,
   Empty,
   Form,
+  Image,
   Input,
   Modal,
   Popconfirm,
@@ -19,6 +20,7 @@ import {
   Switch,
   Tag,
   Typography,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -27,6 +29,7 @@ import {
   AppstoreOutlined,
   DownloadOutlined,
   ImportOutlined,
+  PaperClipOutlined,
   PlusOutlined,
   ReloadOutlined,
   TableOutlined,
@@ -41,6 +44,7 @@ import type { PendingStep } from '../../components/PendingStepCell';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import type {
   BusinessDomain,
+  AttachmentItem,
   MasterDataItem,
   Moscow,
   RequirementRow,
@@ -50,11 +54,12 @@ import { MOSCOW_KEYS, REQ_DECISIONS, REQ_STATUS, REQ_TYPES } from '../../api/typ
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag } from './shared';
 import RequirementImportModal from './RequirementImportModal';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 
 const STATUS_KEYS = Object.keys(REQ_STATUS) as RequirementStatus[];
 
 /** 看板五列：登记→评估→分析→实现→关闭；on_hold / cancelled 不入看板（表格视图可见） */
-const BOARD_COLS: RequirementStatus[] = ['registered', 'evaluating', 'analyzing', 'implementing', 'closed'];
+const BOARD_COLS: RequirementStatus[] = ['registered', 'supplementing', 'evaluating', 'analyzing', 'implementing', 'closed'];
 
 /** 加权总分展示：保留 1 位小数，空显示 - */
 const fmtScore = (v?: number | null): string => (v == null ? '-' : v.toFixed(1));
@@ -70,13 +75,17 @@ interface CreateFormValues {
   req_type: string;
   business_domain_id: string;
   description: string;
+  other_info?: string;
   source?: string;
   // 进阶字段（默认折叠）
-  department?: string;
   expected_date?: Dayjs;
   expected_effect?: string;
   business_value_note?: string;
 }
+
+type RequirementDraftAttachment = AttachmentItem & { previewUrl?: string };
+
+const MAX_REQUIREMENT_ATTACHMENTS = 10;
 
 // ---------------- 看板卡片 ----------------
 
@@ -145,10 +154,12 @@ export default function Requirements() {
 
   const [view, setView] = useState<'board' | 'table'>('table');
   const [items, setItems] = useState<RequirementRow[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // 筛选
   const [q, setQ] = useState('');
@@ -165,6 +176,8 @@ export default function Requirements() {
   const [form] = Form.useForm<CreateFormValues>();
   const [sources, setSources] = useState<MasterDataItem[]>([]);
   const [importOpen, setImportOpen] = useState(false);
+  const [draftAttachments, setDraftAttachments] = useState<RequirementDraftAttachment[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(0);
   const directCreateStarted = useRef(false);
 
   const load = useCallback(async () => {
@@ -196,6 +209,24 @@ export default function Requirements() {
     }
   }, [view, q, domainId, moscow, status, decision, mineOnly, page, pageSize]);
 
+  const exportAll = async () => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (domainId) params.set('business_domain_id', domainId);
+    if (moscow) params.set('moscow', moscow);
+    if (mineOnly) params.set('scope', 'mine');
+    // 看板不展示状态/决议筛选，不能把切换视图前遗留的隐藏条件带入导出。
+    if (view === 'table' && status) params.set('status', status);
+    if (view === 'table' && decision) params.set('decision', decision);
+    const query = params.toString();
+    setExporting(true);
+    try {
+      await api.download(`/requirements/export${query ? `?${query}` : ''}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -217,7 +248,12 @@ export default function Requirements() {
   }, [items]);
 
   const openCreate = () => {
+    draftAttachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
     form.resetFields();
+    setDraftAttachments([]);
+    setAttachmentUploading(0);
     setCreateOpen(true);
     if (sources.length === 0) {
       api
@@ -240,7 +276,52 @@ export default function Requirements() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createRequested, canCreate]);
 
+  const discardDraftAttachments = async (attachments = draftAttachments) => {
+    attachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setDraftAttachments([]);
+    await Promise.allSettled(attachments.map((attachment) => api.delete(`/attachments/requirement-drafts/${attachment.id}`)));
+  };
+
+  const closeCreate = () => {
+    void discardDraftAttachments();
+    setCreateOpen(false);
+  };
+
+  const stageRequirementAttachment = async (file: File) => {
+    if (draftAttachments.length + attachmentUploading >= MAX_REQUIREMENT_ATTACHMENTS) {
+      message.warning(t('req.attachmentLimit'));
+      return;
+    }
+    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+    setAttachmentUploading((count) => count + 1);
+    try {
+      const uploaded = await api.upload<AttachmentItem>('/attachments/requirement-drafts', file);
+      setDraftAttachments((items) => [...items, { ...uploaded, previewUrl }]);
+    } catch {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      // 已统一提示
+    } finally {
+      setAttachmentUploading((count) => Math.max(0, count - 1));
+    }
+  };
+
+  const removeDraftAttachment = async (attachment: RequirementDraftAttachment) => {
+    try {
+      await api.delete(`/attachments/requirement-drafts/${attachment.id}`);
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      setDraftAttachments((items) => items.filter((item) => item.id !== attachment.id));
+    } catch {
+      // 已统一提示
+    }
+  };
+
   const submitCreate = async () => {
+    if (attachmentUploading > 0) {
+      message.warning(t('req.attachmentUploading'));
+      return;
+    }
     const values = await form.validateFields();
     setSaving(true);
     try {
@@ -249,14 +330,19 @@ export default function Requirements() {
         req_type: values.req_type,
         business_domain_id: values.business_domain_id,
         description: values.description,
+        remarks: values.other_info || null,
         source: values.source ?? null,
-        department: values.department || null,
         expected_date: values.expected_date ? values.expected_date.format('YYYY-MM-DD') : null,
         expected_effect: values.expected_effect || null,
         business_value_note: values.business_value_note || null,
+        attachment_ids: draftAttachments.map((attachment) => attachment.id),
       });
       message.success(t('req.created', { code: created.requirement_code ?? '' }));
       setCreateOpen(false);
+      draftAttachments.forEach((attachment) => {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      });
+      setDraftAttachments([]);
       if (created?.id) {
         navigate(`/requirements/${created.id}`);
       } else {
@@ -284,7 +370,8 @@ export default function Requirements() {
         </Space>
       ),
     },
-    { title: t('req.col.title'), dataIndex: 'title', width: 240, ellipsis: true },
+    { title: t('req.col.title'), dataIndex: 'title', width: 280, ellipsis: true, fixed: 'left' },
+    { title: t('req.requester'), dataIndex: 'requester_name', width: 110, render: (v) => v || '-' },
     { title: t('req.col.type'), dataIndex: 'req_type', width: 80, render: (v) => et.reqType(v) },
     { title: t('req.col.domain'), dataIndex: 'business_domain_name', width: 130, ellipsis: true, render: (v) => v || '-' },
     {
@@ -350,7 +437,7 @@ export default function Requirements() {
       render: (_, r) => <PendingStepCell pending={(r as RequirementRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/requirements/${r.id}`)} />,
     },
     // M21：删除（delete 权限，默认仅 admin）：级联移除任务清单与流程记录，示例只读
-    ...(canDelete
+    ...(canDelete || items.some((item) => item.can_delete)
       ? ([
           {
             title: t('common.actions'),
@@ -359,6 +446,7 @@ export default function Requirements() {
             fixed: 'right' as const,
             render: (_: unknown, r: RequirementRow) =>
               r.is_example && !isAdmin ? null : (
+                (r.can_delete ?? canDelete) ? (
                 <Popconfirm
                   title={t('common.deleteConfirm')}
                   onConfirm={async () => {
@@ -371,6 +459,7 @@ export default function Requirements() {
                     {t('common.delete')}
                   </Button>
                 </Popconfirm>
+                ) : null
               ),
           },
         ] as ColumnsType<RequirementRow>)
@@ -496,20 +585,36 @@ export default function Requirements() {
           <Button icon={<ReloadOutlined />} onClick={() => void load()}>
             {t('common.refresh')}
           </Button>
+          {view === 'table' && (canDelete || items.some((item) => item.can_delete)) && (
+            <BatchDeleteToolbar
+              endpoint="/requirements/batch-delete"
+              entityName="需求"
+              selectedIds={selectedIds}
+              onCompleted={() => {
+                setSelectedIds([]);
+                void load();
+              }}
+            />
+          )}
         </Space>
-        {canCreate && (
-          <Space>
-            <Button icon={<DownloadOutlined />} onClick={() => void api.download('/requirements/template')}>
-              {t('req.downloadTemplate')}
-            </Button>
-            <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
-              {t('req.import')}
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
-              {t('req.register')}
-            </Button>
-          </Space>
-        )}
+        <Space>
+          <Button icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportAll()}>
+            {t('req.exportAll')}
+          </Button>
+          {canCreate && (
+            <>
+              <Button icon={<DownloadOutlined />} onClick={() => void api.download('/requirements/template')}>
+                {t('req.downloadTemplate')}
+              </Button>
+              <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>
+                {t('req.import')}
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
+                {t('req.register')}
+              </Button>
+            </>
+          )}
+        </Space>
       </Space>
 
       {view === 'board' ? (
@@ -525,11 +630,21 @@ export default function Requirements() {
           {boardView}
         </Spin>
       ) : (
-        <Table<RequirementRow>
+      <Table<RequirementRow>
+        className="sticky-table--freeze-columns"
           rowKey="id"
           loading={loading}
           columns={columns}
           dataSource={items}
+          rowSelection={
+            canDelete || items.some((item) => item.can_delete)
+              ? {
+                  selectedRowKeys: selectedIds,
+                  onChange: (keys) => setSelectedIds(keys.map(String)),
+                  getCheckboxProps: (row) => ({ disabled: !(row.can_delete ?? canDelete) || (!!row.is_example && !isAdmin) }),
+                }
+              : undefined
+          }
           sticky
           scroll={{ x: 'max-content' }}
           pagination={{
@@ -543,6 +658,8 @@ export default function Requirements() {
               setPageSize(ps);
             },
           }}
+          tableKey="requirements.overview"
+          requiredColumnKeys={['requirement_code', 'title', 'actions']}
         />
       )}
 
@@ -553,7 +670,7 @@ export default function Requirements() {
         width={560}
         onOk={() => void submitCreate()}
         confirmLoading={saving}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={closeCreate}
         destroyOnClose
       >
         <DocumentTypeHint documentType="requirement" />
@@ -586,6 +703,62 @@ export default function Requirements() {
           <Form.Item name="description" label={t('req.reqDesc')} rules={[{ required: true, message: t('req.reqDescRequired') }]}>
             <Input.TextArea rows={4} maxLength={2000} placeholder={t('req.descPlaceholder')} />
           </Form.Item>
+          <Form.Item name="other_info" label={t('req.otherInfo')}>
+            <Input.TextArea
+              rows={3}
+              maxLength={1000}
+              placeholder={t('req.otherInfoPlaceholder')}
+              onPaste={(event) => {
+                const files = Array.from(event.clipboardData.files);
+                if (files.length === 0) return;
+                event.preventDefault();
+                files.forEach((file) => void stageRequirementAttachment(file));
+              }}
+            />
+          </Form.Item>
+          <Form.Item label={t('req.attachments')} extra={t('req.attachmentHint')}>
+            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+              <Upload
+                multiple
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void stageRequirementAttachment(file);
+                  return Upload.LIST_IGNORE;
+                }}
+                accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+              >
+                <Button icon={<PaperClipOutlined />} loading={attachmentUploading > 0}>
+                  {t('req.uploadAttachment')}
+                </Button>
+              </Upload>
+              {draftAttachments.length > 0 && (
+                <Space wrap size={[8, 8]}>
+                  {draftAttachments.map((attachment) => (
+                    <Tag
+                      key={attachment.id}
+                      closable
+                      onClose={(event) => {
+                        event.preventDefault();
+                        void removeDraftAttachment(attachment);
+                      }}
+                      icon={<PaperClipOutlined />}
+                    >
+                      {attachment.previewUrl && (
+                        <Image
+                          preview={{ src: attachment.previewUrl }}
+                          src={attachment.previewUrl}
+                          width={28}
+                          height={28}
+                          style={{ objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }}
+                        />
+                      )}
+                      {attachment.filename}
+                    </Tag>
+                  ))}
+                </Space>
+              )}
+            </Space>
+          </Form.Item>
           <Form.Item name="source" label={t('req.source')}>
             <Select
               allowClear
@@ -601,9 +774,6 @@ export default function Requirements() {
                 label: t('req.moreOptions'),
                 children: (
                   <>
-                    <Form.Item name="department" label={t('req.department')}>
-                      <Input maxLength={100} />
-                    </Form.Item>
                     <Form.Item name="expected_date" label={t('req.expectedDate')}>
                       <DatePicker style={{ width: '100%' }} />
                     </Form.Item>

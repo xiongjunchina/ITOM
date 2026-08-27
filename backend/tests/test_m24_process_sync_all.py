@@ -1,7 +1,7 @@
 """M24：流程线↔状态机双向联动全实体自查修复。
 
 正向：problem 流程完成→自动闭环；project 流程完成→通知 PM（不自动关）。
-反向：工单/问题/需求/项目终态→流程实例收尾（作废待办）；需求驳回不再派方案评估任务。
+反向：工单/问题/需求/项目终态→流程实例收尾（作废待办）；需求驳回退回历史节点。
 """
 import pytest
 
@@ -65,21 +65,21 @@ def test_problem_manual_close_finalizes_process(client, ctx):
     assert all(s["task_status"] != "待处理" for s in proc["steps"])
 
 
-def test_requirement_reject_finalizes_without_next_task(client, ctx):
-    """驳回=终态：流程收尾，不再给产品 leader 派发方案评估任务。"""
+def test_requirement_reject_returns_to_requester_without_next_task(client, ctx):
+    """首审批节点驳回=登记人补充：不派发下一审批节点，也不终止需求。"""
     r = client.post("/api/requirements", json={"title": "M24驳回需求", "req_type": "功能",
                                                "business_domain_id": ctx["domain"], "description": "d"},
                     headers=ctx["admin"]).json()["data"]
     resp = client.post(f"/api/requirements/{r['id']}/score", json={
         "d1_strategy": 1, "d2_value": 1, "d3_tech": 1, "d4_org": 1, "d5_risk": 5, "d6_speed": 1,
-        "decision": "驳回", "comment": "价值不足，评审驳回关闭",
+        "decision": "驳回", "comment": "价值不足，请登记人补充依据",
     }, headers=ctx["admin"])
     assert resp.json()["success"], resp.text
     d = client.get(f"/api/requirements/{r['id']}", headers=ctx["admin"]).json()["data"]
-    assert d["status"] == "cancelled"
+    assert d["status"] == "supplementing"
     proc = d["process"]
-    assert proc["status"] == "completed"
-    assert all(s["task_status"] != "待处理" for s in proc["steps"])  # 无残留待办（方案评估未被派发）
+    assert proc["status"] == "returned"
+    assert all(s["task_status"] != "待处理" for s in proc["steps"])  # 等登记人补充，不派下一节点
 
 
 def test_project_close_finalizes_and_flow_complete_notifies_pm(client, ctx):

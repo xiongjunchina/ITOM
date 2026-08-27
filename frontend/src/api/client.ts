@@ -95,6 +95,10 @@ export const api = {
     const env = await request<T>({ method: 'post', url, data });
     return env.data;
   },
+  async postWithHeaders<T>(url: string, data: unknown, headers: Record<string, string>): Promise<T> {
+    const env = await request<T>({ method: 'post', url, data, headers });
+    return env.data;
+  },
   async patch<T>(url: string, data?: unknown): Promise<T> {
     const env = await request<T>({ method: 'patch', url, data });
     return env.data;
@@ -103,8 +107,8 @@ export const api = {
     const env = await request<T>({ method: 'put', url, data });
     return env.data;
   },
-  async delete<T = unknown>(url: string): Promise<T> {
-    const env = await request<T>({ method: 'delete', url });
+  async delete<T = unknown>(url: string, data?: unknown): Promise<T> {
+    const env = await request<T>({ method: 'delete', url, data });
     return env.data;
   },
   /** 下载二进制文件（如 Excel 模板）：从 Content-Disposition 解析文件名并触发浏览器保存 */

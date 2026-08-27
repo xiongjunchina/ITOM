@@ -1,5 +1,8 @@
 """M5：需求四阶段/阶段门/任务分解/验收清单/转出闭环。"""
+from io import BytesIO
+
 import pytest
+from openpyxl import load_workbook
 
 
 @pytest.fixture(scope="module")
@@ -17,7 +20,7 @@ def ctx(client, admin_headers):
     bp_p, bp = member_and_user("BP小美", "bp10", ["it_bp"])
     pdm_p, pdm = member_and_user("产品老王", "pdm10", ["it_pdm"])
     dev_p, dev = member_and_user("开发小陈", "dev10", ["it_dev"])
-    _, req = member_and_user("业务数字化经理小赵", "req10", ["bdo"])
+    req_p, req = member_and_user("业务数字化经理小赵", "req10", ["bdo"])
 
     domain = client.post(
         "/api/admin/business-domains",
@@ -25,7 +28,7 @@ def ctx(client, admin_headers):
         headers=admin_headers,
     ).json()["data"]
     return {"bp_p": bp_p, "bp": bp, "pdm_p": pdm_p, "pdm": pdm, "dev_p": dev_p, "dev": dev,
-            "req": req, "domain": domain["id"]}
+            "req_p": req_p, "req": req, "domain": domain["id"]}
 
 
 def _register(client, headers, domain, **kw):
@@ -59,6 +62,96 @@ def test_bdo_scope(client, ctx):
     assert client.get(f"/api/requirements/{other['id']}", headers=ctx["req"]).status_code == 403
 
 
+def test_requirement_export_returns_all_filtered_rows_and_preserves_scope(client, ctx):
+    """需求总览导出复用清单筛选和数据范围，并覆盖当前分页之外的全部匹配行。"""
+    prefix = "需求导出跨页验证"
+    created = [
+        _register(client, ctx["bp"], ctx["domain"], title=f"{prefix}-{index}")
+        for index in range(1, 4)
+    ]
+    first_page = client.get(
+        "/api/requirements",
+        params={"q": prefix, "status": "evaluating", "page": 1, "page_size": 1},
+        headers=ctx["bp"],
+    ).json()
+    assert first_page["total"] == 3
+    assert len(first_page["data"]) == 1
+
+    exported = client.get(
+        "/api/requirements/export",
+        params={"q": prefix, "status": "evaluating", "business_domain_id": ctx["domain"]},
+        headers=ctx["bp"],
+    )
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert "filename*=UTF-8''" in exported.headers["content-disposition"]
+    workbook = load_workbook(BytesIO(exported.content), data_only=True)
+    sheet = workbook["需求总览"]
+    assert [cell.value for cell in sheet[1]][:5] == ["需求编号", "标题", "提出人", "类型", "业务域"]
+    rows = list(sheet.iter_rows(min_row=3, values_only=True))
+    assert {row[0] for row in rows} == {item["requirement_code"] for item in created}
+    assert {row[1] for row in rows} == {f"{prefix}-{index}" for index in range(1, 4)}
+
+    scoped_prefix = "需求导出范围验证"
+    mine = _register(client, ctx["req"], ctx["domain"], title=f"{scoped_prefix}-本人")
+    _register(client, ctx["bp"], ctx["domain"], title=f"{scoped_prefix}-他人")
+    scoped_export = client.get(
+        "/api/requirements/export",
+        params={"q": scoped_prefix},
+        headers=ctx["req"],
+    )
+    assert scoped_export.status_code == 200, scoped_export.text
+    scoped_sheet = load_workbook(BytesIO(scoped_export.content), data_only=True)["需求总览"]
+    scoped_rows = list(scoped_sheet.iter_rows(min_row=3, values_only=True))
+    assert [(row[0], row[1]) for row in scoped_rows] == [(mine["requirement_code"], f"{scoped_prefix}-本人")]
+
+
+def test_requirement_draft_attachments_bind_atomically(client, ctx, monkeypatch, tmp_path):
+    """需求补充信息的附件在提交前不可读取，提交时随需求在同一事务中绑定。"""
+    monkeypatch.setattr("app.core.config.settings.upload_dir", str(tmp_path))
+    upload = client.post(
+        "/api/attachments/requirement-drafts",
+        files={"file": ("需求截图.png", b"requirement-png", "image/png")},
+        headers=ctx["req"],
+    )
+    assert upload.status_code == 200, upload.text
+    draft = upload.json()["data"]
+
+    hidden = client.get(
+        f"/api/attachments?entity_type=requirement_draft&entity_id={draft['id']}", headers=ctx["req"],
+    )
+    assert hidden.status_code == 403
+    assert client.get(f"/api/attachments/{draft['id']}/download", headers=ctx["req"]).status_code == 403
+    bypass = client.post(
+        f"/api/attachments?entity_type=requirement_draft&entity_id={draft['id']}",
+        files={"file": ("bypass.exe", b"binary", "application/octet-stream")},
+        headers=ctx["req"],
+    )
+    assert bypass.status_code == 403
+
+    requirement = _register(
+        client,
+        ctx["req"],
+        ctx["domain"],
+        title="带补充附件的需求",
+        remarks="补充上下文与影响范围",
+        attachment_ids=[draft["id"]],
+    )
+    detail = client.get(f"/api/requirements/{requirement['id']}", headers=ctx["req"]).json()["data"]
+    assert detail["remarks"] == "补充上下文与影响范围"
+    attachments = client.get(
+        f"/api/attachments?entity_type=requirement&entity_id={requirement['id']}", headers=ctx["req"],
+    )
+    assert attachments.status_code == 200, attachments.text
+    assert attachments.json()["total"] == 1
+    bound = attachments.json()["data"][0]
+    assert bound["id"] == draft["id"] and bound["filename"] == "需求截图.png"
+    download = client.get(f"/api/attachments/{bound['id']}/download", headers=ctx["req"])
+    assert download.status_code == 200 and download.content == b"requirement-png"
+
+
 def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     r = _register(client, ctx["bp"], ctx["domain"], title="全流程需求")
     rid = r["id"]
@@ -66,7 +159,7 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["bp"])
     assert resp.json()["data"]["status"] == "analyzing", resp.text
 
     # 未完成分析（缺 owner）不能进实现
@@ -77,19 +170,38 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
         "moscow": "M", "owner": ctx["pdm_p"], "solution": "BI 报表方案",
         "acceptance_criteria": [{"text": "报表口径与财务一致", "checked": False},
                                 {"text": "T+1 出数", "checked": False}],
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 
-    # 任务分解 + 负责人自更新状态/实际工时
+    # 任务分解 + IT 开发人员可维护实现中需求上的所有开发任务
     t1 = client.post(f"/api/requirements/{rid}/tasks", json={"name": "建模", "assignee": ctx["dev_p"]}, headers=ctx["pdm"]).json()["data"]
     client.post(f"/api/requirements/{rid}/tasks", json={"name": "报表开发", "assignee": ctx["dev_p"]}, headers=ctx["pdm"])
+    active_tasks = client.get("/api/requirements/tasks/active", headers=ctx["pdm"]).json()["data"]
+    registered = next(task for task in active_tasks if task["id"] == t1["id"])
+    assert registered["registrar"] == ctx["bp_p"]
+    assert registered["registrar_name"] == "BP小美"
     r1 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"status": "已完成"}, headers=ctx["dev"])
     assert r1.json()["success"], r1.text
     r_effort = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"actual_effort": 1.5}, headers=ctx["dev"])
     assert r_effort.json()["success"], r_effort.text
     r2 = client.patch(f"/api/requirements/tasks/{t1['id']}", json={"name": "改名"}, headers=ctx["dev"])
-    assert r2.status_code == 403  # 负责人只能改状态
+    assert r2.status_code == 200, r2.text
+
+    # 进行中的开发任务仅系统管理员可删除；其他状态由有开发任务维护权的 IT 人员删除。
+    running = client.post(
+        f"/api/requirements/{rid}/tasks", json={"name": "进行中任务", "assignee": ctx["dev_p"]}, headers=ctx["pdm"],
+    ).json()["data"]
+    assert client.patch(
+        f"/api/requirements/tasks/{running['id']}", json={"status": "进行中"}, headers=ctx["dev"],
+    ).status_code == 200
+    assert client.delete(f"/api/requirements/tasks/{running['id']}", headers=ctx["dev"]).status_code == 403
+    assert client.delete(f"/api/requirements/tasks/{running['id']}", headers=admin_headers).status_code == 200
+
+    deletable = client.post(
+        f"/api/requirements/{rid}/tasks", json={"name": "待删除任务", "assignee": ctx["dev_p"]}, headers=ctx["pdm"],
+    ).json()["data"]
+    assert client.delete(f"/api/requirements/tasks/{deletable['id']}", headers=ctx["dev"]).status_code == 200
 
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
     assert detail["task_total"] == 2 and detail["task_done"] == 1 and detail["progress"] == 50.0
@@ -101,11 +213,67 @@ def test_stage_gate_and_full_lifecycle(client, ctx, admin_headers):
     client.patch(f"/api/requirements/{rid}", json={
         "acceptance_criteria": [{"text": "报表口径与财务一致", "checked": True},
                                 {"text": "T+1 出数", "checked": True}],
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "closed", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "closed"
     detail = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
     assert detail["lead_days"] is not None
+
+
+def test_development_task_template_and_import(client, ctx, admin_headers):
+    """开发任务模板可由 IT 成员下载；导入按行校验并保留失败明细。"""
+    requirement = _register(client, ctx["bp"], ctx["domain"], title="批量导入开发任务")
+    rid = requirement["id"]
+    client.post(f"/api/requirements/{rid}/score", json={
+        "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
+        "decision": "通过",
+    }, headers=ctx["bp"])
+    client.patch(f"/api/requirements/{rid}", json={
+        "moscow": "M", "owner": ctx["pdm_p"], "solution": "批量任务导入方案",
+    }, headers=admin_headers)
+    assert client.post(
+        f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers,
+    ).status_code == 200
+
+    # 普通项目关联不等于已冻结为“转项目管理”路径，仍允许关联需求开发任务。
+    project = client.post("/api/projects", json={
+        "name": "开发任务导入关联项目",
+        "pm": ctx["pdm_p"],
+        "planned_start": "2026-08-01",
+        "planned_end": "2026-09-30",
+        "requirement_id": rid,
+    }, headers=admin_headers)
+    assert project.status_code == 200, project.text
+    linked = client.get(f"/api/requirements/{rid}", headers=ctx["pdm"]).json()["data"]
+    assert linked["project_id"] == project.json()["data"]["id"]
+    assert linked["implementation_route"] != "转项目管理"
+
+    template = client.get("/api/requirements/tasks/template", headers=ctx["dev"])
+    assert template.status_code == 200
+    workbook = load_workbook(BytesIO(template.content))
+    sheet = workbook["开发任务"]
+    sheet.append(["", "暂未关联需求的任务", "后续再关联", "开发小陈", "2026-08-11", 1, 0, "待处理"])
+    sheet.append([requirement["requirement_code"], "批量导入任务", "模板导入", "开发小陈", "2026-08-11", 2, 1, "待处理"])
+    sheet.append(["RQ-NOT-FOUND", "无效关联", "", "开发小陈", "2026-08-11", 1, 0, "待处理"])
+    content = BytesIO()
+    workbook.save(content)
+    result = client.post(
+        "/api/requirements/tasks/import",
+        files={"file": ("development-tasks.xlsx", content.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=ctx["dev"],
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert data["created"] == 2
+    assert data["failed"] and data["failed"][0]["row"] == 5
+    assert "不存在" in data["failed"][0]["error"]
+
+    active = client.get("/api/requirements/tasks/active", headers=ctx["dev"])
+    imported = next(row for row in active.json()["data"] if row["name"] == "批量导入任务")
+    assert imported["can_edit"] is True and imported["can_delete"] is True
+    unlinked = next(row for row in active.json()["data"] if row["name"] == "暂未关联需求的任务")
+    assert unlinked["requirement_id"] is None
+    assert client.get("/api/requirements/tasks/template", headers=ctx["req"]).status_code == 403
 
 
 def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers):
@@ -115,11 +283,11 @@ def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers)
     resp = client.post(f"/api/requirements/{rid}/score", json={
         "d1_strategy": 4, "d2_value": 4, "d3_tech": 4, "d4_org": 4, "d5_risk": 2, "d6_speed": 4,
         "decision": "通过",
-    }, headers=ctx["pdm"])
+    }, headers=ctx["bp"])
     assert resp.json()["data"]["status"] == "analyzing"
     client.patch(f"/api/requirements/{rid}", json={
         "moscow": "M", "owner": ctx["dev_p"], "solution": "开发实现方案",
-    }, headers=ctx["pdm"])
+    }, headers=admin_headers)
     resp = client.post(f"/api/requirements/{rid}/transition", json={"to": "implementing", "fields": {}}, headers=admin_headers)
     assert resp.json()["data"]["status"] == "implementing"
 
@@ -143,10 +311,13 @@ def test_requirement_owner_can_manage_multiple_tasks(client, ctx, admin_headers)
     assert {task["name"] for task in detail["tasks"]} == {"接口开发（已调整）", "自测与联调"}
 
 
-def test_handover_problem_and_knowledge(client, ctx):
+def test_handover_problem_and_knowledge(client, ctx, admin_headers):
     r = _register(client, ctx["bp"], ctx["domain"], title="带遗留的需求")
     rid = r["id"]
-    client.patch(f"/api/requirements/{rid}", json={"solution": "上线方案A"}, headers=ctx["pdm"])
+    # M92: the PDM has not completed the current review task on this record,
+    # so only the system-level administrator may correct its route-sensitive
+    # solution field before the workflow reaches that handler.
+    client.patch(f"/api/requirements/{rid}", json={"solution": "上线方案A"}, headers=admin_headers)
 
     p = client.post(f"/api/requirements/{rid}/to-problem",
                     json={"description": "性能未达标，需持续优化"}, headers=ctx["pdm"]).json()["data"]

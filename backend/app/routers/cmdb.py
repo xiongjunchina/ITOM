@@ -10,8 +10,9 @@ from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import AuthUser, Ci, CiRelationship, OrgMember, Ticket, Vendor
-from app.schemas.common import ok, paginate
+from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.codes import gen_code
 from app.services.team_scope import require_it_member_if_configured
 
@@ -210,12 +211,8 @@ def create_relation(body: RelationIn, db: Session = Depends(get_db), actor=Depen
     return ok({"id": rel.id})
 
 
-@router.delete("/api/cis/{ci_id}")
-def delete_ci(ci_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "delete"))):
-    """删除配置项（M21，软删）：级联软删其上下游关系；关联工单解除 CI 挂接。"""
-    ci = db.get(Ci, ci_id)
-    if not ci or ci.is_deleted:
-        raise AppError("NOT_FOUND", "配置项不存在", 404)
+def _delete_ci(db: Session, ci: Ci, actor: AuthUser) -> dict:
+    """软删配置项及关联关系，并解除工单引用；由调用方提交事务。"""
     ensure_example_delete_allowed(ci, db, actor)
     ci.is_deleted = True
     relations = 0
@@ -230,8 +227,46 @@ def delete_ci(ci_id: str, db: Session = Depends(get_db), actor=Depends(require_p
         t.ci_id = None
         unlinked += 1
     audit(db, "ci", ci.id, "delete", actor, {"code": ci.ci_code, "relations": relations, "tickets_unlinked": unlinked})
+    return {"id": ci.id, "relations": relations, "tickets_unlinked": unlinked}
+
+
+def _delete_relation(db: Session, rel: CiRelationship, actor: AuthUser) -> dict:
+    rel.is_deleted = True
+    audit(db, "ci_relationship", rel.id, "delete", actor)
+    return {"id": rel.id}
+
+
+@router.delete("/api/cis/batch-delete")
+def batch_delete_cis(body: BatchDeleteIn, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "delete"))):
+    def delete_one(ci_id: str) -> None:
+        ci = db.get(Ci, ci_id)
+        if not ci or ci.is_deleted:
+            raise AppError("NOT_FOUND", "配置项不存在", 404)
+        _delete_ci(db, ci, actor)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/ci-relationships/batch-delete")
+def batch_delete_relations(body: BatchDeleteIn, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "edit"))):
+    def delete_one(relation_id: str) -> None:
+        rel = db.get(CiRelationship, relation_id)
+        if not rel or rel.is_deleted:
+            raise AppError("NOT_FOUND", "关系不存在", 404)
+        _delete_relation(db, rel, actor)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/cis/{ci_id}")
+def delete_ci(ci_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("cmdb", "delete"))):
+    """删除配置项（M21，软删）：级联软删其上下游关系；关联工单解除 CI 挂接。"""
+    ci = db.get(Ci, ci_id)
+    if not ci or ci.is_deleted:
+        raise AppError("NOT_FOUND", "配置项不存在", 404)
+    result = _delete_ci(db, ci, actor)
     db.commit()
-    return ok({"id": ci.id, "relations": relations, "tickets_unlinked": unlinked})
+    return ok(result)
 
 
 @router.delete("/api/ci-relationships/{relation_id}")
@@ -239,7 +274,6 @@ def delete_relation(relation_id: str, db: Session = Depends(get_db), actor=Depen
     rel = db.get(CiRelationship, relation_id)
     if not rel or rel.is_deleted:
         raise AppError("NOT_FOUND", "关系不存在", 404)
-    rel.is_deleted = True
-    audit(db, "ci_relationship", rel.id, "delete", actor)
+    result = _delete_relation(db, rel, actor)
     db.commit()
-    return ok({"id": rel.id})
+    return ok(result)

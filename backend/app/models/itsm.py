@@ -72,7 +72,7 @@ class ServiceItemFormVersion(GlidBase):
 
 
 class ServiceDispatchRule(GlidBase):
-    """服务项、目录或全局派单规则；命中事实会快照到工单。"""
+    """服务项、目录或全局派单规则；受理/实施交付分别解析并快照到工单。"""
 
     __tablename__ = "service_dispatch_rule"
 
@@ -81,6 +81,9 @@ class ServiceDispatchRule(GlidBase):
         String(16), index=True, comment="service_item/catalog/global"
     )
     scope_id: Mapped[str | None] = mapped_column(String(26), index=True)
+    dispatch_stage: Mapped[str] = mapped_column(
+        String(16), default="acceptance", index=True, comment="acceptance/implementation"
+    )
     target_type: Mapped[str] = mapped_column(String(16), comment="group/member")
     target_id: Mapped[str] = mapped_column(String(26))
     strategy: Mapped[str] = mapped_column(
@@ -179,6 +182,12 @@ class Ticket(GlidBase):
     dispatch_source: Mapped[str | None] = mapped_column(String(32))
     assigned_at: Mapped[datetime | None] = mapped_column(DateTime)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 实施交付派单 [C]：与首节点受理人事实分开保存，避免流程推进时按默认角色重新取人。
+    implementation_assignee: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
+    implementation_rule_id: Mapped[str | None] = mapped_column(ForeignKey("service_dispatch_rule.id"))
+    implementation_source: Mapped[str | None] = mapped_column(String(32))
+    implementation_selected_by: Mapped[str | None] = mapped_column(ForeignKey("auth_user.id"))
+    implementation_selected_at: Mapped[datetime | None] = mapped_column(DateTime)
     confirmation_due_at: Mapped[datetime | None] = mapped_column(DateTime)
     suspected_major_impact: Mapped[bool] = mapped_column(Boolean, default=False)
     # 关联

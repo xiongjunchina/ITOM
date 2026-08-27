@@ -8,6 +8,7 @@
 - 幂等：以示例项目存在与否为哨兵
 """
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -15,7 +16,7 @@ from app.models import (
     BusinessDomain,
     Ci,
     Contract,
-    CostEntry,
+    InvestmentCostEntry,
     Department,
     KnowledgeArticle,
     Milestone,
@@ -34,6 +35,7 @@ from app.models import (
     Vendor,
     WbsTask,
 )
+from app.services.codes import gen_code
 
 
 def run_seed_examples(db: Session):
@@ -260,9 +262,13 @@ def run_seed_examples(db: Session):
         probability="中", impact="高",
         mitigation="填写指引：应对措施要具体可执行，如：提前两周与源系统团队确认接口规格，准备模拟数据兜底",
     ))
-    db.add(CostEntry(
-        is_example=True, project_id=project.id, entry_date=today - timedelta(days=5),
-        amount_10k=12.5, note="填写指引：成本按发生记流水（外包费/云资源/采购），执行率与 CPI 自动计算",
+    db.add(InvestmentCostEntry(
+        is_example=True, lifecycle_stage="build", investment_intent="transform",
+        subject_type="project", subject_id=project.id, project_id=project.id,
+        recognition_date=today - timedelta(days=5), amount_cny=Decimal("125000.00"),
+        cost_status="incurred", category="legacy", cost_nature="capex",
+        labor_nature="none", recurrence="one_time", activity_type="implementation",
+        note="填写指引：成本按发生记流水（外包费/云资源/采购），执行率与 CPI 自动计算",
     ))
 
     # ---------- 需求（实现中，挂接示例项目） ----------
@@ -292,12 +298,17 @@ def run_seed_examples(db: Session):
     db.add(requirement)
     db.flush()
     db.add(RequirementTask(
-        is_example=True, requirement_id=requirement.id, name="【示例】指标口径确认",
+        is_example=True, task_code=gen_code(db, RequirementTask, "task_code", "RT"),
+        requirement_id=requirement.id, name="【示例】指标口径确认",
         assignee=person.id, plan_date=today - timedelta(days=1), status="已完成",
         done_at=now - timedelta(days=1),
     ))
+    # SessionLocal disables autoflush.  Flush before generating the next
+    # business number so two seed rows never receive the same RT code.
+    db.flush()
     db.add(RequirementTask(
-        is_example=True, requirement_id=requirement.id, name="【示例】报表开发与推送配置",
+        is_example=True, task_code=gen_code(db, RequirementTask, "task_code", "RT"),
+        requirement_id=requirement.id, name="【示例】报表开发与推送配置",
         assignee=person.id, plan_date=today + timedelta(days=10), status="进行中",
     ))
 

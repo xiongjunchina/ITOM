@@ -1,7 +1,7 @@
 """支撑域模型（docs/04 §1）+ 岗位表（人员主数据依赖）。"""
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import GlidBase, JsonCol
@@ -70,15 +70,19 @@ class OrgMember(GlidBase):
 
 
 class BusinessDomain(GlidBase):
-    """业务域/服务线：负责人是字段不是角色（ServiceNow ownership 惯例）。"""
+    """业务域/服务线：IT 侧 BM 与业务侧 BDO 分工明确的横向服务线。"""
 
     __tablename__ = "business_domain"
 
     code: Mapped[str] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(String(128))
     description: Mapped[str | None] = mapped_column(Text)
-    owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="BP 负责人")
-    backup_owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"))
+    owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="IT 侧负责人（BM）")
+    # 历史列保留，避免升级删除既有业务数据；新代码不得再读取或写入该列。
+    backup_owner_id: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="历史备份负责人（已停用）")
+    business_bdo_id: Mapped[str | None] = mapped_column(
+        ForeignKey("org_member.id"), comment="业务侧 BDO（Business Digital Owner）"
+    )
     sort: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -298,7 +302,11 @@ class NotificationOutbox(GlidBase):
     entity_id: Mapped[str | None] = mapped_column(String(26))
     payload: Mapped[dict | None] = mapped_column(JsonCol)
     channel: Mapped[str] = mapped_column(String(16), default="in_app", comment="in_app/feishu…")
-    status: Mapped[str] = mapped_column(String(16), default="pending", comment="pending/sending/sent/failed")
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="pending",
+        comment="pending/sending/sent/failed; pending may await identity mapping",
+    )
     recipient_type: Mapped[str | None] = mapped_column(String(32), comment="open_id/user_id/union_id")
     recipient_id: Mapped[str | None] = mapped_column(String(128), index=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(255))
@@ -482,3 +490,11 @@ class OrgSettings(GlidBase):
     feishu_auto_sync_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     feishu_auto_sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=1440)
     feishu_auto_sync_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
+    reporting_timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
+    reporting_week_start: Mapped[int] = mapped_column(Integer, default=1, comment="1=周一")
+    fiscal_year_start_month: Mapped[int] = mapped_column(Integer, default=1)
+    workday_hours: Mapped[float] = mapped_column(Float, default=8.0)
+    report_min_group_size: Mapped[int] = mapped_column(Integer, default=3)
+    report_role_rates: Mapped[dict] = mapped_column(
+        JsonCol, default=dict, comment="角色标准日费率（管理口径，不是个人薪酬）"
+    )

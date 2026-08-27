@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test:contracts": "node --test scripts/*.test.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },

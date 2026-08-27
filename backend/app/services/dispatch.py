@@ -22,6 +22,7 @@ class DispatchDecision:
     rule: ServiceDispatchRule | None
     source: str
     support_label: str
+    manual_queue: bool = False
 
 
 def _eligible_member(db: Session, person_id: str) -> OrgMember | None:
@@ -80,7 +81,16 @@ def _pick(db: Session, rule: ServiceDispatchRule) -> str | None:
     return ids[index]
 
 
-def resolve_rule(db: Session, item: ServiceItem) -> ServiceDispatchRule | None:
+def resolve_rule(
+    db: Session,
+    item: ServiceItem,
+    dispatch_stage: str = "acceptance",
+) -> ServiceDispatchRule | None:
+    """按服务项 → 目录 → 全局解析指定阶段派单规则。
+
+    历史规则由迁移默认标记为 acceptance；implementation 只在受理转交时使用，
+    因而不会改变存量工单或原有首节点派单。
+    """
     scopes = (
         ("service_item", item.id),
         ("catalog", item.catalog_id),
@@ -89,6 +99,7 @@ def resolve_rule(db: Session, item: ServiceItem) -> ServiceDispatchRule | None:
     for scope_type, scope_id in scopes:
         query = db.query(ServiceDispatchRule).filter(
             ServiceDispatchRule.scope_type == scope_type,
+            ServiceDispatchRule.dispatch_stage == dispatch_stage,
             ServiceDispatchRule.active.is_(True),
             ServiceDispatchRule.is_deleted.is_(False),
         )
@@ -103,17 +114,31 @@ def resolve_rule(db: Session, item: ServiceItem) -> ServiceDispatchRule | None:
     return None
 
 
-def preview(db: Session, item: ServiceItem) -> DispatchDecision:
-    rule = resolve_rule(db, item)
+def preview(
+    db: Session,
+    item: ServiceItem,
+    dispatch_stage: str = "acceptance",
+) -> DispatchDecision:
+    rule = resolve_rule(db, item, dispatch_stage)
     if not rule:
         return DispatchDecision(None, None, "unassigned", "IT 服务兜底队列")
     source = rule.scope_type
     assignee_id = _pick(db, rule)
-    return DispatchDecision(assignee_id, rule, source, rule.name)
+    return DispatchDecision(
+        assignee_id,
+        rule,
+        source,
+        rule.name,
+        manual_queue=rule.strategy == "manual_queue",
+    )
 
 
-def assign(db: Session, item: ServiceItem) -> DispatchDecision:
-    decision = preview(db, item)
+def assign(
+    db: Session,
+    item: ServiceItem,
+    dispatch_stage: str = "acceptance",
+) -> DispatchDecision:
+    decision = preview(db, item, dispatch_stage)
     if decision.rule and decision.assignee_id:
         decision.rule.last_assigned_member_id = decision.assignee_id
         decision.rule.last_assigned_at = datetime.now()

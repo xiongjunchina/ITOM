@@ -8,6 +8,7 @@ import {
   DatePicker,
   Drawer,
   Form,
+  Image,
   Input,
   InputNumber,
   Modal,
@@ -16,11 +17,12 @@ import {
   Space,
   Switch,
   Tag,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PaperClipOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
@@ -29,9 +31,10 @@ import type { PendingStep } from '../../components/PendingStepCell';
 import { useT } from '../../i18n';
 import { useAuthStore, hasPermission } from '../../stores/auth';
 import { useEnums } from '../../i18n/enums';
-import type { Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
+import type { AttachmentItem, Member, ServiceFormField, ServiceItem, ServiceItemFormVersion, TicketPriority, TicketRow, TicketType } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 
 /** 状态 → Badge 样式（按语义猜测，未匹配用 processing；含变更状态机 rejected/rolled_back） */
 function statusBadge(status: string): 'default' | 'success' | 'error' | 'warning' | 'processing' {
@@ -74,6 +77,10 @@ interface TicketFormValues {
   request_data?: Record<string, unknown>;
 }
 
+type TicketDraftAttachment = AttachmentItem & { previewUrl?: string };
+
+const MAX_SERVICE_REQUEST_ATTACHMENTS = 10;
+
 /** 工单类型 → 权限模块（M17.2 按类型独立授权） */
 const TYPE_MODULE: Record<TicketType, string> = {
   service_request: 'ticket_sr',
@@ -97,6 +104,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const t = useT();
   const et = useEnums();
   const [items, setItems] = useState<TicketRow[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -118,6 +126,8 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const [serviceItemsLoading, setServiceItemsLoading] = useState(false);
   const [serviceForm, setServiceForm] = useState<ServiceItemFormVersion | null>(null);
   const [serviceFormLoading, setServiceFormLoading] = useState(false);
+  const [draftAttachments, setDraftAttachments] = useState<TicketDraftAttachment[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(0);
   const [members, setMembers] = useState<Member[]>([]);
   const directCreateStarted = useRef(false);
 
@@ -241,13 +251,29 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
   }, [page, pageSize, q, status, fixedType, priority, mineOnly]);
 
+  const exportAll = async () => {
+    const params = new URLSearchParams({ ticket_type: fixedType });
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    if (priority) params.set('priority', priority);
+    if (mineOnly) params.set('scope', 'mine');
+    await api.download(`/tickets/export?${params.toString()}`);
+  };
+
   useEffect(() => {
     void load();
   }, [load]);
 
   const openCreate = () => {
+    // 正常关闭会清理临时附件；这里再释放一次浏览器预览 URL，避免异常关闭
+    // 或重复触发“创建”入口时泄漏本地对象引用。
+    draftAttachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
     form.resetFields();
     setServiceForm(null);
+    setDraftAttachments([]);
+    setAttachmentUploading(0);
     setDrawerOpen(true);
     if (serviceItems.length === 0) {
       setServiceItemsLoading(true);
@@ -268,6 +294,47 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
     }
   };
 
+  const discardDraftAttachments = async (attachments = draftAttachments) => {
+    attachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setDraftAttachments([]);
+    await Promise.allSettled(attachments.map((attachment) => api.delete(`/attachments/ticket-drafts/${attachment.id}`)));
+  };
+
+  const closeCreate = () => {
+    void discardDraftAttachments();
+    setDrawerOpen(false);
+  };
+
+  const stageTicketAttachment = async (file: File) => {
+    if (draftAttachments.length + attachmentUploading >= MAX_SERVICE_REQUEST_ATTACHMENTS) {
+      message.warning(t('itsm.ticket.attachmentLimit'));
+      return;
+    }
+    const previewUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
+    setAttachmentUploading((count) => count + 1);
+    try {
+      const uploaded = await api.upload<AttachmentItem>('/attachments/ticket-drafts', file);
+      setDraftAttachments((items) => [...items, { ...uploaded, previewUrl }]);
+    } catch {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      // 已统一提示
+    } finally {
+      setAttachmentUploading((count) => Math.max(0, count - 1));
+    }
+  };
+
+  const removeDraftAttachment = async (attachment: TicketDraftAttachment) => {
+    try {
+      await api.delete(`/attachments/ticket-drafts/${attachment.id}`);
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      setDraftAttachments((items) => items.filter((item) => item.id !== attachment.id));
+    } catch {
+      // 已统一提示
+    }
+  };
+
   // create=1 直达新建表单；一次性 guard 避免 React StrictMode 重复打开。
   useEffect(() => {
     if (!createRequested || !canCreate || directCreateStarted.current) return;
@@ -278,6 +345,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   }, [fixedType, createRequested, canCreate]);
 
   const handleCreate = async () => {
+    if (attachmentUploading > 0) {
+      message.warning(t('itsm.ticket.attachmentUploading'));
+      return;
+    }
     const values = await form.validateFields();
     const payload: Record<string, unknown> = {
       title: values.title,
@@ -298,6 +369,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       if (serviceForm?.schema.properties.priority) requestData.priority = values.priority;
       payload.request_data = requestData;
       payload.request_form_version_id = serviceForm?.id;
+      payload.attachment_ids = draftAttachments.map((attachment) => attachment.id);
     }
     if (values.assignee != null) payload.assignee = values.assignee;
     if (values.remarks) payload.remarks = values.remarks;
@@ -318,6 +390,10 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       message.success(t('itsm.ticket.createdTyped', { type: et.ticketType(fixedType) }));
       setDrawerOpen(false);
       if (created?.id) {
+        draftAttachments.forEach((attachment) => {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        });
+        setDraftAttachments([]);
         navigate(`/itsm/tickets/${created.id}`);
       } else {
         void load();
@@ -359,14 +435,16 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
   const handleEditSave = async () => {
     if (!editing) return;
     const v = await editForm.validateFields();
+    const isUpstreamCorrection = editing.workflow_edit_mode?.startsWith('upstream_') === true;
     setEditSaving(true);
     try {
       await api.patch(`/tickets/${editing.id}`, {
         title: v.title,
         priority: v.priority,
-        assignee: v.assignee ?? null,
         description: v.description,
         remarks: v.remarks,
+        // 回改窗口仅允许更正业务内容，不能借此改派下一节点。
+        ...(isUpstreamCorrection ? {} : { assignee: v.assignee ?? null }),
       });
       message.success(t('itsm.ticket.updatedMsg'));
       setEditing(null);
@@ -458,7 +536,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
       render: (_, r) => <PendingStepCell pending={(r as TicketRow & { pending_step?: PendingStep | null }).pending_step} onGo={() => navigate(`/itsm/tickets/${r.id}`)} />,
     },
     // M20：管理动作列（编辑/关闭需 edit；删除需 delete——默认矩阵仅 admin），示例数据只读
-    ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin
+    ...(canEdit || canDelete || fixedType === 'service_request' || isAdmin || items.some((item) => item.can_edit || item.can_delete)
       ? ([
           {
             title: t('common.actions'),
@@ -468,7 +546,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
             render: (_: unknown, r: TicketRow) =>
               r.is_example && !isAdmin ? null : (
                 <Space size={8}>
-                  {canEdit && r.status !== 'closed' && r.status !== 'rejected' && (
+                  {(r.can_edit ?? canEdit) && r.status !== 'closed' && r.status !== 'rejected' && (
                     <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openEdit(r)}>
                       {t('common.edit')}
                     </Button>
@@ -486,7 +564,7 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                       {t('itsm.ticket.close')}
                     </Button>
                   )}
-                  {canDelete && (
+                  {(r.can_delete ?? canDelete) && (
                     <Popconfirm title={t('itsm.ticket.deleteConfirm')} onConfirm={() => void handleDelete(r)}>
                       <Button type="link" size="small" danger style={{ padding: 0 }}>
                         {t('common.delete')}
@@ -557,6 +635,17 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
+        {(canDelete || items.some((item) => item.can_delete)) && (
+          <BatchDeleteToolbar
+            endpoint="/tickets/batch-delete"
+            entityName="工单"
+            selectedIds={selectedIds}
+            onCompleted={() => {
+              setSelectedIds([]);
+              void load();
+            }}
+          />
+        )}
       </Space>
 
       <Table<TicketRow>
@@ -564,7 +653,23 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         loading={loading}
         columns={columns}
         dataSource={items}
-        standardToolbar={{ exportFileName: '工单清单', showSearch: false, showFilter: false }}
+        rowSelection={
+          canDelete || items.some((item) => item.can_delete)
+            ? {
+                selectedRowKeys: selectedIds,
+                onChange: (keys) => setSelectedIds(keys.map(String)),
+                getCheckboxProps: (row) => ({ disabled: !(row.can_delete ?? canDelete) || (!!row.is_example && !isAdmin) }),
+              }
+            : undefined
+        }
+        standardToolbar={{
+          exportFileName: '工单清单',
+          exportLabel: t('itsm.ticket.exportAll'),
+          onExport: () => exportAll(),
+          total,
+          showSearch: false,
+          showFilter: false,
+        }}
         sticky
         scroll={{ x: 1300 }}
         pagination={{
@@ -584,11 +689,11 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
         title={t('itsm.ticket.createTyped', { type: et.ticketType(fixedType) })}
         open={drawerOpen}
         width={560}
-        onClose={() => setDrawerOpen(false)}
+        onClose={closeCreate}
         destroyOnClose
         extra={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>{t('common.cancel')}</Button>
+            <Button onClick={closeCreate}>{t('common.cancel')}</Button>
             <Button type="primary" loading={saving} onClick={() => void handleCreate()}>
               {t('common.submit')}
             </Button>
@@ -672,7 +777,63 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
                 <Input.TextArea rows={5} maxLength={2000} placeholder={t('itsm.ticket.descPlaceholder')} />
               </Form.Item>
               <Form.Item name="other_info" label={t('itsm.ticket.otherInfo')}>
-                <Input.TextArea rows={3} maxLength={1000} placeholder={t('itsm.ticket.otherInfoPlaceholder')} />
+                <Input.TextArea
+                  rows={3}
+                  maxLength={1000}
+                  placeholder={t('itsm.ticket.otherInfoPlaceholder')}
+                  onPaste={(event) => {
+                    const files = Array.from(event.clipboardData.files);
+                    if (files.length === 0) return;
+                    event.preventDefault();
+                    files.forEach((file) => void stageTicketAttachment(file));
+                  }}
+                />
+              </Form.Item>
+              <Form.Item
+                label={t('itsm.ticket.attachments')}
+                extra={t('itsm.ticket.attachmentHint')}
+              >
+                <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                  <Upload
+                    multiple
+                    showUploadList={false}
+                    beforeUpload={(file) => {
+                      void stageTicketAttachment(file);
+                      return Upload.LIST_IGNORE;
+                    }}
+                    accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                  >
+                    <Button icon={<PaperClipOutlined />} loading={attachmentUploading > 0}>
+                      {t('itsm.ticket.uploadAttachment')}
+                    </Button>
+                  </Upload>
+                  {draftAttachments.length > 0 && (
+                    <Space wrap size={[8, 8]}>
+                      {draftAttachments.map((attachment) => (
+                        <Tag
+                          key={attachment.id}
+                          closable
+                          onClose={(event) => {
+                            event.preventDefault();
+                            void removeDraftAttachment(attachment);
+                          }}
+                          icon={<PaperClipOutlined />}
+                        >
+                          {attachment.previewUrl && (
+                            <Image
+                              preview={{ src: attachment.previewUrl }}
+                              src={attachment.previewUrl}
+                              width={28}
+                              height={28}
+                              style={{ objectFit: 'cover', marginRight: 6, verticalAlign: 'middle' }}
+                            />
+                          )}
+                          {attachment.filename}
+                        </Tag>
+                      ))}
+                    </Space>
+                  )}
+                </Space>
               </Form.Item>
               {serviceFormLoading && <Card size="small" loading style={{ marginBottom: 16 }} />}
               {serviceForm && Object.entries(serviceForm.schema.properties)
@@ -792,17 +953,19 @@ export default function Tickets({ fixedType }: { fixedType: TicketType }) {
           <Form.Item name="priority" label={t('itsm.f.priority')} rules={[{ required: true, message: t('itsm.rule.priority') }]}>
             <Select options={(['P1', 'P2', 'P3', 'P4'] as TicketPriority[]).map((p) => ({ value: p, label: p }))} />
           </Form.Item>
-          <Form.Item name="assignee" label={t('itsm.f.assignee')}>
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              options={members.map((m) => ({
-                value: m.id,
-                label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
-              }))}
-            />
-          </Form.Item>
+          {!editing?.workflow_edit_mode?.startsWith('upstream_') && (
+            <Form.Item name="assignee" label={t('itsm.f.assignee')}>
+              <Select
+                allowClear
+                showSearch
+                optionFilterProp="label"
+                options={members.map((m) => ({
+                  value: m.id,
+                  label: m.department_name ? `${m.name}（${m.department_name}）` : m.name,
+                }))}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="description" label={t('itsm.f.description')}>
             <Input.TextArea rows={4} maxLength={2000} />
           </Form.Item>

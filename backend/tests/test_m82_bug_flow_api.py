@@ -1,5 +1,6 @@
 import pytest
 
+from app.core.config import settings
 from app.db import SessionLocal
 from app.models import Ci, ProcessInstance, ProcessTask
 
@@ -62,6 +63,13 @@ def _register_bug(client, actors, title="供应链接口异常"):
     return response.json()["data"]
 
 
+def test_bug_list_exposes_registrar(client, actors):
+    bug = _register_bug(client, actors, "Bug 登记人展示")
+    assert bug["reporter_name"] == "Bug 登记开发"
+    assert bug["bug_code"].startswith("BG-")
+    assert bug["created_at"] is not None
+
+
 def test_cmdb_requires_product_manager_for_new_app_and_legacy_ci_can_be_repaired(client, actors):
     """新应用 CI 强制配置产品经理；历史空值仍能在 CMDB 补配后进入 Bug 流程。"""
     missing_on_create = client.post(
@@ -99,6 +107,95 @@ def test_cmdb_requires_product_manager_for_new_app_and_legacy_ci_can_be_repaired
     )
     assert registered.status_code == 200, registered.text
     assert registered.json()["data"]["product_manager_id"] == actors["pm_id"]
+
+
+def test_bug_supports_evidence_attachment_upload_and_download(client, actors, tmp_path, monkeypatch):
+    """Bug 创建后可使用通用附件能力上传截图，并在详情下载。"""
+    monkeypatch.setattr(settings, "upload_dir", str(tmp_path))
+    bug = _register_bug(client, actors, "带截图证据的 Bug")
+
+    uploaded = client.post(
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}",
+        files={"file": ("error-screen.png", b"fake-png-content", "image/png")},
+        headers=actors["dev"],
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    attachment = uploaded.json()["data"]
+    assert attachment["filename"] == "error-screen.png"
+
+    listed = client.get(
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}", headers=actors["dev"]
+    )
+    assert listed.status_code == 200, listed.text
+    assert [row["filename"] for row in listed.json()["data"]] == ["error-screen.png"]
+
+    downloaded = client.get(f"/api/attachments/{attachment['id']}/download", headers=actors["dev"])
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"fake-png-content"
+
+    for endpoint in (
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}",
+        f"/api/attachments/{attachment['id']}/download",
+    ):
+        response = client.get(endpoint, headers=actors["requester"])
+        assert response.status_code == 403
+
+    forbidden_upload = client.post(
+        f"/api/attachments?entity_type=bug&entity_id={bug['id']}",
+        files={"file": ("not-allowed.txt", b"not-allowed", "text/plain")},
+        headers=actors["requester"],
+    )
+    assert forbidden_upload.status_code == 403
+
+
+def test_bug_ci_can_be_corrected_before_review_and_delete_respects_view_window(client, actors):
+    replacement_ci = client.post(
+        "/api/cis",
+        json={
+            "name": "供应链管理系统-M82-替代",
+            "category": "app",
+            "owner": actors["dev_id"],
+            "product_manager_id": actors["pm_id"],
+        },
+        headers=actors["admin"],
+    )
+    assert replacement_ci.status_code == 200, replacement_ci.text
+
+    editable = _register_bug(client, actors, "登记后更正所属系统")
+    changed = client.patch(
+        f"/api/task-management/bugs/{editable['id']}",
+        json={"ci_id": replacement_ci.json()["data"]["id"]},
+        headers=actors["dev"],
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["data"]["ci_id"] == replacement_ci.json()["data"]["id"]
+
+    deletable = _register_bug(client, actors, "下游查阅前允许登记人删除")
+    assert client.delete(
+        f"/api/task-management/bugs/{deletable['id']}", headers=actors["dev"],
+    ).status_code == 200
+
+    locked = _register_bug(client, actors, "下游查阅后锁定登记人删除")
+    with SessionLocal() as db:
+        instance = db.query(ProcessInstance).filter(
+            ProcessInstance.entity_type == "bug",
+            ProcessInstance.entity_id == locked["id"],
+            ProcessInstance.is_deleted.is_(False),
+        ).one()
+        current = db.query(ProcessTask).filter(
+            ProcessTask.instance_id == instance.id,
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+        ).one()
+        current_task_id = current.id
+    viewed = client.post(f"/api/process-tasks/{current_task_id}/view", headers=actors["pm"])
+    assert viewed.status_code == 200, viewed.text
+    assert client.delete(
+        f"/api/task-management/bugs/{locked['id']}", headers=actors["dev"],
+    ).status_code == 403
+    assert client.delete(
+        f"/api/task-management/bugs/{locked['id']}", headers=actors["admin"],
+    ).status_code == 200
 
 
 def test_bug_registration_confirmation_multi_tasks_and_verification_close(client, actors):
@@ -140,6 +237,9 @@ def test_bug_registration_confirmation_multi_tasks_and_verification_close(client
         assert current.assignee is None
     tasks = generated.json()["data"]["tasks"]
     assert len(tasks) == 2
+    assert len({task["task_code"] for task in tasks}) == 2
+    assert all(task["task_code"].startswith("BT-") for task in tasks)
+    assert all(task["created_at"] is not None for task in tasks)
 
     for task in tasks:
         response = client.patch(

@@ -299,7 +299,17 @@ def test_p2_service_request_reopen_confirm_rate_and_outbox(client, p1):
         assert event_types.count("ticket.accepted") == 1
         assert event_types.count("ticket.resolved") == 2
         assert event_types.count("ticket.confirmation_reminder") == 1
-        assert event_types.count("ticket.reopened") == 1
+        # Reopen notifies both the requester (dedicated user-facing message)
+        # and the newly active handler (generic ITOM notification). The
+        # handler has no Aily mapping in this fixture, so the second row is
+        # intentionally pending rather than silently dropped.
+        reopened_rows = [row for row in outbox if row.event_type == "ticket.reopened"]
+        assert len(reopened_rows) == 2
+        assert {row.payload.get("auth_user_id") for row in reopened_rows} == {
+            p1["requester_user"]["id"],
+            p1["support_user"]["id"],
+        }
+        assert any(row.last_error_redacted == "AILY_IDENTITY_NOT_MAPPED" for row in reopened_rows)
         assert event_types.count("ticket.closed") == 1
         assert event_types.count("ticket.satisfaction_saved") == 2
         serialized = str([row.payload for row in outbox])

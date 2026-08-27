@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type DragEvent as ReactDragEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Alert,
@@ -12,6 +12,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Pagination,
   Popconfirm,
   Progress,
   Row,
@@ -31,14 +32,18 @@ import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
 import {
   ArrowLeftOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
+  HolderOutlined,
   PlusOutlined,
+  SwapOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -51,10 +56,21 @@ import type { FlowDiagramStep } from '../../components/FlowDiagram';
 import CompleteStepModal from '../../components/CompleteStepModal';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import StickyTable from '../../components/StickyTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
 import ReasonModal from './ReasonModal';
 import ProjectEditModal from './ProjectEditModal';
+import { selectHierarchySafeWbsPage, type WbsDisplayLimit } from './wbsDisplayLimit';
+import {
+  normalizeWbsMoveRoots,
+  resolveWbsDropDestination,
+  toggleWbsBranchSelection,
+  wbsBranchIds,
+  wbsDropPositionFromRatio,
+  wbsSelectionState,
+  type WbsDropPosition,
+} from './wbsHierarchySelection';
 import type {
   AllowedTransition,
   AttachmentItem,
@@ -63,6 +79,9 @@ import type {
   Milestone,
   MilestoneTrackingRow,
   ProjectDetail as ProjectDetailData,
+  ProjectBudgetItem,
+  ProjectEffortEntry,
+  ProjectInvestmentSummary,
   ProjectOrgEntry,
   Risk,
   RiskGrade,
@@ -229,7 +248,29 @@ function buildWbsTree(list: WbsTask[]): WbsNode[] {
       roots.push(node);
     }
   });
+  const bySort = (a: WbsNode, b: WbsNode) => a.sort - b.sort || a.wbs_code.localeCompare(b.wbs_code, undefined, { numeric: true });
+  roots.sort(bySort);
+  map.forEach((node) => node.children?.sort(bySort));
   return roots;
+}
+
+function wbsDescendantIds(taskId: string, tasks: WbsTask[]): Set<string> {
+  const children = new Map<string, string[]>();
+  tasks.forEach((task) => {
+    if (!task.parent_task_id) return;
+    const rows = children.get(task.parent_task_id) ?? [];
+    rows.push(task.id);
+    children.set(task.parent_task_id, rows);
+  });
+  const result = new Set<string>();
+  const pending = [...(children.get(taskId) ?? [])];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (result.has(id)) continue;
+    result.add(id);
+    pending.push(...(children.get(id) ?? []));
+  }
+  return result;
 }
 
 export default function ProjectDetail() {
@@ -243,10 +284,16 @@ export default function ProjectDetail() {
   const [detail, setDetail] = useState<ProjectDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [wbs, setWbs] = useState<WbsTask[]>([]);
+  const [wbsDisplayLimit, setWbsDisplayLimit] = useState<WbsDisplayLimit>(50);
+  const [wbsPage, setWbsPage] = useState(1);
+  const [selectedWbsIds, setSelectedWbsIds] = useState<string[]>([]);
   const [, setMilestones] = useState<Milestone[]>([]);
   const [milestoneTracking, setMilestoneTracking] = useState<MilestoneTrackingRow[]>([]);
   const [risks, setRisks] = useState<Risk[]>([]);
   const [costs, setCosts] = useState<CostEntry[]>([]);
+  const [budgetItems, setBudgetItems] = useState<ProjectBudgetItem[]>([]);
+  const [effortEntries, setEffortEntries] = useState<ProjectEffortEntry[]>([]);
+  const [investmentSummary, setInvestmentSummary] = useState<ProjectInvestmentSummary>();
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
 
@@ -263,7 +310,10 @@ export default function ProjectDetail() {
   const loadWbs = useCallback(async () => {
     if (!id) return;
     try {
-      setWbs((await api.getList<WbsTask>(`/projects/${id}/wbs`)).items);
+      const items = (await api.getList<WbsTask>(`/projects/${id}/wbs`)).items;
+      setWbs(items);
+      const selectableIds = new Set(items.filter((task) => !task.completed_locked).map((task) => task.id));
+      setSelectedWbsIds((current) => current.filter((taskId) => selectableIds.has(taskId)));
     } catch {
       // 已统一提示
     }
@@ -305,6 +355,22 @@ export default function ProjectDetail() {
     }
   }, [id]);
 
+  const loadInvestment = useCallback(async () => {
+    if (!id) return;
+    try {
+      const [budgets, efforts, summary] = await Promise.all([
+        api.getList<ProjectBudgetItem>(`/projects/${id}/budget-items`),
+        api.getList<ProjectEffortEntry>(`/projects/${id}/effort-entries`),
+        api.get<ProjectInvestmentSummary>(`/projects/${id}/investment-summary`),
+      ]);
+      setBudgetItems(budgets.items);
+      setEffortEntries(efforts.items);
+      setInvestmentSummary(summary);
+    } catch {
+      // 已统一提示
+    }
+  }, [id]);
+
   const loadAttachments = useCallback(async () => {
     if (!id) return;
     try {
@@ -325,9 +391,11 @@ export default function ProjectDetail() {
       loadMilestoneTracking(),
       loadRisks(),
       loadCosts(),
+      loadInvestment(),
       loadAttachments(),
     ]).finally(() => setLoading(false));
-  }, [loadDetail, loadWbs, loadMilestones, loadMilestoneTracking, loadRisks, loadCosts, loadAttachments]);
+  }, [loadDetail, loadWbs, loadMilestones, loadMilestoneTracking, loadRisks, loadCosts, loadInvestment, loadAttachments]);
+  useProcessTaskView(detail?.process, user, loadDetail);
 
   useEffect(() => {
     api
@@ -424,8 +492,19 @@ export default function ProjectDetail() {
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskForm] = Form.useForm();
   const [expandedKeys, setExpandedKeys] = useState<readonly React.Key[]>([]);
+  const [moveTask, setMoveTask] = useState<WbsTask | null>(null);
+  const [moveParentId, setMoveParentId] = useState<string | null>(null);
+  const [moveBeforeId, setMoveBeforeId] = useState<string | null>(null);
+  const [moveSaving, setMoveSaving] = useState(false);
+  const [draggingWbsId, setDraggingWbsId] = useState<string | null>(null);
+  const [wbsDropTarget, setWbsDropTarget] = useState<{ id: string; position: WbsDropPosition } | null>(null);
 
-  const wbsTree = useMemo(() => buildWbsTree(wbs), [wbs]);
+  const wbsPageResult = useMemo(
+    () => selectHierarchySafeWbsPage(wbs, wbsDisplayLimit, wbsPage),
+    [wbs, wbsDisplayLimit, wbsPage],
+  );
+  const visibleWbs = wbsPageResult.rows;
+  const wbsTree = useMemo(() => buildWbsTree(visibleWbs), [visibleWbs]);
   const phaseTasks = useMemo(
     () => wbs
       .filter((task) => !task.parent_task_id)
@@ -433,9 +512,48 @@ export default function ProjectDetail() {
       .sort((a, b) => a.wbs_code.localeCompare(b.wbs_code, undefined, { numeric: true })),
     [wbs],
   );
+  const wbsStructureLockedTreeIds = useMemo(() => {
+    const byId = new Map(wbs.map((task) => [task.id, task]));
+    const locked = new Set<string>();
+    for (const task of wbs) {
+      if (!task.structure_locked) continue;
+      locked.add(task.id);
+      const visited = new Set<string>();
+      let parentId = task.parent_task_id;
+      while (parentId && !visited.has(parentId)) {
+        visited.add(parentId);
+        locked.add(parentId);
+        parentId = byId.get(parentId)?.parent_task_id ?? null;
+      }
+    }
+    return locked;
+  }, [wbs]);
   useEffect(() => {
     setExpandedKeys(wbs.map((t) => t.id));
   }, [wbs]);
+
+  const moveDescendantIds = useMemo(() => (moveTask ? wbsDescendantIds(moveTask.id, wbs) : new Set<string>()), [moveTask, wbs]);
+  const movableParentOptions = useMemo(
+    () => wbs
+      .filter((task) => !task.structure_locked && task.id !== moveTask?.id && !moveDescendantIds.has(task.id))
+      .map((task) => ({ value: task.id, label: `${task.wbs_code} ${task.name}` })),
+    [moveDescendantIds, moveTask?.id, wbs],
+  );
+  const moveSiblingOptions = useMemo(
+    () => wbs
+      .filter((task) => task.parent_task_id === moveParentId && task.id !== moveTask?.id)
+      .map((task) => ({ value: task.id, label: `${task.wbs_code} ${task.name}` })),
+    [moveParentId, moveTask?.id, wbs],
+  );
+  const activeDragRootIds = useMemo(
+    () => (draggingWbsId ? normalizeWbsMoveRoots(wbs, selectedWbsIds, draggingWbsId) : []),
+    [draggingWbsId, selectedWbsIds, wbs],
+  );
+  const activeDragTreeIds = useMemo(() => {
+    const ids = new Set<string>();
+    activeDragRootIds.forEach((rootId) => wbsBranchIds(wbs, rootId).forEach((taskId) => ids.add(taskId)));
+    return ids;
+  }, [activeDragRootIds, wbs]);
 
   const openTaskModal = (mode: 'create' | 'edit', task?: WbsTask, parent?: WbsTask) => {
     taskForm.resetFields();
@@ -449,10 +567,8 @@ export default function ProjectDetail() {
         deliverable: task.deliverable ?? undefined,
         is_milestone: task.is_milestone ?? false,
         remarks: task.remarks ?? undefined,
-        actuals: [
-          task.actual_start ? dayjs(task.actual_start) : null,
-          task.actual_end ? dayjs(task.actual_end) : null,
-        ],
+        actual_start: task.actual_start ? dayjs(task.actual_start) : null,
+        actual_end: task.actual_end ? dayjs(task.actual_end) : null,
         description: task.description ?? undefined,
         predecessor_ids: task.predecessor_ids ?? [],
       });
@@ -479,12 +595,14 @@ export default function ProjectDetail() {
     setTaskSaving(true);
     try {
       if (taskModal.mode === 'edit' && taskModal.task) {
-        const actuals = (v.actuals ?? []) as (Dayjs | null)[];
-        await api.patch(`/wbs/${taskModal.task.id}`, {
+        const payload: Record<string, unknown> = {
           ...base,
-          actual_start: actuals[0] ? actuals[0].format('YYYY-MM-DD') : null,
-          actual_end: actuals[1] ? actuals[1].format('YYYY-MM-DD') : null,
-        });
+        };
+        if (!taskModal.task.completed_locked) {
+          payload.actual_start = v.actual_start ? (v.actual_start as Dayjs).format('YYYY-MM-DD') : null;
+          payload.actual_end = v.actual_end ? (v.actual_end as Dayjs).format('YYYY-MM-DD') : null;
+        }
+        await api.patch(`/wbs/${taskModal.task.id}`, payload);
         message.success(t('proj.taskUpdated'));
       } else {
         await api.post(`/projects/${id}/wbs`, {
@@ -507,10 +625,8 @@ export default function ProjectDetail() {
   const changeTaskProgress = async (task: WbsTask, progress: number) => {
     try {
       await api.patch(`/wbs/${task.id}`, { progress });
+      await Promise.all([loadWbs(), loadMilestoneTracking(), loadDetail()]);
       message.success(t('proj.taskProgressUpdated'));
-      void loadWbs();
-      void loadMilestoneTracking();
-      void loadDetail();
     } catch {
       // 403 等由拦截器统一中文提示
     }
@@ -528,6 +644,131 @@ export default function ProjectDetail() {
     }
   };
 
+  const openMoveTask = (task: WbsTask) => {
+    setMoveTask(task);
+    setMoveParentId(task.parent_task_id);
+    setMoveBeforeId(null);
+  };
+
+  const moveWbsTask = async (task: WbsTask, parentTaskId: string | null, beforeTaskId: string | null) => {
+    setMoveSaving(true);
+    try {
+      await api.post(`/wbs/${task.id}/move`, {
+        parent_task_id: parentTaskId,
+        before_task_id: beforeTaskId,
+      });
+      message.success(t('proj.wbs.moveSaved'));
+      setMoveTask(null);
+      setDraggingWbsId(null);
+      setWbsDropTarget(null);
+      await Promise.all([loadWbs(), loadMilestoneTracking(), loadDetail()]);
+    } catch {
+      // 已统一提示，服务端会拒绝已开始/已完成、循环引用和跨层级参照。
+    } finally {
+      setMoveSaving(false);
+    }
+  };
+
+  const moveWbsTasks = async (taskIds: string[], parentTaskId: string | null, beforeTaskId: string | null) => {
+    if (!id || !taskIds.length) return;
+    setMoveSaving(true);
+    try {
+      await api.post(`/projects/${id}/wbs/batch-move`, {
+        task_ids: taskIds,
+        parent_task_id: parentTaskId,
+        before_task_id: beforeTaskId,
+      });
+      await Promise.all([loadWbs(), loadMilestoneTracking(), loadDetail()]);
+      message.success(t('proj.wbs.batchMoveSaved', { count: taskIds.length }));
+    } catch {
+      // 服务端原子校验权限、完成锁、循环关系和目标排序；失败时不会部分移动。
+    } finally {
+      setMoveSaving(false);
+      setDraggingWbsId(null);
+      setWbsDropTarget(null);
+    }
+  };
+
+  const draggedWbsRoots = (draggedId: string): string[] => (
+    draggedId === draggingWbsId ? activeDragRootIds : normalizeWbsMoveRoots(wbs, selectedWbsIds, draggedId)
+  );
+
+  const draggedWbsTreeIds = (draggedId: string): Set<string> => {
+    if (draggedId === draggingWbsId) return activeDragTreeIds;
+    const ids = new Set<string>();
+    for (const rootId of draggedWbsRoots(draggedId)) {
+      wbsBranchIds(wbs, rootId).forEach((taskId) => ids.add(taskId));
+    }
+    return ids;
+  };
+
+  const wbsDropPosition = (event: ReactDragEvent<HTMLTableRowElement>): WbsDropPosition => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = bounds.height > 0 ? (event.clientY - bounds.top) / bounds.height : 0.5;
+    return wbsDropPositionFromRatio(ratio);
+  };
+
+  const canDropWbs = (draggedId: string, target: WbsTask, position: WbsDropPosition): boolean => {
+    const rootIds = draggedWbsRoots(draggedId);
+    const movedTreeIds = draggedWbsTreeIds(draggedId);
+    if (!rootIds.length || movedTreeIds.has(target.id)) return false;
+    if (rootIds.some((taskId) => wbsStructureLockedTreeIds.has(taskId))) return false;
+    const targetParentId = position === 'inside' ? target.id : target.parent_task_id;
+    if (position === 'inside' && wbsStructureLockedTreeIds.has(target.id)) return false;
+    return !wbs.some(
+      (task) => task.parent_task_id === targetParentId && task.structure_locked && !movedTreeIds.has(task.id),
+    );
+  };
+
+  const startWbsDrag = (event: ReactDragEvent<HTMLSpanElement>, task: WbsTask) => {
+    if (
+      moveSaving
+      || task.structure_locked
+      || draggedWbsRoots(task.id).some((taskId) => wbsStructureLockedTreeIds.has(taskId))
+      || !canEdit
+      || isExample
+    ) {
+      event.preventDefault();
+      message.warning(t('proj.wbs.dragLockedTree'));
+      return;
+    }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', task.id);
+    setDraggingWbsId(task.id);
+    setWbsDropTarget(null);
+  };
+
+  const allowWbsDrop = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
+    if (!draggingWbsId || moveSaving) return;
+    const position = wbsDropPosition(event);
+    if (!canDropWbs(draggingWbsId, target, position)) {
+      setWbsDropTarget(null);
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setWbsDropTarget((current) => (
+      current?.id === target.id && current.position === position ? current : { id: target.id, position }
+    ));
+  };
+
+  const dropWbs = (event: ReactDragEvent<HTMLTableRowElement>, target: WbsTask) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!draggingWbsId || moveSaving) return;
+    const position = wbsDropTarget?.id === target.id ? wbsDropTarget.position : wbsDropPosition(event);
+    if (!canDropWbs(draggingWbsId, target, position)) {
+      setDraggingWbsId(null);
+      setWbsDropTarget(null);
+      return;
+    }
+    const rootIds = draggedWbsRoots(draggingWbsId);
+    const movedTreeIds = draggedWbsTreeIds(draggingWbsId);
+    const destination = resolveWbsDropDestination(wbs, movedTreeIds, target.id, position);
+    if (!destination) return;
+    void moveWbsTasks(rootIds, destination.parentTaskId, destination.beforeTaskId);
+  };
+
   /** 完成度可编辑：有 projects.edit 或本人是任务负责人；示例数据一律只读 */
   const canChangeProgress = (task: WbsTask): boolean =>
     !isExample && (canEdit || (!!user?.person_id && user.person_id === task.assignee));
@@ -536,6 +777,11 @@ export default function ProjectDetail() {
   const [costModalOpen, setCostModalOpen] = useState(false);
   const [costSaving, setCostSaving] = useState(false);
   const [costForm] = Form.useForm();
+  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
+  const [budgetForm] = Form.useForm();
+  const [effortModalOpen, setEffortModalOpen] = useState(false);
+  const [effortForm] = Form.useForm();
+  const [investmentSaving, setInvestmentSaving] = useState(false);
 
   const submitCost = async () => {
     const v = await costForm.validateFields();
@@ -543,13 +789,17 @@ export default function ProjectDetail() {
     try {
       await api.post(`/projects/${id}/costs`, {
         entry_date: (v.entry_date as Dayjs).format('YYYY-MM-DD'),
-        amount_10k: v.amount_10k,
+        amount_cny: v.amount_cny,
+        category: v.category,
+        cost_type: v.cost_type,
+        supplier: v.supplier || null,
         note: v.note || null,
       });
       message.success(t('proj.costAdded'));
       setCostModalOpen(false);
       void loadCosts();
       void loadDetail();
+      void loadInvestment();
     } catch {
       // 已统一提示
     } finally {
@@ -563,9 +813,52 @@ export default function ProjectDetail() {
       message.success(t('proj.costDeleted'));
       void loadCosts();
       void loadDetail();
+      void loadInvestment();
     } catch {
       // 已统一提示
     }
+  };
+
+  const submitBudgetItem = async () => {
+    const values = await budgetForm.validateFields();
+    setInvestmentSaving(true);
+    try {
+      await api.post(`/projects/${id}/budget-items`, values);
+      message.success(t('proj.investment.saved'));
+      setBudgetModalOpen(false);
+      void loadInvestment();
+    } finally {
+      setInvestmentSaving(false);
+    }
+  };
+
+  const submitEffortEntry = async () => {
+    const values = await effortForm.validateFields();
+    setInvestmentSaving(true);
+    try {
+      await api.post(`/projects/${id}/effort-entries`, {
+        ...values,
+        work_date: (values.work_date as Dayjs).format('YYYY-MM-DD'),
+        standard_rate_cny_per_day: values.standard_rate_cny_per_day ?? null,
+      });
+      message.success(t('proj.investment.saved'));
+      setEffortModalOpen(false);
+      void loadInvestment();
+    } finally {
+      setInvestmentSaving(false);
+    }
+  };
+
+  const deleteBudgetItem = async (row: ProjectBudgetItem) => {
+    await api.delete(`/project-budget-items/${row.id}`);
+    message.success(t('proj.investment.deleted'));
+    void loadInvestment();
+  };
+
+  const deleteEffortEntry = async (row: ProjectEffortEntry) => {
+    await api.delete(`/project-effort-entries/${row.id}`);
+    message.success(t('proj.investment.deleted'));
+    void loadInvestment();
   };
 
   // ---------- 风险 ----------
@@ -817,13 +1110,6 @@ export default function ProjectDetail() {
         )}
       </Card>
 
-      <RecordRelationsPanel
-        entityType="project"
-        entityId={detail.id}
-        excludeRelationTypes={['converted_to_project']}
-        hideWhenEmpty
-      />
-
       <Card title={t('proj.progress')} size="small">
         {detail.progress == null ? (
           <Typography.Text type="secondary">{t('proj.noWbsProgress')}</Typography.Text>
@@ -838,6 +1124,13 @@ export default function ProjectDetail() {
           </>
         )}
       </Card>
+
+      <RecordRelationsPanel
+        entityType="project"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
     </Space>
   );
 
@@ -866,7 +1159,33 @@ export default function ProjectDetail() {
   ];
 
   const wbsColumns: ColumnsType<WbsNode> = [
-    { title: t('proj.wbs.col.stage'), dataIndex: 'stage', width: 110, render: (v) => v || '-' },
+    {
+      title: t('proj.wbs.col.stage'),
+      dataIndex: 'stage',
+      width: 64,
+      className: 'wbs-table__stage-cell',
+      render: (v, r) => (
+        <Space size={4}>
+          {!isExample && canEdit && (
+            <Tooltip title={wbsStructureLockedTreeIds.has(r.id) ? t('proj.wbs.structureLocked') : t('proj.wbs.dragHandle')}>
+              <span
+                draggable={!moveSaving && !wbsStructureLockedTreeIds.has(r.id)}
+                aria-label={t('proj.wbs.dragHandle')}
+                onDragStart={(event) => startWbsDrag(event, r)}
+                onDragEnd={() => {
+                  setDraggingWbsId(null);
+                  setWbsDropTarget(null);
+                }}
+                style={{ cursor: wbsStructureLockedTreeIds.has(r.id) ? 'not-allowed' : 'grab', color: '#8c8c8c', display: 'inline-flex' }}
+              >
+                <HolderOutlined />
+              </span>
+            </Tooltip>
+          )}
+          <span>{v || '-'}</span>
+        </Space>
+      ),
+    },
     { title: t('proj.wbs.col.code'), dataIndex: 'wbs_code', width: 90 },
     { title: t('proj.wbs.col.name'), dataIndex: 'name', width: 200, ellipsis: true },
     {
@@ -952,26 +1271,102 @@ export default function ProjectDetail() {
           {
             title: t('common.actions'),
             key: 'action',
-            width: 190,
+            width: 120,
             fixed: 'right' as const,
+            className: 'wbs-table__action-cell',
             render: (_: unknown, r: WbsNode) => (
               <Space size={0}>
                 {!isExample && canEdit && (
                   <>
-                    <Button type="link" size="small" onClick={() => openTaskModal('edit', r)}>
-                      {t('common.edit')}
-                    </Button>
-                    <Button type="link" size="small" onClick={() => openTaskModal('create', undefined, r)}>
-                      {t('proj.addSubtask')}
-                    </Button>
+                    <Tooltip title={t('common.edit')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        className="sortable-table__action-icon-button"
+                        icon={<EditOutlined />}
+                        aria-label={t('common.edit')}
+                        onClick={() => openTaskModal('edit', r)}
+                      />
+                    </Tooltip>
+                    {r.structure_locked ? (
+                      <Tooltip title={t('proj.wbs.structureLocked')}>
+                        <span>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="sortable-table__action-icon-button"
+                            icon={<PlusOutlined />}
+                            aria-label={t('proj.addSubtask')}
+                            disabled
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip title={t('proj.addSubtask')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          className="sortable-table__action-icon-button"
+                          icon={<PlusOutlined />}
+                          aria-label={t('proj.addSubtask')}
+                          onClick={() => openTaskModal('create', undefined, r)}
+                        />
+                      </Tooltip>
+                    )}
+                    {r.structure_locked ? (
+                      <Tooltip title={t('proj.wbs.structureLocked')}>
+                        <span>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="sortable-table__action-icon-button"
+                            icon={<SwapOutlined />}
+                            aria-label={t('proj.wbs.adjustStructure')}
+                            disabled
+                          />
+                        </span>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip title={t('proj.wbs.adjustStructure')}>
+                        <Button
+                          type="text"
+                          size="small"
+                          className="sortable-table__action-icon-button"
+                          icon={<SwapOutlined />}
+                          aria-label={t('proj.wbs.adjustStructure')}
+                          onClick={() => openMoveTask(r)}
+                        />
+                      </Tooltip>
+                    )}
                   </>
                 )}
-                {(!isExample && canEdit) || canDeleteExamples ? (
+                {!r.completed_locked && ((!isExample && canEdit) || canDeleteExamples) ? (
                   <Popconfirm title={t('proj.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
-                    <Button type="link" size="small" danger>
-                      {t('common.delete')}
-                    </Button>
+                    <Tooltip title={t('common.delete')}>
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        className="sortable-table__action-icon-button"
+                        icon={<DeleteOutlined />}
+                        aria-label={t('common.delete')}
+                      />
+                    </Tooltip>
                   </Popconfirm>
+                ) : (canEdit || canDeleteExamples) ? (
+                  <Tooltip title={t('proj.wbs.completedLocked')}>
+                    <span>
+                      <Button
+                        type="text"
+                        size="small"
+                        danger
+                        disabled
+                        className="sortable-table__action-icon-button"
+                        icon={<DeleteOutlined />}
+                        aria-label={t('common.delete')}
+                      />
+                    </span>
+                  </Tooltip>
                 ) : null}
               </Space>
             ),
@@ -1060,6 +1455,16 @@ export default function ProjectDetail() {
           )
         }
       >
+        <Alert type="info" showIcon message={t('proj.wbs.structureHint')} style={{ marginBottom: 12 }} />
+        <BatchDeleteToolbar
+          endpoint={id ? `/projects/${id}/wbs/batch-delete` : undefined}
+          selectedIds={selectedWbsIds}
+          entityName={t('proj.wbsTasks')}
+          onCompleted={() => {
+            setSelectedWbsIds([]);
+            void Promise.all([loadWbs(), loadMilestones(), loadMilestoneTracking(), loadDetail()]);
+          }}
+        />
         <StickyTable<WbsNode>
           size="small"
           rowKey="id"
@@ -1071,21 +1476,101 @@ export default function ProjectDetail() {
           freezeColumns={3}
           resizable
           rowResizable
-          storageKey={`project-wbs-layout:${id}`}
+          storageKey={`project-wbs-layout-v3:${id}`}
+          rowSelection={{
+            selectedRowKeys: selectedWbsIds,
+            checkStrictly: true,
+            preserveSelectedRowKeys: true,
+            onSelect: (record, selected) => {
+              setSelectedWbsIds((current) => toggleWbsBranchSelection(wbs, current, record.id, selected));
+            },
+            onSelectAll: (selected, _selectedRows, changedRows) => {
+              setSelectedWbsIds((current) => changedRows.reduce(
+                (next, record) => toggleWbsBranchSelection(wbs, next, record.id, selected),
+                current,
+              ));
+            },
+            getCheckboxProps: (record) => {
+              const selectionState = wbsSelectionState(wbs, selectedWbsIds, record.id);
+              return {
+                disabled: record.completed_locked || !((!isExample && canEdit) || canDeleteExamples),
+                indeterminate: selectionState.indeterminate,
+                title: record.completed_locked ? t('proj.wbs.completedLocked') : undefined,
+              };
+            },
+          }}
           expandable={{
             expandedRowKeys: expandedKeys,
             onExpandedRowsChange: setExpandedKeys,
           }}
+          onRow={(record) => ({
+            onDragOver: (event) => allowWbsDrop(event, record),
+            onDragLeave: (event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWbsDropTarget(null);
+            },
+            onDrop: (event) => dropWbs(event, record),
+          })}
+          rowClassName={(record) => (
+            wbsDropTarget?.id === record.id ? `wbs-table__drop-${wbsDropTarget.position}` : ''
+          )}
           locale={{ emptyText: t('proj.emptyWbs') }}
         />
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+            marginTop: 12,
+          }}
+        >
+          <Typography.Text type="secondary" style={{ fontVariantNumeric: 'tabular-nums' }}>
+            {t('proj.wbs.displayCount', { shown: visibleWbs.length, total: wbs.length })}
+          </Typography.Text>
+          <Space size={12} wrap>
+            {wbsDisplayLimit !== 'all' && wbsPageResult.pageCount > 1 && (
+              <Pagination
+                size="small"
+                current={wbsPageResult.page}
+                pageSize={wbsDisplayLimit}
+                total={wbs.length}
+                showSizeChanger={false}
+                showTotal={(total) => t('proj.wbs.paginationTotal', { total })}
+                onChange={setWbsPage}
+              />
+            )}
+            <Typography.Text>{t('proj.wbs.displayRows')}</Typography.Text>
+            <Select<WbsDisplayLimit>
+              value={wbsDisplayLimit}
+              aria-label={t('proj.wbs.displayRows')}
+              style={{ width: 88 }}
+              options={[
+                { value: 50, label: '50' },
+                { value: 100, label: '100' },
+                { value: 200, label: '200' },
+                { value: 'all', label: t('proj.wbs.displayAll') },
+              ]}
+              onChange={(value) => {
+                setWbsDisplayLimit(value);
+                setWbsPage(1);
+              }}
+            />
+          </Space>
+        </div>
       </Card>
     </Space>
   );
 
   // ----- 成本 -----
+  const fmtCny = (value: string | number | null | undefined): string =>
+    value == null ? '-' : new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', maximumFractionDigits: 2 }).format(Number(value));
   const costColumns: ColumnsType<CostEntry> = [
     { title: t('proj.cost.col.date'), dataIndex: 'entry_date', width: 130, onCell: () => ({ className: 'cell-nowrap' }) },
-    { title: t('proj.cost.col.amountWan'), dataIndex: 'amount_10k', width: 130 },
+    { title: t('proj.investment.category'), dataIndex: 'category', width: 110, render: (value) => t(`proj.investment.category.${value}`) },
+    { title: t('proj.investment.amountCny'), dataIndex: 'amount_cny', width: 160, render: fmtCny },
+    { title: t('proj.investment.costType'), dataIndex: 'cost_type', width: 110, render: (value) => t(`proj.investment.costType.${value}`) },
+    { title: t('proj.investment.supplier'), dataIndex: 'supplier', width: 180, render: (v) => v || '-' },
     { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (v) => v || '-' },
     ...(canEdit || canDeleteExamples
       ? [
@@ -1106,39 +1591,74 @@ export default function ProjectDetail() {
       : []),
   ];
 
+  const budgetColumns: ColumnsType<ProjectBudgetItem> = [
+    { title: t('proj.investment.category'), dataIndex: 'category', width: 120, render: (value) => t(`proj.investment.category.${value}`) },
+    { title: t('proj.investment.name'), dataIndex: 'name', width: 240 },
+    { title: t('proj.investment.amountCny'), dataIndex: 'amount_cny', width: 180, render: fmtCny },
+    { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (value) => value || '-' },
+    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 80, render: (_: unknown, row: ProjectBudgetItem) => (
+      <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteBudgetItem(row)}>
+        <Button type="link" size="small" danger>{t('common.delete')}</Button>
+      </Popconfirm>
+    ) } as ColumnsType<ProjectBudgetItem>[number]] : []),
+  ];
+
+  const effortColumns: ColumnsType<ProjectEffortEntry> = [
+    { title: t('proj.investment.workDate'), dataIndex: 'work_date', width: 130 },
+    { title: t('proj.investment.person'), dataIndex: 'person_name', width: 150, render: (value) => value || '-' },
+    { title: t('proj.investment.roleType'), dataIndex: 'role_type', width: 140, render: (value) => t(`proj.investment.role.${value}`) },
+    { title: t('proj.investment.effort'), dataIndex: 'effort_days', width: 100 },
+    { title: t('proj.investment.rate'), dataIndex: 'standard_rate_cny_per_day', width: 170, render: fmtCny },
+    { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (value) => value || '-' },
+    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 80, render: (_: unknown, row: ProjectEffortEntry) => (
+      <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteEffortEntry(row)}>
+        <Button type="link" size="small" danger>{t('common.delete')}</Button>
+      </Popconfirm>
+    ) } as ColumnsType<ProjectEffortEntry>[number]] : []),
+  ];
+
   const costTab = (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <Row gutter={16}>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title={t('proj.budgetWan')} value={detail.budget_10k ?? '-'} />
+            <Statistic title={t('proj.investment.budgetCny')} value={fmtCny(investmentSummary?.budget_cny)} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic title={t('proj.stat.actualCostWan')} value={detail.actual_cost_10k} />
+            <Statistic title={t('proj.investment.incurredCny')} value={fmtCny(investmentSummary?.incurred_cost_cny)} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
-            <Statistic
-              title={t('proj.d.budgetUsageRate')}
-              value={detail.budget_usage ?? '-'}
-              suffix={detail.budget_usage != null ? '%' : undefined}
-              valueStyle={detail.budget_usage != null && detail.budget_usage > 100 ? { color: '#ff4d4f' } : undefined}
-            />
+            <Statistic title={t('proj.investment.committedCny')} value={fmtCny(investmentSummary?.committed_cost_cny)} />
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card size="small">
             <Statistic
-              title="CPI"
-              value={detail.cpi ?? '-'}
-              valueStyle={detail.cpi != null && detail.cpi < 1 ? { color: '#ff4d4f' } : undefined}
+              title={t('proj.investment.budgetExecution')}
+              value={investmentSummary?.budget_execution_rate ?? '-'}
+              suffix={investmentSummary?.budget_execution_rate != null ? '%' : undefined}
+              valueStyle={investmentSummary?.budget_execution_rate != null && investmentSummary.budget_execution_rate > 100 ? { color: '#ff4d4f' } : undefined}
             />
           </Card>
         </Col>
       </Row>
+
+      <Row gutter={16}>
+        <Col xs={12} md={6}><Card size="small"><Statistic title={t('proj.investment.effortDays')} value={investmentSummary?.effort_days ?? '-'} /></Card></Col>
+        <Col xs={12} md={6}><Card size="small"><Statistic title={t('proj.investment.effortCostCny')} value={fmtCny(investmentSummary?.effort_cost_cny)} /></Card></Col>
+      </Row>
+
+      <Card title={t('proj.investment.budgetItems')} size="small" extra={canEdit && (
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => { budgetForm.resetFields(); setBudgetModalOpen(true); }}>
+          {t('proj.investment.addBudget')}
+        </Button>
+      )}>
+        <Table<ProjectBudgetItem> size="small" rowKey="id" columns={budgetColumns} dataSource={budgetItems} pagination={false} scroll={{ x: 'max-content' }} />
+      </Card>
 
       <Card
         title={t('proj.costDetail')}
@@ -1166,7 +1686,16 @@ export default function ProjectDetail() {
           dataSource={costs}
           pagination={false}
           locale={{ emptyText: t('proj.emptyCost') }}
+          scroll={{ x: 'max-content' }}
         />
+      </Card>
+
+      <Card title={t('proj.investment.effortEntries')} size="small" extra={canEdit && (
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => { effortForm.resetFields(); setEffortModalOpen(true); }}>
+          {t('proj.investment.addEffort')}
+        </Button>
+      )}>
+        <Table<ProjectEffortEntry> size="small" rowKey="id" columns={effortColumns} dataSource={effortEntries} pagination={false} scroll={{ x: 'max-content' }} />
       </Card>
     </Space>
   );
@@ -1462,6 +1991,7 @@ export default function ProjectDetail() {
                 resource_note: detail.resource_note,
                 org_members: detail.org_members ?? [],
                 stakeholders: detail.stakeholders ?? [],
+                workflow_edit_mode: detail.workflow_edit_mode,
               }
             : null
         }
@@ -1502,6 +2032,45 @@ export default function ProjectDetail() {
         </Space>
       </Modal>
 
+      {/* WBS 层级与顺序调整：树形变更必须显式确认，拖拽仅用于同级排序。 */}
+      <Modal
+        title={t('proj.wbs.moveTitle', { name: moveTask?.name ?? '' })}
+        open={!!moveTask}
+        onOk={() => moveTask && void moveWbsTask(moveTask, moveParentId, moveBeforeId)}
+        confirmLoading={moveSaving}
+        onCancel={() => setMoveTask(null)}
+        destroyOnClose
+      >
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Alert type="info" showIcon message={t('proj.wbs.moveHint')} />
+          <div>
+            <div style={{ marginBottom: 4 }}>{t('proj.wbs.newParent')}</div>
+            <Select
+              allowClear
+              value={moveParentId ?? undefined}
+              placeholder={t('proj.wbs.root')}
+              options={movableParentOptions}
+              style={{ width: '100%' }}
+              onChange={(value?: string) => {
+                setMoveParentId(value ?? null);
+                setMoveBeforeId(null);
+              }}
+            />
+          </div>
+          <div>
+            <div style={{ marginBottom: 4 }}>{t('proj.wbs.movePosition')}</div>
+            <Select
+              allowClear
+              value={moveBeforeId ?? undefined}
+              placeholder={t('proj.wbs.moveToEnd')}
+              options={moveSiblingOptions}
+              style={{ width: '100%' }}
+              onChange={(value?: string) => setMoveBeforeId(value ?? null)}
+            />
+          </div>
+        </Space>
+      </Modal>
+
       {/* 新建/编辑任务 Modal */}
       <Modal
         title={
@@ -1532,9 +2101,44 @@ export default function ProjectDetail() {
             <DatePicker.RangePicker style={{ width: '100%' }} />
           </Form.Item>
           {taskModal?.mode === 'edit' && (
-            <Form.Item name="actuals" label={`${t('proj.actualStart')} ~ ${t('proj.actualEnd')}`}>
-              <DatePicker.RangePicker style={{ width: '100%' }} allowEmpty={[true, true]} />
-            </Form.Item>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item name="actual_start" label={t('proj.actualStart')}>
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    disabled={Boolean(taskModal.task?.completed_locked)}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="actual_end"
+                  label={t('proj.actualEnd')}
+                  dependencies={['actual_start']}
+                  extra={taskModal.task?.completed_locked ? t('proj.wbs.actualDatesLocked') : undefined}
+                  rules={[
+                    {
+                      validator: async (_, value: Dayjs | null) => {
+                        if (!value) return;
+                        if (value.isAfter(dayjs(), 'day')) {
+                          throw new Error(t('proj.wbs.actualEndFuture'));
+                        }
+                        const actualStart = taskForm.getFieldValue('actual_start') as Dayjs | null;
+                        if (actualStart && value.isBefore(actualStart, 'day')) {
+                          throw new Error(t('proj.actualEndBeforeStart'));
+                        }
+                      },
+                    },
+                  ]}
+                >
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    disabled={Boolean(taskModal.task?.completed_locked)}
+                    disabledDate={(current) => current.isAfter(dayjs(), 'day')}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
           )}
           <Form.Item name="wbs_dict" label={t('proj.wbsDict')}>
             <Input.TextArea rows={2} maxLength={1000} placeholder={t('proj.wbsDictPlaceholder')} />
@@ -1582,15 +2186,64 @@ export default function ProjectDetail() {
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item
-            name="amount_10k"
-            label={t('proj.cost.col.amountWan')}
+            name="amount_cny"
+            label={t('proj.investment.amountCny')}
             rules={[{ required: true, message: t('proj.cost.amountRequired') }]}
           >
-            <InputNumber min={0.0001} precision={4} style={{ width: '100%' }} placeholder={t('proj.cost.amountPlaceholder')} />
+            <InputNumber min={0.01} precision={2} style={{ width: '100%' }} placeholder={t('proj.cost.amountPlaceholder')} />
+          </Form.Item>
+          <Form.Item name="category" label={t('proj.investment.category')} initialValue="other" rules={[{ required: true }]}>
+            <Select options={['software', 'hardware', 'service', 'labor', 'other'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="cost_type" label={t('proj.investment.costType')} initialValue="incurred" rules={[{ required: true }]}>
+            <Select options={['incurred', 'committed'].map((value) => ({ value, label: t(`proj.investment.costType.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="supplier" label={t('proj.investment.supplier')}>
+            <Input maxLength={128} />
           </Form.Item>
           <Form.Item name="note" label={t('proj.cost.col.note')}>
             <Input maxLength={200} />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('proj.investment.addBudget')}
+        open={budgetModalOpen}
+        onOk={() => void submitBudgetItem()}
+        confirmLoading={investmentSaving}
+        onCancel={() => setBudgetModalOpen(false)}
+        destroyOnClose
+      >
+        <Form form={budgetForm} layout="vertical" preserve={false}>
+          <Form.Item name="category" label={t('proj.investment.category')} initialValue="software" rules={[{ required: true }]}>
+            <Select options={['software', 'hardware', 'service', 'labor', 'other'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="name" label={t('proj.investment.name')} rules={[{ required: true }]}><Input maxLength={128} /></Form.Item>
+          <Form.Item name="amount_cny" label={t('proj.investment.amountCny')} rules={[{ required: true }]}><InputNumber min={0.01} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="note" label={t('proj.cost.col.note')}><Input.TextArea rows={2} maxLength={500} /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={t('proj.investment.addEffort')}
+        open={effortModalOpen}
+        onOk={() => void submitEffortEntry()}
+        confirmLoading={investmentSaving}
+        onCancel={() => setEffortModalOpen(false)}
+        destroyOnClose
+      >
+        <Form form={effortForm} layout="vertical" preserve={false}>
+          <Form.Item name="person_id" label={t('proj.investment.person')} rules={[{ required: true }]}>
+            <Select showSearch optionFilterProp="label" options={members.map((row) => ({ value: row.id, label: row.name }))} />
+          </Form.Item>
+          <Form.Item name="work_date" label={t('proj.investment.workDate')} rules={[{ required: true }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="role_type" label={t('proj.investment.roleType')} initialValue="implementation" rules={[{ required: true }]}>
+            <Select options={['design', 'development', 'testing', 'implementation', 'pm', 'operations', 'other'].map((value) => ({ value, label: t(`proj.investment.role.${value}`) }))} />
+          </Form.Item>
+          <Form.Item name="effort_days" label={t('proj.investment.effort')} rules={[{ required: true }]}><InputNumber min={0.01} max={31} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="standard_rate_cny_per_day" label={t('proj.investment.rate')}><InputNumber min={0} precision={2} style={{ width: '100%' }} /></Form.Item>
+          <Form.Item name="note" label={t('proj.cost.col.note')}><Input.TextArea rows={2} maxLength={500} /></Form.Item>
         </Form>
       </Modal>
 

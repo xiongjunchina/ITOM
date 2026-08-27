@@ -1,7 +1,7 @@
 # ITOM API 契约与架构设计
 
 > 依据 [03-PRD.md](03-PRD.md)、[04-数据模型设计.md](04-数据模型设计.md)。
-> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在 `feature/aily-agent-mcp` 实现；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，历史真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。2026-07-31 IDC 复核发现 `itom.snnc.cc:30443` 公网证书无法通过标准 CA 校验且当前卡片 POST 未到达入口日志，因此当前 IDC 的“确认关闭”仍待受信 TLS 和新工单卡片复验。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
+> Aily + MCP 的 P0 协议/身份/机器人真实收件、P1 服务入口和 P2 服务闭环已在现已封存的 `feature/aily-agent-mcp` 实现并由当前 `feature/AI-agent-version` 继承；P2 已通过真实 Aily 多角色对话、机器人收件及普通用户同单端到端验收。P2.1 已改为飞书新版 `card.action.trigger` 验签回调：Aily Workflow/Skill 因不能提供可信 `x-aily-jwt` 而不承担卡片写操作，历史真实“未解决 → 重开 → 再次解决并关闭 → 评价”按钮 UAT 已通过。2026-07-31 IDC 复核发现 `itom.snnc.cc:30443` 公网证书无法通过标准 CA 校验且当前卡片 POST 未到达入口日志，因此当前 IDC 的“确认关闭”仍待受信 TLS 和新工单卡片复验。P3 飞书审批按用户决定暂缓，IDC 发布加固与正式验收继续进行。Helpdesk 路由只属于冻结标签 `v1.0.0-feishu-helpdesk`。
 
 ## 1. 系统架构
 
@@ -70,6 +70,7 @@ ITOM/
 POST /api/auth/login | GET /api/auth/me
 GET /api/auth/me/profile | PATCH /api/auth/me/preferences
 POST /api/auth/me/password | GET /api/auth/me/audit-logs
+GET /api/auth/me/todos
 GET /api/auth/me/feishu-binding/authorize-url
 POST/DELETE /api/auth/me/feishu-binding
 GET /api/auth/feishu/client-config | POST /api/auth/feishu/app-login
@@ -79,10 +80,14 @@ GET /api/admin/master-data?category=     # 字典（全员只读，admin 可写�
 GET/PUT /api/admin/workflow-config       # 状态机
 GET /api/admin/audit-logs
 GET /api/notifications | POST /api/notifications/{id}/read | POST /api/notifications/read-all | POST /api/notifications/clear-read   # 站内通知、批量已读与已读清理
-POST /api/attachments (multipart) | GET /api/attachments?entity=
+POST /api/attachments?entity_type=&entity_id= (multipart) | GET /api/attachments?entity_type=&entity_id= | GET /api/attachments/{id}/download
+POST /api/attachments/ticket-drafts (multipart) | DELETE /api/attachments/ticket-drafts/{id}   # 服务请求建单前临时附件
+POST /api/attachments/requirement-drafts (multipart) | DELETE /api/attachments/requirement-drafts/{id}   # IT 需求登记前临时附件
 ```
 
-个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
+个人接口约束：`PATCH /me/preferences` 只更新显式提交的键；主题为 `light|dark|system`，密度为 `default|compact`，`table_views` 只允许有限数量的稳定清单键、字段名、列宽（80–800px）及 `manual_widths` 字段数组。`manual_widths` 去重后最多 128 项，每项必须同时存在于同一视图的 `widths`，用于区分用户手工覆盖与运行时自动宽度；服务端不接受对保护列的删除授权。`GET /me/todos` 只返回当前账号按流程授权可处理的活动待办，并提供受控单据详情链接；它不改变 `can_act_on_task` 的权限判断。`POST /me/password` 的新密码至少 8 位且包含字母和数字；已有人工密码时必须提供正确的 `current_password`。飞书解绑要求账号已经设置本地密码；个人审计接口只返回当前账号作为 actor 的记录。
+
+服务请求和 IT 需求网页在创建前分别可用 `POST /api/attachments/ticket-drafts`、`POST /api/attachments/requirement-drafts` 上传 `file`（图片、PDF、常见办公文档；单个最多 50MB、每张单最多 10 个）。响应只返回安全附件元数据；浏览器将返回 ID 分别放入 `POST /api/tickets` 或 `POST /api/requirements` 的 `attachment_ids`，需求可同时提交 `remarks` 作为“其他补充信息”。领域服务只接受当前账号、未删除的对应临时附件，并在单据创建、流程启动和审计的同一事务改绑为 `entity_type=ticket` 或 `requirement`；任一 ID 无效时整个创建事务失败。两个草稿删除接口都只允许上传人取消，未绑定草稿 24 小时后清理；草稿类型均不允许通过 `GET /api/attachments` 或下载端点读取。正式附件的上传、读取和下载均复用对应单据的功能权限、数据范围及流程编辑窗口；服务端分页响应的 `total` 始终是过滤后全量记录数，前端不得用当前页 `items.length` 覆盖它。
 
 ### 4.1a 组织同步（M35）
 
@@ -156,26 +161,38 @@ get_my_it_requirement
 list_my_it_requirements
 ```
 
-需求登记写入独立 `Requirement`，不创建 Ticket。普通业务用户不拥有需求模块权限；仅 BDO 和授权 IT 角色复用现有 `requirements.create/view`，并强制本人数据范围。领域服务还会校验 BDO/IT 角色边界，防止历史或手工追加的 `requester` 权限行绕过限制；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
+需求登记写入独立 `Requirement`，不创建 Ticket。请求可包含既有 `remarks`（“其他补充信息”）和至多 10 个当前账号的 `requirement_draft` 附件 ID；服务端在需求、流程、审计及附件绑定的同一事务再次校验归属、数量和未删除状态。普通业务用户不拥有需求模块权限；仅 BDO 和授权 IT 角色复用现有 `requirements.create/view`，并强制本人数据范围。领域服务还会校验 BDO/IT 角色边界，防止历史或手工追加的 `requester` 权限行绕过限制；评审、评分、转项目和关闭继续由现有需求编辑权限及流程控制。
 
 #### 需求实现任务接口
 
 ```text
 POST /api/requirements/{requirement_id}/tasks
+POST /api/requirements/tasks                       # 可不关联需求的独立开发任务
 PATCH /api/requirements/tasks/{task_id}
 DELETE /api/requirements/tasks/{task_id}
+DELETE /api/requirements/tasks/batch-delete
 GET /api/requirements/tasks/active
 ```
 
-同一实现中需求可重复调用 `POST` 登记多行任务。需求负责人或拥有 `requirements.edit` / `req_tasks.edit` 的账号可以维护任务完整字段；任务负责人在无全局编辑权限时只能更新自己任务的 `status` 和 `actual_effort`。删除仍仅开放给全局需求/任务编辑权限，需求负责人身份不会自动获得删除权。列表和详情响应分别返回 `can_manage_tasks`、`can_delete_tasks` 能力标记，服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。该接口变更不涉及数据库迁移，存量任务按原主键和软删除状态继续可读。
+同一实现中需求可重复调用带 `requirement_id` 的 `POST` 登记多行任务；不带路径 ID 的 `POST /api/requirements/tasks` 可创建 `requirement_id=null` 的独立开发任务，并在 `PATCH` 时补充或调整关联。填写关联时目标必须处于实现中且非示例，并且已冻结的 `implementation_route` 不得为“转项目管理”；`project_id` 仅表示普通项目关联，不能代替实施路径判断。需求负责人或拥有任务维护权的账号可维护完整字段；任务负责人在无全局编辑权限时只能更新自己的 `status` 和 `actual_effort`。所有写接口重新校验权限、关联需求状态、负责人范围和示例保护；既有任务保持原主键及软删除状态。前端需求候选和批量导入使用同一实施路径口径，需求详情的负责人候选按 `can_manage_tasks` 加载，不依赖流程记录的 `can_edit`。
+
+需求列表/详情的 `d1_strategy`…`d6_speed`、`weighted_total` 与 `quadrant` 是 `Requirement` 主表评分字段的服务端权威投影；即使历史/导入记录没有 `requirement_score` 历史行，客户端也必须回填并展示这些字段。`POST /api/requirements/{id}/score` 的“通过”要求评分完整且不落入“重新评估”象限；“搁置”与“驳回”均可提交，驳回要求不少于 5 字的理由，可携带 `return_to_seq` 选择详情 `process.return_targets` 中某个已实际到达的前序节点或 `0`（登记人补充）。省略时默认最近前序节点；首审批节点没有流程前序时默认 `0`。服务端必须在同一事务完成当前任务驳回审计、流程实例回退和需求状态投影，不能把驳回写成关闭/取消。
+
+需求详情的 `process.return_targets` 只在当前待办为审批节点时返回，元素为 `{seq,name,kind}`；`process.return_info` 返回最近一次驳回的理由、时间和实际操作人。退回流程节点时实例保持 `running` 并在目标节点追加待办；选择 `seq=0` 时实例为 `returned`、需求为 `supplementing`，详情仅允许原登记人或管理员补充安全字段和附件，并返回 `can_resubmit=true`。`POST /api/requirements/{id}/resubmit` 不接受客户端指定目标或处理人，只在同一流程实例重新激活首个评审任务并把需求恢复为 `evaluating`。未来节点、未到达节点、非当前审批处理人、理由不足、非待补充状态和非登记人提交均失败关闭。
+
+`POST /api/requirements/{id}/to-dev` 使用空载荷（兼容旧客户端可携带 `owner_id`，但若与需求评分规则 `review_assignees.dev_leader` 不一致则返回 `DEV_LEADER_FIXED`）。服务端必须存在并校验该在岗 IT 开发负责人；缺失/失效返回 `DEV_LEADER_NOT_CONFIGURED`。两个路径接口都只可处理当前「方案评估与路径判定」任务，否则返回 `PROCESS_STEP_MISMATCH`，并且只推进到「实现交付」。完成开发路径的实现交付任务前，流程引擎检查未删除的 `requirement_task` 至少一条，否则返回 `REQUIREMENT_TASK_REQUIRED`；此检查不适用于项目路径或没有 `implementation_route` 快照的既有记录。
 
 #### 任务管理接口（M82）
 
-前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
+前端入口为 `/task-management/development` 与 `/task-management/delegated`；开发任务页的 `tab=requirement|bug|project` 只改变视图，不改变后端资源。历史需求任务路由重定向到需求开发标签，保证既有书签和数据兼容。
 
 ```text
+GET /api/requirements/tasks/template
+POST /api/requirements/tasks/import
+
 GET/POST/PATCH /api/task-management/bugs
 GET /api/task-management/bugs/{id}
+DELETE /api/task-management/bugs/batch-delete
 GET /api/task-management/reference/cis              # Bug 所属系统候选；只读 CMDB 配置项
 POST /api/task-management/bugs/{id}/confirm
 POST /api/task-management/bugs/{id}/reject-confirm
@@ -186,15 +203,54 @@ POST /api/task-management/bugs/{id}/reopen
 
 GET/POST/PATCH /api/task-management/work-tasks
 GET /api/task-management/work-tasks/{id}
+POST /api/task-management/work-tasks/{id}/progress
 POST /api/task-management/work-tasks/{id}/transition
 DELETE /api/task-management/work-tasks/{id}
+DELETE /api/task-management/work-tasks/batch-delete
+
+GET /api/task-management/reference/projects
+GET /api/task-management/reference/projects/{project_id}/wbs
+GET/POST/PATCH /api/task-management/project-tasks
+GET /api/task-management/project-tasks/{id}
+POST /api/task-management/project-tasks/{id}/progress
+DELETE /api/task-management/project-tasks/{id}
+DELETE /api/task-management/project-tasks/batch-delete
 ```
 
-Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客户端指定审批人；登记会启动 `bug_flow` 并自动完成登记节点，确认、生成多行修复任务、子任务全部关闭后的验证关闭均由对应流程处理人执行。验证不通过和重新打开必须带原因，并保留审计。委派任务使用 `登记 → 排期 → 执行 → 关闭`，另含 `暂停/中止`；登记且未分配时登记人可软删除，已分配任务在关闭前仅管理员可删除。所有列表响应都返回 `capabilities`，但后端每次按当前用户、状态、负责人和管理员身份重新校验。
+同一实现中需求可重复调用 `POST` 登记多行任务。所有内置 IT 类角色的 `task_development` 均授予 `view/create/edit`，因此可维护实现中需求上的完整任务字段；需求负责人保留兼容的数据范围维护，未获得维护权的任务负责人只能更新自己任务的 `status` 和 `actual_effort`。删除采用服务端状态规则而不是矩阵 `delete`：非“进行中”任务可由具备开发任务维护权的 IT 人员软删除，“进行中”任务仅系统管理员可删除。列表返回 `can_manage_tasks`、`can_edit`、`can_delete`，详情任务行返回 `can_delete`；服务端不依赖前端按钮，写接口每次重新校验需求阶段、负责人范围、示例数据保护和权限。
+
+`GET /api/requirements/tasks/template` 返回“开发任务”工作表；A 列关联需求编号为可选。`POST /api/requirements/tasks/import` 使用 multipart 字段 `file` 接收不超过 5MB 的 `.xlsx`；空编号创建独立任务，填写编号时才校验已冻结实施路径不是“转项目管理”、非示例和实现中，普通 `project_id` 关联不触发拒绝。处理人按在岗 IT 成员姓名精确匹配。有效行写审计及指派通知，失败行以 `{row, error}` 返回；响应为 `{created, failed}`，只追加、不更新或去重。
+
+开发任务读取合同统一返回持久化编号和登记时间：需求开发行为 `task_code`（RT）与 `created_at`，项目开发行为 `task_code`（PT）与 `created_at`，Bug 父行为 `bug_code`（BG）与 `created_at`，其 `fix_tasks` 子行为 `task_code`（BT）与 `created_at`。前端对这些列提供本地排序，显示的是接口返回的真实业务编号/时间而不是当前页序号。启动迁移只补齐缺失的 RT/BT，按原 `created_at` 月份和 `created_at + id` 稳定顺序生成，并在补齐后建立唯一非空约束；不修改其他存量字段。
+
+Bug 接口固定使用 `ci.product_manager_id` 快照，不接受客户端指定审批人；在通用上游回改窗口内，`PATCH` 可变更 `ci_id` 并重新校验、快照目标产品经理。`DELETE /bugs/{id}` 复用流程单据删除窗口：创建人仅在下一节点未查阅处理时允许，管理员始终允许；删除同时终止并软删除活动流程任务。Bug 编号和详情按钮均调用 `GET /bugs/{id}`。委派任务进度接口只追加 `task_progress_entry`，不覆盖历史；项目开发要求项目、WBS 可选且必须属于该项目。项目开发进度请求新增可选 `complete`（默认 `false`）：普通请求的 `progress_percent` 只允许 0–99，并在任务尚为待处理时自动启动为进行中；`complete=true` 要求非空 `comment`，服务端忽略客户端百分比并原子写入已完成、100%、完成说明和完成时间。普通 `PATCH` 不得首次写入已完成，也不得重开已完成任务。列表返回派生的 `completion_percent` 以及 `capabilities.complete`，文字进展继续只存在追加式时间线；所有能力字段仅供界面提示，后端仍按当前用户、状态、负责人和管理员身份重新校验。
+
+任务通知统一调用 `notifier.notify()`：首次指派或改派写给负责人；非登记人更新状态、实际工时、完成说明或显式进度时写给登记人。通知与业务写入同事务产生站内记录和 `notification_outbox(channel=feishu_aily)`，Outbox 继续按身份映射、租户和 Bot 配置异步投递；没有映射时保持待处理，不向未知收件人发送。每条进度记录 ID 作为幂等来源，连续更新不会被合并。
+
+Bug 创建成功后，网页可用通用附件接口依次上传零个或多个文件：`POST /api/attachments?entity_type=bug&entity_id={bug_id}`，multipart 字段固定为 `file`，单个文件上限 50MB。创建与附件上传不是同一事务：Bug 创建成功后单个附件失败不得删除或回滚该 Bug；详情继续通过 `GET /api/attachments?entity_type=bug&entity_id={bug_id}` 列出并允许补传/下载。附件接口不绕过 `task_bug`、身份认证或记录级工作流校验。
 
 `GET /api/task-management/reference/cis` 只返回未删除、未退役的 CMDB 配置项及其产品经理可读信息，供 Bug 登记页选择“所属系统”；它不维护第二套系统字典，也不放宽 `cmdb.view` 之外的写权限。CMDB 的 `owner` 是全部配置项均必填的技术负责人；仅“应用”类别的 `product_manager_id` 是 Bug 确认和验证关闭的产品经理，二者可为同一人但不是重复字段。后端拒绝新建或编辑时缺少产品经理的应用；历史应用缺值的 Bug 登记返回 `PRODUCT_MANAGER_REQUIRED`，补配后重新登记即可，登记成功后保存快照。
 
+`GET /api/itsm-import/ci/template` 返回 CMDB Excel 模板，`POST /api/itsm-import/ci` 按行追加导入。模板以“技术负责人姓名”映射 `owner`，以“应用产品经理姓名”映射 `product_manager_id`；后者仅“应用”类别可填写且必填。两列均按系统中在岗人员姓名精确匹配，缺失或无法匹配的应用产品经理、以及非应用填写产品经理，均返回该行错误；导入不更新既有配置项，也不迁移历史数据。
+
 绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
+
+#### 清单受控批量删除
+
+```text
+DELETE /api/tickets/batch-delete | /api/requirements/batch-delete
+DELETE /api/problems/batch-delete
+DELETE /api/requirements/tasks/batch-delete
+DELETE /api/task-management/bugs/batch-delete | /work-tasks/batch-delete | /project-tasks/batch-delete
+DELETE /api/trainings/batch-delete
+DELETE /api/projects/{project_id}/wbs/batch-delete
+DELETE /api/cis/batch-delete | /api/ci-relationships/batch-delete
+DELETE /api/catalogs/batch-delete | /api/service-items/batch-delete
+```
+
+所有批量删除接口接收 `{ids: [...]}`（1–100 条），返回 `{deleted_ids, rejected:[{id, code, message}]}`。每条记录在独立嵌套事务中复用原单条删除的权限、状态、引用/依赖和审计校验；仅实际删除的记录提交，拒绝项不影响其他记录。WBS 批量删除按层级从最深任务开始执行，已完成任务继续由单条删除规则拒绝；服务目录批量删除不级联，仍含服务项的目录、仍被有效工单引用的服务项等均按原业务错误码拒绝。
+
+清单界面只在存在选中记录时展示批量操作栏，并按页面原有能力及所选记录状态计算可执行动作。行级“操作”列统一渲染为带本地化 Tooltip 与 `aria-label` 的图标按钮，并由共享表格组件把操作列限制在最小可用宽度；历史持久化的过宽操作列偏好不得继续制造无意义空白，批量操作栏保留文字按钮。WBS 使用专用表格增强器：复选框/全选、当前 100% 完成任务禁选、一条固定底部原生横向滚动条和表内原生兜底均由同一组件维护，通用横向滚动增强器不得再次接管该表；“阶段”和“操作”列使用独立紧凑宽度。WBS 能力字段按当前完成度派生，`completed_at` 仅为首次完成审计时间；完成度从 100% 纠正为较低值后，前端必须等待 WBS 清单、里程碑跟踪和项目详情重新加载，再按新能力启用删除、增加子任务和结构调整按钮。
 
 #### 禁止工具
 
@@ -202,15 +258,17 @@ Bug 接口固定使用 `ci.product_manager_id` 的登记时快照，不接受客
 
 #### 主动消息
 
-MCP 不能在后台状态变化时主动唤醒 Aily。服务请求首次受理、解决、重开、关闭和保存评价时，ITOM 领域事件写入 `notification_outbox(channel=feishu_aily)`，后台工作器通过飞书机器人应用发送消息。机器人凭据、消息开关、卡片回调 Verification Token 与 Encrypt Key 同时就绪后，解决/确认期限提醒发送交互卡片（已解决并关闭、仍未解决），关单发送 1–5 星评价卡片；否则发送兼容纯文本。“仍未解决”第一次点击只把原卡片更新为必填原因表单，提交后才重开。
+MCP 不能在后台状态变化时主动唤醒 Aily。进入 `notifier.notify()` 的 ITOM 通知会在原业务事务内按 ITOM 账号写入 `notification_outbox(channel=feishu_aily)` 文本记录；稳定幂等键由事件、实体和账号摘要生成。账号尚未有活动、已验证的 Aily 机器人身份时，记录仍为 `pending`，payload 仅保存内部 `auth_user_id`，错误摘要为 `AILY_IDENTITY_NOT_MAPPED`；后台工作器在发送前重新解析身份，映射补齐后再投递，等待身份期间不消耗重试次数，也不向未知收件人发送。飞书登录回调在 OAuth 验真并映射到活动 ITOM 账号后，使用响应中的 `tenant_key` 和跨应用稳定的 `user_id` 自动写入当前机器人应用的活动 `external_identity`；权限范围未返回 `user_id` 时回退 `union_id`。该 OAuth 自动映射同时写审计，当前 `bot_app_id` 下只存在一个经审计的活动 `tenant_key` 时，它成为后台补齐映射的唯一租户锚点。工作器遇到其他未映射账号时，仅允许账号已关联“在岗 + 飞书同步”的 `org_member`，使用该人员的登录应用 `open_id` 调用通讯录单用户查询，再以返回的租户级 `user_id`（缺失时 `union_id`）写当前机器人应用映射；登录应用 `open_id` 本身绝不作为机器人收件标识。租户锚点缺失或歧义、账号/人员停用、人员未关联、显式映射停用或身份冲突时继续保持 `pending`，查询失败也不消耗消息发送重试次数。Aily JWT `tenant_id` 白名单仅用于 MCP 入站鉴权，与 OAuth `tenant_key` 分属不同契约，不参与阻断该出站身份自动映射。出站解析优先选择与当前 `bot_app_id` 一致的自动映射，历史人工/Aily 映射仍按原租户白名单约束。Aily 未启用时不新增发件箱记录，机器人凭据或消息开关未就绪时保留 `pending`。服务请求首次受理、解决、重开、关闭和保存评价仍由专用订阅写入发件箱并发送交互卡片或回退文本；通用出口跳过 `ticket.resolved`，避免与解决卡片重复。“仍未解决”第一次点击只把原卡片更新为必填原因表单，提交后才重开。
 
 普通对话仍只走 Aily + MCP。卡片按钮是唯一例外：飞书开放平台向 `POST /api/integrations/feishu/card-actions` 推送新版 `card.action.trigger`，ITOM 在读取业务 JSON 前以 `X-Lark-Request-Timestamp`、`X-Lark-Request-Nonce`、Encrypt Key 和原始正文计算 SHA-256 签名，并限制 5 分钟时效；时间戳按官方 Unix 秒/毫秒格式校验，同时兼容真实 Aily 回调出现的带时区和 Go 单调时钟后缀的时间字符串，签名计算仍使用原始请求头字符串。启用加密时按 AES-256-CBC/PKCS#7 解密，再校验 Verification Token、Bot App ID、回调头与点击人中的 `tenant_key` 一致性，以及点击人的 `open_id/user_id/union_id` 显式映射。真实联调证明 Aily JWT 的 `tenant_id` 与卡片回调 `tenant_key` 属于不同标识命名空间，不能强制字符串相等：回调租户未直接命中 Aily 租户白名单时，点击人必须在允许的 Agent/Bot App 范围内唯一映射到“已授权 Aily 租户 + 活动 ITOM 账号”，未知、歧义、停用或无权限身份均拒绝；白名单为空也不允许回退授权。飞书保存 Webhook 地址时实测发送无签名头的加密 `url_verification` challenge；该只读握手仅在成功解密、类型严格为 challenge 且 Verification Token 匹配时放行，任何 `card.action.trigger` 仍必须具备完整有效签名。通过后只调用 `service_request_closure`，不直接写表；该服务继续执行 RBAC、提交人本人范围、流程状态、8–128 字符幂等键和审计。响应在飞书要求的 3 秒内返回 Toast 与更新后的卡片；立即更新使用新版固定结构 `card={"type":"raw","data":<完整卡片 JSON>}`，不能把原始卡片直接放在 `card` 下。无效签名使用 HTTP 401，业务拒绝使用错误 Toast 并保留原卡片。动作值只含公开工单号、动作、评分和幂等键，不含飞书身份、Token、密钥、ITOM 主键或内部处理字段。
 
 协议依据：飞书开放平台[处理卡片回调](https://open.feishu.cn/document/uAjLw4CM/ukzMukzMukzM/feishu-cards/handle-card-callbacks?lang=zh-CN)、[接收回调](https://open.feishu.cn/document/event-subscription-guide/callback-subscription/receive-and-handle-callbacks?lang=zh-CN)及[输入框组件](https://open.feishu.cn/document/feishu-cards/card-components/interactive-components/input?lang=zh-CN)。实现固定使用新版 `card.action.trigger`，不兼容已废弃的旧版卡片回调。
 
-发送使用事件级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。管理员通过 `GET/PUT /api/admin/integrations/aily` 只写配置两个回调秘密；响应仅返回 `has_card_callback_verification_token`、`has_card_callback_encrypt_key` 和 `interactive_cards_ready`，绝不回显秘密。存量 PostgreSQL 由启动迁移幂等补列两个密文字段，不新增业务表。
+发送使用事件/实体/收件身份级幂等键、指数退避和脱敏错误；机器人配置尚未启用或凭据不完整时保留 `pending` 且不消耗重试次数。每个账号选择最近使用的活动飞书身份作为接收人，内部备注、根因、审批意见和敏感字段不出站。管理员通过既有 `GET/PUT /api/admin/integrations/aily` 配置机器人消息开关、凭据、租户白名单和 `public_base_url`，无需新增 API；响应仅返回秘密是否存在及就绪状态，绝不回显秘密。存量 PostgreSQL 无需新增字段或迁移。
 
 飞书服务台的 `/api/integrations/feishu/helpdesk/*`、订阅、交接、事件队列和专用 outbox 已从新版本路由和运行时删除。存量 PostgreSQL 结构通过 `python -m app.scripts.migrate_aily_mcp` 默认预览，明确追加 `--confirm` 后才永久清理。
+
+`DELETE /api/tickets/{id}` 在现有记录级删除授权后，先把该实体的所有活动流程实例与未完成任务完成收尾并软删除，再软删除工单并写入审计。后续 `GET /api/tickets/{id}` 对从前存在但已软删除的工单返回 HTTP 404、错误码 `TICKET_DELETED` 与“工单已撤回或删除，无法查看详情”；从未存在的 ID 仍返回 `NOT_FOUND`。该差异不返回任何已删除字段，专为站内或飞书/Aily 历史通知链接提供准确提示；已经投递的外部消息不可撤回。
 
 ### 4.1c IT 员工分流与跨单据关联（阶段 A/B/C 已实现）
 
@@ -233,10 +291,78 @@ GET  /api/records/{entity_type}/{entity_id}/relations
 
 `recommend` 的问题和答案不得持久化。活动关系已建立来源/目标/关系类型唯一约束，并对创建人、来源、目标类型、幂等键建立唯一约束；同键异参由请求摘要拒绝。`prepare/submit` 不直接写领域表；`submit` 已通过事件、问题、变更或项目等领域服务完成各自的字段、状态、流程、审批、RBAC、审计和事件发布。允许的首期关系类型由服务端白名单控制；任何重复提交按幂等键返回首次结果，不得改变源单据类型、状态或流程。
 
+### 4.1d ITOM 网页智能体（WA0–WA4，设计已确认）
+
+网页智能体使用现有 ITOM Bearer 登录身份和独立 `/api/assistant` 入口，不调用 Aily `/mcp/` 进行自连接；两种渠道只在领域服务、权限、表单、流程、确认、幂等和审计层复用。目标接口如下：
+
+```text
+GET/POST /api/assistant/conversations
+GET      /api/assistant/conversations/{id}
+POST     /api/assistant/conversations/{id}/messages    # SSE
+POST     /api/assistant/actions/{id}/confirm|cancel
+POST     /api/assistant/conversations/{id}/archive
+GET      /api/assistant/bootstrap
+
+GET/POST       /api/admin/ai/providers
+PATCH/DELETE   /api/admin/ai/providers/{id}
+POST           /api/admin/ai/providers/{id}/test
+GET/PATCH      /api/admin/ai/profiles/{code}/draft
+POST           /api/admin/ai/profiles/{code}/publish|rollback
+GET            /api/admin/ai/health|usage?days=1..90|action-audits
+```
+
+模型只收到当前用户可用的代码注册能力。L3 动作先生成绑定用户、会话、能力、规范化参数摘要和有效期的单次确认凭证，确认时再次校验账号、权限、数据范围、记录状态和流程任务；成功结果只能来自领域服务。读取模型配置只返回 `has_secret`。详细架构、安全和降级见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
+
+WA0 Task 1–2 已实现持久化基础及服务器内的策略/脱敏内核：能力只能由代码中的固定注册表登记；注册拒绝重复代码、无确认的 L3、全部 L4、非 Pydantic 输入和缺失处理器。输入模型字段及别名按凭据和授权内部名称的分段语义校验，检查字段名、普通别名、`validation_alias`/`serialization_alias`、`AliasPath` 的每个字符串段和 `AliasChoices` 的全部替代路径；拒绝 `authorization/auth` 上下文、权限范围/矩阵、角色/角色 ID 与凭据变体；普通业务近邻字段不因偶然子串被拒绝。任意 `dict`/`Mapping`（含嵌套或列表项）及其可导出任意键的 `additionalProperties` schema 都在注册和导出前失败关闭，输入对象必须使用有限的显式 Pydantic 字段契约。返回模型的 schema 不含处理器、内部角色/权限矩阵或已禁用能力，并递归删除字段 schema 的 `default/example(s)` 元数据和值；`properties` 映射中合法名为 `default`、`example`、`examples` 的字段仍保留。每次发现均从数据库重新读取活动账号、有效角色、功能权限和已发布档案的能力代码/最高风险限制；档案只能按代码和风险收紧，不能创建处理器或授予权限。记录数据范围、状态、所有权和流程任务仍必须在未来的领域处理器执行时再次校验，发现能力本身不构成执行授权。入模、消息持久化和普通日志摘要均使用同一递归、确定性脱敏，mapping 键与文本赋值共用凭据名称分类：敏感键（不分大小写）、动态表单 `sensitive=true` 字段、Cookie/Authorization 头、Bearer、JWT 和密码/Token/Secret/API access/private key 等赋值均替换为 `[REDACTED]`。本任务未实现提供商调用、`/api/assistant` 路由、UI 或业务能力处理器。
+
+WA0 Task 3 已实现提供商中立的 `ModelProvider` 契约、OpenAI-compatible `/chat/completions` 适配器和 `AssistantGateway`。`AI_PROVIDER_ALLOWED_HOSTS` 必须配置逗号分隔的精确主机或显式 `*.受控后缀`；空白名单失败关闭。Base URL 只允许 HTTPS，禁止 URL 凭据、查询、片段和路径逃逸；路径按最多 8 轮、长度最多 2048 字符解码至稳定状态，残留、循环/歧义百分号编码及解码后分隔符、反斜杠或点段均拒绝。每个真实请求在发送前重新解析 DNS，并拒绝 loopback、private、link-local、multicast、unspecified、reserved 和 metadata 类地址；生产 DNS 只在专用有界 DNS/IO executor 中调用同步 `socket.getaddrinfo`，其容量准入和等待共用 `ChatRequest` 的 absolute deadline/剩余预算，不调用 `loop.getaddrinfo`、`asyncio.to_thread` 或默认 executor。DNS 满载或超时安全失败；解析成功后生产传输为该请求建立独立连接池，只向当次通过校验的字面 IP 集合拨号，HTTP origin/Host、TLS SNI 和证书主机校验仍使用原始白名单主机。环境代理和重定向均禁用；只有测试可注入 `httpx.MockTransport`，普通注入客户端拒绝。连接/读取超时分别由 `AI_PROVIDER_CONNECT_TIMEOUT_SECONDS`（默认 5）与 `AI_PROVIDER_READ_TIMEOUT_SECONDS`（默认 60）控制。
+
+当前 IDC 部署清单为 DashScope 百炼测试配置 `AI_PROVIDER_ALLOWED_HOSTS=dashscope.aliyuncs.com`。该项仅允许连接该受控主机，不保存、读取或启用任何 API Key；API Key 只能由管理员在 ITOM 的模型提供商页面录入并以加密形式保存。首次配置以及配置或密钥变更后必须手动完成安全探测；已启用且未变更的提供商由后端每 10 分钟自动复探，以覆盖 15 分钟探测有效期，失败即自动停用并记录系统触发的脱敏审计。切换提供商前仍必须同步调整白名单并重新发布后端。
+
+`probe()` 依次独立执行并精确校验：认证基础响应、带合法 `[DONE]` 终止语义的流式响应、`tool_choice` 强制的唯一已提供工具名及合法参数、符合请求中 strict schema 常量/必填/禁额外字段约束的 JSON；提供商忽略某项时仅该能力标记为 false，认证、连接、超时或上游服务故障仍使探测失败。L2/L3 必须同时具备 `supports_streaming`、`supports_tools` 和 `supports_json_schema`，并满足启用、近期探测成功及同策略主/备条件。流式响应只接受可验证的 SSE delta、完整 JSON 对象工具参数、usage、受支持的 `stop/tool_calls` 终止原因和最终 `[DONE]`，见到 `[DONE]` 即停止读取并关闭响应；未知事件、非法 JSON、截断或缺失终止语义均失败关闭。主模型任何输出开始后失败不得切换备用。
+
+`ChatRequest.purpose` 只接受服务端 `ProviderPurpose` 枚举并以最长 32 字符的规范代码存储；原始字符串、未知、超长或可能携密的用途在构造提供商、出站和审计前拒绝。每次真实尝试只向 `ai_provider_call` 写提供商、模型、规范用途、Token、耗时、结果码、状态和脱敏错误，不保存 prompt、响应正文或密钥。审计使用独立 `SessionLocal` 事务，绝不提交/回滚调用方会话；失败尝试的审计写入失败被隔离且不阻断安全回退，取消时审计失败不掩盖取消，成功尝试仅在审计提交后发送 `done`，审计失败返回脱敏 `GATEWAY_AUDIT_FAILED` 而不宣称完成。Task 3 不增加管理 API、`/api/assistant` 路由、UI、会话/动作编排或业务处理器。
+
+WA0 Task 4 已实现 `/api/admin/ai` 管理 API，全部端点逐一声明真实服务端 `require_perm("admin_ai", ...)`，浏览器自报角色不参与授权。提供商创建、查询、更新、软删除与探测复用 Task 3 的 HTTPS、主机白名单、DNS 地址分类及请求级固定 IP 传输；未探测或探测已过期的提供商不能启用。提供商类型、URL、模型、非空新密钥、超时、输出限制、温度或备用关系变化会在治理锁内递增 `config_revision`、使旧探测失效并自动停用；修订号不散列或记录明文密钥。`api_key` 只在写请求中接收，非空值逐字节加密，省略或全空白更新保留旧密文；任何响应只返回 `has_secret`，不返回明文或密文。
+
+`POST /providers/{id}/test` 原样复用 Task 3 的“认证基础 → 流式终止 → 强制工具 → strict JSON Schema”顺序，并严格分为三阶段：A 短事务取得专用于 AI provider governance 的 PostgreSQL transaction-scoped advisory lock，按 provider ID 排序 `FOR UPDATE`、刷新/校验并复制密文但不含明文/散列的配置快照及 `config_revision` 后提交；B 在不持有任何数据库事务、advisory lock 或行锁时执行异步网络探测及关闭传输；C 再用同一短事务锁刷新当前提供商，只有未删除且修订号不变才原子写 `probe_status`、布尔能力、`last_probed_at` 和脱敏审计。配置已变化或删除时丢弃结果并返回 409 `AI_PROVIDER_PROBE_STALE`，绝不覆盖较新的未验证/失败状态；探测本身失败则保存真实失败并撤销启用。创建、更新、删除、A/C 探测短事务，以及发布/回滚活动档案对提供商的引用均共用该跨 Pod 锁；同步锁从不跨异步网络等待，且主备环路、唯一主模型、启用门禁和删除引用均在锁内重新校验，不依赖进程内锁。
+
+档案 code 固定为 `requester`、`bdo`、`it_staff`、`admin`，受众分别固定为 `requester`、`bdo`、`it`、`admin`。草稿更新携带 `expected_updated_at` 乐观锁；数据库只能选择进程内注册表已有的能力 code，且能力受众、风险、知识范围均不得超出服务端受众白名单。`name/default_provider_id/enabled/retention_days` 与提示词、能力、知识范围、风险全部保存在 version=0 草稿；所有新草稿、发布版本和回滚副本的 `config_snapshot` 都含显式 `schema_version=1` 及完整四个活动字段，PATCH 不修改 `ai_agent_profile` 当前活动字段。发布必须携带 `expected_draft_updated_at`，并同时通过中英文系统指令、非 L4 风险、注册能力、知识范围、启用且近期健康的默认提供商和 L2/L3 工具/JSON Schema 兼容性校验；只有验证成功后才在同一事务中应用活动档案字段并新增不可变、单调递增的 `ai_agent_profile_version`。运行时复用同一完整性校验：完整快照、双语提示、能力/风险、健康兼容提供商、最新版本及活动档案行必须一致；`enabled_capabilities` 与 `knowledge_scope` 必须保留原始的合法 list 形状，缺失、`null` 或其他畸形值绝不归一化为空列表，否则失败关闭。回滚请求携带来源版本与 `expected_latest_version`，只把可证明完整的历史快照复制为新发布版本并原子应用，从不修改或删除历史。迁移前 `{}`、无 schema 标记或缺字段版本返回 409 `AI_PROFILE_LEGACY_SNAPSHOT_UNAVAILABLE`，活动档案和全部版本字节保持不变，服务端绝不从当前活动档案猜测历史；完整的新版本仍可复制式回滚。过期草稿或并发版本返回 409；失败发布不改变当前活动档案、既有发布版本或生成半成品版本。
+
+`GET /health` 只返回提供商/档案计数；`GET /usage?days=N` 由数据库聚合调用、Token、耗时及按提供商/结果码分组，`days` 默认 30 且只允许 1–90，不加载调用整行或消息/错误字段；`GET /action-audits` 只返回动作 code、风险、状态、结果实体与时间。三者均不返回 Prompt、消息正文、完整会话、密钥、确认 token/hash、规范化载荷、结果载荷或提供商错误正文。
+
+WA0 Task 5 已实现当前登录用户的 `GET /api/assistant/bootstrap`、`POST/GET /api/assistant/conversations`、`GET /api/assistant/conversations/{id}` 和 `POST /api/assistant/conversations/{id}/archive`。`bootstrap` 的固定白名单只有 `enabled`、档案 code/version、`max_risk`、`suggested_prompts`、`retention_days` 和 `fallback_available`；档案未发布/停用/删除、受众不一致或运行时完整性无法证明时返回 `enabled=false`，不泄露内部原因、能力矩阵、禁用能力、提供商配置、密钥或处理器。`fallback_available` 仅在认证用户的既有 `GET /api/it-document-guide` 可安全产生权限感知的 `documents[].can_create/target_path` 指南载荷时为真；它不承诺 WA1 能力。创建在同一事务中先取得与 Task 4 发布/撤回相同的 PostgreSQL 治理 advisory/provider 行锁，再按该顺序 `FOR UPDATE` 重载目标活动档案、运行时校验、插入会话并提交；SQLite 保持相同服务调用和重载顺序以支持确定性测试。创建请求只接受 `language` 和 extra-forbid 的 `page_context`：route 必须是规范化本地路径，page/entity/tab 是有限安全标识，`selected_ids` 只能是最多 20 个不重复 GLID；角色、权限、DOM/HTML、提示词、Cookie、头、外部/协议相对/穿越式路径和其他字段全部 422。创建、列表、详情和归档均以认证后的数据库 `auth_user_id` 过滤；非归属会话统一返回 `AI_CONVERSATION_NOT_FOUND` 404，不通过 total、详情或归档状态泄露其他用户。列表默认只返回 active 会话，`include_archived=true` 仅显示本人已归档会话，按 `created_at DESC, id DESC` 稳定分页，`page` 只允许 1–10,000（`page_size` 为 1–200）。普通消息保留期只能读取会话创建时捕获版本的完整 schema 标记快照，不能由活动档案或 `expires_at` 推断：捕获为 0 时永不写正文，后续正值再发布也不能改变；捕获为 1–90 时保留其不可变决定和创建时 `expires_at`，但当前档案停用、删除、未发布、受众不一致或运行时校验失败时不写新正文；所有写入前递归脱敏。归档在提交 `archived_at/status` 前会 `FOR UPDATE + populate_existing` 锁定并刷新所属会话行，且绝不删除 `ai_action` 或安全/业务审计。SQLite 覆盖真实 Task 4 发布/撤回的确定性屏障和锁后重载契约；尚未在本轮执行 PostgreSQL 双会话行锁竞争，Task 9 IDC 验收必须执行创建/普通消息与真实发布/撤回竞争的两会话屏障（包括 0→正值及正值→0 保留结果）。Task 5 不包含消息 SSE、工具循环、L3 动作、业务处理器、UI、部署或 WA1 工作。
+
+WA0 Task 6 已实现 `prepare_action(db, actor, conversation_id, capability_code, payload, idempotency_key)`、`confirm_action(...)` 和 `cancel_action(...)`，并开放 `POST /api/assistant/actions/{id}/confirm`（请求体只含 `confirmation_token`）与 `POST /api/assistant/actions/{id}/cancel`。准备阶段按注册定义取得能力、风险、输入模型和固定 handler；L3 注册时强制 handler 同时具备 `authorize_preview()`、`preview()` 和 `authorize_record()`。Pydantic `extra=forbid` 等注册模型规则拒绝客户端附加 SLA、队列、角色、处理器或最终状态；规范化后递归脱敏若发生任何变化，则统一 `AI_ACTION_PAYLOAD_INVALID`，不保存/执行脱敏替代值、不计算其摘要，也不占用幂等键。安全规范化原值计算稳定 SHA-256。`AiAction` 幂等唯一范围为账号 + 能力 + key，SQLAlchemy/PostgreSQL 统一命名 `uq_ai_action_user_capability_idempotency`；同键同摘要返回首个状态且不重新签发 Token，同键异摘要返回 409，竞态只捕获该命名约束、回滚后锁定重载赢家，其他 `IntegrityError` 原样传播。准备先在独立 `SessionLocal` 事务调用 `authorize_preview()`，通过后才可读取/返回记录元数据并要求 `preview()` 精确返回 `status=prepared`；`authorize_preview/preview` 只接收独立预览 Session 内加载的 actor 上下文和 `ReadOnlyActionData` 门面，后者不暴露 Session-like 属性，只接受显式、有界的 SQLAlchemy `Select` 标量投影，返回递归冻结的 `FrozenActionRecord`，并统一拒绝实体/关系结果、eager 结果、所有行锁、text/DML、过大 offset 与超限读取。PostgreSQL 在 handler 访问前执行 `SET TRANSACTION READ ONLY`。预览门面与 dirty/new/deleted 检查共同拒绝 ORM/DML 写入、textual SQL、flush、commit、rollback 和事务对象面；只有预览事务 rollback/close 结束后才进入动作持久化事务。准备存在两条顺序化路径：已有 key 先无锁探测，再按 `AiAction → active 会话` 顺序锁定/重检并比较摘要；新动作则在 preview 后先锁定并刷新所属 active 会话，再无锁复查同 key，只有仍不存在才插入；命名唯一约束竞态会整笔 rollback 后以同样的 `AiAction → active 会话` 顺序恢复赢家。
+
+WA0 Task 7 新增 `POST /api/assistant/conversations/{id}/messages`（SSE）和 `AssistantOrchestrator.stream_turn()`。请求严格只接受 `content`、`client_message_id` 与 Task 5 白名单 `page_context`；该流式路由使用独立异步标量鉴权，在共享有界 DB worker 内创建/回滚/关闭短 Session 后只返回活动账号 ID，`StreamingResponse` 生命周期不持有请求 Session 或 ORM。开始/幂等、能力发现、原生降级、Gateway 提供商选择/审计、每次工具、L3 prepare、最终写入与失败清理分别使用独立短 Session；所有同步 SQLAlchemy I/O/锁等待均在有界 worker 中完成，Session 在 worker 内创建/关闭，生产 assistant 路径不调用 `asyncio.to_thread` 或默认无界 executor，也不直接阻塞 async SSE 事件循环。worker 满载按边界失败关闭；Gateway 成功调用若无法写入审计，不发送成功终态。`_TurnState` 只保存标量快照，不跨 provider await 持有 ORM。事件只允许 `meta|delta|message|action|error|done`，每条 `data` 使用单行 JSON 编码；响应头为 `Cache-Control: no-store, private`、`Vary: Authorization`、`X-Accel-Buffering: no`。正常终态恰好一个 `done`，`error` 后不再发送成功事件。
+
+平台安全指令、不可变已发布档案、当次已授权能力 schema 与明确标为不可信的知识/业务/page_context/用户输入独立分层，浏览器声明的角色/权限/工具结果永不成为系统权威。语义形式执行 Unicode NFKC/casefold 并保留合理边界；紧凑形式先在原始 code point 阶段仅接纳 `L*`/`N*` 且剔除名称或显式表中的 Hangul `FILLER`，再做 NFKC/casefold 并再次仅保留 `L*`/`N*`。原始 `M*`/`C*`/`Z*`/`P*`/`S*`、零宽字符和兼容分解符号不能先“洗成”字母再切断指纹，合法全角字母/数字仍归一；WA0 不承诺完美识别全部视觉同形异码字符。两种形式逐行、逐句和滑动片段建立稳定指纹：完整规范化行至少 12 字符、强片段至少 24 字符，或命中至少两个不同的 12–23 字符片段时失败关闭；空串和短公共词不参与且计算受输出预算约束。工具调用只按固定 code 重查注册表并重新授权，注册 Pydantic 模型负责参数校验；模型自报 handler/risk/role/result、未知或禁用 code、非法参数、重复相同调用及超过四轮均失败关闭。L1/L2 handler 不取得 SQLAlchemy Session、ORM `AuthUser`、Connection 或 Engine，只取得 Task 6 `ReadOnlyActionData`、不可变 `ActionActorContext` 和合作式 `CapabilityExecutionContext`。工具使用专用有界执行器：worker 配置范围 1–32、排队范围 0–256；调用先预留容量，再创建能力发现/重授权 Session，满载时不创建 Session、不查询权限、不运行 handler，所有未提交和终态分支均释放 permit。`stream_turn()` 只生成一次 monotonic absolute deadline；fallback、start/idempotency、Gateway/provider、各 DB/工具和 finalization 的所有 pre-commit 工作共享剩余预算。业务 work deadline 最多预留 250ms（总预算的 25%）供失败占位清理。工具总 deadline 配置范围 0.1–60 秒，PostgreSQL `statement_timeout` 为 10–59,000 毫秒且必须严格短于总 deadline，实际工具/provider/statement timeout 取配置上限与 turn 剩余预算的较小值。权威 commit 必须在 deadline 前、最终锁齐并最后检查取消后开始；一旦开始则等待 commit/Session 收尾以保持 durable `completed` 与客户端终态一致，允许小幅越过 deadline，不能将已提交完成态改报超时。PostgreSQL 在任何读取前执行 `SET TRANSACTION READ ONLY`，工具 Session 最终始终 rollback/close；门面拒绝 commit/flush/rollback/add/delete/merge/query/raw SQL/Core DML/ORM mutate。断流或独立工具 deadline 后事件循环立即停止等待且不再发事件，并发出合作式取消信号；同步 Python 线程不能被安全强杀，非合作式阻塞可能继续在后台运行至自行返回，但其 Session 最终仍关闭。Gateway 取消审计以有界 DB executor 非阻塞准入后后台 best effort 执行，满载不创建 Session、异常仅记录脱敏本地告警且不延迟断流；正常成功和可处理错误仍等待审计落库后才输出结果。若要求硬终止任意处理器，必须采用进程隔离。L3 可能完成为 `prepared` 并保留到过期，绝不执行 mutation。事件数、文本、Token、工具和全部 pre-commit 时间由同一绝对预算约束，不把阶段 timeout 相加伪称整个返回的硬上限。
+
+Task 7A 将“commit 已开始”与“commit 已持久化成功”拆为线程安全状态：durable-success 只能在 `db.commit()` 成功返回后设置。其后的 Session close 异常仅记录脱敏异常类型，不重查数据库猜测事务结果，也不进入安全错误 SSE 分支；正常连接继续输出既定 `meta → delta/action → message → done`。若 commit 已开始后观察到断流，则取消语义优先且不再发送后续 SSE 终态，即使清理同时失败。`db.commit()` 自身失败不设置 durable-success，仍 rollback、执行失败占位清理并输出安全 `error → done`。
+
+L3 在流式阶段只能调用 Task 6 `prepare_action()` 并发送服务端 action id、风险、预览、一次性确认 Token 和期限，绝不调用 confirm/execute；其最终消息由服务端固定渲染为 `authority=server_preview, operation_status=prepared_not_executed`，模型成功自由文本被丢弃。没有已提交服务端结果时，普通模型文本只能作为 `authority=advisory, operation_status=not_executed` 的非权威建议，不能作为 ITOM 业务成功或状态结果。提供商不可用、超时、非法/截断协议、非法工具输出或客户端断开会停止等待并返回不含原始异常、提示、系统指令或密钥的统一错误；原生降级路径由当前账号对 `it_document_guide.guide_payload()` 的真实权限计算首个 `can_create` 目标，无可用目标时固定为 `/`。`_run_turn` 返回后先复查连接；最终 worker 在新短事务中按固定锁序锁定活动账号、本人 active 会话、精确当前发布档案/版本和 `streaming` 占位，并在锁齐后及写 `completed`、commit 前合作式检查取消，已观察断流则 rollback。该护栏不承诺消除真实 socket/线程调度的所有微小竞态，也不强杀 worker。归档、账号停用、档案撤回/换版、占位缺失或状态冲突全部失败关闭，不发送成功 message/done。只有脱敏最终消息按捕获保留策略持久化；partial delta/provider error/secret 不成为完成回答，保留期 0 只写无正文幂等元数据。`request_digest` 是服务端密钥对规范化原始 `content + page_context` 的 HMAC，同一 `client_message_id` 仅同一原始请求可安全重放，原始异参即使脱敏后相同也冲突。SQLite 自动化验证查询顺序、锁标记和合作式取消护栏；真实 PostgreSQL 锁等待与 ASGI 断流仍在 Task 9 留证。
+
+消息 endpoint 在认证、请求 schema 与路由接受前仍使用普通 HTTP 错误（如 401/403/422）；一旦接受并开始 SSE，owner、幂等与运行时错误均保持 HTTP 200，通过 `error→done` 表达，不再改写为 HTTP 404/409。真实 PostgreSQL 双 Session 的同键并发唯一组消息/一次 provider、只读事务拒写和锁等待，以及真实 ASGI 断流证据明确延期至 Task 9；本地 SQLite/ASGI 自动化不替代这些证据。
+
+确认/取消只按当前认证账号查询并 `FOR UPDATE` 锁定 `AiAction`，他人动作统一 404。确认校验 `prepared`、十分钟期限和 Token SHA-256 后，会先在同一外层事务 `FOR UPDATE + populate_existing` 锁定并刷新所属 active 会话；会话已归档时在治理锁之前失败关闭并把同一动作行提交为有界 `failed`。只有会话仍 active 时，才按 Task 4 的 PostgreSQL advisory → provider 行 → profile 行顺序取得治理锁，并通过 Task 5 `_active_profile(..., lock_runtime_profile=True)` 和完整 `runtime_published_profile()` 证明：会话绑定的 profile/profile_version 仍是当前活动且最新发布版本，快照、双语提示、能力/风险/知识范围、活动行一致性及默认提供商启用/近期健康/工具与 JSON Schema 兼容仍全部有效。随后重新读取数据库账号、角色/组权限和注册能力，并在领域 mutation 前立即通过 `ActionUnitOfWork.lock_one()/update_locked()`、`FrozenActionRecord` 快照和不暴露真实 ORM 身份的 `LockedActionRecord` 调用 `authorize_record()` 复核数据范围、记录状态、所有权和流程任务。handler 只能在调用方事务内执行，不能自行 commit/rollback/flush，也不能取得原始 begin/get_transaction/connection/bind 面，也没有通用表写入口。领域 handler、有效 `CapabilityResult(status="succeeded")`、动作状态/实体和通用 `audit_log` 位于嵌套 savepoint；全部成功后由外层事务一次提交。处理器或成功审计异常只回滚 savepoint，不释放已持有的动作行锁；同一锁定行随后由外层事务提交有界、脱敏 `failed`，等待确认者只会读到终态而不会再次进入 handler。失败状态 persistence/commit 自身失败时回滚外层并显式返回 `AI_ACTION_FAILURE_PERSISTENCE_FAILED`，不吞错、不宣称持久终态。错误 Token 保持 `prepared` 供合法本人重试；取消、过期、成功、失败均不可再次确认。原始 Token、敏感规范化载荷、provider secret、handler 异常和成功结果中的凭据赋值不进入数据库结果、日志、审计或错误正文。处理器代码是受信任的进程内扩展代码，不是针对恶意 introspection/import hack 的沙箱；支持接口只保证正常用法下没有 Session 逃逸。Task 6 不含消息 SSE/工具循环、具体业务 capability、UI、部署或 WA1。SQLite 自动化只证明 service/guard/锁序、归档与 prepare/confirm 竞争、回滚结果、命名竞态注入和 savepoint 语义，不等价于 PostgreSQL 运行证据。Task 9 IDC 必须以真实 PostgreSQL 两个 Session 留存：预览事务只读及写入失败；同键同参/异参准备竞态只有一个赢家且无 500/Token 重发；归档与 prepare/confirm 竞争的真实等待与失败关闭；确认 handler 或审计失败时等待者在动作行锁后读到 `failed` 且 handler 恰好执行一次；失败状态提交故障不得伪称已持久化。
+
+Fix Round 4 进一步固定 handler 数据端口：`ReadOnlyActionData` 对完整 SQLAlchemy AST 递归白名单校验，只接受单个直接映射表的显式直接标量列、同表安全比较/布尔条件与排序，以及编译期非负且在服务端上限内的 limit/offset；任意层级的子查询/CTE/行锁、join/alias、实体/关系、聚合/窗口/函数、text/raw SQL、跨表引用和动态/负数/超限分页均拒绝，执行时仍最多抓取“上限 + 1”行检测溢出。`LockedActionRecord` 则绑定模块私有的签发 UoW token、Session、外层事务和当前 savepoint identity；`update_locked()` 只接受同一活跃事务中未消费的真实锁定句柄及原选定非主键标量字段，成功后消费旧句柄并返回带合并快照的新句柄。伪造、跨 UoW（即使共用 Session）、跨 Session/外层事务/savepoint、事务结束后和重复使用均失败关闭。
+
+Fix Round 5 补齐 SQLAlchemy 原始查询修饰面：`_projection_metadata()` 在任何 SQL 执行前对非空 `_prefixes`、`_suffixes`、`_statement_hints` 或 `_hints` 一律返回对应端口 violation，不解析也不允许字符串白名单。由此 `prefix_with()`、`suffix_with()`、`with_statement_hint()` 和 `with_hint()` 不能注入 `FOR UPDATE`、大 offset、`DISTINCT` 或其他方言 SQL；`ReadOnlyActionData` 与共用校验的 `ActionUnitOfWork.lock_one()` 使用同一 fail-closed 契约。
+
+WA0 Task 8 只增加前端消费层，不修改上述后端契约。`frontend/src/api/assistant.ts` 使用原生 `fetch` 发起带 Bearer Token 与 `X-Lang` 的 POST-SSE 请求，并以有限帧/缓冲、严格事件白名单、单对象 JSON 和完整终态校验失败关闭；401 复用现有退出/登录跳转。页面上下文由显式路由表及有限 tab/GLID 参数构造，未知路径退回 `/`，不读取 DOM、HTML、表单、Cookie、存储或 URL 凭据。业务门户与内部工作台均挂载同一全局抽屉；所有消息、预览和审计值只按 React 文本呈现，不使用 raw HTML。L3 卡片的确认/取消只调用 Task 6 API，防重复点击、按服务端期限过期并只把确认响应中的 `status=succeeded` 认定为权威成功。`/admin/ai-assistant` 由 `admin_ai:view` 路由/菜单守卫暴露五页签控制台；编辑/删除动作还检查对应前端权限，但后端各端点的 `require_perm` 仍是最终授权。提供商表单从不读取或预填密钥，只在用户输入非空新值时写出。该任务不增加后端路由、模型、迁移、配置或具体领域 capability。
+
+独立 Task 8B 明确 SSE 消费状态机与 L3 凭证投影。合法错误流精确为 `error → done(error)` 或 `meta → error → done(error)`；error 前若已出现 delta/action/message、`done(error)` 带成功数据、error 后出现非对应终态、或终态后仍有事件，客户端统一失败关闭。重放流精确为 `meta → message → done(replay)`，message 可为 `advisory/not_executed` 或 `server_preview/prepared_not_executed`；后者只重放安全说明，必须没有 action/delta/确认 Token，客户端不得构造可操作卡片。首次 L3 prepare 的 action 事件不再把整个对象送入通用 `redact_for_message()`，而由服务端专用投影只输出经过通用脱敏的 `preview`，以及精确的 `action_id`、`risk=L3`、原始一次性 `confirmation_token` 和 `expires_at`；字段缺失、越界、风险不符或 Token 为 `[REDACTED]` 均拒绝发出。该例外只属于同属主 action SSE 传输，通用脱敏规则不变，凭证仍只存 SHA-256，不进入 message、数据库正文/结果、日志、审计、provider/model 或确认 REST 响应。确认 API 继续按属主、状态、期限和 SHA-256 校验并一次消费；重放、重复、跨属主、过期、取消、脱敏占位和畸形凭证均不能执行 handler。
+
+Task 8C 固定 WA0 的 action 线缆和执行声明。`confirmation_expires_at` 与 SSE `expires_at` 都是 RFC 3339 UTC `Z` 字符串；客户端只接受该格式，拒绝 offset-free/畸形期限。`server_preview.action_id` 在 action 与 replay completed-message 两条路径使用同一 ULID 语法，非法重放不渲染。确认 API 先完成属主、Token、期限和运行时校验，再提交 `executing` 的 durable claim；只有该提交成功才进入 handler。后续成功事务仍原子写领域变更、`succeeded` 和审计；已知失败可持久化 `failed`，但 claim 后的处理器或终态提交不确定时响应 `AI_ACTION_OUTCOME_UNKNOWN`，动作保持非确认态，客户端不能将其呈现为成功或再次确认/取消。该任务不新增 API 路由、迁移、Aily/MCP 或 IDC 验收结论。
+
+Round 1 收紧 live action SSE：含有效原始 `confirmation_token` 时，`confirmation_expires_at`/`expires_at` 的有效值必须存在、非 `null` 且为可解析 RFC 3339 UTC `Z`；否则流解析器在向展示层交付 action 前以 `AI_ASSISTANT_STREAM_PAYLOAD` 失败关闭。无有效 Token 的 action 可作不可确认信息，不能借缺失期限变为 `prepared`。`AI_ACTION_OUTCOME_UNKNOWN` 由确认接口到卡片统一映射为 `executing`，不返回或展示成功结论。
+
 ### 4.2 ITSM
 
 ```text
-GET/POST /api/tickets | GET/PATCH /api/tickets/{id}
+GET/POST /api/tickets | GET /api/tickets/export | GET/PATCH /api/tickets/{id}
 POST /api/tickets/{id}/transition        # 含审批(approve/reject)、解决、关闭、挂起、重开
 POST /api/tickets/{id}/satisfaction      # requester 评价
 POST /api/tickets/{id}/escalate-problem  # 一键升级为问题
@@ -246,10 +372,14 @@ GET/POST/PATCH /api/catalogs | /api/service-items。目录列表返回 `item_cou
 GET /api/service-items/{id}/form                # P1：当前用户可申请的已发布表单
 GET/POST /api/service-items/{id}/form-versions | POST /api/service-items/{id}/form-versions/{version}/publish   # P1：动态表单版本
 GET/PUT /api/service-items/{id}/dispatch-rule  # P1：服务项派单规则；运行时仍支持目录/全局兜底
+GET/PUT/DELETE /api/service-items/{id}/implementation-dispatch-rule  # M93：服务项实施交付派单；GET 可说明目录/全局继承
+GET/PUT/DELETE /api/catalogs/{id}/implementation-dispatch-rule       # M93：目录实施交付兜底
+GET/PUT/DELETE /api/service-dispatch/implementation-fallback         # M93：全局实施交付兜底，仅 admin/CIO
 POST /api/tickets/{id}/accept                  # 目标：实际受理打点，响应 SLA 以此为准
 POST /api/tickets/{id}/confirm-resolution      # 目标：提交人确认关闭或未解决重开；网页与 MCP 共用服务
 POST /api/integrations/feishu/card-actions     # P2.1：飞书新版验签卡片回调；无需 ITOM Bearer Token
 GET/POST/PATCH /api/cis | GET /api/cis/{id}/impact          # 影响分析(上下游+关联工单)
+GET /api/itsm-import/ci/template | POST /api/itsm-import/ci # CMDB Excel 模板与逐行追加导入
 GET/POST/DELETE /api/ci-relationships
 GET/PUT /api/admin/sla-policies | GET /api/sla/dashboard     # 实时达成率
 GET/POST/PATCH /api/vendors | /api/contracts
@@ -257,40 +387,77 @@ GET/POST/PATCH /api/knowledge | POST /api/knowledge/{id}/vote
 GET /api/knowledge/search?q=
 ```
 
+`GET /api/tickets/export` 接受与工单清单相同的过滤条件和数据范围，服务端导出当前授权范围内**全部**匹配行，而不是当前分页页；导出排序与清单默认排序一致。
+
 ### 4.3 项目
 
 ```text
 GET/POST/PATCH /api/portfolios
 GET/POST/PATCH /api/projects | POST /api/projects/{id}/transition
 POST /api/projects/import-charter        # .docx 解析 → 草稿预览 → 确认落库(两步)
-GET/POST/PATCH/DELETE /api/projects/{id}/wbs | /milestones | /risks | /costs
+GET/POST /api/projects/{id}/wbs
+PATCH/DELETE /api/wbs/{task_id}
+DELETE /api/projects/{id}/wbs/batch-delete
+GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
+GET/POST /api/projects/{id}/budget-items
+DELETE /api/project-budget-items/{item_id}
+GET/POST /api/projects/{id}/effort-entries
+DELETE /api/project-effort-entries/{entry_id}
+GET /api/projects/{id}/investment-summary
+POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}；仅未启动子树可调整层级和同级顺序
+POST /api/projects/{id}/wbs/batch-move   # {task_ids:[1..500], parent_task_id?, before_task_id?}；原子移动多个根及完整子树
 GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 ```
+
+`PATCH /api/wbs/{task_id}` 接受 `progress`、`actual_start`、`actual_end` 及其它可编辑字段。提交非空 `actual_end` 时，该日期必须不晚于服务端当天且不早于最终 `actual_start`；通过后服务端在同一事务把完成度设为 100%，响应中的派生 `status` 为“已完成”。未来日期返回 `WBS_ACTUAL_END_IN_FUTURE`，结束早于开始返回 `WBS_ACTUAL_DATES_INVALID`。当前完成度已为 100% 时，任何实际日期字段均以 `WBS_ACTUAL_DATES_LOCKED` 拒绝；若同一请求还试图把完成度降到 100% 以下，则返回 `WBS_REOPEN_ACTUAL_DATES_CONFLICT` 及“请先重新打开任务，再修改实际日期”。单独把完成度降到 100% 以下会重新打开当前任务及因层级回算而重新打开的祖先，清空它们的 `actual_end`，但保留首次完成审计 `completed_at`。
+
+`POST /api/projects/{id}/wbs/batch-move` 需要 `projects.edit`，接收 1–500 个 `task_ids`；重复 ID 去重，父子同时提交时只保留最高层移动根，根的全部后代随树移动。`parent_task_id=null` 表示一级，`before_task_id=null` 表示目标层级末尾。服务端锁定并校验项目全部有效 WBS 行，拒绝缺失/跨项目任务、无效参照、循环关系、已完成移动根/后代/目标父项以及会扰动已完成同级编码的请求；任一校验失败不提交任何排序变化。成功后重算受影响层级 `sort` 与全树 `wbs_code`，逐根写 `move` 审计并返回 `requested_task_ids`、归一后的 `moved_root_ids`、目标父项/参照和总行数。原单行 `/api/wbs/{task_id}/move` 复用相同验证。读取接口继续返回完整 WBS 与真实 `total`；50/100/200/全部、页码 51–75 等目标切片和祖先补齐均为浏览器显示策略，不改变接口分页或树关系。
+
+项目投入接口统一以十进制字符串返回人民币元和人天，避免 JSON 浮点误差。成本写入优先接受 `amount_cny`，旧客户端仍可传 `amount_10k`；两者同时出现时精确人民币元为权威。预算分项与人天记录支持软删除；人天未显式传费率时读取 `org_settings.report_role_rates[role_type]` 并在记录中形成快照。`investment-summary` 返回预算、已发生、已承诺、投入人天、标准费率成本、预算执行率及分类结构；标准费率成本不会写回成本明细或个人薪酬。
 
 ### 4.4 需求
 
 ```text
-GET/POST /api/requirements | GET/PATCH /api/requirements/{id}
+GET/POST /api/requirements | GET /api/requirements/export | GET/PATCH /api/requirements/{id}
+GET /api/requirements/template | POST /api/requirements/import
 POST /api/requirements/{id}/transition   # 登记→分析→实现→关闭/搁置/取消，携带阶段字段
+POST /api/requirements/{id}/to-dev       # {}；固定使用需求评分规则 dev_leader，并写入开发路径快照
+POST /api/requirements/{id}/to-project   # {pm_id}；写入项目路径快照
 GET/POST/PATCH /api/requirements/{id}/tasks
 POST /api/requirements/{id}/close        # 校验验收标准全勾 → 可带 {legacy_problem, knowledge_draft}
-# P1：仅 BDO/授权 IT 角色复用 requirements.create/view，并由服务层强制本人数据范围；不新增第二套需求实体
+# P1：仅 BDO/授权 IT 角色复用 requirements.create/view；Aily/MCP 强制本人范围，网页 BDO 范围为本人需求及其被配置为业务 BDO 的服务域需求；不新增第二套需求实体
 ```
+
+`GET /api/requirements/export` 要求 `requirements.view`，接受与需求总览一致的 `q`、`business_domain_id`、`moscow`、`status`、`decision`、`scope` 参数，并与 `GET /api/requirements` 共用同一授权查询。服务端按清单默认顺序导出当前账号数据范围内全部匹配行，不接受或应用分页参数；Excel 输出清单业务列，不包含选择框、能力字段和操作列。网页看板调用时不发送只在表格视图可见的状态/决议条件。
 
 ### 4.5 流程
 
 ```text
-GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code，已有实例的节点/RACI/SLA 改动需另存新版本)
+GET/POST/PATCH /api/admin/process-definitions (含 steps 嵌套；步骤有稳定 step_code；已有实例的版本仅 cc_roles 可原地维护且只影响后续节点激活，节点/RACI/SLA 改动需另存新版本)
 GET /api/process-instances?entity= | GET /api/process-monitor   # 卡点/超时聚合
-POST /api/process-tasks/{id}/complete | /reassign
+GET  /api/process-tasks/{id}/reassign-candidates  # 当前处理人/管理员可选；仅在岗且具有有效系统账号的人员，不写 viewed_at
+POST /api/process-tasks/{id}/complete | /reassign # reassign={assignee, reason?}；不推进节点/状态，写审计并通知目标
+POST /api/process-tasks/{id}/view       # 当前处理人首次打开详情时记录查阅；幂等返回 viewed_at/viewed_by
 ```
 
+需求模板契约：`GET /requirements/template` 只导出登记字段；`POST /requirements/import` 根据表头识别新登记模板或历史评分模板。新模板不会写入评分、决议、PRD/开发人天或渠道部门；历史模板仍按兼容规则导入，逐行反馈错误。
+
+流程详情契约：详情中的 `process.current_step_seq/current_step_code/current_step_name` 由最新待处理 `ProcessTask` 直接计算，并返回每个步骤最新的非删除任务。业务单据阶段是向前兼容投影；评分接口在流程进入实现/验收后返回 `EVAL_STAGE_CLOSED`，不得通过旧状态或历史评分绕过流程。
+
 流程定义列表的稳定展示顺序为：ITSM（服务请求）→ ITSM（变更）→ ITSM（事件）→ ITSM（问题）→ 项目 → 需求 → Bug 管理；后端按触发实体归一排序，前端分组与左侧菜单保持一致，不能依赖数据库返回顺序。
+
+流程单据的 `GET` 详情与清单行均返回 `can_edit`、`can_delete`、`workflow_edit_mode` 和 `workflow_edit_locked_reason`，但这些仅用于界面呈现；`PATCH/DELETE` 必须重新执行领域级流程授权。当前节点处理人以 `POST /api/process-tasks/{id}/view`、完成、同意或驳回形成首次查阅事实；清单/通知读取不调用该接口。管理员仅查看详情不会写查阅事实；管理员改派任务只改变 `assignee`，也不写查阅事实。若待办尚未被下游处理人查阅，首节点创建人可编辑/删除，后续节点的上一实际完成者只可编辑；回改请求若携带会改变路由的字段返回 `WORKFLOW_CORRECTION_FIELD_FORBIDDEN`，不满足窗口返回 `WORKFLOW_EDIT_LOCKED` 或 `WORKFLOW_DELETE_LOCKED`。新任务窗口默认启用，数据库升级前的待处理任务保持关闭，避免追溯扩大既有权限。
+
+流程转派契约：当前待办处理人或管理员才可读取候选并执行转派；候选必须是未删除、在岗且至少关联一个已启用系统账号的人员。服务端在写入时重复校验，不信任前端候选。转派只更新当前 `process_task.assignee`，不推进步骤、不改业务状态、不重写 `raci_snapshot`，审计记录 `from_assignee/to_assignee/reason` 并复用可靠通知链路通知新处理人。当前处理人自行转派属于处理动作并形成查阅事实；管理员代转派不形成下游查阅事实。
+
+需求清单与详情的数据范围契约：普通 requester 无需求模块权限；仅持业务门户角色的 BDO 在网页端可读取本人登记需求，以及 `business_domain.business_bdo_id == current.person_id` 的服务域全部未删除需求。`scope=mine` 始终收窄为本人需求。附件和通用关联关系使用相同可见性判断。Aily/MCP 工具继续按 `requester == current auth_user.id` 强制本人范围，不复用网页扩展范围。
+
+开发任务列表统一返回登记人显示字段：需求开发为 `registrar/registrar_name`，项目开发沿用 `registrar_id/registrar_name`，Bug 修复为 `reporter_id/reporter_name`。页面直接登记取当前账号关联人员；需求转化取原需求登记账号关联人员；项目/WBS 转化取项目经理；Bug 取登记 Bug 的账号/人员。历史数据或无人员映射管理员允许为空，账号审计保持可追溯。
 
 ### 4.6 团队
 
 ```text
-GET /api/team/overview                   # 负载/积分Top/培训数/招聘进度聚合
+GET /api/team/overview                   # 全部在岗 IT 成员负载（项目任务=WBS未完成+项目开发未完成；网页本地20条分页）/积分Top/培训数/招聘进度聚合
 GET/POST/PATCH /api/positions | /api/hiring-needs；岗位与招聘需求另提供 `GET /api/positions/template`、`GET /api/positions/export`、`POST /api/positions/import`，以及对应的 `/api/hiring-needs/template`、`GET /api/hiring-needs/export`、`POST /api/hiring-needs/import` Excel 闭环。
 GET/POST/PATCH/DELETE /api/trainings     # 培训提升活动；PATCH/DELETE 仅 admin/CIO/登记人
 GET/PUT /api/team-charter
@@ -336,6 +503,46 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 
 当账号具有任务模块查看权限时，响应额外包含 `task` 聚合块：`open_total`、`open_bugs`、`open_bug_fix_tasks`、`open_delegated_tasks` 和 `open_requirement_tasks`。该块只读、按当前非终态任务实时统计，不改变原有 Dashboard 字段。
 
+### 4.8 统一投入台账与报表中心（B2 + B-OPS）
+
+```text
+GET  /api/investments/summary
+GET/POST /api/investments/budgets
+GET/POST /api/investments/costs
+GET/POST /api/investments/worklogs
+GET/POST /api/investments/allocations
+DELETE /api/investments/budgets/{id}
+DELETE /api/investments/costs/{id}
+DELETE /api/investments/worklogs/{id}
+DELETE /api/investments/allocations/{id}
+GET  /api/reports/metrics
+POST /api/reports/query
+GET  /api/reports/drilldown/{metric_code}
+GET/POST /api/reports/templates
+PATCH /api/reports/templates/{template_id}
+GET/POST /api/reports
+GET  /api/reports/{report_id}
+POST /api/reports/{report_id}/generate        # Idempotency-Key 必填
+PATCH /api/reports/{report_id}/narrative
+POST /api/reports/{report_id}/submit-review
+POST /api/reports/{report_id}/publish
+GET  /api/reports/{report_id}/versions
+GET  /api/reports/{report_id}/export
+GET/PATCH /api/admin/org-settings             # 统一时区/周起始/月历/人天/角色费率口径
+```
+
+投入 API 使用 `subject_type/subject_id` 归属对象，shared_operations 的 subject_id 必须为空；`lifecycle_stage` 为 demand/build/run，`investment_intent` 为 run/grow/transform。预算周期结束日不得早于开始日；已发生/已支付费用和实际工时禁止未来日期；同一人员单日有效工时合计不得超过 2 人天；WBS 仅能引用同一项目任务。分摊写入前校验来源存在、目标可见、不能分摊回直接归属对象，且同一来源有效比例合计不得超过 100%。所有新增/删除均软删除并写审计。
+
+`GET /api/investments/summary` 返回预算、已承诺、已发生、已支付、实际人天、标准人力成本、管理总投入、未分类人力费用、财务/管理预算执行率、费用分类、活动人天与数据质量。paid 已包含在 incurred 中，仅另列支付进度；管理总投入在未分类人力费用非零时返回 null。服务项/CI 汇总可通过账本引用归集其工单投入；显式分摊按比例加权。合同金额和工单处理时长均不自动进入台账。
+
+项目原 `/api/projects/{id}/budget-items|costs|effort-entries|investment-summary` 保持兼容，但新写入只落统一台账。PostgreSQL 启动迁移把旧项目预算、费用和人天按 `source_type/source_id` 幂等复制；旧表不删除，统一台账不双写。创建项目显式预算分项时软删除旧总预算兜底行。
+
+指标注册表以固定 code 声明领域、源模块权限、敏感权限、公式版本、数据质量语义和可选穿透器。`POST /query` 接受 1–50 个已注册指标、闭区间日期及白名单筛选 `project_id/portfolio_id/business_domain_id/ticket_type/priority/service_item_id/ci_id/contract_id/requirement_id/ticket_id/problem_id/subject_type/subject_id`；未知筛选或越权指标失败关闭。项目、需求、运维、人力、ITSM、任务与流程均直接查询领域事实或统一投入台账，不读取 `report_version` 反向充当业务事实。运维指标限定 lifecycle=run；人力指标按 demand/build/run 和角色聚合。任务指标只聚合当前用户实际拥有查看权的任务模块；需求指标继续应用其记录级可见范围。穿透明细再次执行相同授权且 `limit ≤ 200`。
+
+周期支持 week/month/quarter/half_year/year/custom；默认口径为 Asia/Shanghai、周一开始、自然年、8 小时/人天。需求时效队列以周期内 `Requirement.created_at` 为准，完成时长只计算存在 `closed_at` 的记录，P50/P90 使用该样本；阶段停留读取当前阶段打点，按期率仅以存在目标日期的已关闭需求为分母。计数无行返回 `value=0, quality=ok`；没有分母返回 `value=null, quality=no_data`。
+
+正式报告生成采用“操作者 + Idempotency-Key”唯一约束和规范请求摘要。同键同参返回首次版本，同键异参返回 409；每版保存指标快照、公式版本、质量、管理说明、生成事实和校验和。系统模板包括运营周报、管理月报、项目投入、需求时效、运维投入和 IT 人力容量与投向；启动时只更新系统模板，不覆盖自定义模板。草稿说明可编辑并重算校验和；提交审核后不可重新生成。`report_flow` 批准回调把实例/当前版本置为 approved，驳回回到 draft；发布要求 `reports_publish`，写入 user/role/group 受众并把当前版本/实例锁定。查看、版本列表和 Excel 导出按创建人/发布管理权限或已发布受众判定，同时重新检查版本中涉及的 finance/people/platform 敏感权限。`report_schedule` 本轮仅为禁用预留模型，不存在自动运行 API。
+
 ## 5. 领域事件清单
 
 事件由 service 层在事务内发布；`→积分` 表示触发 point_engine 计分（分值查 point_rule），`→通知` 表示写发件箱。
@@ -377,7 +584,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 
 1. **状态机**：`services/workflow.py` 统一入口 `transition(entity, to, fields, actor)` —— 查 workflow_transition 校验角色与合法性 → 校验该转换的必填阶段字段 → 更新 + 打点 → 发事件 → 写审计。所有单据共用。
 2. **积分引擎幂等**：point_entry 建 UNIQUE(event_type, source_entity_type, source_entity_id, person)，同一单据同一事件不重复计分（重开再解决不二次得分）。
-3. **计算列维护**：wbs_task/cost_entry/milestone 写操作后，service 层重算所属 project 的 progress_pct/actual_cost/health_status 写回（同事务）。WBS `progress` 接受 0-100 的整数百分比；流程步骤通过 `node_type=processing|approval` 区分处理/审批语义。审批任务可调用 `POST /api/process-tasks/{id}/approve`（理由可选）或 `POST /api/process-tasks/{id}/reject`（理由必填），完成入口仍支持流程图中的“完成此步骤”。
+3. **计算列维护**：wbs_task/cost_entry/milestone 写操作后，service 层重算所属 project 的 progress_pct/actual_cost/health_status 写回（同事务）。WBS `progress` 接受 0-100 的整数百分比；流程步骤通过 `node_type=processing|approval` 区分处理/审批语义。审批任务可调用 `POST /api/process-tasks/{id}/approve`（理由可选）或 `POST /api/process-tasks/{id}/reject`（理由必填）；需求审批还可提交 `target_seq`，其值必须来自当前实例详情返回的已到达前序节点，省略时退回最近前序节点，`0` 表示登记人补充。非需求实体继续使用既有终止或专项回退语义。完成入口仍支持流程图中的“完成此步骤”。
 4. **章程导入两步**：解析接口只返回草稿 JSON + warnings（不落库）；前端展示确认页，用户修正后调创建接口落库。解析失败回退手工表单。
 5. **SLA 计时**：挂起时累计 paused_minutes，达成判定 = (resolved_at − submitted_at − paused) ≤ 目标。
 6. **矩阵角色人效评审**：系统先从 ITSM、需求、项目、流程和积分事件生成参考分；业务线负责人只能写入业务角色初评，专业线负责人只能写入专业角色初评，平台角色和各类负责人本人由 CIO 直接评分。后端按 `performance_role_assignment.review_scope` 做范围校验，不能只依赖前端隐藏按钮。
@@ -386,7 +593,7 @@ GET /api/dashboard    # 单接口返回四板块+告警区全部数据(一次聚
 9. **MCP 适配边界（P1 已实现）**：MCP 工具只调用领域服务；`x-aily-jwt` 经白名单和 `external_identity` 映射后生成请求级 `AuthUser` 上下文。任何业务校验不得复制到提示词作为唯一规则。
 10. **确认与幂等（P1 已实现）**：预览写入 `mcp_operation_intent`，提交核对 token hash、用户、工具、过期时间和 idempotency key；payload digest 在准备阶段防止同键异内容，重复调用返回首次结果，不重复建单或启动流程。
 11. **动态表单快照（P1 已实现）**：发布版本不可原地修改；创建时把版本、答案和 schema 快照写入工单。人员/部门选项在提交时二次校验。
-12. **服务派单（P1 已实现）**：服务项规则 → 目录默认组 → 全局兜底组；组内轮询只选择启用且在岗并有活动账号的成员。没有可用规则时保留工单并产生未派单事件，禁止静默丢单。
+12. **服务派单（P1/M93）**：受理阶段继续按服务项规则 → 目录默认组 → 全局兜底组解析；组内轮询只选择启用且在岗并有活动账号的成员。实施阶段使用独立 `dispatch_stage=implementation` 规则，也按服务项→目录→全局优先级，但只在服务请求首个受理节点完成时求值。当前受理人可以在 `POST /api/process-tasks/{id}/complete`（或审批节点的 `/approve`）受控提交 `implementation_mode=self|member|auto`，`member` 必须提交在岗 IT 人员；服务端锁定当前任务并复核单据/节点后才会写入实施事实和生成下一任务。Aily/MCP 建单契约不含这些字段。`manual_queue` 保留未指派任务供下一节点合格角色认领；无实施规则才落到节点 `default_role`。全局实施兜底只允许 admin/CIO；所有选择、命中规则、认领和改派均审计，禁止静默丢单。
 
 ## 7. 部署架构
 
@@ -402,15 +609,19 @@ Harbor:
 IDC Kubernetes:
   db:        PostgreSQL 16 + 持久卷
   backend:   uvicorn，启动时增量迁移 + 幂等 seed
-  frontend:  nginx 托管构建产物，反代 /api 与 /mcp
+  frontend:  nginx 托管构建产物，反代 /api 与 /mcp；2 副本仅节点 01/02，跨主机强制分布
 ```
 
 - 环境变量：`DATABASE_URL`、`JWT_SECRET`、`ADMIN_INIT_PASSWORD`、`TZ=Asia/Shanghai`。
 - IDC Kubernetes 是唯一运行、联调和验收环境；默认禁止在本地启动应用栈、数据库、Compose、8180 或 ngrok。只有用户明确要求临时隔离排障时才允许例外，且结果不属于交付验收。
 - `.github/workflows/quality-gate.yml` 在 feature/develop/main 的推送和 PR 上运行完整后端回归、前端生产构建、部署文件检查及中英文文档交付守卫。测试夹具使用临时 SQLite，不连接 IDC 业务数据库。
-- 质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，使用已验证的 `mirror.gcr.io` 官方 Docker Library 缓存与固定摘要取得 Python/Node/Nginx/PostgreSQL 基础镜像，构建并校验 linux/amd64，以 `git-<commit前12位>-linux-amd64` 为默认不可变标签后推送 Harbor；镜像构建不启动本地 ITOM，也不依赖 Docker Hub 匿名限流。
-- `deploy/k8s/k8s-deploy.sh` 部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。脚本对 rollout、Ready Endpoint、实际镜像、集群内前端代理、外部 `/api/health` 与 MCP `initialize` 采用失败即停止；涉及数据库结构的版本在部署前必须执行批准的集群内备份/检查点。
-- 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。
+- 提交前可用 `scripts/change-scope.sh` 将相对指定基线的差异失败安全地分类为 `none|docs|backend|frontend|all`，并由 `scripts/fast-check.sh` 执行对应的 pytest、前端契约测试和生产构建；共享或未知路径归为 `all`。快速检查不替代 GitHub Actions 或 IDC 验收。质量门禁通过后，`deploy/k8s/push-images.sh` 只接受干净提交，默认 `BUILD_SCOPE=all`；经范围复核可显式只构建/推送 backend 或 frontend。所有构建继续使用固定摘要并校验 linux/amd64；PostgreSQL 镜像仅在 `MIRROR_POSTGRES=1` 时镜像，不再随普通应用发布重复执行。
+- 每个编码任务在修改前必须确认 `production-fix|feature-local|code-candidate` 路线，并由 `scripts/task-lifecycle.py --track` 建立本机生命周期记录。`production-fix` 默认基于 IDC 真实故障事实且不启动本地应用；`feature-local` 可使用仓库定义的隔离 Docker 与测试数据库形成 `local_candidate_ready`，但严禁生产数据、凭据、Secret、OAuth/Aily 应用和回调进入本地；`code-candidate` 不启动应用环境且不能进入 IDC 状态。定向真实目标验收是正式文档和提交的前置门禁，同一目标第二次失败必须先完成根因复盘。所有 IDC 写入还必须在 CI 后单独展示提交、不可变标签、变更对象、数据库影响、中断、回滚和验收方法，并以 `approve-idc` 记录用户明确批准。
+- 前端所有业务表必须经 `SortableTable` 或 `StickyTable` 进入统一表格内核。`ResponsiveTableEnhancer` 只为与 `.app-content` 横纵相交的活动宽表挂载一条 `body` 级原生悬浮滚动条，并与始终保留 `overflow-x:auto` 的真实表体同步。`SortableTable` 默认把前两个非操作业务叶列设为 `fixed:left`，存在 `rowSelection` 时另将选择列固定；显式固定和 WBS 的专用前三列规则优先。列设置必须保护这些上下文字段。普通清单使用 `table-layout:fixed`；自动列先以表头/当前行文本估算首帧宽度，再把真实表头和表体单元格克隆到不可见的 `width:max-content` 测量宿主，显式复制水平 padding 后取同列最大渲染宽度。自动列关闭 ellipsis 并保持 `nowrap`；空列仍由表头决定宽度。`scroll.x` 只取当前显示列计算宽度之和，不再使用页面历史下限或视口余量拉伸；统一表格覆盖短表的 `min-width:100%`，所以剩余视口留在表格外。拖拽从整个 `.ant-table-wrapper` 收集 sticky/普通表头及表体所有同索引 `col`，实时同步宽度；调整左固定列时同时更新后续固定列的 `left` 偏移，松手后把字段加入 `manual_widths` 并持久化。“恢复默认”清除手工标记，旧版仅保存全列默认宽度的偏好按历史声明宽度迁移，不阻断自动测量。操作列仍按当前结果集最大可见控件数收敛到 64–176px；左右固定列均使用不透明背景、独立层叠上下文和边界阴影。`StickyTable` 不维护第二条底部滚动条。
+- `python -m app.scripts.seed_table_uat seed|cleanup --confirm-local` 是显式、非启动式的 `feature-local` 验收工具，不是 HTTP API、迁移或生产种子。它先通过 `assert_local_uat_database()` 失败关闭非 SQLite、非本机及非仓库 Compose 数据库，再幂等创建或软删除带专用 `UAT-TABLE` 编号/`【本地表格UAT】` 标记的纯虚构可编辑记录，并在成功后显式提交本地事务。命令只输出各实体数量，不输出连接凭据或密钥；部署、启动和 IDC 流程不得调用该脚本。
+- `deploy/k8s/k8s-deploy.sh` 默认全量部署同一标签并保留既有 Secret、PVC、数据库、上传和飞书配置。`DEPLOY_SCOPE=backend|frontend` 强制要求 `SKIP_DATABASE=1`，不 apply Namespace、Secret、Ingress、PostgreSQL或未选中的 Deployment，只更新并验证所选组件；共享清单或结构变化禁止使用组件模式。全量和组件模式都保留严格 rollout、Ready Endpoint、实际镜像、每个前端 Endpoint 的后端代理、外部 `/api/health` 与 MCP `initialize` 验证。当前节点调度、反亲和、RWO 和数据库保护规则保持不变。
+- 公网入口由管理员在“Aily Agent + MCP Server”的 `public_base_url` 字段维护，支持域名/IP 和非 443 服务端口；同一根地址承载前端、`/api`、飞书 OAuth 回调和 `/mcp/`。当前地址为 `https://itom.snnc.cc:30443`。FortiGate 保持 `183.60.58.58:30443` 到 Ingress VIP `10.60.65.220:443` 的 TLS 直通，不在防火墙卸载 TLS。
+- `itom` 命名空间的 Ingress 对 `itom.prod.sn.local` 和 `itom.snnc.cc` 分别绑定精确 TLS host。公网域名固定引用 `kubernetes.io/tls` 类型的 `itom-snnc-cc-tls`，其中 `tls.crt` 必须是以叶证书开头的完整公开 CA 链，并且 SAN 覆盖 `itom.snnc.cc`；`tls.key` 只可通过受控的集群 Secret 创建，绝不提交、记录或回显。部署脚本会在 apply 前确认该 Secret 存在且类型正确；IDC 正式验证不得使用 `ALLOW_UNTRUSTED_TLS`、`curl -k` 或其他跳过证书校验的方法。
 - `/mcp/` 必须保留流式响应并设置合理读超时；Aily 配置使用带末尾斜杠的规范地址，密钥只放请求头，不放 URL、日志或前端构建变量。
 - 日志：结构化 JSON 到 stdout（由 Kubernetes 日志链路查询）。
 
@@ -427,7 +638,8 @@ IDC Kubernetes:
 | Aily-MCP P0（代码/自动化/真实身份及机器人真实收件已完成） | 删除 Helpdesk、MCP 挂载、身份/审计/消息 | Nginx `/mcp`、Aily 配置 | docs/10 §10 |
 | Aily-MCP P1（服务请求与 IT 需求真实 Aily 写入 UAT 均已完成） | 动态表单、搜索、确认提交、BDO 需求登记、派单 | 服务项表单/派单配置 | PRD §5/7 |
 | Aily-MCP P2（普通用户文本同单闭环及 P2.1 真实验签按钮闭环均已完成） | 受理、解决通知、确认/重开、评价 | 工单详情 + 3 个闭环 MCP 工具 | PRD §5.1 |
-| Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS、安全/性能/恢复与真实角色 UAT | 审批与运维配置 | docs/10 §10 |
+| Aily-MCP P3 / 发布加固 | 飞书审批暂缓；IDC 可信 TLS 已部署，安全/性能/恢复与当前版本真实角色 UAT 待完成 | 审批与运维配置 | docs/10 §10 |
+| 网页智能体 WA0（Task 1–8 已实现；Task 9 验收待执行）/WA1–WA4 | WA0 持久化、固定能力注册、实时角色策略、递归脱敏、安全 OpenAI-compatible 模型网关、模型/档案管理 API、本人网页会话生命周期、通用 L3 服务端预览/确认边界、受控 POST-SSE/工具循环、全局助手、结构化动作卡和 AI 智能体管理 UI；具体领域能力待 WA1+ | Task 9 真实 PostgreSQL/ASGI/IDC 证据及后续领域能力 | 网页智能体设计基线 |
 
 ## 8.1 业务域服务部门 API（M41）
 
@@ -435,18 +647,20 @@ IDC Kubernetes:
 GET /api/admin/departments
     # 读取组织架构部门；前端筛选 active=true 且 dept_type=business 并构造部门树
 GET /api/admin/business-domains
-    # 每个业务域返回 departments[]：id/name/parent_id/active/include_children
+    # 每个业务域返回 departments[]：id/name/parent_id/active/include_children，及 business_bdo_id/business_bdo_name
+GET /api/admin/business-domains/bdo-candidates
+    # 仅返回已启用账号、持有有效 BDO 角色且归属启用业务部门的业务人员
 PUT /api/admin/business-domains/{domain_id}/departments
     # body: { department_ids: string[], include_children: boolean }
 POST /api/admin/business-domains
-    # 新建 body 可直接带 department_ids/include_children；owner_id/backup_owner_id 仅允许数字化团队成员
+    # 新建 body 可直接带 department_ids/include_children；owner_id 必须属于数字化团队；business_bdo_id 为可选业务 BDO
 PATCH /api/admin/business-domains/{domain_id}
-    # 编辑 body 可同步替换 department_ids/include_children；负责人范围同上
+    # 编辑 body 可同步替换 department_ids/include_children；若设置 business_bdo_id，必须仍处于有效服务部门范围
 PUT /api/admin/business-domains/{domain_id}/members
     # 服务团队成员必须属于统一数字化团队口径
 ```
 
-部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。负责人、备份负责人和服务团队在服务端统一通过 `it_member_ids` 校验，不允许全公司其他人员绕过前端写入。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。
+部门维护写接口要求 `admin_business_domains.edit` 权限，对部门 ID 去重并校验部门存在、启用且类型为 business；采用全量替换语义并写审计动作 `set_departments`。新建与编辑业务域也可在同一请求中提交部门范围。IT 侧负责人（BM）和服务团队在服务端统一通过 `it_member_ids` 校验；业务 BDO 则必须有活动账号、有效 `bdo` 角色，并属于该业务域服务部门范围（`include_children=true` 时可在任一后代部门）。变更服务部门时服务端也会复核既有 BDO，不能留下越界定义。`include_children=true` 表示服务范围在业务语义上覆盖所选节点全部后代，但持久层只保存显式选择的根节点，避免组织调整时批量重写关系。历史 `backup_owner_id` 仅作数据兼容，不出现在新接口写模型，也不参与路由或绩效归属。
 
 M42 新增 `GET/PATCH /api/admin/org-settings`，管理数字化团队范围和飞书自动同步策略。范围请求包含 `digital_team_department_ids`、`digital_team_member_ids` 与 `digital_team_include_children`；服务端分别校验有效部门和人员并去重，实际口径取部门成员与指定人员并集。新增 `DELETE /api/admin/business-domains/{id}`，存在未删除需求引用时返回 `DOMAIN_IN_USE`（409）。定时器每 15 分钟检查一次是否到达管理员配置的同步周期，实际同步仍复用 `org_sync.run_sync`。
 
@@ -470,3 +684,5 @@ POST /api/admin/ui-branding/reset                    # 草稿恢复内置默认
 
 除两个 public 读取端点外均要求 `admin_ui_branding` 权限，写操作进入 `audit_log`。前端启动先读取公开配置；接口失败、无发布版本或字段缺失时逐字段合并内置默认值，确保品牌配置故障不会阻断登录。
 M44：审批接口生成 12 位密码并保存加密密文，不发信。`GET /api/admin/users/{id}/initial-password` 鉴权解密查看；`POST .../initial-password/email` 手工发送。`GET/PUT /api/admin/integrations/email|ldap` 管理全局配置，`POST .../test` 执行连接测试。敏感配置只返回 `has_secret`，不回显密钥。
+
+Task 8C Round 2：action SSE 的共享前端 expiry parser 在显式 `Z` 和 RFC 3339 形状校验之后执行日历有效性校验，拒绝 `2030-02-30T00:10:00Z`、`2030-01-01T24:00:00Z` 等 JavaScript 规范化输入；有效闰日与小数秒仍可通过。该轮不改变后端语义、路由、数据库或 Aily/MCP。

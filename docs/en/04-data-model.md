@@ -2,11 +2,15 @@
 
 > English translation of [../04-数据模型设计.md](../04-数据模型设计.md). For the authoritative version, the Chinese source prevails.
 
-> Based on PRD v1.2 and the approved Aily + MCP baseline. P2 code maps **81 tables**: Support 29, ITSM 16, Project 6, Requirement 4, Process 4, Team 22. P0 removed four Helpdesk tables and added four MCP support tables; P1 added form-version and dispatch-rule tables; P2 adds one ticket-rating detail table.
-> Compared with SN-AOM's 106 tables, there are no manually maintained statistics tables. Process, performance, and configuration snapshots exist only for auditable, reproducible history.
+> Based on PRD v1.2 and the approved Aily + MCP baseline. This document maintains the core contracts by domain; SQLAlchemy models and incremental migration code are authoritative for the current table count.
+> Compared with SN-AOM's 106 tables, live metrics have no manually maintained pre-computed statistics table. Process, performance, configuration, and explicitly generated formal-report snapshots exist only for auditable, reproducible history.
 > This document groups core contracts and does not relist every auxiliary/compatibility table. Aily/MCP support, dynamic-form, dispatch, and rating-detail models are implemented. Database facts must be checked against real models and migrations.
 
-> This task-management enhancement changes only read aggregations, presentation, and authentication configuration. It adds or deletes no business table and rewrites no existing record; `business_initial_password` is deployment configuration, not a persisted business field.
+> M93 implementation-delivery routing adds only nullable/defaulted columns to existing `service_dispatch_rule` and `ticket` tables. It creates/deletes no business table and never backfills, migrates, or rewrites existing records; `business_initial_password` is deployment configuration, not a persisted business field.
+
+> The unified table kernel and local wide-table UAT dataset do not change the database model: no table, column, index, constraint, or migration is added. `preferences.table_views.widths` plus `manual_widths` retain only explicitly resized columns and their markers; every other width is derived in the frontend from the rendered header and currently loaded rows. First-two-business-column freezing, compact natural width for short tables, exact wide-table width, and sticky/body synchronization add no business field. After explicit `--confirm-local`, `app.scripts.seed_table_uat` writes and explicitly commits wholly fictitious records into existing entities with dedicated `UAT-TABLE` codes and the `【本地表格UAT】` marker. Repeated seeding idempotently refreshes those records, while `cleanup` soft-deletes and commits only the same dedicated set. This utility is not a startup seed, production initializer, or IDC data migration.
+
+> Requirement Overview Excel export likewise changes no data model. It reads existing requirements, related people/business domains, and derived scoring/task progress only; it adds no export snapshot, field, index, or migration, persists no filters, and never broadens record visibility.
 
 ## 0. Global Conventions
 
@@ -37,12 +41,16 @@
 | initial_password_ciphertext | TEXT | Fernet ciphertext for the M44 provisioning password; cleared after change/reset |
 | initial_password_sent_at | TIMESTAMP | Last administrator-triggered initial-password email time |
 
+Incremental contract: `auth_user.preferences` may contain a `table_views` object keyed by a stable list key. Each value stores a `visible` field list, a `widths` map, and an optional `manual_widths` list naming explicitly resized fields. The API bounds keys, counts, and widths and requires every manual field to have a width in the same view; protected identifier/title/action columns are always retained. Automatic widths remain runtime-derived. No new business table or destructive migration is required.
+
+Workflow runtime uses the newest non-deleted pending `process_task` as the current-node fact. `process_instance.current_step_seq`, `Requirement.status`, and stage timestamps are compatibility projections/read models; synchronization only moves a stage forward and never rewrites closed/cancelled/on-hold records, historical tasks, or scores. `Requirement.department` remains a legacy-compatible field, but new registration and its template do not require/export it. The import service distinguishes the new registration template from the legacy scored template by headers. Personal todos are calculated from active tasks and domain records on read rather than stored as a snapshot, so they cannot drift from workflow authorization.
+
 **M36–M37 lifecycle semantics**: account deletion uses `GlidBase.is_deleted`, disables the account, clears `person_id`, and rewrites the username to release the original value; it never deletes `org_member`. Feishu unbinding clears account `external_id` and switches the source to local without changing `person_id`.
 
 ### 1.0 department / business_domain / provision_rule (added in M3.5)
 
 - **department**: code UNIQUE, name, parent_id self-reference, dept_type (it/business/audit), external_source/external_id (reserved for Feishu/AD sync), sort, active. One person, one department; pure data.
-- **business_domain**: code UNIQUE, name, description, owner_id FK org_member (the BP owner, a field not a role), backup_owner_id, sort, active.
+- **business_domain**: code UNIQUE, name, description, owner_id FK org_member (the IT-side BM, a field not a role), business_bdo_id FK org_member (the business-side BDO), sort, active. `business_bdo_id` is the additive nullable M95 column and may reference only an active business person with the `bdo` role inside the domain's served-department scope. The historic `backup_owner_id` column remains without migration or reads/writes, so old IT backup-owner values are never misidentified as BDOs and existing data is preserved.
 - **business_domain_department**: unique domain_id FK business_domain + department_id FK department, plus include_children. It records which organization departments a domain serves; only active business departments may be linked, while historical links remain when a department is later disabled.
 - **provision_rule**: match_type (dept_type/department), match_value, default_roles JSONB, sort (lower matches first and stops), active. Takes effect only on first account provisioning.
 - **org_member changes**: drop the dept/team text columns (migrated to the department table / user groups); add name_en, department_id FK, mobile, external_source, external_id.
@@ -86,11 +94,11 @@ category (business line / closure code / requirement source / CI category extens
 
 ### 1.6 audit_log — audit log (append-only)
 
-entity_type, entity_id, action, actor, summary JSONB (before/after values of changed fields), created_at.
+entity_type, entity_id, action (`VARCHAR(32)`), actor, summary JSONB (before/after values of changed fields), created_at. Service action codes must be constants covered by a pre-persistence length test. Aily notification identity mapping uses `auto_map_aily_identity` for verified OAuth mapping and `auto_map_aily_identity_org` for organization-assisted reconciliation, preventing an audit insert failure from rolling back an otherwise verified Feishu sign-in transaction.
 
 ### 1.7 notification_outbox — notification outbox
 
-event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient type/ID, unique idempotency key, attempt count, next attempt, provider message ID, redacted last error, and sent time. `feishu_aily` payloads are either the legacy-compatible `{text}` form or `{message_type: interactive, card, fallback_text}`. Card callbacks carry only public ticket codes, actions, scores, and idempotency keys—never secrets, JWTs, internal primary keys, or sensitive payloads.
+event_type, entity_type, entity_id, payload JSONB, channel (in_app/feishu_aily…), status (pending/sending/sent/failed), recipient type/ID, unique idempotency key, attempt count, next attempt, provider message ID, redacted last error, and sent time. The unified notification outlet writes a `feishu_aily` text row in the same business transaction by ITOM account and uses a stable digest of event, entity, and account for idempotency. If the account has no active verified Aily-bot identity, the payload carries only the internal `auth_user_id`, recipient fields remain empty, and the row stays `pending` with `last_error_redacted=AILY_IDENTITY_NOT_MAPPED`; the worker resolves the mapping immediately before send and fills the recipient only after it exists, without consuming retry attempts while waiting. A disabled Aily integration creates no new rows; incomplete message configuration leaves rows `pending`. `feishu_aily` payloads are either the legacy-compatible `{text}` form, `{message_type: interactive, card, fallback_text}`, or a user-scoped form with internal `auth_user_id`. Card callbacks carry only public ticket codes, actions, scores, and idempotency keys—never secrets, JWTs, internal primary keys, or sensitive payloads. This change adds no fields or migration.
 
 ### 1.8 in_app_notification — in-app notification
 
@@ -98,7 +106,7 @@ recipient FK→org_member, title, content, link (front-end route), read_at. The 
 
 ### 1.9 attachment — generic attachment
 
-entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, and original charter files.
+entity_type, entity_id, filename, storage_path, size, uploaded_by. Shared by contract attachments, project documents, original charter files, Bug evidence, and supplemental files for service requests and IT requirements. Bugs use `entity_type=bug`, `entity_id=bug.id`; committed service-request files use `entity_type=ticket`, `entity_id=ticket.id`; committed requirement files use `entity_type=requirement`, `entity_id=requirement.id`; no dedicated attachment table is introduced. Before creation, drafts use `entity_type=ticket_draft` or `requirement_draft`, with `entity_id=auth_user.id`; only the uploader may bind them in the same creation transaction or cancel them. Unbound drafts are soft-deleted and their stored files cleaned after 24 hours and cannot be listed or downloaded through generic routes. Requirement Other supplemental information uses the existing `requirement.remarks`; attachment metadata is not duplicated there. Bug evidence text remains in `bug.evidence`.
 
 ### 1.10 external_identity [implemented in P0]
 
@@ -162,7 +170,9 @@ code, name, tier (gold/silver/bronze), description, sort, status.
 | Derived [C] | ticket_code, status, submitter, submitter_dept, service_line, submitted_at, first_response_at, resolved_at, closed_at, paused_minutes (on-hold accumulation, deducted from SLA), reopen_count, first_time_fix, sla_response_min, sla_resolution_hours, sla_response_met, sla_resolution_met | |
 | Links | problem_id FK→problem (back-written after escalation), requirement_id FK→requirement, process_instance_id | |
 | Dynamic form [P1] | request_data JSONB, request_form_version_id, request_form_snapshot JSONB | Answers and submission-time schema |
-| Dispatch/acceptance facts | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records rule/source/dispatch; P2 stamps actual acceptance on first entry to processing |
+| Supplemental attachments [M108] | generic `attachment` rows with `entity_type=ticket` | The web form supplies current-account draft attachment IDs; the domain service rechecks ownership and binds them in the same transaction as ticket creation, workflow start, and audit. No attachment metadata is stored on `ticket` |
+| Acceptance-dispatch/acceptance facts | dispatch_rule_id, dispatch_source, assigned_at, accepted_at | P1 records the first-task acceptance rule/source/dispatch; P2 stamps actual acceptance on first entry to processing |
+| Implementation-delivery dispatch facts [M93] | implementation_assignee, implementation_rule_id, implementation_source, implementation_selected_by, implementation_selected_at | Written only when the first service-request acceptance task completes; distinguishes self, selected colleague, item/catalog/global automatic rule, manual queue, and workflow default role; never rewritten through upstream correction |
 | Confirmation | confirmation_due_at, suspected_major_impact | P2 takes the deadline from the active requester-confirmation task; broad impact remains a service-request flag |
 
 Indexes: status, assignee, service_item_id, submitted_at, (ticket_type, status).
@@ -175,7 +185,7 @@ service_item_id, version, status (draft/published/retired), schema JSONB, publis
 
 ### 2.14 service_dispatch_rule [cfg][implemented in P1]
 
-name, scope_type (service_item/catalog/global), scope_id, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. A service item does not duplicate a current-rule FK; resolution uses `scope_type + scope_id` in item → catalog → global order, and records the execution facts on the ticket.
+name, scope_type (service_item/catalog/global), scope_id, **dispatch_stage (acceptance/implementation)**, target_type (group/member), target_id, strategy (round_robin/fixed/manual_queue), priority, active, fallback, last-assigned member/time. A service item does not duplicate a current-rule FK; resolution uses `dispatch_stage + scope_type + scope_id` in item → catalog → global order. Migration classifies historic rules as `acceptance` without changing historic tickets. `implementation` is resolved only at service-request acceptance handoff; `manual_queue` intentionally creates an unassigned process task for the next step's eligible role to claim rather than selecting a person through the default role. The two stages write separate ticket facts.
 
 ### 2.15 ticket_satisfaction [implemented in P2]
 
@@ -232,7 +242,7 @@ article_id + person, UNIQUE composite. Triggers the "marked helpful" points.
 
 ---
 
-## 3. Project Domain (6 tables)
+## 3. Project Domain (8 tables)
 
 ### 3.1 portfolio — portfolio
 
@@ -242,7 +252,7 @@ code [C], name, owner FK, year, description, status.
 
 | Group | Fields |
 | --- | --- |
-| Required on creation | name, pm FK, planned_start, planned_end |
+| Required on creation | name, pm FK, planned_start, planned_end; created_by FK (creator account, used for first-node correction/delete authorization) |
 | Optional on creation | portfolio_id FK, description, budget_10k, service_item_id FK |
 | Staged | latest_update (one-line update) |
 | Derived [C] | project_code, status, actual_start, actual_end, progress_pct (WBS-weighted), health_status (green/yellow/red, per PRD 6.1 rules), actual_cost_10k (rolled up from cost_entry) |
@@ -251,7 +261,7 @@ code [C], name, owner FK, year, description, status.
 
 ### 3.3 wbs_task — WBS task
 
-project_id FK, parent_task_id FK self-reference, wbs_code [C] (generated from tree position), task_name, assignee FK, start_date, end_date, status, description, deliverable, predecessors JSONB (array of task ids), progress_pct (integer 0–100%; project roll-up is duration-weighted), sort.
+project_id FK, parent_task_id FK self-reference, wbs_code [C] (generated from tree position), task_name, assignee FK, start_date, end_date, actual_start, actual_end, status, description, deliverable, predecessors JSONB (array of task ids), progress_pct (integer 0–100%; project roll-up is duration-weighted), sort, completed_at (the first time the task reached 100%; retained as an audit fact after a later completion correction). `actual_end` is a nullable actual-finish date and cannot be later than the submission date or earlier than `actual_start`; writing a valid `actual_end` makes the domain service set current progress to 100%. `completed_locked` and `structure_locked` are derived API flags rather than persisted fields: current `progress_pct >= 100` locks actual-date edits, deletion, add-child, and structural changes, while historical `completed_at` never creates a permanent lock. An authorized correction below 100% in a separate request reopens the task and clears `actual_end` while retaining `actual_start` and `completed_at`; the derived capabilities return immediately. Single and batch structural moves update only the existing `parent_task_id`, sibling `sort`, and derived `wbs_code`: selecting a parent and descendant normalizes to the highest moved root, and descendants retain their internal structure. The server locks all active WBS rows for the project before validating authorization, project scope, references, currently completed sibling/descendant protection, target layer, and cycles; one invalid root rolls back the whole transaction. Each actual moved root receives an audit row, while batch anchor and size exist only in the audit summary. This rule adds no business field or database migration.
 
 ### 3.4 milestone — milestone
 
@@ -263,7 +273,27 @@ project_id FK, title, probability (High/Medium/Low), impact (High/Medium/Low), r
 
 ### 3.6 cost_entry — cost detail
 
-project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_by [C].
+project_id FK, nullable wbs_task_id FK, entry_date, authoritative `amount_cny NUMERIC(18,2)`, legacy compatibility projection `amount_10k`, category (software/hardware/service/labour/other/legacy), cost_type (incurred/committed), supplier, note, and created_by [C]. Upgrade backfills only missing `amount_cny` as exact `amount_10k × 10000` and never overwrites an existing exact amount.
+
+### 3.7 project_budget_item — project budget line
+
+project_id FK, category (software/hardware/service/labour/other), name, `amount_cny NUMERIC(18,2)`, note, and created_by [C]. When active lines exist their sum is the budget total; otherwise reads remain compatible with `project.budget_10k`.
+
+### 3.8 project_effort_entry — project effort fact
+
+project_id FK, nullable wbs_task_id FK, person_id FK, work_date, `effort_days NUMERIC(8,2)`, role_type (design/development/testing/implementation/pm/operations/other), nullable `standard_rate_cny_per_day NUMERIC(12,2)`, note, and created_by [C]. Registration snapshots the explicit rate or configured role-standard daily rate. It is a management-cost convention and never stores or derives personal salary. Upgrade never fabricates effort or role rates from historical tasks, hours, or people.
+
+### 3.9 B-OPS unified investment ledger (4 tables)
+
+`investment_budget_item`: `lifecycle_stage` (demand/build/run), `investment_intent` (run/grow/transform), `subject_type/subject_id`, `period_start/period_end`, category (software/hardware/cloud/network/security/service/outsourcing/telecom/facility/labor/other/legacy), `cost_nature` (capex/opex), name, `amount_cny NUMERIC(18,2)`, note, `source_type/source_id`, and created_by. `(source_type, source_id)` is unique for idempotent historical backfill. Legacy `project.budget_10k` becomes a `legacy_project_budget_total` fallback row and is excluded once that project has an explicit budget item.
+
+`investment_cost_entry`: in addition to lifecycle, intent, and subject, stores `recognition_date`, `amount_cny NUMERIC(18,2)`, `cost_status` (committed/incurred/paid), category, `cost_nature`, `labor_nature` (none/internal/external/unclassified), `recurrence` (one_time/recurring), activity_type, optional Project/Requirement/Service Item/CI/Ticket/Problem/Contract/Vendor/WBS references, supplier snapshot, note, unique source key, and created_by. Paid is a payment subset of incurred: incurred aggregation includes paid and paid is also shown separately, but they are never added. Contract `amount_10k` is never backfilled here.
+
+`investment_worklog`: stores lifecycle, intent, subject, person_id, work_date, `effort_days NUMERIC(8,2)`, role_type, activity_type, `standard_rate_cny_per_day NUMERIC(12,2)` snapshot, optional Project/Requirement/Service Item/CI/Ticket/Problem/WBS references, note, unique source key, and created_by. Future actual dates are rejected, and all active entries for one person/date cannot exceed two person-days. Ticket `actual_resolution_hours` and task estimates never backfill this table.
+
+`investment_allocation`: `source_kind` (budget/cost/worklog), source_id, target_type/target_id, `percentage NUMERIC(5,2)`, allocation_method, note, and created_by. A source/target pair is unique, and all active percentages for one source cannot exceed 100%. Allocation applies a read-time target weight and never copies the budget, cost, or worklog fact.
+
+Supported subjects are project/requirement/service_item/ci/ticket/problem/contract/business_domain/work_task/shared_operations. New Project, Requirement, Ticket, and Shared Operations writes use the unified tables only; legacy `project_budget_item/cost_entry/project_effort_entry` remain for one rollback cycle and receive no new writes. Historical facts are copied idempotently by unique source key without deleting legacy data. Financial actual equals incurred including paid; standard labor valuation equals person-days times entry-time rate; management total equals financial actual plus standard labor valuation, but is unavailable when incurred `category=labor AND labor_nature=unclassified` could be double-counted.
 
 ---
 
@@ -277,26 +307,34 @@ project_id FK, wbs_task_id FK nullable, date, amount_10k, description, created_b
 | Optional at registration | source, parent_requirement_id FK, department, expected_date, expected_effect, business_value_note |
 | Evaluation stage | six D1–D6 scores, decision, solution_type, PRD/dev effort |
 | Analysis stage | moscow, owner FK, target_date, solution, acceptance_criteria JSONB |
-| Implementation stage | project_id FK (optional attachment) |
-| Derived [C] | requirement_code, status, requester/name, registered/evaluating/analyzing/implementing/closed timestamps, closure_note |
+| Implementation stage | project_id FK (optional attachment), implementation_route (nullable route snapshot: In-house Dev / To Project; written when routing is executed and never backfilled into history) |
+| Derived [C] | requirement_code, status (`registered` / **`supplementing`** / `evaluating` / `analyzing` / `implementing` / `closed`, etc.), requester/name, stage timestamps, closure_note; `supplementing` means explicitly returned to the original requester and is neither closed nor cancelled |
 
 ### 4.2 requirement_task — requirement task
 
-`requirement_id` FK, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C]. A requirement may have multiple task rows. Tasks continue to use `GlidBase.is_deleted` soft deletion; this permission fix does not rebuild, overwrite, or migrate existing records.
+Unique non-null `task_code` (`RT-YYYYMM-NNNN`), nullable `requirement_id` FK for register-before-link, nullable `registrar` FK for administrator accounts without a person, `name`, `description`, `assignee` FK, `plan_date`, `plan_effort`, `actual_effort`, `status` (Pending / In Progress / Done), `done_at` [C], and the base model's persisted `created_at` registration time. A direct registration stores the current actor's person; conversion from a requirement stores the original requirement requester's linked person rather than the converter. A standalone task can be linked later. Startup migration drops PostgreSQL's NOT NULL constraint on `requirement_id` and fills only missing historical task codes using the original `created_at` month and deterministic `created_at + id` order. It never overwrites, deletes, or rebuilds existing rows. Import adds no batch table and overwrites no existing task.
 
 ### 4.3 bug — defect record
 
-`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK (the selectable system comes from CMDB), `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id`, `source_type/source_id`, reproduction details, expected/actual results, environment, evidence, resolution and verification notes, rejection reason, and reopen/close timestamps. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
+`bug_code` [C], `title`, `description`, `priority`, `status`, `ci_id` FK (the selectable system comes from CMDB), `product_manager_id` FK (snapshotted system product manager), `dev_leader_id` FK, `reporter_id` (also the list's Registrar display), `source_type/source_id`, reproduction details, expected/actual results, environment, `evidence` text, resolution and verification notes, rejection reason, and reopen/close timestamps. Screenshot, log, and other binary evidence is related through generic `attachment(entity_type=bug, entity_id=bug.id)` without duplicating file metadata. Bugs use a dedicated process and do not reuse the ITIL `problem` table.
 
 ### 4.4 bug_fix_task — Bug repair task
 
-`bug_id` FK, `name`, `task_type` (development/testing/other), `description`, `assignee` FK, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed), `done_at`, and `completion_note`. A Bug may have multiple development or testing rows; all required child tasks must be closed before product-manager verification.
+Unique non-null `task_code` (`BT-YYYYMM-NNNN`), `bug_id` FK, `name`, `task_type` (development/testing/other), `description`, `assignee` FK, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed), `done_at`, `completion_note`, and the base model's persisted `created_at` registration time. A Bug may have multiple development or testing rows; all required child tasks must be closed before product-manager verification. The parent Bug keeps its `BG-YYYYMM-NNNN` code and never shares a child code. Startup migration fills only missing historical child codes by original registration month and deterministic creation order, without changing parent-child relations or business fields.
 
 ### 4.5 work_task — delegated work task
 
 `task_code` [C], `title`, `description`, `task_type`, `source_type/source_id`, `registrar` FK, `assignee` FK, `priority`, `plan_start`, `plan_date`, `plan_effort`, `actual_effort`, `status` (Registered / Scheduled / Executing / Paused / Closed / Aborted), `performance_bucket`, pause/abort reasons, completion note, and close time. Sources may be tickets, problems, incidents, Bugs, manual technical research, or other IT work.
 
 Only the registrar may delete an unassigned task still in Registered status. After assignment and before closure, deletion is administrator-only. Deletion is soft and audited; administrators can edit, pause, abort, and close from the list.
+
+### 4.6 project_development_task — project development task
+
+Unique non-null `task_code` (`PT-YYYYMM-NNNN`), required `project_id` FK, optional `wbs_task_id` FK, `title`, `description`, `acceptance_criteria`, `task_type`, `registrar` FK, `assignee` FK, `priority`, `environment`, `version`, planned dates, planned/actual effort, `status` (Pending / In Progress / Done, the sole state authority), `completion_note`, `done_at`, and the base model's persisted `created_at` registration time. Direct registration stores the current actor; project/WBS conversion stores the project manager. The server validates that a selected WBS row belongs to the project. Non-administrators may delete only Pending rows; administrators retain audited deletion authority. Completion is not a second state field: reads derive it from `task_progress_entry`, returning 100% for Done and otherwise the newest non-null percentage capped at 99%.
+
+### 4.7 task_progress_entry — append-only task progress
+
+`task_kind`, `task_id`, nullable `author_id` FK, `author_name` snapshot, optional `progress_percent` (0–100), `status_snapshot`, `comment`, and `created_at`. It currently records delegated and project-development progress. There is no update/overwrite endpoint. Results use creation time plus the time-sortable GLID as a deterministic newest-first order, and each entry ID is the notification idempotency source so consecutive updates remain distinct. Regular Project Development entries are limited to 0–99%; only the explicit completion action creates 100% in the same transaction as Done status, the completion note, and completion time. No historical-row migration or rewrite is required.
 
 > No separate table is needed for closure hand-off: `problem.source_requirement_id` and `knowledge_article.source_requirement_id` are queryable both ways.
 
@@ -310,15 +348,15 @@ code, name, entity_type, trigger_condition JSONB, version, active, description. 
 
 ### 5.2 process_step — process step [cfg]
 
-definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R; the Bug Development Fix node is intentionally empty and executes through repair-child assignees), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step_code, node type, handler, CC parties, and SLA cannot be changed in place; use a new version. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
+definition_id FK, seq, step_code (stable code within a version), name, node_type (processing / approval), default_role (R; the Bug Development Fix node is intentionally empty and executes through repair-child assignees), cc_roles (I notification roles/groups), autonomy_level (L1-L4), sla_hours, description. Once instances exist, step code, node order/type, handler, autonomy level, and SLA cannot be changed in place; use a new version. `cc_roles` is the only non-blocking rule that may be maintained in place and applies only when a later node first activates. Existing tasks' `raci_snapshot.informed` values and sent notifications are never rewritten. Approval nodes support approve (optional comment) or reject (required reason); processing nodes advance through the complete-step action.
 
 ### 5.3 process_instance — process instance
 
-definition_id FK, entity_type, entity_id (triggering record), status (In Progress / Completed / Terminated), current_step_seq [C], started_at, completed_at.
+definition_id FK, entity_type, entity_id (triggering record), status (In Progress / Completed / Terminated, plus requirement-specific `returned` while waiting for requester supplementation), current_step_seq [C], started_at, completed_at. Returning a requirement to a reached process node keeps the instance `running` and creates a new target-node task. Only Requester supplement uses `returned` without a synthetic task. Resubmission restores `running` on the same instance rather than creating another requirement or process instance.
 
 ### 5.4 process_task — process task
 
-instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Skipped), started_at, due_at [C] (from the step SLA), completed_at, completed_by FK, comment. Snapshots keep historical performance extraction stable after later process versions.
+instance_id FK, step_id FK, definition_version, step_code_snapshot, raci_snapshot JSONB (R/A/C/I snapshot at task creation), assignee FK (resolved from default role, reassignable), status (Pending / In Progress / Done / Rejected / Skipped), started_at, due_at [C] (from the step SLA), `viewed_at`, `viewed_by` FK (the current handler's first actual-view fact), `upstream_correction_enabled` (true for new tasks; false by default for pre-upgrade pending tasks), completed_at, completed_by FK, comment. Reassignment is permitted only to an active, in-position organization member with an active ITOM account; it changes only `assignee`, keeps the node/state/RACI snapshot/history, and writes from/to/reason audit data plus a new-handler notification. `started_at` only records generation/dispatch and never substitutes for an actual view; snapshots plus the view fact keep workflow versions, performance extraction, and correction-window history auditable. Requirement rejection retains the original Rejected task, real actor, and target-bearing comment. A return to a reached prior node appends a new pending task for that step instead of soft-deleting history. Candidate targets are derived from non-deleted historical task `step_id` values in the same instance, so no target-snapshot table is added. Only the newest effective legacy requirement instance incorrectly terminated with `status=rejected` is repaired idempotently. Closed, cancelled, or on-hold requirements are skipped; older process instances are never resurrected, and historical tasks, scores, attachments, and audit are never overwritten.
 
 ---
 
@@ -390,6 +428,38 @@ period_id FK, person FK, version, business_role_score, professional_role_score, 
 
 ---
 
+## 6A. Unified Report Center (6 tables)
+
+Live metrics exist only in the `services/reporting.py` registry and query responses; they are not persisted as monthly or quarterly statistic rows. These tables store only explicitly created templates, formal reports, immutable versions, audiences, idempotent generation facts, and reserved scheduling configuration.
+
+### 6A.1 report_template
+
+Unique code, name, description, domains JSONB, metric_codes JSONB, default_filters JSONB, default_period_type (week/month/quarter/half_year/year/custom), is_system, active, and created_by. A template may reference only server-registered metrics the current operator may use.
+
+### 6A.2 report_instance
+
+template_id FK, title, period_type, period_start/end, filters JSONB, status (draft/review/approved/published/locked), current_version, published_version, created_by FK, process_instance_id FK, published_at, and locked_at. Period and filters form the instance contract; publication points to a generated version and never overwrites history.
+
+### 6A.3 report_version
+
+Unique report_instance_id FK + version, status, metric_snapshot JSONB, narrative JSONB, formula_versions JSONB, data_quality JSONB, checksum, generated_by, generated_at, and locked_at. A snapshot is created only by explicit formal-report generation. Publication locks it; later revisions increment version and do not edit an old row.
+
+### 6A.4 report_audience
+
+Unique report_instance_id FK + subject_type (user/role/group) + subject_id. It limits published-report audiences and never grants a source-module or sensitive-metric permission.
+
+### 6A.5 report_generation_job
+
+report_instance_id FK, actor_id FK, idempotency_key, request_digest, status, version_id FK, error_code, and completed_at; actor_id + idempotency_key is unique. The same key/digest restores its first version, while the same key with a different digest conflicts.
+
+### 6A.6 report_schedule
+
+template_id FK, name, period_type, enabled, next_run_at, audience JSONB, and created_by. B2 reserves this disabled model but exposes no execution API or scheduler, so it is not evidence that automatic weekly/monthly generation is enabled.
+
+### 6A.7 Organization-level reporting conventions
+
+`org_settings` adds `reporting_timezone` (Asia/Shanghai), `reporting_week_start` (1=Monday), `fiscal_year_start_month` (1), `workday_hours` (8), `report_min_group_size` (3), and `report_role_rates` JSONB. Rates are management conventions rather than personal salary. The grouping threshold is reserved for future person-group aggregates; current person detail remains explicitly protected by `reports_people`.
+
 ## 7. Core Relationship Diagram
 
 ```mermaid
@@ -409,6 +479,8 @@ erDiagram
     project ||--o{ milestone : ""
     project ||--o{ risk : ""
     project ||--o{ cost_entry : ""
+    project ||--o{ project_budget_item : "budget lines"
+    project ||--o{ project_effort_entry : "effort facts"
     requirement ||--o{ requirement_task : "task breakdown"
     requirement }o--|| project : "implementation attach"
     requirement ||--o{ problem : "legacy hand-off"
@@ -423,13 +495,17 @@ erDiagram
     auth_user ||--o{ external_identity : "external identity"
     auth_user ||--o{ mcp_operation_intent : "confirmation"
     auth_user ||--o{ mcp_tool_call : "tool audit"
+    report_template ||--o{ report_instance : "instantiates"
+    report_instance ||--o{ report_version : "immutable versions"
+    report_instance ||--o{ report_audience : "published audiences"
+    report_instance ||--o{ report_generation_job : "idempotent generation"
 ```
 
 ## 8. Reconciliation Against the Design Principles
 
 | Principle | How it is realized |
 | --- | --- |
-| No pre-computed tables | Not one of the 43 tables is a statistics/snapshot table; project's three computed columns and performance_score are "system-maintained computation results," not manual data |
+| No pre-computed live-metric tables | Business analysis has no manual statistics table; Project computed columns and performance_score are system-maintained results. `report_version` contains only an explicitly generated formal-report audit snapshot and never feeds back into live metrics or becomes a source-domain fact |
 | Minimal entry | Each table's "required on creation" group has ≤ 5 fields |
 | Event-driven | notification_outbox + point_entry are written by the same domain-event outlet |
 | Duplicate-proof | idea_like / knowledge_vote unique constraints |
@@ -442,7 +518,7 @@ erDiagram
 `ui_branding_asset` stores controlled brand images with kind, path, MIME type, byte size, dimensions and uploader. Only PNG/JPEG/WebP/ICO up to 5 MB and 4096×4096 are accepted; SVG and arbitrary HTML/CSS/JS or remote fonts are intentionally unsupported.
 ### Org governance settings (M42)
 
-`org_settings` is a singleton containing `digital_team_department_ids`, `digital_team_member_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. The effective digital team is the union of active people in the expanded department scope and active individually selected people; selecting an individual never includes their colleagues. The settings remain separate from credentials so the internal digital-team definition survives an organization-source change.
+`org_settings` is a singleton containing `digital_team_department_ids`, `digital_team_member_ids`, descendant inclusion, and the Feishu scheduled-sync enablement, interval, and last-attempt timestamp. The effective digital team is the union of active people in the expanded department scope and active individually selected people; selecting an individual never includes their colleagues. It also stores `reporting_timezone`, `reporting_week_start`, `fiscal_year_start_month`, `workday_hours`, `report_min_group_size`, and `report_role_rates` for shared reporting conventions and role-standard daily rates. The settings remain separate from credentials so organization-source changes do not lose the digital-team or reporting definitions.
 
 ### System integration settings (M44)
 
@@ -453,3 +529,22 @@ erDiagram
 `feishu_config` retains only Feishu OAuth, workplace login, organization sync, and generic app credentials. All `helpdesk_*` fields are removed. The Aily bot may be a different app, so its credentials and tenant/agent allowlists live in `aily_integration_config`; its `open_id` is never assumed equal to the login app's value.
 
 Remove `feishu_helpdesk_handoff`, `feishu_helpdesk_intake`, `feishu_helpdesk_sync_event`, and `feishu_helpdesk_outbox`. The user confirmed there is no valuable production history to migrate or archive. The migration safely drops those dedicated tables/fields while the frozen Git tag remains recoverable.
+
+### 1.15 Web-agent target models (WA0; design approved)
+
+The web agent adds structures instead of reusing or rewriting `aily_integration_config`. WA0 now adds the following tables. Each inherits GLID, audit timestamps, and soft-delete fields; providers and profiles are disabled by default:
+
+- `ai_provider_config`: unique `code`, provider type, model connection, encrypted API key, timeout/output limits, capability probe, primary/fallback, `enabled=false`, and `config_revision` starting at 1. Type, URL, model, a nonblank replacement secret, timeout, output limit, temperature, or fallback change increments the revision under the governance lock and invalidates the old probe. Probe state is queryable, but the revision is not derived from secret hashing and the secret never appears in ordinary reads.
+- `ai_agent_profile` / `ai_agent_profile_version`: unique profile `code`, audience, currently active default provider, maximum risk level, enablement, and `retention_days`; profile retention has a database default of 30 days and a database `CHECK` constraint of 0–90 days. Versions are unique by `(profile_id, version)` and retain bilingual system instructions, enabled capabilities, knowledge scope, publisher, publication time, and `config_snapshot`. Every new draft, publication, and rollback copy stores all publication-controlled `name/default_provider_id/retention_days/enabled` fields with `schema_version=1`; draft PATCH changes the version snapshot only, while successful publish/rollback atomically applies the snapshot plus version risk to the active profile row. Runtime use additionally requires a complete snapshot, bilingual prompts, registered capability/risk limits, a recently healthy compatible provider, and agreement between the active row and newest version. Existing `{}`, missing-marker, or incomplete historical versions are unprovable and fail closed; runtime and rollback never fill them from the current active profile.
+- `ai_conversation` / `ai_message`: the current web `auth_user`, profile/version, language, strictly allowlisted page context, lifecycle/archive status and time, `expires_at`, and redacted structured messages with role, token use, and latency. Every read and archive is constrained by `auth_user_id`; archive changes conversation visibility only. Ordinary-message retention is read only from the complete schema-marked snapshot of the `profile_version_id` captured at conversation creation, never from the active profile or `expires_at`: a captured zero remains nonpersistent after a positive republish, while a captured 1–90-day decision and stable creation-time `expires_at` remain immutable. New bodies still stop when the current profile is disabled, deleted, unpublished, audience-incompatible, or fails runtime validation. Task 7 adds no field or migration: a user message is first stored as `accepted`; only a fresh short transaction created in a bounded DB worker may lock in the fixed `AuthUser → AiConversation → current profile/version → AiMessage` order and make the recursively redacted structured body `completed`. `AuthUser` is first loaded with `FOR UPDATE + populate_existing` and checked for active/deleted after locking; the conversation must remain owned and active, the profile/version must remain the exact current publication, and the assistant placeholder must still be `streaming`. Finalization cooperatively checks disconnect/absolute-deadline cancellation after all locks and again before writing/committing `completed`; observed cancellation rolls back and leaves no completed state, without claiming elimination of every real-socket/thread-scheduling micro-race. One monotonic absolute deadline covers failed-placeholder cleanup and every pre-commit stage; stage timeouts are neither reset nor summed. Authority commit must begin before that deadline after the last cancellation check. Once commit begins, the caller waits for commit and Session cleanup to preserve database `completed` versus client-terminal consistency, so return may slightly exceed the deadline rather than misreport a durable completion as timeout. Model prose persists under `authority=advisory, operation_status=not_executed`; an L3 preparation persists under `authority=server_preview, operation_status=prepared_not_executed`; neither represents a committed business result. Provider errors, truncated protocols, disconnects, and partial deltas never become completed answers. Failure/cancellation may retain a bodyless nonsensitive state fact; retention zero stores only bodyless idempotency metadata and digests. `request_digest` is a server-key HMAC over normalized raw `content + page_context`; only the digest is stored, never the key or any new raw-body copy, while durable bodies remain redacted. The same `client_message_id` therefore replays equal raw input and conflicts even when different raw inputs redact to the same body. An L3 `prepared` action may survive a disconnect until expiry but is never auto-executed by streaming. This round still adds no table, field, index, or migration.
+Task 7A changes none of those tables or status values; it repairs the finalization authority for `completed`. Thread-safe durable success is set only after `db.commit()` returns successfully. A later Session-close failure stores only a redacted exception type, cannot negate the persisted state, and never triggers a database re-query to guess transaction outcome. When disconnect is observed after commit has started, cancellation wins and no SSE terminal follows. A failing commit sets no durable success; rollback and the existing failed-placeholder cleanup safely converge the non-completed row to `failed`.
+- `ai_action`: conversation, initiating account, capability, risk, a safe payload normalized by the registered Pydantic model and unchanged by sensitive-collision checking, stable SHA-256 digest, confirmation-token SHA-256, idempotency key, status, result, and related entity. SQLAlchemy metadata and PostgreSQL DDL use the same named uniqueness target, `uq_ai_action_user_capability_idempotency(auth_user_id, capability_code, idempotency_key)`. If recursive redaction would change normalized input, the request is rejected rather than storing or executing a redacted substitute. Task 6 adds no column or migration. First preparation stores `prepared` plus the server-handler preview only after the separate rollback-only preview Session has ended, and returns the raw token once. Same-key/same-digest reads existing `prepared/succeeded/failed/cancelled/expired` state; a different digest conflicts, and named-constraint race recovery reloads only its winner. Confirmation locks the row, proves that the owner conversation's captured profile remains the complete current publication with a healthy compatible provider, then rechecks capability and digest. One success transaction writes domain state, `succeeded`, `consumed_at`, redacted result/entity, and generic `audit_log`. Cancellation writes `cancelled`; expiry writes `expired`. Handler or success-audit failure rolls back only the nested savepoint and writes a bounded `failed` fact in the same still-row-locked outer transaction; failure-state commit failure is never reported as durable. `token_hash` may remain for irreversible security evidence but is never returned; raw tokens never enter messages, logs, or audit.
+
+Task 8C changes no column or migration, but extends the state contract. `prepared` is the only confirmable/cancellable state. `executing` is an internal non-retryable claim committed after credential/runtime checks and before handler entry; it never represents business success. `succeeded` still appears only after the domain mutation, result, and audit commit together. An uncertain handler or final persistence outcome keeps `executing`, never restores `prepared`; a known failed execution writes `failed` only when that terminal commit succeeds. `expires_at` remains a naive UTC `TIMESTAMP` in storage, while every public `confirmation_expires_at`/`expires_at` wire value is explicit-`Z` RFC 3339 UTC.
+
+Round 1 makes the post-claim outer write transaction explicit for SQLite before the handler nested savepoint: an uncertain or failed success-terminal commit rolls back the domain mutation, `succeeded`, and success audit while the durably claimed row remains `executing`; only a claim failure before handler entry may retain `prepared` and its original token for an honest retry.
+- `ai_provider_call`: provider, conversation/message/profile version, model, purpose, input/output tokens, latency, result code, status, and redacted error metadata.
+
+Capability handlers are code-registered. Database configuration may disable a registered capability but cannot invent an executable handler. Startup migration `ensure_assistant_schema()` runs only on PostgreSQL and performs only `CREATE TABLE IF NOT EXISTS`, missing-column additions (including `ai_provider_config.config_revision INTEGER NOT NULL DEFAULT 1` and `ai_agent_profile_version.config_snapshot JSONB NOT NULL DEFAULT '{}'`), `CREATE INDEX IF NOT EXISTS`, and an idempotently added retention `CHECK` constraint; SQLite tests continue to create tables through `Base.metadata.create_all()`. It does not backfill, recalculate, rewrite, or fabricate an existing `config_snapshot`, nor does it rewrite business records, process instances, Aily identities, or MCP audit. Legacy `{}` therefore remains intact and fails closed under the one-time compatibility limitation above. Conversation retention defaults to 30 days and is configurable from 0–90 days; archive or retention cleanup never deletes `ai_action` or other security/business audit. See [`docs/en/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md).
+
+Task 8C Round 2 changes no column or migration; it clarifies that the public expiry browser contract is explicit-`Z` and calendar-valid, so normalized invalid date/time values cannot form a confirmable `prepared` state.

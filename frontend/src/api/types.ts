@@ -81,6 +81,12 @@ export interface UserPreferences {
   notification_preferences?: Record<'work' | 'workflow' | 'system', boolean>;
   theme?: 'light' | 'dark' | 'system';
   density?: 'default' | 'compact';
+  /** 清单列可见性与手工宽度，未手工调整的列按当前数据自动适配。 */
+  table_views?: Record<string, {
+    visible?: string[];
+    widths?: Record<string, number>;
+    manual_widths?: string[];
+  }>;
 }
 
 /** 登录用户 */
@@ -380,6 +386,7 @@ export interface DashboardData {
     open_bug_fix_tasks: number;
     open_delegated_tasks: number;
     open_requirement_tasks: number;
+    open_project_tasks: number;
   };
   alerts: { type: string; title: string; link?: string | null }[];
 }
@@ -427,6 +434,9 @@ export interface TicketRow {
   submitter_dept: string | null;
   assignee: string | null;
   assignee_name: string | null;
+  /** 服务请求受理转交时确定的实施交付人；与首节点受理人分开保存。 */
+  implementation_assignee?: string | null;
+  implementation_assignee_name?: string | null;
   submitted_at: string;
   sla_resolution_hours: number | null;
   sla_response_met: boolean | null;
@@ -435,6 +445,12 @@ export interface TicketRow {
   satisfaction: number | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  /** 当前用户在流程权限下可编辑（含上游回改窗口） */
+  can_edit?: boolean;
+  /** 当前用户在流程权限下可删除（仅首节点创建人窗口或管理员） */
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 可执行的状态流转 */
@@ -459,6 +475,10 @@ export interface ProcessStep {
   assignee?: string | null;
   assignee_name?: string | null;
   due_at?: string | null;
+  /** 当前处理人首次实际打开该节点详情的事实（不等同于任务分派时间）。 */
+  viewed_at?: string | null;
+  viewed_by?: string | null;
+  viewed_by_name?: string | null;
   completed_at?: string | null;
   raci_snapshot?: Record<string, unknown> | null;
 }
@@ -469,7 +489,22 @@ export interface TicketProcess {
   definition_version?: number | null;
   status: string;
   current_step_seq?: number | null;
+  current_step_code?: string | null;
+  current_step_name?: string | null;
   steps: ProcessStep[];
+  /** 需求审批驳回时可选择的已到达前序位置；seq=0 表示退回登记人补充。 */
+  return_targets?: {
+    seq: number;
+    name: string;
+    kind: 'process_step' | 'requester_supplement';
+  }[];
+  /** 最近一次退回事实，用于向登记人和处理人解释当前状态。 */
+  return_info?: {
+    reason?: string | null;
+    returned_at?: string | null;
+    returned_by?: string | null;
+    returned_by_name?: string | null;
+  } | null;
 }
 
 /** 工单详情 */
@@ -486,6 +521,12 @@ export interface TicketDetail extends TicketRow {
   change_reason?: string | null;
   rollback_plan?: string | null;
   implementation_plan?: string | null;
+  implementation_rule_id?: string | null;
+  implementation_rule_name?: string | null;
+  /** self_selected / handler_selected / service_item / catalog / global / manual_queue / step_default */
+  implementation_source?: string | null;
+  implementation_selected_by?: string | null;
+  implementation_selected_at?: string | null;
   planned_start_at?: string | null;
   planned_end_at?: string | null;
   approved_at?: string | null;
@@ -504,6 +545,10 @@ export interface TicketDetail extends TicketRow {
   allowed_transitions: AllowedTransition[];
   /** 当前用户对该类型工单有编辑权限（M18）：控制改派等写入口显隐 */
   can_edit?: boolean;
+  /** 首节点未查阅前创建人可删除；管理员保留全权。 */
+  can_delete?: boolean;
+  workflow_edit_mode?: 'admin' | 'module_permission' | 'current_handler' | 'upstream_creator' | 'upstream_handler' | null;
+  workflow_edit_locked_reason?: string | null;
   /** 可主动/强制关闭（M28）：admin 或服务请求登记人本人 */
   can_close?: boolean;
   /** 当前流程节点处理人姓名（M25） */
@@ -623,7 +668,7 @@ export interface OrgTreeData {
   sync_sources: string[];
 }
 
-/** 业务域 = 横向服务线：owner=BM 总体负责，服务团队为跟随成员（负责人是数据字段而非角色） */
+/** 业务域 = 横向服务线：IT 侧 BM 管服务，业务侧 BDO 管业务协作与验收。 */
 export interface BusinessDomain {
   id: string;
   code: string;
@@ -631,8 +676,8 @@ export interface BusinessDomain {
   description?: string | null;
   owner_id?: string | null;
   owner_name?: string | null;
-  backup_owner_id?: string | null;
-  backup_owner_name?: string | null;
+  business_bdo_id?: string | null;
+  business_bdo_name?: string | null;
   /** 服务团队成员（跟随该业务线的 BP/开发等） */
   members: { id: string; name: string }[];
   /** 从组织架构选取的服务部门；include_children 表示覆盖下级部门 */
@@ -870,6 +915,10 @@ export interface ProblemRow {
   created_at: string;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 关联工单摘要 */
@@ -894,6 +943,10 @@ export interface ProblemDetail extends ProblemRow {
   /** M29：当前用户是「问题确认」节点处理人 → 显示确认/驳回按钮 */
   can_confirm?: boolean;
   process?: TicketProcess | null;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 // ============ M3 CMDB ============
@@ -945,10 +998,23 @@ export interface TaskCapabilities {
   generate_fix_tasks?: boolean;
   verify?: boolean;
   reopen?: boolean;
+  progress?: boolean;
+  complete?: boolean;
+}
+
+export interface TaskProgressEntry {
+  id: string;
+  author_id: string | null;
+  author_name: string | null;
+  progress_percent: number | null;
+  status_snapshot: string;
+  comment: string;
+  created_at: string;
 }
 
 export interface BugFixTaskRow {
   id: string;
+  task_code: string;
   bug_id: string;
   name: string;
   task_type: string;
@@ -962,6 +1028,7 @@ export interface BugFixTaskRow {
   status: BugFixTaskStatus;
   done_at: string | null;
   completion_note: string | null;
+  created_at: string;
 }
 
 export interface BugRow {
@@ -978,6 +1045,7 @@ export interface BugRow {
   dev_leader_id: string | null;
   dev_leader_name: string | null;
   reporter_id: string;
+  reporter_name: string | null;
   reproduction: string | null;
   expected_result: string | null;
   actual_result: string | null;
@@ -988,8 +1056,13 @@ export interface BugRow {
   rejection_reason: string | null;
   reopened_at: string | null;
   closed_at: string | null;
+  created_at: string;
   fix_tasks: BugFixTaskRow[];
   capabilities: TaskCapabilities;
+  /** Bug 管理也使用同一流程任务视图，以便记录产品经理/开发负责人首次查阅。 */
+  process?: TicketProcess | null;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 export interface WorkTaskRow {
@@ -1015,6 +1088,45 @@ export interface WorkTaskRow {
   abort_reason: string | null;
   completion_note: string | null;
   closed_at: string | null;
+  progress_entries: TaskProgressEntry[];
+  latest_progress: TaskProgressEntry | null;
+  capabilities: TaskCapabilities;
+}
+
+export type ProjectDevelopmentTaskStatus = '待处理' | '进行中' | '已完成';
+
+export interface ProjectDevelopmentTaskRow {
+  id: string;
+  task_code: string;
+  project_id: string;
+  project_code: string | null;
+  project_name: string | null;
+  wbs_task_id: string | null;
+  wbs_code: string | null;
+  wbs_name: string | null;
+  title: string;
+  description: string;
+  acceptance_criteria: string | null;
+  task_type: string;
+  registrar: string;
+  registrar_name: string | null;
+  assignee: string | null;
+  assignee_name: string | null;
+  priority: TicketPriority;
+  environment: string | null;
+  version: string | null;
+  plan_start: string | null;
+  plan_date: string | null;
+  plan_effort: number | null;
+  actual_effort: number | null;
+  status: ProjectDevelopmentTaskStatus;
+  /** Derived from append-only progress; task status remains the completion authority. */
+  completion_percent: number;
+  completion_note: string | null;
+  done_at: string | null;
+  created_at: string;
+  progress_entries: TaskProgressEntry[];
+  latest_progress: TaskProgressEntry | null;
   capabilities: TaskCapabilities;
 }
 
@@ -1238,6 +1350,10 @@ export interface ProjectRow {
   red_risks: number;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 项目详情 */
@@ -1288,6 +1404,9 @@ export interface ProjectDetail extends ProjectRow {
   process: TicketProcess | null;
   /** 当前用户是否有 projects.edit 权限（写操作按钮显隐） */
   can_edit: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** WBS 任务状态（状态由后端计算；已延期 = 实际结束晚于计划结束或已超期未完成） */
@@ -1334,6 +1453,10 @@ export interface WbsTask {
   /** 前置任务的 WBS 编号（展示用） */
   predecessor_codes: string[];
   sort: number;
+  /** 当前完成度为 100% 时作为交付记录锁定删除；修正到 100% 以下后重新开放。 */
+  completed_locked: boolean;
+  /** 当前完成度为 100% 时锁定层级、排序与新增子任务。 */
+  structure_locked: boolean;
 }
 
 /** 里程碑跟踪派生行（GET /projects/{id}/milestone-tracking，只读，来自 WBS is_milestone=true） */
@@ -1379,7 +1502,42 @@ export interface CostEntry {
   id: string;
   entry_date: string;
   amount_10k: number;
+  amount_cny: string;
+  category: 'software' | 'hardware' | 'service' | 'labor' | 'other' | 'legacy';
+  cost_type: 'incurred' | 'committed';
+  supplier: string | null;
+  wbs_task_id: string | null;
   note: string | null;
+}
+
+export interface ProjectBudgetItem {
+  id: string;
+  category: 'software' | 'hardware' | 'service' | 'labor' | 'other';
+  name: string;
+  amount_cny: string;
+  note: string | null;
+}
+
+export interface ProjectEffortEntry {
+  id: string;
+  person_id: string;
+  person_name: string | null;
+  work_date: string;
+  effort_days: string;
+  role_type: 'design' | 'development' | 'testing' | 'implementation' | 'pm' | 'operations' | 'other';
+  standard_rate_cny_per_day: string | null;
+  wbs_task_id: string | null;
+  note: string | null;
+}
+
+export interface ProjectInvestmentSummary {
+  budget_cny: string;
+  incurred_cost_cny: string;
+  committed_cost_cny: string;
+  effort_days: string;
+  effort_cost_cny: string;
+  budget_execution_rate: number | null;
+  categories: Array<{ category: string; budget_cny: string; actual_cny: string }>;
 }
 
 /** 章程解析：WBS 草稿行 */
@@ -1457,6 +1615,7 @@ export interface AttachmentItem {
 /** 需求状态 */
 export type RequirementStatus =
   | 'registered'
+  | 'supplementing'
   | 'evaluating'
   | 'analyzing'
   | 'implementing'
@@ -1470,6 +1629,7 @@ export const REQ_STATUS: Record<
   { label: string; badge: 'default' | 'processing' | 'success' | 'warning'; color?: string }
 > = {
   registered: { label: '已登记', badge: 'default', color: 'blue' },
+  supplementing: { label: '待登记人补充', badge: 'warning', color: 'orange' },
   evaluating: { label: '评估中', badge: 'processing', color: 'cyan' },
   analyzing: { label: '分析中', badge: 'processing' },
   implementing: { label: '实现中', badge: 'processing', color: 'purple' },
@@ -1548,6 +1708,7 @@ export const REQ_TASK_STATUS_COLORS: Record<RequirementTaskStatus, string> = {
 /** 需求任务（实现阶段分解） */
 export interface RequirementTask {
   id: string;
+  task_code: string;
   name: string;
   /** 任务描述 */
   description?: string | null;
@@ -1561,13 +1722,20 @@ export interface RequirementTask {
   actual_effort?: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
+  created_at: string;
+  /** 当前用户是否可删除此任务（进行中任务仅管理员可删） */
+  can_delete?: boolean;
 }
 
 /** 排期/实现中的需求任务行（GET /requirements/tasks/active）：跨需求聚合的任务清单 */
 export interface ActiveTaskRow {
   id: string;
+  task_code: string;
   name: string;
   description: string | null;
+  /** 登记人（人员主数据 id）；需求转化任务继承需求登记人。 */
+  registrar: string | null;
+  registrar_name: string | null;
   /** 处理人（人员主数据 id） */
   assignee: string | null;
   assignee_name: string | null;
@@ -1576,12 +1744,13 @@ export interface ActiveTaskRow {
   actual_effort: number | null;
   status: RequirementTaskStatus;
   done_at: string | null;
-  requirement_id: string;
-  requirement_code: string;
-  requirement_title: string;
+  created_at: string;
+  requirement_id: string | null;
+  requirement_code: string | null;
+  requirement_title: string | null;
   /** 所属需求状态 code（analyzing/implementing） */
-  requirement_status: RequirementStatus | string;
-  requirement_status_name: string;
+  requirement_status: RequirementStatus | string | null;
+  requirement_status_name: string | null;
   requirement_owner_name: string | null;
   business_domain_name: string | null;
   /** MoSCoW 优先级 */
@@ -1592,6 +1761,10 @@ export interface ActiveTaskRow {
   weighted_total: number | null;
   /** 当前用户是否可维护该实现中需求的任务 */
   can_manage_tasks?: boolean;
+  /** 当前用户是否可编辑此任务 */
+  can_edit?: boolean;
+  /** 当前用户是否可删除此任务（进行中任务仅管理员可删） */
+  can_delete?: boolean;
 }
 
 /** 需求列表行 */
@@ -1628,6 +1801,13 @@ export interface RequirementRow {
   weighted_total?: number | null;
   /** 四象限（中文权威值：战略下注/速赢项目/低优先级/重新评估） */
   quadrant?: string | null;
+  /** 已持久化的六维评分。导入或历史数据可能没有评分历史行，详情页仍须以此回填。 */
+  d1_strategy?: number | null;
+  d2_value?: number | null;
+  d3_tech?: number | null;
+  d4_org?: number | null;
+  d5_risk?: number | null;
+  d6_speed?: number | null;
   /** 评估决议（中文权威值：通过/搁置/驳回） */
   decision?: string | null;
   /** PRD 人天 */
@@ -1639,10 +1819,16 @@ export interface RequirementRow {
   // ---- M16 需求评审分流 ----
   /** 方案类型（中文权威值：二次开发/新购系统；方案评估阶段填写） */
   solution_type: string | null;
-  /** 实现路径（后端按方案类型+开发人天+阈值派生：需求开发实现/转项目管理；未填方案类型为 null） */
+  /** 已执行时冻结的实现路径快照；未分流时为 null。 */
+  implementation_route?: string | null;
+  /** 已执行路径使用快照；未分流时按方案类型+开发人天+阈值实时派生。 */
   route: string | null;
   /** 示例数据（列表置顶返回，后端强制只读） */
   is_example?: boolean;
+  can_edit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
 }
 
 /** 六维评分记录（多评审人；单人场景通常一条） */
@@ -1738,6 +1924,11 @@ export interface RequirementDetail extends RequirementRow {
   process: TicketProcess | null;
   /** 当前用户是否有 requirements.edit 权限 */
   can_edit: boolean;
+  /** 首个审批节点退回登记人后，当前用户可否补充并重新提交。 */
+  can_resubmit?: boolean;
+  can_delete?: boolean;
+  workflow_edit_mode?: string | null;
+  workflow_edit_locked_reason?: string | null;
   /** 当前用户是否可维护该需求的任务 */
   can_manage_tasks: boolean;
   /** 当前用户是否可删除该需求的任务 */
@@ -2314,4 +2505,202 @@ export interface PersonalAuditLog {
   action: string;
   summary: Record<string, unknown> | null;
   created_at: string;
+}
+
+/** 当前登录用户可处理的流程待办。 */
+export interface PersonalTodo {
+  id: string;
+  task_id: string;
+  entity_type: string;
+  entity_id: string;
+  code: string | null;
+  title: string | null;
+  process_name: string;
+  step_name: string;
+  step_seq: number | null;
+  assignee: string | null;
+  assignee_name: string | null;
+  due_at: string | null;
+  created_at: string;
+  link: string;
+}
+
+// ============ WA0 网页智能体 ============
+
+/** 浏览器只可提交由路由与显式页面白名单生成的非敏感上下文。 */
+export interface AssistantPageContext {
+  route: string;
+  page_type?: string;
+  entity_type?: string;
+  entity_id?: string;
+  tab?: string;
+  selected_ids: string[];
+}
+
+export interface AssistantBootstrap {
+  enabled: boolean;
+  profile: { code: string; version: number } | null;
+  max_risk: 'L1' | 'L2' | 'L3' | null;
+  suggested_prompts: string[];
+  retention_days: number | null;
+  fallback_available: boolean;
+}
+
+export interface AssistantConversation {
+  id: string;
+  language: string;
+  page_context: AssistantPageContext;
+  status: 'active' | 'archived' | string;
+  expires_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+}
+
+export interface AssistantServerMessage {
+  id: string;
+  role: 'assistant';
+  content: {
+    text?: string;
+    advisory_text?: string;
+    authority?: 'advisory' | 'server_preview' | string;
+    operation_status?: 'not_executed' | 'prepared_not_executed' | string;
+    action_id?: string;
+  };
+  status: 'completed' | string;
+}
+
+export type AssistantActionStatus =
+  | 'prepared'
+  | 'executing'
+  | 'confirming'
+  | 'cancelling'
+  | 'succeeded'
+  | 'cancelled'
+  | 'expired'
+  | 'conflict'
+  | 'failed';
+
+export interface AssistantActionPayload {
+  action_id: string;
+  capability_code?: string;
+  risk: 'L3';
+  status?: AssistantActionStatus;
+  preview?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  confirmation_token?: string;
+  confirmation_expires_at?: string | null;
+  expires_at?: string | null;
+}
+
+export type AssistantSseEvent =
+  | { type: 'meta'; data: Record<string, unknown> }
+  | { type: 'delta'; data: { text?: string } }
+  | { type: 'message'; data: { message?: AssistantServerMessage } }
+  | { type: 'action'; data: AssistantActionPayload }
+  | { type: 'error'; data: { code?: string; message?: string; retryable?: boolean; fallback_path?: string } }
+  | { type: 'done'; data: { finish_reason?: string } };
+
+/** 管理端模型提供商响应不含 api_key；has_secret 是唯一密钥状态。 */
+export interface AiProviderConfig {
+  id: string;
+  code: string;
+  name: string;
+  provider_type: 'openai_compatible';
+  api_base_url: string;
+  model: string;
+  timeout_seconds: number;
+  max_output_tokens: number;
+  temperature: number | null;
+  capability_probe: Partial<Record<
+    'authentication' | 'supports_streaming' | 'supports_tools' | 'supports_json_schema' | 'error_code' | 'error_message',
+    boolean | string | null
+  >>;
+  probe_status: 'success' | 'failed' | string | null;
+  last_probed_at: string | null;
+  is_primary: boolean;
+  fallback_provider_id: string | null;
+  enabled: boolean;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AiProviderWrite {
+  code?: string;
+  name: string;
+  provider_type?: 'openai_compatible';
+  api_base_url: string;
+  api_key?: string;
+  model: string;
+  timeout_seconds: number;
+  max_output_tokens: number;
+  temperature?: number | null;
+  is_primary: boolean;
+  fallback_provider_id?: string | null;
+  enabled: boolean;
+}
+
+export interface AiProfileDraft {
+  id: string;
+  code: 'requester' | 'bdo' | 'it_staff' | 'admin';
+  name: string;
+  audience: 'requester' | 'bdo' | 'it' | 'admin';
+  default_provider_id: string | null;
+  retention_days: number;
+  status: string;
+  enabled: boolean;
+  system_prompt_zh: string;
+  system_prompt_en: string;
+  enabled_capabilities: string[];
+  knowledge_scope: string[];
+  max_risk_level: 'L1' | 'L2' | 'L3';
+  draft_updated_at: string;
+  latest_published_version: number | null;
+}
+
+export interface AiProfileVersion {
+  id: string;
+  version: number;
+  status: string;
+  system_prompt_zh: string;
+  system_prompt_en: string;
+  enabled_capabilities: string[];
+  knowledge_scope: string[];
+  max_risk_level: 'L1' | 'L2' | 'L3';
+  config_schema_version: number | null;
+  name: string;
+  default_provider_id: string | null;
+  retention_days: number;
+  enabled: boolean;
+  published_at: string | null;
+}
+
+export interface AiHealthSummary {
+  providers: { total: number; enabled: number; healthy: number; failed: number; unverified: number };
+  profiles: { fixed_total: number; published: number; enabled: number };
+}
+
+export interface AiUsageSummary {
+  window_days: number;
+  window_started_at: string;
+  total_calls: number;
+  completed_calls: number;
+  failed_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  average_duration_ms: number;
+  by_provider: { provider_code: string; calls: number; input_tokens: number; output_tokens: number }[];
+  by_result_code: { result_code: string; count: number }[];
+}
+
+export interface AiActionAuditRow {
+  id: string;
+  capability_code: string;
+  risk_level: string;
+  status: string;
+  result_code: string | null;
+  result_entity_type: string | null;
+  result_entity_id: string | null;
+  created_at: string;
+  consumed_at: string | null;
 }

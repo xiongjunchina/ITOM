@@ -19,6 +19,7 @@ from app.models import AuthUser, Problem, Project, RecordRelation, Requirement, 
 from app.services.audit import audit
 from app.services.permissions import TICKET_TYPE_MODULE, has_perm
 from app.services.rbac import effective_roles
+from app.services.requirement_access import can_view_requirement
 
 
 ENTITY_MODELS = {
@@ -155,7 +156,7 @@ def can_view_record(db: Session, user: AuthUser, entity_type: str, record: Any) 
             return False
         return record.submitter == user.id or has_perm(db, user, _record_module(entity_type, record), "view")
     if entity_type == "requirement":
-        return not _is_requester_only(db, user) or record.requester == user.id
+        return can_view_requirement(db, user, record)
     return has_perm(db, user, _record_module(entity_type, record), "view")
 
 

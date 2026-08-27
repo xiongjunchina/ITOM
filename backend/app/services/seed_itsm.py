@@ -70,17 +70,19 @@ PROJECT_TRANSITIONS = [
 
 REQUIREMENT_STATUSES = [
     ("requirement", "registered", "已登记", True, False, 1),
-    ("requirement", "evaluating", "评估中", False, False, 2),
-    ("requirement", "analyzing", "分析中", False, False, 3),
-    ("requirement", "implementing", "实现中", False, False, 4),
-    ("requirement", "closed", "已关闭", False, True, 5),
-    ("requirement", "on_hold", "已搁置", False, False, 6),
-    ("requirement", "cancelled", "已取消", False, True, 7),
+    ("requirement", "supplementing", "待登记人补充", False, False, 2),
+    ("requirement", "evaluating", "评估中", False, False, 3),
+    ("requirement", "analyzing", "分析中", False, False, 4),
+    ("requirement", "implementing", "实现中", False, False, 5),
+    ("requirement", "closed", "已关闭", False, True, 6),
+    ("requirement", "on_hold", "已搁置", False, False, 7),
+    ("requirement", "cancelled", "已取消", False, True, 8),
 ]
 
 REQUIREMENT_TRANSITIONS = [
     # 主漏斗：登记 → 评估 → 分析 → 实现 → 关闭
     ("requirement", "registered", "evaluating", []),
+    ("requirement", "supplementing", "evaluating", []),
     ("requirement", "evaluating", "analyzing", []),   # 评估门：需决议=立项（service 校验）
     ("requirement", "registered", "analyzing", []),   # 小需求可跳过评估
     ("requirement", "analyzing", "implementing", []),
@@ -270,8 +272,16 @@ def run_seed_itsm(db: Session):
         if not db.query(MasterData).filter_by(category=category, code=code).first():
             db.add(MasterData(category=category, code=code, name=name, sort=sort))
     for etype, code, name, initial, terminal, sort in PROBLEM_STATUSES + TICKET_STATUSES + PROJECT_STATUSES + REQUIREMENT_STATUSES:
-        if not db.query(WorkflowStatus).filter_by(entity_type=etype, code=code).first():
+        status = db.query(WorkflowStatus).filter_by(entity_type=etype, code=code).first()
+        if not status:
             db.add(WorkflowStatus(entity_type=etype, code=code, name=name, is_initial=initial, is_terminal=terminal, sort=sort))
+        else:
+            # 状态字典是页面顺序与流转语义的权威配置。新增中间状态后，
+            # 同步既有行的展示顺序，避免存量环境出现重复 sort。
+            status.name = name
+            status.is_initial = initial
+            status.is_terminal = terminal
+            status.sort = sort
     for etype, frm, to, roles in PROBLEM_TRANSITIONS + TICKET_TRANSITIONS + PROJECT_TRANSITIONS + REQUIREMENT_TRANSITIONS:
         if not db.query(WorkflowTransition).filter_by(entity_type=etype, from_code=frm, to_code=to).first():
             db.add(WorkflowTransition(entity_type=etype, from_code=frm, to_code=to, allowed_roles=roles))

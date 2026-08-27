@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Button,
   DatePicker,
@@ -7,16 +7,28 @@ import {
   Input,
   InputNumber,
   Modal,
+  Progress,
   Select,
   Space,
   Switch,
   Tag,
+  Timeline,
+  Typography,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  CalendarOutlined,
+  CheckCircleOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  StopOutlined,
+} from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import { api } from '../../api/client';
 import type { Member, TicketPriority, WorkTaskRow, WorkTaskStatus } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
@@ -49,11 +61,16 @@ export default function DelegatedTasksPage() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>();
   const [mineOnly, setMineOnly] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editing, setEditing] = useState<WorkTaskRow | null>(null);
   const [transitioning, setTransitioning] = useState<{ row: WorkTaskRow; to: WorkTaskStatus } | null>(null);
+  const [bulkTransitioning, setBulkTransitioning] = useState<WorkTaskStatus | null>(null);
+  const [detail, setDetail] = useState<WorkTaskRow | null>(null);
+  const [progressOpen, setProgressOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm<TaskFormValues>();
   const [transitionForm] = Form.useForm<{ reason: string }>();
+  const [progressForm] = Form.useForm<{ progress_percent?: number; comment: string }>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -141,19 +158,56 @@ export default function DelegatedTasksPage() {
   };
 
   const submitTransition = async () => {
-    if (!transitioning) return;
+    if (!transitioning && !bulkTransitioning) return;
     const values = await transitionForm.validateFields();
     setSaving(true);
     try {
-      await api.post(`/task-management/work-tasks/${transitioning.row.id}/transition`, { to: transitioning.to, reason: values.reason || '' });
-      message.success(t('task.transitionDone'));
-      setTransitioning(null);
+      if (transitioning) {
+        await api.post(`/task-management/work-tasks/${transitioning.row.id}/transition`, { to: transitioning.to, reason: values.reason || '' });
+        message.success(t('task.transitionDone'));
+        setTransitioning(null);
+      } else if (bulkTransitioning) {
+        const eligible = rows.filter((row) => (
+          selectedIds.includes(row.id)
+          && row.capabilities.transition
+          && NEXT[row.status].includes(bulkTransitioning)
+        ));
+        let succeeded = 0;
+        const failures: string[] = [];
+        for (const row of eligible) {
+          try {
+            await api.post(`/task-management/work-tasks/${row.id}/transition`, {
+              to: bulkTransitioning,
+              reason: values.reason || '',
+            });
+            succeeded += 1;
+          } catch {
+            failures.push(row.task_code);
+          }
+        }
+        const skipped = selectedIds.length - eligible.length;
+        if (failures.length === 0) {
+          message.success(`已${bulkTransitioning} ${succeeded} 条；跳过 ${skipped} 条不适用记录`);
+        } else {
+          Modal.warning({
+            title: '批量操作结果',
+            content: `成功 ${succeeded} 条，跳过 ${skipped} 条，失败 ${failures.length} 条：${failures.join('、')}`,
+          });
+        }
+        setBulkTransitioning(null);
+        setSelectedIds([]);
+      }
       await load();
     } catch {
       // API client 已统一提示错误
     } finally {
       setSaving(false);
     }
+  };
+
+  const openBulkTransition = (to: WorkTaskStatus) => {
+    transitionForm.resetFields();
+    setBulkTransitioning(to);
   };
 
   const remove = (row: WorkTaskRow) => {
@@ -163,8 +217,29 @@ export default function DelegatedTasksPage() {
     });
   };
 
+  const openDetail = async (row: WorkTaskRow) => {
+    const current = await api.get<WorkTaskRow>(`/task-management/work-tasks/${row.id}`);
+    setDetail(current);
+  };
+
+  const submitProgress = async () => {
+    if (!detail) return;
+    const values = await progressForm.validateFields();
+    setSaving(true);
+    try {
+      const current = await api.post<WorkTaskRow>(`/task-management/work-tasks/${detail.id}/progress`, values);
+      message.success(t('task.progress.saved'));
+      setDetail(current);
+      setProgressOpen(false);
+      progressForm.resetFields();
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const columns: ColumnsType<WorkTaskRow> = [
-    { title: t('task.code'), dataIndex: 'task_code', width: 140 },
+    { title: t('task.code'), dataIndex: 'task_code', width: 140, render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void openDetail(row)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 260, ellipsis: true },
     { title: t('task.taskType'), dataIndex: 'task_type', width: 110 },
     { title: t('task.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
@@ -172,9 +247,11 @@ export default function DelegatedTasksPage() {
     { title: t('task.priority'), dataIndex: 'priority', width: 90, render: (v: TicketPriority) => <Tag color={PRIORITY_COLORS[v]}>{v}</Tag> },
     { title: t('common.status'), dataIndex: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
     { title: t('task.planDate'), dataIndex: 'plan_date', width: 120, render: (v) => v || '-' },
+    { title: t('task.progress.latest'), dataIndex: 'latest_progress', width: 220, ellipsis: true, render: (v: WorkTaskRow['latest_progress']) => v?.comment || '-' },
     {
       title: t('common.actions'), key: 'actions', width: 240, fixed: 'right',
       render: (_: unknown, row: WorkTaskRow) => <Space size={0} wrap>
+        <Button type="link" size="small" onClick={() => void openDetail(row)}>{t('common.detail')}</Button>
         {row.capabilities.edit && <Button type="link" size="small" onClick={() => openEdit(row)}>{t('common.edit')}</Button>}
         {row.capabilities.transition && NEXT[row.status].map((next) => <Button key={next} type="link" size="small" onClick={() => openTransition(row, next)}>{next}</Button>)}
         {row.capabilities.delete && <Button type="link" size="small" danger onClick={() => remove(row)}>{t('common.delete')}</Button>}
@@ -182,16 +259,54 @@ export default function DelegatedTasksPage() {
     },
   ];
 
+  const selectedRows = rows.filter((row) => selectedIds.includes(row.id));
+  const deletableSelectedIds = selectedRows.filter((row) => row.capabilities.delete).map((row) => row.id);
+  const transitionMeta: Array<{ to: WorkTaskStatus; icon: ReactNode }> = [
+    { to: '排期', icon: <CalendarOutlined /> },
+    { to: '执行', icon: <PlayCircleOutlined /> },
+    { to: '暂停', icon: <PauseCircleOutlined /> },
+    { to: '关闭', icon: <CheckCircleOutlined /> },
+    { to: '中止', icon: <StopOutlined /> },
+  ];
+  const batchTransitionActions = transitionMeta.flatMap(({ to, icon }) => {
+    const count = selectedRows.filter((row) => row.capabilities.transition && NEXT[row.status].includes(to)).length;
+    return count > 0 ? [{
+      key: `transition-${to}`,
+      label: `${to}（${count}）`,
+      icon,
+      danger: to === '中止',
+      onClick: () => openBulkTransition(to),
+    }] : [];
+  });
+
   return (
     <div>
       <Space wrap style={{ marginBottom: 16 }}>
         <Select allowClear style={{ width: 140 }} placeholder={t('task.filter.status')} value={status} onChange={setStatus} options={STATUSES.map((v) => ({ value: v, label: v }))} />
         <span>{t('task.filter.onlyMine')} <Switch checked={mineOnly} onChange={setMineOnly} /></span>
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>{t('common.refresh')}</Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.register')}</Button>
+        <Button className="task-register-hitbox" type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.register')}</Button>
       </Space>
+      <BatchDeleteToolbar
+        endpoint="/task-management/work-tasks/batch-delete"
+        selectedIds={deletableSelectedIds}
+        selectedCount={selectedIds.length}
+        entityName="委派任务"
+        actions={batchTransitionActions}
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
       <Table<WorkTaskRow>
         rowKey="id" loading={loading} columns={columns} dataSource={rows}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({
+            disabled: !row.capabilities.delete && !(row.capabilities.transition && NEXT[row.status].length > 0),
+          }),
+        }}
         standardToolbar={{ exportFileName: '委派任务', searchPlaceholder: t('task.search') }} sticky scroll={{ x: 1320 }} pagination={false}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.empty')} /> }}
       />
@@ -217,8 +332,57 @@ export default function DelegatedTasksPage() {
         </Form>
       </Modal>
 
-      <Modal title={`${t('task.transition')}${transitioning ? `：${transitioning.to}` : ''}`} open={!!transitioning} onOk={() => void submitTransition()} confirmLoading={saving} onCancel={() => setTransitioning(null)} destroyOnClose>
-        <Form form={transitionForm} layout="vertical"><Form.Item name="reason" label={transitioning && ['暂停', '中止', '关闭'].includes(transitioning.to) ? t('task.reason') : t('common.remark')} rules={transitioning && ['暂停', '中止'].includes(transitioning.to) ? [{ required: true, min: 2, message: t('task.reasonRequired') }] : []}><Input.TextArea rows={3} /></Form.Item></Form>
+      <Modal
+        title={`${t('task.transition')}：${transitioning?.to ?? bulkTransitioning ?? ''}${bulkTransitioning ? `（批量）` : ''}`}
+        open={!!transitioning || !!bulkTransitioning}
+        onOk={() => void submitTransition()}
+        confirmLoading={saving}
+        onCancel={() => { setTransitioning(null); setBulkTransitioning(null); }}
+        destroyOnClose
+      >
+        <Form form={transitionForm} layout="vertical">
+          <Form.Item
+            name="reason"
+            label={['暂停', '中止', '关闭'].includes(transitioning?.to ?? bulkTransitioning ?? '') ? t('task.reason') : t('common.remark')}
+            rules={['暂停', '中止'].includes(transitioning?.to ?? bulkTransitioning ?? '') ? [{ required: true, min: 2, message: t('task.reasonRequired') }] : []}
+          >
+            <Input.TextArea rows={3} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={detail ? `${detail.task_code} · ${detail.title}` : t('common.detail')} open={!!detail} footer={null} onCancel={() => setDetail(null)} width={760} destroyOnClose>
+        {detail && <>
+          <Space wrap style={{ marginBottom: 12 }}>
+            <Tag>{detail.status}</Tag>
+            <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
+            {detail.capabilities.progress && <Button type="primary" onClick={() => { progressForm.resetFields(); setProgressOpen(true); }}>{t('task.progress.add')}</Button>}
+          </Space>
+          <Typography.Paragraph>{detail.description}</Typography.Paragraph>
+          <Typography.Text strong>{t('task.progress.timeline')}</Typography.Text>
+          <Timeline
+            style={{ marginTop: 18 }}
+            items={detail.progress_entries.map((entry) => ({
+              children: <div>
+                <Space wrap>
+                  <Typography.Text strong>{entry.author_name || '-'}</Typography.Text>
+                  <Tag>{entry.status_snapshot}</Tag>
+                  {entry.progress_percent != null && <Progress percent={entry.progress_percent} size="small" style={{ width: 160 }} />}
+                  <Typography.Text type="secondary">{dayjs(entry.created_at).format('YYYY-MM-DD HH:mm')}</Typography.Text>
+                </Space>
+                <div>{entry.comment}</div>
+              </div>,
+            }))}
+          />
+          {detail.progress_entries.length === 0 && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.progress.empty')} />}
+        </>}
+      </Modal>
+
+      <Modal title={t('task.progress.add')} open={progressOpen} onOk={() => void submitProgress()} confirmLoading={saving} onCancel={() => setProgressOpen(false)} destroyOnClose>
+        <Form form={progressForm} layout="vertical">
+          <Form.Item name="progress_percent" label={t('task.progress.percent')}><InputNumber min={0} max={100} precision={0} addonAfter="%" style={{ width: 180 }} /></Form.Item>
+          <Form.Item name="comment" label={t('task.progress.comment')} rules={[{ required: true, message: t('task.progress.commentRequired') }]}><Input.TextArea rows={4} maxLength={2000} /></Form.Item>
+        </Form>
       </Modal>
     </div>
   );

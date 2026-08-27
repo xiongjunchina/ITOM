@@ -75,7 +75,7 @@ const ZH_SECTIONS: ManualSection[] = [
     summary: '所有业务表格采用统一的搜索、筛选、排序、分页和横向浏览规则。',
     logic: [
       '表头字段可点击排序；分页支持 10/20/50/100 条每页。',
-      '表格超过内容区域时，底部保留横向滚动条，纵向滚动时表头保持可见。',
+      '表格超过内容区域时，当前活动宽表显示浏览器原生、可拖拽的底部悬浮横向滚动条；若它尚未完成测量或浏览器异常，表内原生横向滚动条仍可使用。',
       '提供下载模板时，必须保持工作表名称、列名和隐藏校验列不变；导入失败会返回工作表、行号和原因。',
       '示例数据只用于字段说明，不能编辑或参与业务流转；系统管理员可明确删除。',
     ],
@@ -110,7 +110,7 @@ const ZH_SECTIONS: ManualSection[] = [
       '项目经理只能从数字化团队成员中选择。章程导入可解析目标、范围、组织、里程碑和 WBS 草稿。',
       'WBS 完成度提供 0%/50%/100% 预设，也支持填写 0–100% 自定义比例。',
       '父级设为 100% 会级联子级；修改子级后父级按直接子项平均值递归回算。项目进度按末级任务工期加权。',
-      'WBS 支持冻结表头和前三列、列宽/行高调整以及底部横向滚动条。',
+      'WBS 支持冻结表头和前三列、列宽/行高调整，以及浏览器原生底部横向滚动条和表内原生兜底。',
     ],
     steps: ['进入“项目管理 → 项目列表”，新建项目并填写经理、日期、预算和描述。', '需要时上传章程并确认解析结果。', '在项目详情维护里程碑和 WBS。', '按流程完成立项、执行监控和收尾复盘。'],
   },
@@ -119,11 +119,13 @@ const ZH_SECTIONS: ManualSection[] = [
     title: '需求管理',
     summary: '从需求登记到评审、方案评估、路由和验收形成闭环。',
     logic: [
-      '需求总览负责登记、澄清和决议；任务跟踪负责拆分任务和执行进度；评分规则负责维度和权重。',
+      '需求总览负责登记、澄清和决议；任务跟踪负责拆分任务和执行进度；需求评分规则负责维度和权重。',
       '登记前必须至少存在一个已启用的业务域；网页和 Aily MCP 只使用真实业务域列表，列表为空时先由管理员完成配置。',
+      '普通业务用户只看本人需求；BDO 在 ITOM 网页端还可查看其被配置为业务 BDO 的服务域全部需求，但 Aily/MCP 仍只看本人需求，且不会因此获得评审权限。',
+      '开发任务清单显示登记人：网页直接登记取当前登录人员，需求转化取原需求登记人，项目/WBS 转化取项目经理，Bug 修复取 Bug 登记人。',
       '需求可转开发、转项目、暂缓或拒绝；节点处理人和知会人由流程定义决定。',
     ],
-    steps: ['在需求总览登记需求并选择业务域。', '根据当前节点补充分析、方案和评审结论。', '在任务跟踪查看责任人、计划日期和完成情况。', '需要调整评价口径时，由管理员维护评分规则。'],
+    steps: ['在需求总览登记需求并选择业务域。', '根据当前节点补充分析、方案和评审结论。', '在任务跟踪查看责任人、计划日期和完成情况。', '需要调整评价口径时，由管理员维护需求评分规则。'],
   },
   {
     id: 'team',
@@ -132,7 +134,7 @@ const ZH_SECTIONS: ManualSection[] = [
     logic: [
       '团队总览展示数字化团队人数、负载、培训、招聘和积分；面板布局按账号保存。',
       '人效评分默认由角色贡献 80% + 团队贡献 20% 组成；多人评审按配置权重汇总。',
-      '外部原数据只允许录入 external_business_satisfaction，评价对象必须是业务服务域，作用于该域负责人、备份负责人和 IT BP。',
+      '外部原数据只允许录入 external_business_satisfaction，评价对象必须是业务服务域，作用于该域 IT 侧负责人（BM）和 IT BP，不作用于业务 BDO。',
       '学习任务记录目标、完成进度、佐证和说明，进度比例自动换算团队贡献积分。',
     ],
     steps: [
@@ -151,6 +153,7 @@ const ZH_SECTIONS: ManualSection[] = [
     logic: [
       '处理节点使用“完成此步骤”；审批节点支持“同意”和“驳回”。同意理由可选，驳回理由必填。',
       '知会节点只发送通知，不生成待办；未指派节点可由有权限的人员认领。',
+      '当前待办处理人或管理员可将当前任务转派给另一名在岗且已开通 ITOM 的人员；转派不改变流程节点和业务状态，并保留审计、通知新处理人。',
       '存量单据使用创建时的流程快照，新发布版本只作用于新单据。',
     ],
     steps: ['在流程定义配置节点类型、处理人、知会人、角色和自动化等级。', '发布流程版本。', '在流程监控按类型、状态、当前节点和处理人定位运行中单据。', '进入详情完成、同意、驳回或认领操作。'],
@@ -197,7 +200,7 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'common', title: 'Common list and data actions', summary: 'Business tables share search, filters, sorting, pagination, and horizontal browsing.',
-    logic: ['Headers sort ascending/descending; page sizes are 10/20/50/100.', 'Wide tables retain one bottom scrollbar and a visible header.', 'Use the latest downloaded template without changing sheet names, columns, or validation columns.', 'Example rows are read-only and can be deleted by administrators.'],
+    logic: ['Headers sort ascending/descending; page sizes are 10/20/50/100.', 'The active wide table gets one browser-native, draggable bottom scrollbar and a visible header; the in-table native scrollbar remains available until the floating control is measured and usable, and remains the fallback on failure.', 'Use the latest downloaded template without changing sheet names, columns, or validation columns.', 'Example rows are read-only and can be deleted by administrators.'],
     steps: ['Search by keyword.', 'Apply a core-field filter.', 'Click a header to sort.', 'For bulk work, download, fill, import, and fix rejected rows.'],
   },
   {
@@ -213,7 +216,7 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'requirements', title: 'Requirement management', summary: 'Close the loop from registration and review through solution routing and acceptance.',
-    logic: ['Overview handles registration and decisions; Task Tracking handles execution; Scoring Rules handles dimensions and weights.', 'At least one active business domain is required; the web UI and Aily MCP use only the live domain list and report an explicit blocker when it is empty.', 'Requirements route to development, projects, deferment, or rejection through workflow.'],
+    logic: ['Overview handles registration and decisions; Task Tracking handles execution; Requirement Scoring Rules handles dimensions and weights.', 'At least one active business domain is required; the web UI and Aily MCP use only the live domain list and report an explicit blocker when it is empty.', 'A normal business user sees only own requirements. In the ITOM web module, a BDO additionally sees requirements in domains where that person is the configured business BDO; Aily/MCP remains owner-only and the wider view grants no review authority.', 'Development-task lists show the registrar: direct web registration uses the signed-in person, requirement conversion uses the original requirement requester, project/WBS conversion uses the project manager, and Bug repair uses the Bug reporter.', 'Requirements route to development, projects, deferment, or rejection through workflow.'],
     steps: ['Register a requirement and select its domain.', 'Add analysis, solution, and review results at the current step.', 'Track owners, dates, and completion in Task Tracking.', 'Maintain scoring rules when the evaluation model changes.'],
   },
   {
@@ -224,8 +227,8 @@ const EN_SECTIONS: ManualSection[] = [
   },
   {
     id: 'process', title: 'Process center', summary: 'Define workflows and monitor running records.',
-    logic: ['Processing nodes use Complete Step; approval nodes support Approve and Reject.', 'Approval comments are optional; rejection reasons are mandatory.', 'CC recipients receive notifications without a task.', 'Existing records retain their creation-time process snapshot.'],
-    steps: ['Configure node types, handlers, CC recipients, roles, and automation.', 'Publish the process version.', 'Filter running records in Process Monitor.', 'Complete, approve, reject, or claim the current action.'],
+    logic: ['Processing nodes use Complete Step; approval nodes support Approve and Reject.', 'Approval comments are optional; rejection reasons are mandatory.', 'The current pending handler or an administrator may reassign the current task to another active, in-position ITOM user without changing node or business state; the transfer is audited and notified.', 'CC recipients receive notifications without a task.', 'Existing records retain their creation-time process snapshot.'],
+    steps: ['Configure node types, handlers, CC recipients, roles, and automation.', 'Publish the process version.', 'Filter running records in Process Monitor.', 'Complete, approve, reject, claim, or reassign the current action.'],
   },
   {
     id: 'admin', title: 'System administration', summary: 'Organization, users, permissions, dictionaries, integrations, branding, and audit.',
@@ -287,7 +290,7 @@ function buildDetailedArticles(english: boolean): HelpArticle[] {
           'The requester reviews the result and accepts or returns it with a reason.',
           'After closure, use the audit trail and SLA details to confirm the hand-off was captured.',
         ],
-        role: 'Requesters submit and accept. IT handlers process the current node. Administrators/CIOs can reassign or reopen only when the permission matrix allows it.',
+        role: 'Requesters submit and accept. IT handlers process the current node. The current pending handler or an administrator may reassign the task to an eligible active ITOM user; reopen remains permission-controlled.',
       },
       {
         id: 'itsm-change-flow', category: 'itsm', title: 'Change management: assess, approve, implement, and verify',
@@ -388,7 +391,7 @@ function buildDetailedArticles(english: boolean): HelpArticle[] {
         '登记人查看交付结果，选择验收通过或带理由退回。',
         '关闭后查看审计轨迹和 SLA 明细，确认责任交接已留痕。',
       ],
-      role: '业务用户负责提交和验收；IT 处理人负责当前节点；管理员/CIO 只有在权限矩阵允许时才能重分派或重开。',
+      role: '业务用户负责提交和验收；IT 处理人负责当前节点。当前待办处理人或管理员可转派给符合条件的在岗 ITOM 用户；重开仍按权限矩阵控制。',
     },
     {
       id: 'itsm-change-flow', category: 'itsm', title: '变更管理：评估、审批、实施、验证',

@@ -1,14 +1,14 @@
 # ITOM 飞书 Aily Agent + MCP Server 正式设计基线
 
-> 状态：**正式设计基线；P0/P1 已完成；P2 文本与验签卡片按钮的真实同单端到端 UAT 均已通过；P3 飞书审批暂缓，IDC 发布加固与正式验收待完成**
+> 状态：**正式设计基线；P0/P1 已完成；P2 文本与验签卡片按钮的真实同单端到端 UAT 均已通过；P3 飞书审批暂缓，IDC 可信 TLS 已部署并完成协议验收，安全/性能/恢复与当前版本真实角色正式 UAT 待完成**
 > 确认日期：2026-07-29
 > 权威语言：中文；英文镜像见 `docs/en/10-aily-mcp-handoff-and-decision-context.md`
 
 ## 1. 文档用途与状态口径
 
-本文是 `feature/aily-agent-mcp` 开发线的正式产品与架构基线，记录已经由用户确认的目标、边界、工具范围、数据设计、阶段和验收标准。后续实现不得重新使用飞书服务台方案，也不得把 Aily、MCP 或飞书平台变成第二套 ITOM 业务系统。
+本文最初形成于现已封存的 `feature/aily-agent-mcp` 开发线；当前 `feature/AI-agent-version` 继承其 Aily + MCP 能力并作为 Web Agent 后续唯一开发线。本文记录已经由用户确认的目标、边界、工具范围、数据设计、阶段和验收标准。后续实现不得重新使用飞书服务台方案，也不得把 Aily、MCP 或飞书平台变成第二套 ITOM 业务系统。
 
-本文同时记录目标契约与实际状态。当前分支已实现 P0 的协议/身份/消息底座、P1 的服务请求与 IT 需求入口，以及 P2 的受理/待确认打点、3 个闭环 MCP 工具、网页/MCP 共用确认语义、可靠用户消息和评价明细；P2 的真实对话闭环、机器人收件、普通用户同单文本闭环和验签卡片按钮闭环均已通过。P3 飞书审批按用户决定暂缓；IDC 已恢复并完成当前版本部署及公网协议探针，但可信 TLS、安全/性能/恢复和真实角色正式 UAT 仍待完成。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
+本文同时记录目标契约与实际状态。当前分支已实现 P0 的协议/身份/消息底座、P1 的服务请求与 IT 需求入口，以及 P2 的受理/待确认打点、3 个闭环 MCP 工具、网页/MCP 共用确认语义、可靠用户消息和评价明细；P2 的真实对话闭环、机器人收件、普通用户同单文本闭环和验签卡片按钮闭环均已通过。当前通用通知出口也已把进入 `notifier.notify()` 的 ITOM 通知接入飞书文本可靠发件箱，复用既有身份映射、偏好过滤、幂等、重试和后台发送器；服务请求解决通知仍由专用交互卡片链路负责。P3 飞书审批按用户决定暂缓；IDC 已恢复并完成当前版本部署、公网协议探针及可信 TLS 协议验收，安全/性能/恢复和当前版本真实角色正式 UAT 仍待完成。能力状态必须继续以当前分支的真实模型、路由、测试和 Git 记录为准。
 
 新会话开始前必须完整阅读 `AGENTS.md`、本文、`docs/03-PRD.md`、`docs/04-数据模型设计.md`、`docs/05-API契约与架构设计.md` 和 `docs/06-用户身份与组织模型设计.md`，并检查真实代码和 Git 状态。
 
@@ -20,7 +20,8 @@
 | 历史标签 | `v1.0.0-feishu-helpdesk` | 不可重写，是恢复冻结版的权威引用 |
 | 历史分支 | `release/feishu-helpdesk-v1` | 仅用于查看或维护历史版本 |
 | 稳定分支 | `main` | 只接受用户确认的 Pull Request |
-| 新版本开发分支 | `feature/aily-agent-mcp` | Aily + MCP 唯一长期开发线 |
+| 已封存开发分支 | `feature/aily-agent-mcp` | 保留 Aily + MCP 历史记录，不再接收提交 |
+| 当前开发分支 | `feature/AI-agent-version` | 继承 Aily + MCP 能力的 Web Agent 唯一开发线 |
 | 冻结工作区 | `/Users/xjun/Gitrepo/ITOM` | 不用于新版本开发 |
 | 新版本工作区 | `/Users/xjun/Gitrepo/ITOM-Aily-MCP` | 所有新版本工作均在此进行 |
 
@@ -66,9 +67,37 @@ IT 事件专指网络、服务器、应用等影响范围较大的故障，只�
 
 普通员工描述疑似大范围故障时，Aily 仍创建其本人的服务请求并标记“疑似大范围影响”；IT 人员确认后可关联已有事件或创建事件。普通用户和 Aily 不直接认定事件。
 
-### 3.4 IT 员工网页分流不改变 Aily 边界（已确认，待实现）
+### 3.4 IT 员工网页分流不改变 Aily 边界（阶段 A/B/C 已实现）
 
-IT 员工和系统管理员将获得网页“创建单据指引”轻量分流和跨单据关系能力；它只服务内部人员的 ITIL 判断，不对普通业务用户增加网页选择负担。Aily 中普通业务用户仍只创建服务请求，业务部门指定的 BDO 可登记 IT 需求；Aily 不执行服务请求→事件、服务请求/事件→问题、事件/问题→变更或需求→项目的转单。任何后续 MCP 范围扩展必须重新确认架构、权限、审计和用户体验。
+IT 员工和系统管理员已获得网页“创建单据指引”轻量分流和跨单据关系能力；它只服务内部人员的 ITIL 判断，不对普通业务用户增加网页选择负担。Aily 中普通业务用户仍只创建服务请求，业务部门指定的 BDO 可登记 IT 需求；Aily 不执行服务请求→事件、服务请求/事件→问题、事件/问题→变更或需求→项目的转单。任何后续 MCP 范围扩展必须重新确认架构、权限、审计和用户体验。
+
+### 3.5 ITOM 网页智能体（设计已确认；WA0 Task 1–8 已实现）
+
+Task 5 会话运行时只接受可证明完整的 schema 标记版本快照、双语提示、合法能力/风险、健康兼容提供商及与活动行一致的最新发布版本；`enabled_capabilities` 和 `knowledge_scope` 必须是原始合法 list，缺失、`null` 或畸形值不归一化为空列表；未发布、停用、删除或不一致均失败关闭。创建会话在同一事务先取得与 Task 4 发布/撤回相同的 PostgreSQL 治理锁，再 `FOR UPDATE` 重载目标档案、验证、插入和提交，SQLite 保留相同调用顺序作确定性测试。普通消息保留期只从创建时捕获的版本读取，绝不由活动档案或 `expires_at` 推断：捕获为 0 时后续正值再发布也不保存正文，捕获为 1–90 时保持原决定和创建时 `expires_at`，但当前档案撤销或受众不一致时停止新正文。所有正文先递归脱敏。`fallback_available` 只反映认证用户既有、权限感知“创建单据指引”的安全载荷可用性，不代表 WA1；列表页码限制为 1–10,000。PostgreSQL 双会话竞争留待 Task 9 IDC 验收，本轮未执行。
+
+Task 6 建立了通用 L3 动作边界：注册的固定 handler 必须实现 `authorize_preview/preview/authorize_record`。规范化输入若会被递归脱敏改变则统一拒绝，只有安全原值参与摘要和持久化。记录级预览授权先于元数据；预览使用独立、最终 rollback/close 的 Session，`authorize_preview/preview` 只接收独立 Session 内重新加载的 actor 上下文与 `ReadOnlyActionData` 门面。该门面不暴露 Session-like 属性，只接受显式、有界的 SQLAlchemy `Select` 标量投影，返回递归冻结的 `FrozenActionRecord`，并统一拒绝实体/关系结果、eager 结果、所有行锁、text/DML、过大 offset 与超限读取。PostgreSQL 在 handler 访问前设事务只读，ORM/DML 写入、textual SQL 事务语句及 flush/commit/rollback 均失败关闭，结果状态必须精确为 `prepared`。准备存在两条顺序化路径：已有 key 先无锁探测，再按 `AiAction → active 会话` 顺序锁定/重检并比较摘要；新动作则在 preview 后先锁定并刷新所属 active 会话，再无锁复查同 key，只有仍不存在才插入；命名唯一约束竞态会整笔 rollback 后以同样的 `AiAction → active 会话` 顺序恢复赢家。确认凭证只存 SHA-256、十分钟过期且一次消费；确认先 `FOR UPDATE` 锁动作，再锁定并刷新所属 active 会话，之后才沿 Task 4 governance/provider/profile 锁序完成 Task 5 的完整运行档案证明，确认会话捕获版本仍为当前发布版本且提供商仍启用、健康、兼容，随后仅通过 `ActionUnitOfWork.lock_one()/update_locked()`、`FrozenActionRecord` 快照和不暴露真实 ORM 身份的 `LockedActionRecord` 重算账号/角色/组权限/能力并调用记录级再授权。成功业务变更、`AiAction` 结果及通用审计在嵌套 savepoint 后由外层事务一次提交；处理器/审计失败只回滚 savepoint，保持动作行锁并把同一行提交为有界 `failed`，其 persistence 失败显式报错。处理器代码是受信任的进程内扩展代码，不是针对恶意 introspection/import hack 的沙箱；支持接口只保证正常用法下没有 Session 逃逸。取消、确认和重放均受所属用户和终态约束。SQLite 已覆盖确定性调用顺序、归档与 prepare/confirm 竞争、回滚结果、竞态注入和 savepoint，不构成 PostgreSQL 运行证明；Task 9 IDC 仍须留存只读预览、同/异载荷准备竞态、归档竞争以及确认失败等待者不重复执行 handler 的真实双会话证据。
+
+Fix Round 4 已把 Task 6 支持接口进一步固定为可验证的查询与 mutation 范围：`ReadOnlyActionData` 递归校验完整 SQLAlchemy AST，只允许单表直接标量列、同表安全条件/排序和编译期有界分页，拒绝任意层级子查询/CTE/行锁、join/alias、实体/关系、聚合/窗口/函数、text/raw SQL、跨表引用及动态/负数/超限分页；`LockedActionRecord` 绑定精确签发 UoW、Session、外层事务和 savepoint，成功更新即消费旧句柄并返回合并快照的新句柄。伪造、跨范围、事务结束后或重复使用均失败关闭。此轮没有新增具体业务能力或数据库字段，PostgreSQL 双会话运行证明仍归 Task 9 IDC 验收。
+
+Fix Round 5 封闭了 SQLAlchemy 不进入 visitor AST 的原始查询修饰入口：`_prefixes/_suffixes/_statement_hints/_hints` 任一非空即在执行前拒绝，字符串不解析、不设白名单；只读预览和 mutation `lock_one()` 共用此门禁。该修复不新增能力、字段或迁移，也不改变 Task 9 PostgreSQL/IDC 延后证据范围。
+
+网页智能体采用双入口、统一能力内核：网页使用当前 ITOM 登录会话，Aily 保持现有 JWT/MCP 身份，两者只复用下层领域服务和业务约束。WA0 Task 1–8 已实现默认关闭的持久化与 `admin_ai` 权限基础、固定能力注册/请求级策略/递归脱敏、安全 OpenAI-compatible 模型网关、仅限 `admin_ai` 的提供商/四类固定档案管理 API、当前登录用户的会话 API、L3 预览/确认/取消通用动作边界，以及事件固定为 `meta|delta|message|action|error|done` 的受控 POST-SSE/工具循环。Task 7 Fix Round 1 把运行时收紧为标量 turn 快照和分段短事务：L1/L2 只取得只读门面与不可变 actor，L3 只产生服务端“待确认、未执行”预览，普通模型 prose 只作为 `advisory/not_executed`，请求幂等摘要使用服务端密钥 HMAC。Fix Round 2 进一步完成四项收口：提示泄漏检测使用 NFKC/casefold、清除 format/零宽字符并同时比较语义文本与去标点紧凑文本；最终事务先锁定刷新账号并锁后校验，再按会话/档案/占位顺序完成；L1/L2 改为专用有界执行器和合作式取消，满载在工具 Session 创建前拒绝；工具/数据库 deadline 与 worker/queue 均有安全配置范围和关系校验。断流/deadline 立即停止等待和发事件，但不承诺强杀任意 Python 同步线程，非合作式阻塞可能后台运行至返回且 Session 最终关闭；任意硬终止需要进程隔离。会话和动作均按数据库 `auth_user_id` 隔离，模型、提示词和客户端声明不是授权来源；每次工具调用按固定 code 重新授权。已有的提供商安全、档案发布、会话归属/保留、递归脱敏、审计原子性和失败关闭契约继续有效。管理员 UI 已由 Task 8 实现；具体业务处理器仍待 WA1+ 实现。普通业务用户网页智能体仍只处理本人服务请求，BDO 增加本人 IT 需求；IT 员工按实际权限和流程任务获得全模块指导及分阶段写操作。现有“创建单据指引”由真实权限计算可用路径，仍是模型不可用时的确定性降级。真实 PostgreSQL 双 Session、账号/会话/档案锁等待、非合作式线程与真实 ASGI 断流证据留待 Task 9。正式设计见 [`docs/superpowers/specs/2026-08-01-itom-web-agent-design.md`](superpowers/specs/2026-08-01-itom-web-agent-design.md)。
+
+Task 7 Fix Round 3 在不扩大业务能力的前提下关闭四项运行时缺口：泄漏紧凑指纹在 NFKC/casefold 后只保留 Unicode `L*`/`N*`，因此 `M*`/`C*`/`Z*`/`P*`/`S*` 插入均不能切断匹配；工具调用先预留有界容量，再进行能力发现/重授权，满载不创建 Session、不查权限、不运行 handler；开始/幂等、能力发现、原生降级、Gateway 选择/审计、最终化和失败清理的同步数据库边界全部移出 async SSE 事件循环；最终化在 provider 返回后及锁齐账号/会话/档案/占位后、写 `completed`/commit 前合作式检查断流并在已观察取消时 rollback。该护栏不宣称强杀线程或消除真实 socket/锁调度的全部微小竞态，Task 9 仍须提供真实 PostgreSQL/ASGI 证据。
+
+Task 7 Fix Round 4 修正前三项剩余审查结论且不进入 Task 8：泄漏紧凑路径改为先按原始 code point 只接纳 `L*`/`N*` 并排除命名/显式 Hangul `FILLER`，再 NFKC/casefold 和二次 `L*`/`N*` 过滤，防止原始 Mn/Sc/So 等兼容分解后“洗成”字母；视觉同形异码不在 WA0 完美检测承诺内。所有 assistant 同步 DB offload 统一使用有界执行器，消息流鉴权只返回账号 ID 标量并在 `StreamingResponse` 前关闭 worker Session，Gateway 选择/审计也不使用默认 executor。`stream_turn()` 入口只生成一个 monotonic deadline，fallback/start/provider/Gateway/DB/tool/finalization 共享剩余预算，并预留最多 250ms（25%）做失败占位清理；工具、provider、statement timeout 取自身上限与剩余预算的较小值。Round 5 进一步明确该预算严格覆盖 pre-commit 工作，而权威 commit 后收尾以终态一致性优先。真实 PostgreSQL 锁等待、双 Session 幂等和真实 ASGI 断流仍按 Task 9 留证。
+
+Task 7 Fix Round 5 关闭最后三项独立审查缺口且仍不进入 Task 8：生产 Provider DNS 改为专用有界 DNS/IO executor 内同步 `socket.getaddrinfo`，容量准入与等待共享请求 absolute deadline，禁止 `loop.getaddrinfo`、`asyncio.to_thread` 和默认 executor；SSRF、DNS rebinding 与 TLS 原主机绑定保持不变。断流取消审计经既有有界 DB executor 非阻塞 reserve 后后台 best effort 执行，取消立即传播，满载不创建 Session，异常只产生脱敏本地告警；正常成功/可处理错误仍等待审计持久化。单一 absolute deadline 严格覆盖所有 pre-commit 工作；最终锁齐且 deadline 前最后检查通过后进入权威 commit，调用方会等待 commit 与 Session 收尾以保持 durable `completed` 和客户端终态一致，因此该收尾可能小幅越过 deadline，不再把整个返回路径描述为绝对硬上限。真实 PostgreSQL commit/断流临界竞态、真实 ASGI socket 和双 Session 幂等继续留 Task 9。
+
+Task 7A 在不扩大 WA0 或进入 Task 8 的前提下修复最终化权威：线程安全 durable-success 只在 `db.commit()` 成功返回后设置；之后的 Session close 异常只记录脱敏异常类型，不重查数据库猜测事务结果，也不能把 durable `completed` 改报 `error → done`。commit 已开始后观察到断流时取消语义优先且不再发送后续 SSE 终态，即使清理同时失败；commit 自身失败不设置 durable-success，继续 rollback、失败占位清理和安全错误路径。真实 PostgreSQL commit/断流临界竞态与真实 ASGI socket 证据仍由 Task 9 留存。
+
+Task 8 已完成 WA0 前端消费层：业务门户与内部工作台顶栏共享全局启动器，响应式抽屉调用既有 bootstrap/会话/POST-SSE/动作 API；严格有界解析器只接受固定事件并拒绝未知、畸形、截断、错误后成功及超限数据。页面上下文只来自路由/标签/显式 GLID 白名单，不抓取 DOM；输出和服务端预览只按文本渲染。L3 卡片覆盖确认、取消、过期、冲突、失败和成功终态，仅服务端确认结果 `succeeded` 为权威成功，确认 Token 不展示且终态清除。系统管理新增 `admin_ai` 守卫的提供商、四类固定档案、健康、用量和动作审计五页签控制台，密钥只写不回填。该任务未修改后端、持久化模型、具体领域能力或部署；Task 9 仍负责真实 PostgreSQL/ASGI/IDC 角色与动作证据，WA1+ 仍负责具体业务 capability。
+
+独立 Task 8B 已修复 Task 8 前端与既有 L3 后端之间的确认桥，且不重开 Task 8 五轮审查、不扩大 WA0。严格状态机现精确接受启动前 `error → done(error)`、元数据后 `meta → error → done(error)`，以及 `advisory` 或 `server_preview` 的 `meta → message → done(replay)`；错误出现在 delta/action/message 后、错误终态混入成功载荷、重放预览夹带 action/delta/Token 或其他畸形交叉序列均失败关闭。重放的服务端预览只作信息展示，不产生卡片或可执行含义。首次同属主 L3 action SSE 通过服务端固定窄投影交付一次原始确认 Token 和安全预览；通用脱敏规则不变，Token 仍只存 SHA-256，且不进入模型、message、持久化、日志、审计或 REST 响应。同一属主恰好一次合法确认成功，重复、跨属主、过期、取消、脱敏占位与畸形凭证全部失败关闭。Task 8B 未新增字段、迁移、业务 capability、部署或 IDC 证据；Task 9 延后范围不变。
+
+Task 8C 修复 WA0 确认传输/状态边界而不新增业务 capability、迁移、部署或 Aily/MCP 变更。`AiAction.expires_at` 仍为 naive UTC 存储，但公开 `confirmation_expires_at` 和 action SSE `expires_at` 统一输出带 `Z` 的 RFC 3339 UTC；浏览器拒绝无时区日期。live/replay `server_preview.action_id` 都按相同 ULID 语法失败关闭。确认在既有属主、凭证、期限、会话/档案/能力重授权完成后，先提交内部非可确认、非可取消且不可重试的 `executing` 声明；只有成功声明后才调用 handler。已知 handler/审计失败仍可写 `failed`，而声明后的 handler 或终态持久化不确定时保留非确认态并返回安全 outcome-unknown，绝不恢复 `prepared`、再发 Token 或未经成功事务就报告业务成功。成功领域变更、`succeeded` 结果和审计仍同事务；Task 9 的真实 PostgreSQL/ASGI/IDC 证据仍待完成。
+
+Task 8C Round 1 闭合三项审查结论：含有效原始 Token 的 live action SSE 必须以非空、可解析、显式 `Z` 期限绑定确认，缺失/`null`/无偏移/畸形期限在创建卡片前失败关闭；Token 缺失的 action 仍仅为不可确认信息。SQLite 在 handler savepoint 前建立 claim 后外层写事务，因此 success terminal commit 失败时领域写、成功结果和审计回滚，数据库保留不可重试 `executing`；claim commit 失败则 handler 不启动且原 `prepared` Token 可供诚实重试。浏览器收到 `AI_ACTION_OUTCOME_UNKNOWN` 时只显示“结果待核实”、清除 Token 并停用确认/取消，绝不显示“尚未执行”或成功断言。Task 9 真实 PostgreSQL/ASGI/IDC 证据仍待完成。
 
 ## 4. 已确认的架构
 
@@ -90,9 +119,11 @@ ITOM 领域事件 → 可靠通知发件箱 → Aily 机器人飞书消息 → �
 用户回复 → Aily → MCP → ITOM 确认、重开或评价
 ```
 
-IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。默认禁止在本地启动 ITOM 应用栈、数据库、Docker Compose、8180 或 ngrok；只有用户明确要求临时隔离排障时才允许例外，且不能作为交付证据。
+IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址为 `https://itom.snnc.cc:30443`，同时承载 ITOM 前端、`/api`、飞书 OAuth 回调和 `/mcp/`。管理员通过 `public_base_url` 维护该根地址并由页面生成各入口。当前 IDC 前端仅限节点 01/02：节点 02 的构建污点只由 ITOM 前端显式容忍，两个前端副本以必需主机反亲和分布；节点 03 不再承载 ITOM 前端。前端滚动更新采用 `maxSurge: 0` 与 `maxUnavailable: 1`，在仅有节点 01/02 可运行时先释放旧副本占用的节点，再创建替换副本，避免默认超额副本与强制反亲和导致发布卡住。后端固定节点 02，数据库 StatefulSet/PVC 与备份 Job 不属于应用重部署范围。经批准的非数据库应用恢复使用 `SKIP_DATABASE=1 ./k8s-deploy.sh`，明确跳过 PostgreSQL 清单 apply 与 StatefulSet 等待，不删除、重启或重新调度数据库 Pod/PVC；涉及结构迁移的版本不得使用该模式。默认禁止在本地启动 ITOM 应用栈、数据库、Docker Compose、8180 或 ngrok；只有用户明确要求临时隔离排障时才允许例外，且不能作为交付证据。
 
-提交先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor，`k8s-deploy.sh` 部署同一标签并严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
+提交前可按指定基线运行 `scripts/fast-check.sh` 获得后端、前端或文档范围的快速反馈；共享/未知路径失败安全地升级为全量检查。提交仍先由 `.github/workflows/quality-gate.yml` 在隔离测试数据库上完成后端完整回归、前端契约测试与生产构建、部署文件及中英文文档交付检查。通过后，`push-images.sh` 从干净提交构建 Git SHA 不可变 linux/amd64 镜像并推送 Harbor；默认全量，经范围复核可只发布 backend 或 frontend，PostgreSQL 镜像仅显式请求时同步。组件级 `k8s-deploy.sh` 强制跳过数据库并保留共享资源和未选中 Deployment；全量和组件模式都严格验证 rollout、实际镜像、内外健康链路和 MCP `initialize`。真实 Aily、飞书回调、身份、权限和业务流程只在 IDC 验收。
+
+所有编码任务在修改前先确认 `production-fix|feature-local|code-candidate` 路线，并使用 `scripts/task-lifecycle.py --track` 建立生命周期证据。生产修复以 IDC 真实事实为基线；新功能可在不含任何生产数据、凭据、Secret、OAuth/Aily 应用或回调的本地隔离 Docker 环境形成候选；代码候选不启动应用。定向目标验证通过后才同步正式文档和提交；冻结候选只运行一次完整 CI。任何 IDC 写入都必须在 CI 后另行展示精确提交、不可变标签、变更对象、数据影响、中断、回滚及验收方案，并记录用户 `approve-idc` 明确批准；本地候选和 CI 均不构成生产交付。
 
 ### 4.1 职责边界
 
@@ -102,6 +133,8 @@ IDC Kubernetes 是唯一运行、联调和验收环境，当前公网根地址�
 | MCP Server | 工具发现、认证、身份映射、参数规范化、调用领域服务、结构化错误和审计 | 直接写业务表、绕过 RBAC/状态机、暴露密钥或通用 HTTP/SQL |
 | ITOM | 服务目录、表单、SLA、派单、流程、权限、单据、评价和审计的唯一事实来源 | 把授权或最终业务状态交给大模型 |
 | 飞书平台 | Aily 会话、身份与组织、机器人消息、静态知识、后续审批 | 将外部载荷直接视为可信业务事实 |
+
+网页智能体新增网页会话适配器、模型网关、能力注册、编排和安全知识检索，但不改变上述职责：网页身份与 Aily 身份隔离，模型不直接写表，所有结果仍由 ITOM 领域服务、RBAC、数据范围、流程、确认、幂等和审计决定。
 
 静态 IT 知识由 Aily 对接飞书知识库，首期 MCP 不重复提供知识检索。飞书审批保留在第三阶段接入，审批结果仍由 ITOM 流程校验和落库。
 
@@ -206,10 +239,10 @@ new → processing → resolved → closed
 ### 8.3 新增 ITSM 模型
 
 - `service_item_form_version`：服务项表单版本和 JSON Schema [P1 已实现]；
-- `service_dispatch_rule`：服务项/目录/全局派单规则 [P1 已实现]；
+- `service_dispatch_rule`：服务项/目录/全局派单规则；P1 的受理派单规则与 M93 的实施交付派单规则通过 `dispatch_stage=acceptance|implementation` 隔离 [P1/M93 已实现]；
 - `ticket_satisfaction`：评分、标签、意见、来源和审计时间，每张工单一条有效评价 [P2 已实现]。
 
-P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id` 分层解析。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；P2 在首次进入处理中时写 `accepted_at`，在进入最终用户确认节点时从流程任务 SLA 写 `confirmation_due_at`。`ticket.satisfaction` 由有效评价记录同步回填，兼容既有统计。
+P1 扩展 `service_item` 保存搜索元数据、活动表单、绑定流程和默认优先级；派单规则通过 `scope_type + scope_id + dispatch_stage` 分层解析。P1 扩展 `ticket` 保存表单答案/快照、派单事实和疑似大范围影响标记；M93 追加实施交付人、命中的实施规则、派单来源、选择人及选择时间，均为只读审计事实。P2 在首次进入处理中时写 `accepted_at`，在进入最终用户确认节点时从流程任务 SLA 写 `confirmation_due_at`。`ticket.satisfaction` 由有效评价记录同步回填，兼容既有统计。
 
 ## 9. 飞书服务台移除范围
 
@@ -288,20 +321,34 @@ P0 已删除服务台路由、服务、后台扫描任务、事件订阅、模�
 
 同日 IDC 回调复核：`https://itom.snnc.cc:30443/api/health` 在标准证书校验下因 `unable to get local issuer certificate` 失败，关闭证书校验后返回 HTTP 200；Backend/Frontend Ingress 日志在复核窗口内没有收到 `card-actions` POST，当前 IDC 数据库也没有旧截图中的 `TK-202607-0004/0005`。因此 Aily 显示的 `200080` 当前不能归因于 `service_request_closure` 业务逻辑；首先必须为 `itom.snnc.cc:30443` 配置公网受信 CA 证书，再用当前 IDC 新建工单生成的新卡片复验。旧 `TK-202607-0005` 的按钮闭环仍是历史 UAT 证据，不代表当前 IDC 卡片链路已恢复。
 
+2026-08-06 通知身份修复：排查 `TK-202608-0036` 发现站内通知已写入，但旧版通用通知出口因为熊军只有 ITOM 登录应用的 `AuthUser.external_id`、没有 Aily 机器人应用的已验证身份映射而静默跳过飞书发件箱。现改为在 Aily 已启用时按 ITOM 账号入队：身份未映射时保留 `pending`，写入脱敏原因 `AILY_IDENTITY_NOT_MAPPED`，后台发送前重新解析身份，映射补齐后自动投递；身份等待不消耗重试次数，也不向未知收件人发送。飞书 OAuth 的 `tenant_key + union_id` 只有在租户白名单、机器人应用配置一致且属于同一开发者范围时才自动建立映射，不混用不同应用的 `open_id`，停用或冲突映射不自动覆盖。Aily 未启用时不新增积压。由于 `TK-202608-0036` 在修复前没有飞书发件箱记录，不自动补发；部署后熊军需要重新通过飞书登录一次建立映射，再用新的受控指派通知完成 IDC 验收。
+
+2026-08-11 飞书主动通知身份自动映射修正：真实 IDC 数据显示 28 个活动飞书登录账号中只有熊军存在出站映射；胡书豪等人的 `work_task.assigned` 已正确进入发件箱，却停留在 `pending / AILY_IDENTITY_NOT_MAPPED`。这些用户当天已完成飞书 OAuth 登录，证明旧实现把 OAuth `tenant_key` 错误拿去匹配 Aily MCP JWT `tenant_id` 白名单，导致自动映射被静默跳过。正式口径拆分为两个信任边界：MCP 租户白名单仅用于入站工具调用；已配置飞书登录应用验真的 OAuth 回调在成功映射活动 ITOM 账号后，优先以 `tenant_key + user_id`、缺失时以 `tenant_key + union_id` 自动建立当前 `bot_app_id` 的出站映射。机器人出站解析优先使用该应用映射，历史人工/Aily 映射仍受原租户白名单约束；跨应用 `open_id`、停用映射、冲突账号和未知身份仍不放行。已有账号无需管理员逐个加入租户白名单或手工绑定，在修复部署后的下一次正常飞书登录会自动建立映射，原有身份等待发件箱随后由后台重试投递。
+
+2026-08-11 飞书主动通知批量自动补齐：只读核查证明现有通讯录 `find_by_department` 已返回 `open_id`、`user_id` 与 `union_id`，但登录应用和机器人应用均未开通 `tenant:tenant:readonly`，不能依赖“获取企业信息”接口直接启动历史批量回填。实现采用最小权限路径：首个修复部署后正常 OAuth 登录建立并审计当前机器人应用的唯一 `tenant_key` 锚点；后台发送其他未映射账号的待发消息时，只对“活动账号 + 在岗飞书同步人员”使用其登录应用 `open_id` 查询单个通讯录用户，并把返回的租户级 `user_id`（缺失时 `union_id`）保存为当前机器人应用身份后投递。其他员工无需逐人重新登录或管理员逐项绑定。锚点缺失/歧义、离职/未关联人员、显式停用、冲突身份和通讯录查询失败均保持 `pending`；查询失败不消耗消息发送重试次数，且登录应用 `open_id` 从不直接发送给机器人应用。
+
+2026-08-12 飞书 OAuth 登录回归修复：IDC 实时日志证明授权地址、应用令牌、OIDC 令牌和用户信息接口均成功，失败发生在 ITOM 把已验真的登录身份与通知映射审计同事务提交时。原动作名超过 `audit_log.action VARCHAR(32)`，PostgreSQL 拒绝插入并回滚整个登录事务；SQLite 回归未执行该长度约束。现将 OAuth 自动映射和组织补齐动作编码固定为 `auto_map_aily_identity`、`auto_map_aily_identity_org`，可信锚点查询复用同一组常量，并增加直接读取 SQLAlchemy 列长度的边界测试。本修复不迁移数据库、不改变身份信任边界，也不触碰已有账号、映射、通知发件箱或业务数据。
+
+2026-08-10 IDC 公网可信 TLS：将 `*.snnc.cc` 的公开 CA 完整证书链和匹配私钥作为 `itom/itom-snnc-cc-tls`（`kubernetes.io/tls`）创建，Ingress 为 `itom.snnc.cc` 绑定精确 TLS host；FortiGate 保持 `183.60.58.58:30443 → 10.60.65.220:443` TLS 直通，DNS 与 `public_base_url=https://itom.snnc.cc:30443` 均未改变。公网 `curl`、`openssl s_client -verify_return_error -verify_hostname` 和浏览器现有登录会话均不跳过证书校验地通过；服务器发送 3 张 DigiCert 链证书，SAN 覆盖 `*.snnc.cc`。外部 `/mcp/` `initialize` 返回协议与 `serverInfo`。飞书开放平台已显示相同 HTTPS 回调地址、已订阅新版 `card.action.trigger` 且应用已发布；重新保存未改变的地址未报错，但未产生新的 challenge 访问日志。为避免变更生产业务单据，本轮未创建新工单或点击签名卡片；当前 IDC 的真实角色卡片点击仍须作为独立业务 UAT 完成，不能由历史卡片证据替代。
+
+2026-08-10 IDC 前端调度收口：三节点均 Ready、可调度且没有压力/污点；node02 是正常生产候选节点，不再按历史 build-executor 角色排除。`itom-frontend` 的目标模板显式声明空 `nodeName`，以清除人工恢复留下的 node01 固定绑定，并通过节点 01/02 选择器和硬主机反亲和使两个副本跨节点。后端保持无节点硬绑定的单副本 `Recreate`，数据库 StatefulSet、PVC、Secret 与业务数据不在本次应用发布范围。该策略不改变业务、身份、数据或 TLS 契约。
+
 验收：以业务用户、IT 人员完成“诉求 → 建单 → 派单 → 受理 → 解决 → 通知 → 确认/重开 → 关闭 → 评价”真实闭环，多张待确认单据不串单，内部信息不外发。
 
 ### 阶段 3：飞书审批（暂缓）与发布加固
 
 - 指定 ITOM 审批节点接入飞书审批并做双向幂等（按用户决定暂缓，不阻塞当前发布加固）；
-- 为 IDC 公网入口替换受信 TLS 证书，完成安全、性能、故障恢复和真实角色 UAT；
-- 从 `feature/aily-agent-mcp` 发起用户确认的 PR 合入 `main`。
+- IDC 公网入口已替换为受信 TLS；继续完成安全、性能、故障恢复和当前版本真实角色 UAT；
+- 从 `feature/AI-agent-version` 发起用户确认的 PR 合入 `main`。
 
 ## 11. 完成交付标准
 
-每次改动必须同时完成实现、测试、中文权威文档和 `docs/en` 英文镜像；feature 分支先通过 GitHub Actions 的相关单元、API/MCP 集成、身份权限、幂等重试测试、前端生产构建和仓库契约检查。自动化测试不得连接 IDC 业务数据库。本地不启动应用环境；只有用户明确要求时才允许临时隔离排障。发布必须来自干净提交、使用 Git SHA 不可变 linux/amd64 镜像，并在 IDC 完成 rollout、镜像、健康链路、MCP 和真实角色验收。
+每次改动必须同时完成实现、测试、中文权威文档和 `docs/en` 英文镜像；feature 分支先通过 GitHub Actions 的相关单元、API/MCP 集成、身份权限、幂等重试测试、前端生产构建和仓库契约检查。自动化测试不得连接 IDC 业务数据库。只有已确认的 `feature-local` 路线可启动仓库定义的本地隔离应用与测试数据库；`production-fix` 和 `code-candidate` 默认不启动。发布必须来自干净提交、使用 Git SHA 不可变 linux/amd64 镜像，并在单独获得精确发布批准后于 IDC 完成 rollout、镜像、健康链路、MCP 和真实角色验收。
 
 不得把 CI 全绿、镜像构建成功、`/api/health`、MCP 初始化、单次工具成功或模拟载荷测试当作完整业务验收。验收证据必须覆盖真实身份和多角色业务闭环。
 
 ## 12. 维护要求
 
 本文件是当前正式设计基线。任何改变产品分流、工具契约、身份、安全、数据模型、消息通道、部署或验收口径的决策，都必须在同一改动中同步本文、`docs/03–06`、README 和英文镜像。每阶段实现后，文档必须从“目标/待实现”更新为实际能力和验证证据。
+
+Task 8C Round 2 证据补充：共享前端 expiry parser 现拒绝显式 `Z` 形状下仍会被 JavaScript 规范化的非法日/月/小时；合法闰日与小数秒 UTC 保持兼容。本轮无后端、数据库、部署、Aily/MCP 或 IDC 变化。

@@ -10,6 +10,7 @@ from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_
 from app.db import get_db
 from app.deps import get_current_user, require_perm
 from app.models import (
+    AuthUser,
     Department,
     OrgMember,
     ProcessDefinition,
@@ -20,7 +21,7 @@ from app.models import (
     SlaPolicy,
     Ticket,
 )
-from app.schemas.common import ok
+from app.schemas.common import BatchDeleteIn, ok
 from app.schemas.itsm import (
     CatalogCreate,
     CatalogUpdate,
@@ -31,12 +32,130 @@ from app.schemas.itsm import (
     SlaPolicyIn,
 )
 from app.services.audit import audit
+from app.services.batch_delete import execute_batch_delete
 from app.services.codes import gen_code
 from app.services import dispatch, service_forms
 from app.services.service_audience import service_item_visible_to_user
 from app.services.team_scope import require_it_member_if_configured
 
 router = APIRouter(tags=["itsm"])
+
+
+def _global_implementation_manager(db: Session, actor: AuthUser) -> AuthUser:
+    """全局实施兜底会影响全目录，限定系统管理员/CIO。"""
+    from app.core.rbac import ADMIN, CIO
+    from app.services.rbac import actor_keys
+
+    if not ({ADMIN, CIO} & actor_keys(db, actor)):
+        raise AppError("FORBIDDEN", "仅系统管理员或 CIO 可以维护全局实施兜底规则", 403)
+    return actor
+
+
+def _dispatch_rule_row(rule: ServiceDispatchRule, *, inherited: bool = False) -> dict:
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "scope_type": rule.scope_type,
+        "scope_id": rule.scope_id,
+        "dispatch_stage": rule.dispatch_stage,
+        "target_type": rule.target_type,
+        "target_id": rule.target_id,
+        "strategy": rule.strategy,
+        "priority": rule.priority,
+        "active": rule.active,
+        "fallback": rule.fallback,
+        "inherited": inherited,
+    }
+
+
+def _exact_dispatch_rule(
+    db: Session,
+    *,
+    scope_type: str,
+    scope_id: str | None,
+    dispatch_stage: str,
+) -> ServiceDispatchRule | None:
+    query = db.query(ServiceDispatchRule).filter(
+        ServiceDispatchRule.scope_type == scope_type,
+        ServiceDispatchRule.dispatch_stage == dispatch_stage,
+        ServiceDispatchRule.is_deleted.is_(False),
+    )
+    query = query.filter(
+        ServiceDispatchRule.scope_id == scope_id
+        if scope_id is not None
+        else ServiceDispatchRule.scope_id.is_(None)
+    )
+    return query.order_by(ServiceDispatchRule.priority, ServiceDispatchRule.created_at).first()
+
+
+def _replace_dispatch_rule(
+    db: Session,
+    body: ServiceDispatchRuleIn,
+    *,
+    scope_type: str,
+    scope_id: str | None,
+    dispatch_stage: str,
+    actor: AuthUser,
+    audit_context: dict,
+) -> ServiceDispatchRule:
+    dispatch.validate_rule_target(db, body.target_type, body.target_id, body.strategy)
+    query = db.query(ServiceDispatchRule).filter(
+        ServiceDispatchRule.scope_type == scope_type,
+        ServiceDispatchRule.dispatch_stage == dispatch_stage,
+        ServiceDispatchRule.is_deleted.is_(False),
+    )
+    query = query.filter(
+        ServiceDispatchRule.scope_id == scope_id
+        if scope_id is not None
+        else ServiceDispatchRule.scope_id.is_(None)
+    )
+    for current in query:
+        current.is_deleted = True
+    rule = ServiceDispatchRule(
+        **body.model_dump(),
+        scope_type=scope_type,
+        scope_id=scope_id,
+        dispatch_stage=dispatch_stage,
+    )
+    db.add(rule)
+    db.flush()
+    audit(
+        db,
+        "service_dispatch_rule",
+        rule.id,
+        "upsert",
+        actor,
+        {**audit_context, "name": rule.name, "dispatch_stage": dispatch_stage},
+    )
+    return rule
+
+
+def _delete_dispatch_rule(
+    db: Session,
+    *,
+    scope_type: str,
+    scope_id: str | None,
+    dispatch_stage: str,
+    actor: AuthUser,
+    audit_context: dict,
+) -> None:
+    rule = _exact_dispatch_rule(
+        db,
+        scope_type=scope_type,
+        scope_id=scope_id,
+        dispatch_stage=dispatch_stage,
+    )
+    if not rule:
+        raise AppError("NOT_FOUND", "该范围未配置实施派单规则", 404)
+    rule.is_deleted = True
+    audit(
+        db,
+        "service_dispatch_rule",
+        rule.id,
+        "delete",
+        actor,
+        {**audit_context, "name": rule.name, "dispatch_stage": dispatch_stage},
+    )
 
 
 def _resolve_target_audience(db: Session, mode: str, refs: list[dict] | None) -> tuple[str, list[dict]]:
@@ -154,21 +273,12 @@ def update_catalog(catalog_id: str, body: CatalogUpdate, db: Session = Depends(g
     return ok({"id": catalog.id})
 
 
-@router.delete("/api/catalogs/{catalog_id}")
-def delete_catalog(
-    catalog_id: str,
-    cascade: bool = Query(False, description="同时软删除该目录下的服务项"),
-    db: Session = Depends(get_db),
-    actor=Depends(require_perm("catalog", "delete")),
-):
+def _delete_catalog(db: Session, catalog: ServiceCatalog, actor: AuthUser, *, cascade: bool) -> dict:
     """删除服务目录（软删），可在管理员明确确认后级联软删下属服务项。
 
     级联只删除目录和服务项本身，不删除历史工单、项目或配置项；这些历史记录仍保留
     对原服务项的引用，避免为了清理目录而破坏审计链路。
     """
-    catalog = db.get(ServiceCatalog, catalog_id)
-    if not catalog or catalog.is_deleted:
-        raise AppError("NOT_FOUND", "目录不存在", 404)
     ensure_example_delete_allowed(catalog, db, actor)
     live_items = db.query(ServiceItem).filter(ServiceItem.catalog_id == catalog.id, ServiceItem.is_deleted.is_(False)).all()
     if live_items and not cascade:
@@ -196,8 +306,38 @@ def delete_catalog(
         actor,
         {"code": catalog.code, "name": catalog.name, "items_deleted": len(live_items), "cascade": cascade},
     )
+    return {"id": catalog.id, "items_deleted": len(live_items), "cascade": cascade}
+
+
+@router.delete("/api/catalogs/batch-delete")
+def batch_delete_catalogs(
+    body: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    """批量删除不支持级联，存在有效服务项的目录逐项返回拒绝原因。"""
+    def delete_one(catalog_id: str) -> None:
+        catalog = db.get(ServiceCatalog, catalog_id)
+        if not catalog or catalog.is_deleted:
+            raise AppError("NOT_FOUND", "目录不存在", 404)
+        _delete_catalog(db, catalog, actor, cascade=False)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/catalogs/{catalog_id}")
+def delete_catalog(
+    catalog_id: str,
+    cascade: bool = Query(False, description="同时软删除该目录下的服务项"),
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    catalog = db.get(ServiceCatalog, catalog_id)
+    if not catalog or catalog.is_deleted:
+        raise AppError("NOT_FOUND", "目录不存在", 404)
+    result = _delete_catalog(db, catalog, actor, cascade=cascade)
     db.commit()
-    return ok({"id": catalog.id, "items_deleted": len(live_items), "cascade": cascade})
+    return ok(result)
 
 
 # ---- 服务项 ----
@@ -409,15 +549,10 @@ def get_item_dispatch_rule(
     _=Depends(require_perm("catalog", "view")),
 ):
     item = _get_service_item(db, item_id)
-    rule = dispatch.resolve_rule(db, item)
+    rule = dispatch.resolve_rule(db, item, dispatch_stage="acceptance")
     if not rule:
         return ok(None)
-    return ok({
-        "id": rule.id, "name": rule.name, "scope_type": rule.scope_type,
-        "scope_id": rule.scope_id, "target_type": rule.target_type,
-        "target_id": rule.target_id, "strategy": rule.strategy,
-        "priority": rule.priority, "active": rule.active, "fallback": rule.fallback,
-    })
+    return ok(_dispatch_rule_row(rule, inherited=rule.scope_type != "service_item"))
 
 
 @router.put("/api/service-items/{item_id}/dispatch-rule")
@@ -429,29 +564,193 @@ def put_item_dispatch_rule(
 ):
     item = _get_service_item(db, item_id)
     ensure_not_example(item)
-    dispatch.validate_rule_target(db, body.target_type, body.target_id, body.strategy)
-    for current in db.query(ServiceDispatchRule).filter(
-        ServiceDispatchRule.scope_type == "service_item",
-        ServiceDispatchRule.scope_id == item.id,
-        ServiceDispatchRule.is_deleted.is_(False),
-    ):
-        current.is_deleted = True
-    rule = ServiceDispatchRule(
-        **body.model_dump(), scope_type="service_item", scope_id=item.id
+    rule = _replace_dispatch_rule(
+        db,
+        body,
+        scope_type="service_item",
+        scope_id=item.id,
+        dispatch_stage="acceptance",
+        actor=actor,
+        audit_context={"item_code": item.item_code},
     )
-    db.add(rule)
-    db.flush()
-    audit(db, "service_dispatch_rule", rule.id, "upsert", actor, {"item_code": item.item_code, "name": rule.name})
     db.commit()
-    return ok({"id": rule.id, **body.model_dump(), "scope_type": "service_item", "scope_id": item.id})
+    return ok(_dispatch_rule_row(rule))
 
 
-@router.delete("/api/service-items/{item_id}")
-def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
+@router.get("/api/service-items/{item_id}/implementation-dispatch-rule")
+def get_item_implementation_dispatch_rule(
+    item_id: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_perm("catalog", "view")),
+):
+    """返回实施交付规则；服务项未配置时明确标识目录/全局继承来源。"""
+    item = _get_service_item(db, item_id)
+    rule = dispatch.resolve_rule(db, item, dispatch_stage="implementation")
+    return ok(_dispatch_rule_row(rule, inherited=rule.scope_type != "service_item") if rule else None)
+
+
+@router.put("/api/service-items/{item_id}/implementation-dispatch-rule")
+def put_item_implementation_dispatch_rule(
+    item_id: str,
+    body: ServiceDispatchRuleIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    item = _get_service_item(db, item_id)
+    ensure_not_example(item)
+    rule = _replace_dispatch_rule(
+        db,
+        body,
+        scope_type="service_item",
+        scope_id=item.id,
+        dispatch_stage="implementation",
+        actor=actor,
+        audit_context={"item_code": item.item_code},
+    )
+    db.commit()
+    return ok(_dispatch_rule_row(rule))
+
+
+@router.delete("/api/service-items/{item_id}/implementation-dispatch-rule")
+def delete_item_implementation_dispatch_rule(
+    item_id: str,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    item = _get_service_item(db, item_id)
+    ensure_not_example(item)
+    _delete_dispatch_rule(
+        db,
+        scope_type="service_item",
+        scope_id=item.id,
+        dispatch_stage="implementation",
+        actor=actor,
+        audit_context={"item_code": item.item_code},
+    )
+    db.commit()
+    return ok({"scope_type": "service_item", "scope_id": item.id, "dispatch_stage": "implementation"})
+
+
+def _get_catalog(db: Session, catalog_id: str) -> ServiceCatalog:
+    catalog = db.get(ServiceCatalog, catalog_id)
+    if not catalog or catalog.is_deleted:
+        raise AppError("NOT_FOUND", "目录不存在", 404)
+    return catalog
+
+
+@router.get("/api/catalogs/{catalog_id}/implementation-dispatch-rule")
+def get_catalog_implementation_dispatch_rule(
+    catalog_id: str,
+    db: Session = Depends(get_db),
+    _=Depends(require_perm("catalog", "view")),
+):
+    catalog = _get_catalog(db, catalog_id)
+    rule = _exact_dispatch_rule(
+        db,
+        scope_type="catalog",
+        scope_id=catalog.id,
+        dispatch_stage="implementation",
+    )
+    return ok(_dispatch_rule_row(rule) if rule else None)
+
+
+@router.put("/api/catalogs/{catalog_id}/implementation-dispatch-rule")
+def put_catalog_implementation_dispatch_rule(
+    catalog_id: str,
+    body: ServiceDispatchRuleIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    catalog = _get_catalog(db, catalog_id)
+    ensure_not_example(catalog)
+    rule = _replace_dispatch_rule(
+        db,
+        body,
+        scope_type="catalog",
+        scope_id=catalog.id,
+        dispatch_stage="implementation",
+        actor=actor,
+        audit_context={"catalog_code": catalog.code},
+    )
+    db.commit()
+    return ok(_dispatch_rule_row(rule))
+
+
+@router.delete("/api/catalogs/{catalog_id}/implementation-dispatch-rule")
+def delete_catalog_implementation_dispatch_rule(
+    catalog_id: str,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "edit")),
+):
+    catalog = _get_catalog(db, catalog_id)
+    ensure_not_example(catalog)
+    _delete_dispatch_rule(
+        db,
+        scope_type="catalog",
+        scope_id=catalog.id,
+        dispatch_stage="implementation",
+        actor=actor,
+        audit_context={"catalog_code": catalog.code},
+    )
+    db.commit()
+    return ok({"scope_type": "catalog", "scope_id": catalog.id, "dispatch_stage": "implementation"})
+
+
+@router.get("/api/service-dispatch/implementation-fallback")
+def get_global_implementation_dispatch_rule(
+    db: Session = Depends(get_db),
+    actor=Depends(get_current_user),
+):
+    _global_implementation_manager(db, actor)
+    rule = _exact_dispatch_rule(
+        db,
+        scope_type="global",
+        scope_id=None,
+        dispatch_stage="implementation",
+    )
+    return ok(_dispatch_rule_row(rule) if rule else None)
+
+
+@router.put("/api/service-dispatch/implementation-fallback")
+def put_global_implementation_dispatch_rule(
+    body: ServiceDispatchRuleIn,
+    db: Session = Depends(get_db),
+    actor=Depends(get_current_user),
+):
+    _global_implementation_manager(db, actor)
+    rule = _replace_dispatch_rule(
+        db,
+        body,
+        scope_type="global",
+        scope_id=None,
+        dispatch_stage="implementation",
+        actor=actor,
+        audit_context={"scope": "global"},
+    )
+    db.commit()
+    return ok(_dispatch_rule_row(rule))
+
+
+@router.delete("/api/service-dispatch/implementation-fallback")
+def delete_global_implementation_dispatch_rule(
+    db: Session = Depends(get_db),
+    actor=Depends(get_current_user),
+):
+    _global_implementation_manager(db, actor)
+    _delete_dispatch_rule(
+        db,
+        scope_type="global",
+        scope_id=None,
+        dispatch_stage="implementation",
+        actor=actor,
+        audit_context={"scope": "global"},
+    )
+    db.commit()
+    return ok({"scope_type": "global", "scope_id": None, "dispatch_stage": "implementation"})
+
+
+def _delete_item(db: Session, item: ServiceItem, actor: AuthUser) -> dict:
     """删除服务项（M21，软删）：已有工单引用时拒绝（历史可溯），建议改为下架。"""
-    item = db.get(ServiceItem, item_id)
-    if not item or item.is_deleted:
-        raise AppError("NOT_FOUND", "服务项不存在", 404)
     ensure_example_delete_allowed(item, db, actor)
     from app.models import ProcessInstance, ProcessTask, Ticket
 
@@ -475,8 +774,32 @@ def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(requi
             raise AppError("ITEM_IN_USE", f"该服务项已被 {len(live_tickets)} 张工单引用，不可删除；如不再提供请改为「下架」")
     item.is_deleted = True
     audit(db, "service_item", item.id, "delete", actor, {"code": item.item_code, "name": item.name, "tickets_deleted": len(live_tickets) if item.is_example else 0})
+    return {"id": item.id}
+
+
+@router.delete("/api/service-items/batch-delete")
+def batch_delete_items(
+    body: BatchDeleteIn,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("catalog", "delete")),
+):
+    def delete_one(item_id: str) -> None:
+        item = db.get(ServiceItem, item_id)
+        if not item or item.is_deleted:
+            raise AppError("NOT_FOUND", "服务项不存在", 404)
+        _delete_item(db, item, actor)
+
+    return ok(execute_batch_delete(db, body.ids, delete_one))
+
+
+@router.delete("/api/service-items/{item_id}")
+def delete_item(item_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("catalog", "delete"))):
+    item = db.get(ServiceItem, item_id)
+    if not item or item.is_deleted:
+        raise AppError("NOT_FOUND", "服务项不存在", 404)
+    result = _delete_item(db, item, actor)
     db.commit()
-    return ok({"id": item.id})
+    return ok(result)
 
 
 # ---- SLA 策略（admin）与看板 ----

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   Button,
   Card,
+  Checkbox,
   DatePicker,
   Descriptions,
   Divider,
@@ -33,6 +34,7 @@ import {
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleTag } from '../../components/ExampleTag';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import ImportButtons from '../../components/ImportButtons';
 import { hasAnyRole, hasPermission, useAuthStore } from '../../stores/auth';
 import { useT } from '../../i18n';
@@ -84,6 +86,7 @@ export default function Cmdb() {
   const et = useEnums();
 
   const [items, setItems] = useState<CiRow[]>([]);
+  const [selectedCiIds, setSelectedCiIds] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -107,6 +110,7 @@ export default function Cmdb() {
   // 影响分析 Drawer
   const [impactCi, setImpactCi] = useState<CiRow | null>(null);
   const [impact, setImpact] = useState<CiImpact | null>(null);
+  const [selectedRelationIds, setSelectedRelationIds] = useState<string[]>([]);
   const [impactLoading, setImpactLoading] = useState(false);
   // 添加关系
   const [relForm] = Form.useForm<{ direction: 'upstream' | 'downstream'; relation_type: string; other_ci_id: string }>();
@@ -245,6 +249,7 @@ export default function Cmdb() {
   const openImpact = (row: CiRow) => {
     setImpactCi(row);
     setImpact(null);
+    setSelectedRelationIds([]);
     relForm.resetFields();
     void loadImpact(row);
   };
@@ -388,6 +393,19 @@ export default function Cmdb() {
             }
           >
             <Space>
+              {canWrite && !impactCi?.is_example && (
+                <Checkbox
+                  aria-label={`选择配置项关系 ${e.ci.name}`}
+                  checked={selectedRelationIds.includes(e.relation_id)}
+                  onChange={(event) => {
+                    setSelectedRelationIds((current) =>
+                      event.target.checked
+                        ? [...current, e.relation_id]
+                        : current.filter((id) => id !== e.relation_id),
+                    );
+                  }}
+                />
+              )}
               <Tag>{et.ciRelation(e.relation_type)}</Tag>
               <span>{e.ci.name}</span>
               <Typography.Text type="secondary">
@@ -491,6 +509,17 @@ export default function Cmdb() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
+        {canDelete && (
+          <BatchDeleteToolbar
+            endpoint="/cis/batch-delete"
+            selectedIds={selectedCiIds}
+            entityName="配置项"
+            onCompleted={() => {
+              setSelectedCiIds([]);
+              void load();
+            }}
+          />
+        )}
       </Space>
 
       <Table<CiRow>
@@ -498,6 +527,17 @@ export default function Cmdb() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        rowSelection={
+          canDelete
+            ? {
+                selectedRowKeys: selectedCiIds,
+                onChange: (keys) => setSelectedCiIds(keys.map(String)),
+                getCheckboxProps: (record) => ({
+                  disabled: record.is_example && !isAdmin,
+                }),
+              }
+            : undefined
+        }
         standardToolbar={{ exportFileName: '配置项清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 1100 }}
@@ -666,6 +706,18 @@ export default function Cmdb() {
                 </Descriptions.Item>
               ))}
             </Descriptions>
+
+            {canWrite && !impactCi?.is_example && (
+              <BatchDeleteToolbar
+                endpoint="/ci-relationships/batch-delete"
+                selectedIds={selectedRelationIds}
+                entityName="配置项关系"
+                onCompleted={() => {
+                  setSelectedRelationIds([]);
+                  if (impactCi) void loadImpact(impactCi);
+                }}
+              />
+            )}
 
             {relationList(
               t('itsm.cmdb.upstream'),

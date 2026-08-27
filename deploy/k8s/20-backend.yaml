@@ -55,6 +55,10 @@ spec:
             - { name: UPLOAD_DIR, value: /data/uploads }
             - { name: SEED_INITIAL_CONFIG, value: "1" }
             - { name: TZ, value: Asia/Shanghai }
+            # DashScope is the approved OpenAI-compatible provider host for
+            # the initial Web Agent validation. API keys remain DB-encrypted
+            # user-entered provider configuration and are never stored here.
+            - { name: AI_PROVIDER_ALLOWED_HOSTS, value: dashscope.aliyuncs.com }
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef: { name: itom-secrets, key: DATABASE_URL }

@@ -46,6 +46,22 @@ def test_team_endpoints_exclude_business_people(client, admin_headers):
     assert next(item for item in positions if item["id"] == pos_id)["onboard"] == 1
 
 
+def test_team_overview_returns_every_active_it_member_workload(client, admin_headers):
+    """团队总览的人员负载不可在后端静默截断为前 20 人。"""
+    with SessionLocal() as db:
+        department = Department(code="m94_workload", name="M94 负载测试部", dept_type="it")
+        db.add(department)
+        db.flush()
+        names = {f"M94 负载成员 {index:02d}" for index in range(21)}
+        db.add_all([OrgMember(name=name, department_id=department.id) for name in names])
+        db.commit()
+
+    overview = client.get("/api/team/overview", headers=admin_headers).json()["data"]
+    workload_names = {row["person_name"] for row in overview["workload"]}
+    assert names <= workload_names
+    assert overview["onboard_count"] >= len(names)
+
+
 def test_business_member_cannot_receive_team_campaign_award(client, admin_headers):
     with SessionLocal() as db:
         biz_id = db.query(OrgMember).filter(OrgMember.name == "M40 业务成员").first().id

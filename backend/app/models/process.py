@@ -44,7 +44,7 @@ class ProcessInstance(GlidBase):
     definition_id: Mapped[str] = mapped_column(ForeignKey("process_definition.id"))
     entity_type: Mapped[str] = mapped_column(String(32), index=True)
     entity_id: Mapped[str] = mapped_column(String(26), index=True)
-    status: Mapped[str] = mapped_column(String(16), default="running", comment="running/completed（M24 统一英文 code，前端词表翻译）")
+    status: Mapped[str] = mapped_column(String(16), default="running", comment="running/returned/completed/rejected")
     current_step_seq: Mapped[int] = mapped_column(Integer, default=1)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -64,6 +64,15 @@ class ProcessTask(GlidBase):
     assignee: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), index=True)
     status: Mapped[str] = mapped_column(String(16), default="待处理", comment="待处理/已完成/已跳过")
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # ``started_at`` is the assignment/SLA clock.  It is deliberately not reused
+    # as a read receipt: an assignee can receive a task without opening it.
+    viewed_at: Mapped[datetime | None] = mapped_column(DateTime, comment="当前处理人首次实际查阅时间")
+    viewed_by: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="首次实际查阅人")
+    # Only tasks created after the upstream-correction rule is released opt in.
+    # Existing pending tasks remain safe and keep their historical semantics.
+    upstream_correction_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, comment="未查阅前是否允许上一节点更正"
+    )
     due_at: Mapped[datetime | None] = mapped_column(DateTime, comment="按步骤 SLA")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_by: Mapped[str | None] = mapped_column(ForeignKey("org_member.id"), comment="实际完成任务的人员")

@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import require_perm
-from app.models import Bug, BugFixTask, Contract, Milestone, Problem, Project, Requirement, RequirementTask, Ticket, WorkTask
+from app.models import (
+    Bug, BugFixTask, Contract, Milestone, Problem, Project,
+    ProjectDevelopmentTask, Requirement, RequirementTask, Ticket, WorkTask,
+)
 from app.schemas.common import ok
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -226,16 +229,19 @@ def _task_section(db: Session) -> dict:
     bug_tasks = db.query(BugFixTask).filter(BugFixTask.is_deleted.is_(False)).all()
     work_tasks = db.query(WorkTask).filter(WorkTask.is_deleted.is_(False)).all()
     requirement_tasks = db.query(RequirementTask).filter(RequirementTask.is_deleted.is_(False)).all()
+    project_tasks = db.query(ProjectDevelopmentTask).filter(ProjectDevelopmentTask.is_deleted.is_(False)).all()
     open_bugs = sum(1 for row in bugs if row.status not in {"closed", "rejected"})
     open_bug_tasks = sum(1 for row in bug_tasks if row.status != "关闭")
     open_work_tasks = sum(1 for row in work_tasks if row.status not in {"关闭", "中止"})
     open_requirement_tasks = sum(1 for row in requirement_tasks if row.status != "已完成")
+    open_project_tasks = sum(1 for row in project_tasks if row.status != "已完成")
     return {
-        "open_total": open_bugs + open_bug_tasks + open_work_tasks + open_requirement_tasks,
+        "open_total": open_bugs + open_bug_tasks + open_work_tasks + open_requirement_tasks + open_project_tasks,
         "open_bugs": open_bugs,
         "open_bug_fix_tasks": open_bug_tasks,
         "open_delegated_tasks": open_work_tasks,
         "open_requirement_tasks": open_requirement_tasks,
+        "open_project_tasks": open_project_tasks,
     }
 
 

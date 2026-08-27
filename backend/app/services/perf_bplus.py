@@ -298,9 +298,11 @@ def _domain_scope(db: Session, person_id: str) -> tuple[list[str], list[str]]:
             BusinessDomainMember.person_id == person_id,
             BusinessDomainMember.is_deleted.is_(False),
         ).first()
-        if members or person_id in {domain.owner_id, domain.backup_owner_id}:
+        if members or person_id == domain.owner_id:
             domain_ids.add(domain.id)
-            for evaluator in (domain.owner_id, domain.backup_owner_id):
+            # 业务侧 BDO 不属于 IT 人效负责人；业务域外部评价仅归属 IT 侧 BM
+            # 和服务团队。历史 backup_owner_id 已停止作为绩效归属依据。
+            for evaluator in (domain.owner_id,):
                 if evaluator and evaluator != person_id:
                     evaluator_ids.add(evaluator)
     return sorted(domain_ids), sorted(evaluator_ids)
@@ -529,9 +531,8 @@ def _score_domain_demand_outcome(db: Session, member_ids: list[str], start, end)
     for dm in db.query(BusinessDomainMember).filter(BusinessDomainMember.is_deleted.is_(False)):
         domain_people[dm.domain_id].add(dm.person_id)
     for domain in db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False)):
-        for pid in (domain.owner_id, domain.backup_owner_id):
-            if pid:
-                domain_people[domain.id].add(pid)
+        if domain.owner_id:
+            domain_people[domain.id].add(domain.owner_id)
     demands = db.query(Requirement).filter(
         Requirement.business_domain_id.isnot(None), Requirement.is_deleted.is_(False), Requirement.is_example.is_(False),
         Requirement.target_date.isnot(None), Requirement.target_date >= start.date(), Requirement.target_date <= end.date(),
@@ -564,14 +565,13 @@ def _external_scores(db: Session, period: PerformancePeriod, member_ids: list[st
         member.id: member
         for member in db.query(OrgMember).filter(OrgMember.id.in_(member_ids_set), OrgMember.is_deleted.is_(False)).all()
     }
-    # 业务域评价只对该域负责人（BM/备份负责人）和该域 IT BP 生效，
-    # 不扩散到业务部门成员、开发、运维等其他人员。
+    # 业务域评价只对该域 IT 侧负责人（BM）和该域 IT BP 生效，
+    # 不扩散到业务 BDO、业务部门成员、开发、运维等其他人员。
     domain_targets: dict[str, set[str]] = defaultdict(set)
     domains = db.query(BusinessDomain).filter(BusinessDomain.is_deleted.is_(False), BusinessDomain.active.is_(True)).all()
     for domain in domains:
-        for owner_id in (domain.owner_id, domain.backup_owner_id):
-            if owner_id and owner_id in member_ids_set:
-                domain_targets[domain.id].add(owner_id)
+        if domain.owner_id and domain.owner_id in member_ids_set:
+            domain_targets[domain.id].add(domain.owner_id)
     for dm in db.query(BusinessDomainMember).filter(BusinessDomainMember.is_deleted.is_(False)):
         if dm.person_id not in member_ids_set:
             continue

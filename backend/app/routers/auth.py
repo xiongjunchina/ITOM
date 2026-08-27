@@ -1,4 +1,5 @@
 from datetime import datetime
+import math
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -8,7 +9,7 @@ from app.core.errors import AppError
 from app.core.security import create_token, hash_password, verify_password
 from app.db import get_db
 from app.deps import get_current_user
-from app.models import AuthUser
+from app.models import AuthUser, OrgMember, ProcessInstance, ProcessTask, Project, Problem, Requirement, Ticket
 from app.schemas.common import ok
 from app.schemas.support import LoginIn
 
@@ -67,6 +68,9 @@ class PreferencesIn(BaseModel):
     notification_preferences: dict[str, bool] | None = None
     theme: str | None = Field(default=None, pattern="^(light|dark|system)$")
     density: str | None = Field(default=None, pattern="^(default|compact)$")
+    # 每个清单的列可见性/宽度偏好；manual_widths 只标记用户明确调整的列，
+    # 未标记列由前端按当前数据重新计算。服务端对数量和宽度做边界校验。
+    table_views: dict[str, dict] | None = None
 
 
 @router.patch("/me/preferences")
@@ -80,7 +84,53 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
         if len(body.avatar) > 400_000:  # 前端已压缩到 256px，此为兜底（约 300KB 图）
             raise AppError("BAD_AVATAR", "头像图片过大")
     prefs = dict(user.preferences or {})
-    for k, v in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    table_views = updates.get("table_views")
+    if table_views is not None:
+        if len(table_views) > 64:
+            raise AppError("TABLE_VIEW_INVALID", "清单视图配置数量不能超过 64 个", 422)
+        normalized_views: dict[str, dict] = {}
+        for table_key, view in table_views.items():
+            if not _re.fullmatch(r"[a-z][a-z0-9_.-]{1,63}", table_key):
+                raise AppError("TABLE_VIEW_INVALID", "清单视图标识格式不正确", 422)
+            if not isinstance(view, dict):
+                raise AppError("TABLE_VIEW_INVALID", "清单视图配置格式不正确", 422)
+            visible = view.get("visible", [])
+            widths = view.get("widths", {})
+            manual_widths = view.get("manual_widths", [])
+            if not isinstance(visible, list) or len(visible) > 128 or not all(isinstance(x, str) for x in visible):
+                raise AppError("TABLE_VIEW_INVALID", "可见字段配置格式不正确", 422)
+            if not isinstance(widths, dict) or len(widths) > 128:
+                raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+            if (
+                not isinstance(manual_widths, list)
+                or len(manual_widths) > 128
+                or not all(isinstance(x, str) for x in manual_widths)
+            ):
+                raise AppError("TABLE_VIEW_INVALID", "手工列宽字段配置格式不正确", 422)
+            normalized_widths: dict[str, int] = {}
+            for key, value in widths.items():
+                # JSON 规范之外的 NaN / Infinity 或极端数值会使 int(value)
+                # 抛出异常；偏好配置必须以 4xx 返回，而不能影响整条请求。
+                if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError, OverflowError):
+                    raise AppError("TABLE_VIEW_INVALID", "列宽配置格式不正确", 422)
+                if not math.isfinite(numeric_value):
+                    raise AppError("TABLE_VIEW_INVALID", "列宽配置必须为有限数值", 422)
+                normalized_widths[key] = max(80, min(800, int(numeric_value)))
+            normalized_manual_widths = list(dict.fromkeys(manual_widths))
+            if any(key not in normalized_widths for key in normalized_manual_widths):
+                raise AppError("TABLE_VIEW_INVALID", "手工列宽字段必须存在对应列宽", 422)
+            normalized_views[table_key] = {
+                "visible": visible,
+                "widths": normalized_widths,
+                "manual_widths": normalized_manual_widths,
+            }
+        updates["table_views"] = normalized_views
+    for k, v in updates.items():
         prefs[k] = v
     user.preferences = prefs
     from app.services.audit import audit as _audit
@@ -88,6 +138,84 @@ def update_preferences(body: PreferencesIn, user: AuthUser = Depends(get_current
            {"keys": sorted(body.model_dump(exclude_unset=True))})
     db.commit()
     return ok({"preferences": prefs})
+
+
+@router.get("/me/todos")
+def list_my_todos(
+    page: int = 1,
+    page_size: int = 20,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """当前用户可处理的流程待办，详情页负责执行具体流程动作。"""
+    from app.services import process_engine
+
+    page = max(1, page)
+    page_size = max(1, min(100, page_size))
+    tasks = (
+        db.query(ProcessTask)
+        .join(ProcessInstance, ProcessTask.instance_id == ProcessInstance.id)
+        .filter(
+            ProcessTask.status == "待处理",
+            ProcessTask.is_deleted.is_(False),
+            ProcessInstance.status.in_(["running", "进行中"]),
+            ProcessInstance.is_deleted.is_(False),
+        )
+        .order_by(ProcessTask.due_at.is_(None), ProcessTask.due_at.asc(), ProcessTask.created_at.desc())
+        .all()
+    )
+    member_names = {m.id: m.name for m in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    items = []
+    for task in tasks:
+        if not process_engine.can_act_on_task(db, user, task):
+            continue
+        instance = db.get(ProcessInstance, task.instance_id)
+        if not instance:
+            continue
+        entity = None
+        code = None
+        title = None
+        if instance.entity_type in ("ticket", "ticket_change"):
+            entity = db.get(Ticket, instance.entity_id)
+            code, title = (entity.ticket_code, entity.title) if entity else (None, None)
+        elif instance.entity_type == "requirement":
+            entity = db.get(Requirement, instance.entity_id)
+            code, title = (entity.requirement_code, entity.title) if entity else (None, None)
+        elif instance.entity_type == "project":
+            entity = db.get(Project, instance.entity_id)
+            code, title = (entity.project_code, entity.name) if entity else (None, None)
+        elif instance.entity_type == "problem":
+            entity = db.get(Problem, instance.entity_id)
+            code, title = (entity.problem_code, entity.title) if entity else (None, None)
+        elif instance.entity_type == "bug":
+            from app.models import Bug
+
+            entity = db.get(Bug, instance.entity_id)
+            code, title = (entity.bug_code, entity.title) if entity else (None, None)
+        if not entity or getattr(entity, "is_deleted", False):
+            continue
+        link_template = process_engine.ENTITY_LINKS.get(instance.entity_type)
+        if not link_template:
+            continue
+        items.append({
+            "id": task.id,
+            "task_id": task.id,
+            "entity_type": instance.entity_type,
+            "entity_id": instance.entity_id,
+            "code": code,
+            "title": title,
+            "process_name": instance.definition.name,
+            "step_name": task.step.name if task.step else "",
+            "step_seq": task.step.seq if task.step else None,
+            "assignee": task.assignee,
+            "assignee_name": member_names.get(task.assignee) if task.assignee else None,
+            "due_at": task.due_at,
+            "created_at": task.created_at,
+            "link": link_template.format(id=instance.entity_id),
+        })
+    total = len(items)
+    start = (page - 1) * page_size
+    return ok(items[start:start + page_size], total=total, page=page)
 
 
 @router.get("/me/profile")
@@ -128,6 +256,7 @@ def my_profile(user: AuthUser = Depends(get_current_user), db: Session = Depends
             "notification_preferences": prefs.get("notification_preferences", {}),
             "theme": prefs.get("theme", "light"),
             "density": prefs.get("density", "default"),
+            "table_views": prefs.get("table_views", {}),
         },
     })
 
@@ -205,6 +334,9 @@ def bind_my_feishu(
         raise AppError("FEISHU_ALREADY_BOUND", "该飞书身份已绑定其他账号")
     user.external_id = external_id
     user.auth_source = "feishu"
+    from app.services.aily import sync_aily_notification_identity
+
+    sync_aily_notification_identity(db, user=user, feishu_info=info)
     _audit(db, "auth_user", user.id, "bind_feishu", user, {})
     db.commit()
     return ok({"feishu_bound": True, "auth_source": "feishu"})
@@ -300,7 +432,8 @@ def _notify(db: Session, event_type: str, req: LoginRequest, title: str, content
 
 def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
                             email: str | None = None, mobile: str | None = None,
-                            avatar_url: str | None = None) -> dict:
+                            avatar_url: str | None = None,
+                            feishu_info: dict | None = None) -> dict:
     """飞书身份 → 已开通直登 / 业务用户自动开户 / 其他人员进入审批。"""
     existing = (
         db.query(AuthUser)
@@ -315,6 +448,9 @@ def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
         if not existing.is_active:
             raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
         existing.last_login_at = datetime.now()
+        from app.services.aily import sync_aily_notification_identity
+
+        sync_aily_notification_identity(db, user=existing, feishu_info=feishu_info)
         audit(db, "auth_user", existing.id, "login", existing, {"source": "feishu"})
         db.commit()
         return {"status": "active", "token": create_token(existing.id), "user": _user_payload(db, existing)}
@@ -333,6 +469,9 @@ def _handle_feishu_identity(db: Session, *, external_id: str, display_name: str,
         if not business_user.is_active:
             raise AppError("LOGIN_FAILED", "账号已禁用，请联系管理员", 401)
         business_user.last_login_at = datetime.now()
+        from app.services.aily import sync_aily_notification_identity
+
+        sync_aily_notification_identity(db, user=business_user, feishu_info=feishu_info)
         audit(db, "auth_user", business_user.id, "auto_provision_business_login", business_user, {
             "source": "feishu", "role_initialized": "requester",
         })
@@ -425,6 +564,7 @@ def feishu_callback(body: FeishuCallbackIn, db: Session = Depends(get_db)):
         display_name=info.get("name") or info.get("en_name") or external_id,
         email=info.get("enterprise_email") or info.get("email"),
         mobile=info.get("mobile"), avatar_url=info.get("avatar_url"),
+        feishu_info=info,
     ))
 
 
@@ -463,6 +603,7 @@ def feishu_app_login(body: FeishuAppLoginIn, db: Session = Depends(get_db)):
         display_name=info.get("name") or info.get("en_name") or external_id,
         email=info.get("enterprise_email") or info.get("email"),
         mobile=info.get("mobile"), avatar_url=info.get("avatar_url"),
+        feishu_info=info,
     ))
 
 

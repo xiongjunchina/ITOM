@@ -8,7 +8,7 @@ from app.core.errors import AppError
 from app.core.rbac import ADMIN, BDO, TEAM_ROLES
 from app.events import notifier
 from app.events.bus import publish
-from app.models import AuthUser, BusinessDomain, OrgMember, Requirement
+from app.models import Attachment, AuthUser, BusinessDomain, OrgMember, Requirement
 from app.services import mcp_intents, process_engine
 from app.services.audit import audit
 from app.services.codes import gen_code
@@ -17,6 +17,8 @@ from app.services.rbac import effective_roles
 
 REQ_TYPES = ("业务", "功能", "数据", "集成", "合规")
 REQUIRED_FIELDS = ("title", "req_type", "business_domain_id", "description")
+REQUIREMENT_ATTACHMENT_DRAFT = "requirement_draft"
+MAX_REQUIREMENT_ATTACHMENTS = 10
 
 
 def ensure_registration_authorized(db: Session, user: AuthUser) -> None:
@@ -74,7 +76,7 @@ def validate_fields(db: Session, fields: dict | None) -> dict:
     allowed = {
         "title", "req_type", "business_domain_id", "description", "source",
         "department", "expected_date", "expected_effect", "business_value_note",
-        "parent_requirement_id",
+        "parent_requirement_id", "remarks",
     }
     for code in fields.keys() - allowed:
         errors.append({"code": code, "message": "字段不在 IT 需求登记表中"})
@@ -122,6 +124,10 @@ def _current_process_task(db: Session, requirement_id: str):
 
 
 def create_requirement(db: Session, data: dict, user: AuthUser, commit: bool = True) -> Requirement:
+    data = dict(data)
+    attachment_ids = list(dict.fromkeys(data.pop("attachment_ids", []) or []))
+    if len(attachment_ids) > MAX_REQUIREMENT_ATTACHMENTS:
+        raise AppError("ATTACHMENT_LIMIT_EXCEEDED", f"单张需求最多上传 {MAX_REQUIREMENT_ATTACHMENTS} 个附件")
     validation = validate_fields(db, data)
     if validation["missing"] or validation["errors"]:
         raise AppError("FORM_VALIDATION_FAILED", "IT 需求登记表存在缺失或无效字段")
@@ -139,6 +145,31 @@ def create_requirement(db: Session, data: dict, user: AuthUser, commit: bool = T
     )
     db.add(requirement)
     db.flush()
+    if attachment_ids:
+        staged = (
+            db.query(Attachment)
+            .filter(
+                Attachment.id.in_(attachment_ids),
+                Attachment.entity_type == REQUIREMENT_ATTACHMENT_DRAFT,
+                Attachment.entity_id == user.id,
+                Attachment.uploaded_by == user.id,
+                Attachment.is_deleted.is_(False),
+            )
+            .all()
+        )
+        if len(staged) != len(attachment_ids):
+            raise AppError("ATTACHMENT_DRAFT_INVALID", "需求临时附件已失效、无权使用或已被绑定", 409)
+        for attachment in staged:
+            attachment.entity_type = "requirement"
+            attachment.entity_id = requirement.id
+            audit(
+                db,
+                "attachment",
+                attachment.id,
+                "bind_requirement",
+                user,
+                {"requirement_id": requirement.id, "requirement_code": requirement.requirement_code},
+            )
     process_engine.start_instance(db, "requirement", requirement.id, {})
     requirement.status = "evaluating"
     requirement.evaluating_at = datetime.now()
@@ -157,7 +188,14 @@ def create_requirement(db: Session, data: dict, user: AuthUser, commit: bool = T
             f"业务域「{domain.name}」新需求待评审（六维评分）。",
             link=f"/requirements/{requirement.id}",
         )
-    audit(db, "requirement", requirement.id, "create", user, {"code": requirement.requirement_code})
+    audit(
+        db,
+        "requirement",
+        requirement.id,
+        "create",
+        user,
+        {"code": requirement.requirement_code, "attachment_count": len(attachment_ids)},
+    )
     publish(db, "requirement.registered", "requirement", requirement.id, {})
     if commit:
         db.commit()

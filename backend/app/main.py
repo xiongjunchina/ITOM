@@ -11,11 +11,13 @@ from app.core.errors import AppError
 from app.db import Base, SessionLocal, engine
 from app.routers import (
     aily,
+    admin_ai,
     admin_misc,
     admin_org,
     admin_rbac,
     admin_users,
     attachments,
+    assistant,
     auth,
     feishu_card_callbacks,
     cmdb,
@@ -30,6 +32,7 @@ from app.routers import (
     projects,
     perf,
     requirements,
+    reports,
     record_relations,
     staff_intake,
     task_management,
@@ -40,6 +43,7 @@ from app.routers import (
     vendors_contracts,
     ui_branding,
     integrations,
+    investments,
 )
 from app.mcp.server import mcp_runtime
 from app.services import scheduler
@@ -74,10 +78,19 @@ async def lifespan(app: FastAPI):
     async with mcp_runtime.run():
         task = asyncio.create_task(scheduler.run_forever())
         outbox_task = asyncio.create_task(scheduler.run_aily_outbox_forever())
+        provider_probe_task = asyncio.create_task(
+            scheduler.run_ai_provider_probe_refresh_forever()
+        )
         yield
         task.cancel()
         outbox_task.cancel()
-        await asyncio.gather(task, outbox_task, return_exceptions=True)
+        provider_probe_task.cancel()
+        await asyncio.gather(
+            task,
+            outbox_task,
+            provider_probe_task,
+            return_exceptions=True,
+        )
 
 
 app = FastAPI(title="IT运营管理平台 API", version="0.9.0-m9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -151,8 +164,8 @@ async def auditor_readonly_guard(request: Request, call_next):
     return await call_next(request)
 
 
-for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, notifications, attachments, dashboard,
-          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, record_relations, staff_intake, task_management, team_activities, team_learning, team_mgmt, ui_branding, integrations, aily):
+for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, admin_ai, assistant, notifications, attachments, dashboard,
+          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, reports, investments, record_relations, staff_intake, task_management, team_activities, team_learning, team_mgmt, ui_branding, integrations, aily):
     app.include_router(r.router)
 
 app.include_router(feishu_card_callbacks.router)

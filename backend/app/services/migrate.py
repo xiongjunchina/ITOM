@@ -3,6 +3,9 @@
 M3.5：org_member 的 dept/team 自由文本列 → department 表 / 用户组成员关系，然后删列。
 """
 import logging
+import re
+from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -33,6 +36,27 @@ ENSURE_COLUMNS = {
     ],
     "org_settings": [
         ("digital_team_member_ids", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("reporting_timezone", "VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai'"),
+        ("reporting_week_start", "INTEGER NOT NULL DEFAULT 1"),
+        ("fiscal_year_start_month", "INTEGER NOT NULL DEFAULT 1"),
+        ("workday_hours", "DOUBLE PRECISION NOT NULL DEFAULT 8"),
+        ("report_min_group_size", "INTEGER NOT NULL DEFAULT 3"),
+        ("report_role_rates", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+    ],
+    "cost_entry": [
+        ("wbs_task_id", "VARCHAR(26)"),
+        ("amount_cny", "NUMERIC(18,2)"),
+        ("category", "VARCHAR(32) NOT NULL DEFAULT 'legacy'"),
+        ("cost_type", "VARCHAR(16) NOT NULL DEFAULT 'incurred'"),
+        ("supplier", "VARCHAR(128)"),
+    ],
+    "report_instance": [
+        ("published_version", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "business_domain": [
+        # M95：语义不同于历史 backup_owner_id，只增列、不复制，避免把旧 IT
+        # 备份负责人误认作业务侧 BDO；历史列保留以保护既有数据。
+        ("business_bdo_id", "VARCHAR(26)"),
     ],
     "ci": [
         ("product_manager_id", "VARCHAR(26)"),
@@ -81,9 +105,12 @@ ENSURE_COLUMNS = {
         ("decision", "VARCHAR(16)"),
         ("prd_effort", "DOUBLE PRECISION"),
         ("dev_effort", "DOUBLE PRECISION"),
+        # M96：仅为新路径决定写入快照；不回填、不改写既有需求的历史流转事实。
+        ("implementation_route", "VARCHAR(32)"),
         ("evaluating_at", "TIMESTAMP"),
     ],
     "project": [
+        ("created_by", "VARCHAR(26)"),
         ("background", "TEXT"),
         ("goals", "TEXT"),
         ("scope_in", "TEXT"),
@@ -93,9 +120,14 @@ ENSURE_COLUMNS = {
         ("stakeholders", "JSONB"),
     ],
     "requirement_task": [
+        ("task_code", "VARCHAR(32)"),
         ("description", "TEXT"),
         ("plan_effort", "DOUBLE PRECISION"),
         ("actual_effort", "DOUBLE PRECISION"),
+        ("registrar", "VARCHAR(26)"),
+    ],
+    "bug_fix_task": [
+        ("task_code", "VARCHAR(32)"),
     ],
     "auth_user": [
         ("preferences", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
@@ -133,6 +165,12 @@ ENSURE_COLUMNS = {
         ("step_code_snapshot", "VARCHAR(64)"),
         ("raci_snapshot", "JSONB"),
         ("completed_by", "VARCHAR(26)"),
+        ("viewed_at", "TIMESTAMP"),
+        ("viewed_by", "VARCHAR(26)"),
+        # Existing open tasks deliberately default to false.  New tasks are
+        # created by the engine with true, preventing a retroactive permission
+        # grant on records already being processed at release time.
+        ("upstream_correction_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ],
     "point_rule": [
         ("contribution_bucket", "VARCHAR(24) NOT NULL DEFAULT 'team_contribution'"),
@@ -174,6 +212,10 @@ ENSURE_COLUMNS = {
         ("process_definition_id", "VARCHAR(26)"),
         ("default_priority", "VARCHAR(8) NOT NULL DEFAULT 'P3'"),
     ],
+    "service_dispatch_rule": [
+        # M93：历史规则均为首节点受理派单；实施交付规则按新增 stage 独立维护。
+        ("dispatch_stage", "VARCHAR(16) NOT NULL DEFAULT 'acceptance'"),
+    ],
     "ticket": [
         ("service_category", "VARCHAR(128)"),
         ("other_info", "TEXT"),
@@ -184,6 +226,12 @@ ENSURE_COLUMNS = {
         ("dispatch_source", "VARCHAR(32)"),
         ("assigned_at", "TIMESTAMP"),
         ("accepted_at", "TIMESTAMP"),
+        # M93：新增事实，不回填或改写任何历史服务请求。
+        ("implementation_assignee", "VARCHAR(26)"),
+        ("implementation_rule_id", "VARCHAR(26)"),
+        ("implementation_source", "VARCHAR(32)"),
+        ("implementation_selected_by", "VARCHAR(26)"),
+        ("implementation_selected_at", "TIMESTAMP"),
         ("confirmation_due_at", "TIMESTAMP"),
         ("suspected_major_impact", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ],
@@ -212,6 +260,74 @@ def ensure_columns(db: Session):
             if name not in existing:
                 db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
                 logger.info("added column %s.%s", table, name)
+    db.commit()
+
+
+def backfill_report_center_amounts(db: Session):
+    """把旧万元金额精确换算为人民币元；不伪造任何历史人天投入。"""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    changed = db.execute(text(
+        "UPDATE cost_entry SET amount_cny = ROUND(amount_10k::numeric * 10000, 2) "
+        "WHERE amount_cny IS NULL"
+    )).rowcount
+    if changed:
+        logger.info("backfilled %d cost_entry amount_cny rows", changed)
+    db.commit()
+
+
+def _legacy_task_code_assignments(rows: list[tuple], prefix: str) -> list[tuple[str, str]]:
+    """为缺少业务编号的历史开发任务生成稳定、无碰撞的月份序号。"""
+    # Keep accepting sequences beyond 9999.  ``:04d`` is a minimum width,
+    # therefore a busy month may legitimately contain a five-digit suffix.
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d{{6}})-(\d+)$")
+    maxima: dict[str, int] = {}
+    used: set[str] = set()
+    pending: list[tuple[str, datetime | None]] = []
+    for row_id, task_code, created_at in rows:
+        normalized = (task_code or "").strip()
+        if normalized:
+            used.add(normalized)
+            match = pattern.fullmatch(normalized)
+            if match:
+                month, sequence = match.groups()
+                maxima[month] = max(maxima.get(month, 0), int(sequence))
+        else:
+            pending.append((row_id, created_at))
+
+    assignments: list[tuple[str, str]] = []
+    for row_id, created_at in pending:
+        month = (created_at or datetime.now()).strftime("%Y%m")
+        sequence = maxima.get(month, 0) + 1
+        candidate = f"{prefix}-{month}-{sequence:04d}"
+        while candidate in used:
+            sequence += 1
+            candidate = f"{prefix}-{month}-{sequence:04d}"
+        maxima[month] = sequence
+        used.add(candidate)
+        assignments.append((row_id, candidate))
+    return assignments
+
+
+def backfill_development_task_codes(db: Session):
+    """M109：补齐需求开发、Bug 修复子任务编号，保留所有历史业务数据。"""
+    specs = (
+        ("requirement_task", "RT", "uq_requirement_task_task_code"),
+        ("bug_fix_task", "BT", "uq_bug_fix_task_task_code"),
+    )
+    for table, prefix, index_name in specs:
+        rows = db.execute(text(
+            f"SELECT id, task_code, created_at FROM {table} ORDER BY created_at, id"
+        )).all()
+        for row_id, task_code in _legacy_task_code_assignments(rows, prefix):
+            db.execute(
+                text(f"UPDATE {table} SET task_code = :task_code WHERE id = :id"),
+                {"id": row_id, "task_code": task_code},
+            )
+        db.execute(text(
+            f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} ON {table} (task_code)"
+        ))
+        db.execute(text(f"ALTER TABLE {table} ALTER COLUMN task_code SET NOT NULL"))
     db.commit()
 
 
@@ -829,6 +945,234 @@ def backfill_wbs_progress_hierarchy(db: Session):
         db.commit()
 
 
+ASSISTANT_SCHEMA_STATEMENTS = (
+    "CREATE TABLE IF NOT EXISTS ai_provider_config ("
+    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, "
+    "provider_type VARCHAR(32) NOT NULL, api_base_url VARCHAR(300), api_key_encrypted TEXT, model VARCHAR(128), "
+    "timeout_seconds INTEGER NOT NULL DEFAULT 30, max_output_tokens INTEGER NOT NULL DEFAULT 2048, temperature DOUBLE PRECISION, "
+    "capability_probe JSONB NOT NULL DEFAULT '{}'::jsonb, probe_status VARCHAR(16) NOT NULL DEFAULT 'unverified', "
+    "last_probed_at TIMESTAMP, config_revision INTEGER NOT NULL DEFAULT 1, "
+    "is_primary BOOLEAN NOT NULL DEFAULT false, fallback_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), "
+    "enabled BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false, "
+    "CONSTRAINT uq_ai_provider_config_code UNIQUE(code))",
+    "CREATE TABLE IF NOT EXISTS ai_agent_profile ("
+    "id VARCHAR(26) PRIMARY KEY, code VARCHAR(64) NOT NULL, name VARCHAR(128), audience VARCHAR(32) NOT NULL, "
+    "default_provider_id VARCHAR(26) REFERENCES ai_provider_config(id), max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', "
+    "status VARCHAR(16) NOT NULL DEFAULT 'draft', enabled BOOLEAN NOT NULL DEFAULT false, "
+    "retention_days INTEGER NOT NULL DEFAULT 30, "
+    "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
+    "is_example BOOLEAN NOT NULL DEFAULT false, CONSTRAINT uq_ai_agent_profile_code UNIQUE(code), "
+    "CONSTRAINT ck_ai_agent_profile_retention_days CHECK (retention_days BETWEEN 0 AND 90))",
+    "CREATE TABLE IF NOT EXISTS ai_agent_profile_version ("
+    "id VARCHAR(26) PRIMARY KEY, profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), version INTEGER NOT NULL, "
+    "status VARCHAR(16) NOT NULL DEFAULT 'draft', system_prompt_zh TEXT, system_prompt_en TEXT, "
+    "enabled_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb, knowledge_scope JSONB NOT NULL DEFAULT '[]'::jsonb, "
+    "config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb, "
+    "max_risk_level VARCHAR(2) NOT NULL DEFAULT 'L1', published_by VARCHAR(26) REFERENCES auth_user(id), published_at TIMESTAMP, "
+    "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
+    "is_example BOOLEAN NOT NULL DEFAULT false, CONSTRAINT uq_ai_agent_profile_version_profile_version UNIQUE(profile_id, version))",
+    "CREATE TABLE IF NOT EXISTS ai_conversation ("
+    "id VARCHAR(26) PRIMARY KEY, auth_user_id VARCHAR(26) NOT NULL REFERENCES auth_user(id), "
+    "profile_id VARCHAR(26) NOT NULL REFERENCES ai_agent_profile(id), "
+    "profile_version_id VARCHAR(26) REFERENCES ai_agent_profile_version(id), language VARCHAR(16) NOT NULL DEFAULT 'zh-CN', "
+    "page_context JSONB NOT NULL DEFAULT '{}'::jsonb, status VARCHAR(16) NOT NULL DEFAULT 'active', expires_at TIMESTAMP, archived_at TIMESTAMP, "
+    "created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, "
+    "is_example BOOLEAN NOT NULL DEFAULT false)",
+    "CREATE TABLE IF NOT EXISTS ai_message ("
+    "id VARCHAR(26) PRIMARY KEY, conversation_id VARCHAR(26) NOT NULL REFERENCES ai_conversation(id), role VARCHAR(16) NOT NULL, "
+    "content JSONB NOT NULL DEFAULT '{}'::jsonb, redacted_text TEXT, status VARCHAR(16) NOT NULL DEFAULT 'completed', "
+    "input_tokens INTEGER, output_tokens INTEGER, duration_ms INTEGER, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false)",
+    "CREATE TABLE IF NOT EXISTS ai_action ("
+    "id VARCHAR(26) PRIMARY KEY, conversation_id VARCHAR(26) NOT NULL REFERENCES ai_conversation(id), "
+    "auth_user_id VARCHAR(26) NOT NULL REFERENCES auth_user(id), message_id VARCHAR(26) REFERENCES ai_message(id), "
+    "capability_code VARCHAR(96) NOT NULL, risk_level VARCHAR(2) NOT NULL, normalized_payload JSONB NOT NULL DEFAULT '{}'::jsonb, "
+    "payload_digest VARCHAR(64) NOT NULL, token_hash VARCHAR(64), idempotency_key VARCHAR(128) NOT NULL, "
+    "status VARCHAR(16) NOT NULL DEFAULT 'prepared', expires_at TIMESTAMP, consumed_at TIMESTAMP, result_code VARCHAR(64), "
+    "result_summary JSONB, result_entity_type VARCHAR(32), result_entity_id VARCHAR(26), created_at TIMESTAMP DEFAULT now(), "
+    "updated_at TIMESTAMP DEFAULT now(), is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false, "
+    "CONSTRAINT uq_ai_action_user_capability_idempotency UNIQUE(auth_user_id, capability_code, idempotency_key))",
+    "CREATE TABLE IF NOT EXISTS ai_provider_call ("
+    "id VARCHAR(26) PRIMARY KEY, provider_id VARCHAR(26) NOT NULL REFERENCES ai_provider_config(id), "
+    "conversation_id VARCHAR(26) REFERENCES ai_conversation(id), message_id VARCHAR(26) REFERENCES ai_message(id), "
+    "profile_version_id VARCHAR(26) REFERENCES ai_agent_profile_version(id), model VARCHAR(128) NOT NULL, "
+    "purpose VARCHAR(32) NOT NULL DEFAULT 'chat', input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0, "
+    "duration_ms INTEGER NOT NULL DEFAULT 0, result_code VARCHAR(64) NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'completed', "
+    "error_redacted JSONB, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now(), "
+    "is_deleted BOOLEAN NOT NULL DEFAULT false, is_example BOOLEAN NOT NULL DEFAULT false)",
+)
+
+ASSISTANT_ENSURE_COLUMNS = {
+    "ai_provider_config": [
+        ("code", "VARCHAR(64)"),
+        ("name", "VARCHAR(128)"),
+        ("provider_type", "VARCHAR(32)"),
+        ("api_base_url", "VARCHAR(300)"),
+        ("api_key_encrypted", "TEXT"),
+        ("model", "VARCHAR(128)"),
+        ("timeout_seconds", "INTEGER NOT NULL DEFAULT 30"),
+        ("max_output_tokens", "INTEGER NOT NULL DEFAULT 2048"),
+        ("temperature", "DOUBLE PRECISION"),
+        ("capability_probe", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("probe_status", "VARCHAR(16) NOT NULL DEFAULT 'unverified'"),
+        ("last_probed_at", "TIMESTAMP"),
+        ("config_revision", "INTEGER NOT NULL DEFAULT 1"),
+        ("is_primary", "BOOLEAN NOT NULL DEFAULT false"),
+        ("fallback_provider_id", "VARCHAR(26)"),
+        ("enabled", "BOOLEAN NOT NULL DEFAULT false"),
+    ],
+    "ai_agent_profile": [
+        ("code", "VARCHAR(64)"),
+        ("name", "VARCHAR(128)"),
+        ("audience", "VARCHAR(32)"),
+        ("default_provider_id", "VARCHAR(26)"),
+        ("max_risk_level", "VARCHAR(2) NOT NULL DEFAULT 'L1'"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'draft'"),
+        ("enabled", "BOOLEAN NOT NULL DEFAULT false"),
+        ("retention_days", "INTEGER NOT NULL DEFAULT 30"),
+    ],
+    "ai_agent_profile_version": [
+        ("profile_id", "VARCHAR(26)"),
+        ("version", "INTEGER"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'draft'"),
+        ("system_prompt_zh", "TEXT"),
+        ("system_prompt_en", "TEXT"),
+        ("enabled_capabilities", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("knowledge_scope", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ("config_snapshot", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("max_risk_level", "VARCHAR(2) NOT NULL DEFAULT 'L1'"),
+        ("published_by", "VARCHAR(26)"),
+        ("published_at", "TIMESTAMP"),
+    ],
+    "ai_conversation": [
+        ("auth_user_id", "VARCHAR(26)"),
+        ("profile_id", "VARCHAR(26)"),
+        ("profile_version_id", "VARCHAR(26)"),
+        ("language", "VARCHAR(16) NOT NULL DEFAULT 'zh-CN'"),
+        ("page_context", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'active'"),
+        ("expires_at", "TIMESTAMP"),
+        ("archived_at", "TIMESTAMP"),
+    ],
+    "ai_message": [
+        ("conversation_id", "VARCHAR(26)"),
+        ("role", "VARCHAR(16)"),
+        ("content", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("redacted_text", "TEXT"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'completed'"),
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("duration_ms", "INTEGER"),
+    ],
+    "ai_action": [
+        ("conversation_id", "VARCHAR(26)"),
+        ("auth_user_id", "VARCHAR(26)"),
+        ("message_id", "VARCHAR(26)"),
+        ("capability_code", "VARCHAR(96)"),
+        ("risk_level", "VARCHAR(2)"),
+        ("normalized_payload", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+        ("payload_digest", "VARCHAR(64)"),
+        ("token_hash", "VARCHAR(64)"),
+        ("idempotency_key", "VARCHAR(128)"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'prepared'"),
+        ("expires_at", "TIMESTAMP"),
+        ("consumed_at", "TIMESTAMP"),
+        ("result_code", "VARCHAR(64)"),
+        ("result_summary", "JSONB"),
+        ("result_entity_type", "VARCHAR(32)"),
+        ("result_entity_id", "VARCHAR(26)"),
+    ],
+    "ai_provider_call": [
+        ("provider_id", "VARCHAR(26)"),
+        ("conversation_id", "VARCHAR(26)"),
+        ("message_id", "VARCHAR(26)"),
+        ("profile_version_id", "VARCHAR(26)"),
+        ("model", "VARCHAR(128)"),
+        ("purpose", "VARCHAR(32) NOT NULL DEFAULT 'chat'"),
+        ("input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ("result_code", "VARCHAR(64)"),
+        ("status", "VARCHAR(16) NOT NULL DEFAULT 'completed'"),
+        ("error_redacted", "JSONB"),
+    ],
+}
+
+ASSISTANT_INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_provider_type ON ai_provider_config (provider_type)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_probe_status ON ai_provider_config (probe_status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_is_primary ON ai_provider_config (is_primary)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_fallback_provider_id ON ai_provider_config (fallback_provider_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_config_enabled ON ai_provider_config (enabled)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_audience ON ai_agent_profile (audience)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_default_provider_id ON ai_agent_profile (default_provider_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_status ON ai_agent_profile (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_enabled ON ai_agent_profile (enabled)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_profile_id ON ai_agent_profile_version (profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_status ON ai_agent_profile_version (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_agent_profile_version_published_by ON ai_agent_profile_version (published_by)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_auth_user_id ON ai_conversation (auth_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_profile_id ON ai_conversation (profile_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_profile_version_id ON ai_conversation (profile_version_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_status ON ai_conversation (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_conversation_expires_at ON ai_conversation (expires_at)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_message_conversation_id ON ai_message (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_message_role ON ai_message (role)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_message_status ON ai_message (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_conversation_id ON ai_action (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_auth_user_id ON ai_action (auth_user_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_message_id ON ai_action (message_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_capability_code ON ai_action (capability_code)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_token_hash ON ai_action (token_hash)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_idempotency_key ON ai_action (idempotency_key)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_status ON ai_action (status)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_expires_at ON ai_action (expires_at)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_action_result_code ON ai_action (result_code)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_provider_id ON ai_provider_call (provider_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_conversation_id ON ai_provider_call (conversation_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_message_id ON ai_provider_call (message_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_profile_version_id ON ai_provider_call (profile_version_id)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_purpose ON ai_provider_call (purpose)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_result_code ON ai_provider_call (result_code)",
+    "CREATE INDEX IF NOT EXISTS ix_ai_provider_call_status ON ai_provider_call (status)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_provider_config_code ON ai_provider_config (code)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_agent_profile_code ON ai_agent_profile (code)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_agent_profile_version_profile_version "
+    "ON ai_agent_profile_version (profile_id, version)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ai_action_user_capability_idempotency "
+    "ON ai_action (auth_user_id, capability_code, idempotency_key)",
+)
+
+ASSISTANT_CONSTRAINT_STATEMENTS = (
+    "DO $$ BEGIN "
+    "IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_ai_agent_profile_retention_days' "
+    "AND conrelid='ai_agent_profile'::regclass) THEN "
+    "ALTER TABLE ai_agent_profile ADD CONSTRAINT ck_ai_agent_profile_retention_days "
+    "CHECK (retention_days BETWEEN 0 AND 90); "
+    "END IF; END $$",
+)
+
+
+def ensure_assistant_schema(db: Session):
+    """Idempotently add WA0 assistant persistence without touching business data."""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    for statement in ASSISTANT_SCHEMA_STATEMENTS:
+        db.execute(text(statement))
+    for table, columns in ASSISTANT_ENSURE_COLUMNS.items():
+        existing = _columns(db, table)
+        for name, ddl in columns:
+            if name not in existing:
+                db.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                logger.info("added assistant column %s.%s", table, name)
+    for statement in ASSISTANT_INDEX_STATEMENTS:
+        db.execute(text(statement))
+    for statement in ASSISTANT_CONSTRAINT_STATEMENTS:
+        db.execute(text(statement))
+    db.commit()
+
+
 def migrate_m35_org(db: Session):
     if db.get_bind().dialect.name != "postgresql":
         return
@@ -836,7 +1180,17 @@ def migrate_m35_org(db: Session):
     drop_notification_recipient_fk_m34(db)
     widen_department_sort_m341(db)
     ensure_columns(db)
+    backfill_report_center_amounts(db)
+    backfill_unified_investments(db)
+    backfill_development_task_codes(db)
+    # M97：需求开发任务允许先登记、后关联需求。仅放宽约束，不删除、不改写
+    # 任何既有任务及其关联关系。
+    db.execute(text("ALTER TABLE requirement_task ALTER COLUMN requirement_id DROP NOT NULL"))
+    # M97：系统管理员可能是未绑定组织人员的内置账号。任务登记人允许为空，
+    # 审计日志仍保留 AuthUser 身份；普通 IT 账号仍由服务层强制要求人员绑定。
+    db.execute(text("ALTER TABLE work_task ALTER COLUMN registrar DROP NOT NULL"))
     ensure_aily_indexes(db)
+    ensure_assistant_schema(db)
     ensure_record_relation_schema(db)
     backfill_development_activity_creator(db)
     backfill_process_step_codes(db)
@@ -859,6 +1213,13 @@ def migrate_m35_org(db: Session):
     rebuild_problem_flow_m29(db)
     fix_process_node_types_m75(db)
     fix_bug_flow_assignment_m83(db)
+    # M108：旧版把需求“驳回”误作流程终止。恢复为默认退回上一节点；
+    # 首审批节点则回到登记人补充。函数按 instance.status 幂等执行。
+    from app.services.requirement_returns import repair_rejected_instances
+
+    repaired_requirement_returns = repair_rejected_instances(db)
+    if repaired_requirement_returns:
+        logger.info("repaired %d rejected requirement process instances", repaired_requirement_returns)
     ensure_is_example_everywhere(db)
     cols = _columns(db, "org_member")
 
@@ -919,6 +1280,106 @@ def migrate_m35_org(db: Session):
         logger.info("migrated org_member.team -> user_group (%d rows)", len(rows))
 
     db.commit()
+
+
+def backfill_unified_investments(db: Session):
+    """把旧项目投入事实幂等复制到 B-OPS 统一账本。
+
+    旧表不删除、不改写，保留为一个发布周期的回滚依据。唯一来源键保证重复
+    启动不会复制金额或人天；迁移不会为历史任务虚构日期、费率或分摊。
+    """
+    from app.models import (
+        CostEntry,
+        InvestmentBudgetItem,
+        InvestmentCostEntry,
+        InvestmentWorklog,
+        Project,
+        ProjectBudgetItem,
+        ProjectEffortEntry,
+    )
+
+    existing_budget = {
+        (row.source_type, row.source_id)
+        for row in db.query(InvestmentBudgetItem).filter(InvestmentBudgetItem.source_type.is_not(None)).all()
+    }
+    existing_cost = {
+        (row.source_type, row.source_id)
+        for row in db.query(InvestmentCostEntry).filter(InvestmentCostEntry.source_type.is_not(None)).all()
+    }
+    existing_worklog = {
+        (row.source_type, row.source_id)
+        for row in db.query(InvestmentWorklog).filter(InvestmentWorklog.source_type.is_not(None)).all()
+    }
+    projects = {row.id: row for row in db.query(Project).all()}
+    explicit_budget_projects: set[str] = set()
+
+    for old in db.query(ProjectBudgetItem).all():
+        project = projects.get(old.project_id)
+        if not project:
+            continue
+        explicit_budget_projects.add(old.project_id)
+        source = ("legacy_project_budget_item", old.id)
+        if source in existing_budget:
+            continue
+        db.add(InvestmentBudgetItem(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=old.project_id,
+            period_start=project.planned_start, period_end=project.planned_end,
+            category=old.category, cost_nature="capex", name=old.name,
+            amount_cny=old.amount_cny, note=old.note,
+            source_type=source[0], source_id=source[1], created_by=old.created_by,
+            is_deleted=old.is_deleted, is_example=old.is_example,
+        ))
+    for project in projects.values():
+        source = ("legacy_project_budget_total", project.id)
+        if project.id in explicit_budget_projects or project.budget_10k is None or source in existing_budget:
+            continue
+        db.add(InvestmentBudgetItem(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=project.id,
+            period_start=project.planned_start, period_end=project.planned_end,
+            category="legacy", cost_nature="capex", name="历史项目预算总额",
+            amount_cny=Decimal(str(project.budget_10k)) * Decimal("10000"),
+            note="由 project.budget_10k 兼容迁移；未拆分预算类别",
+            source_type=source[0], source_id=source[1], created_by=project.created_by,
+            is_deleted=project.is_deleted, is_example=project.is_example,
+        ))
+    for old in db.query(CostEntry).all():
+        source = ("legacy_project_cost", old.id)
+        if source in existing_cost:
+            continue
+        amount = old.amount_cny if old.amount_cny is not None else Decimal(str(old.amount_10k)) * Decimal("10000")
+        db.add(InvestmentCostEntry(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=old.project_id,
+            recognition_date=old.entry_date, amount_cny=amount,
+            cost_status=old.cost_type if old.cost_type in {"committed", "incurred"} else "incurred",
+            category=old.category or "legacy", cost_nature="capex",
+            labor_nature="unclassified" if old.category == "labor" else "none",
+            recurrence="one_time", activity_type="implementation",
+            project_id=old.project_id, wbs_task_id=old.wbs_task_id,
+            supplier_snapshot=old.supplier, note=old.note,
+            source_type=source[0], source_id=source[1], created_by=old.created_by,
+            is_deleted=old.is_deleted, is_example=old.is_example,
+        ))
+    for old in db.query(ProjectEffortEntry).all():
+        source = ("legacy_project_effort", old.id)
+        if source in existing_worklog:
+            continue
+        db.add(InvestmentWorklog(
+            lifecycle_stage="build", investment_intent="transform",
+            subject_type="project", subject_id=old.project_id,
+            person_id=old.person_id, work_date=old.work_date, effort_days=old.effort_days,
+            role_type=old.role_type, activity_type=(
+                old.role_type if old.role_type in {"design", "development", "testing", "implementation", "pm"}
+                else "other"
+            ),
+            standard_rate_cny_per_day=old.standard_rate_cny_per_day,
+            project_id=old.project_id, wbs_task_id=old.wbs_task_id, note=old.note,
+            source_type=source[0], source_id=source[1], created_by=old.created_by,
+            is_deleted=old.is_deleted, is_example=old.is_example,
+        ))
+    db.flush()
 
 
 def run_migrations(db: Session):

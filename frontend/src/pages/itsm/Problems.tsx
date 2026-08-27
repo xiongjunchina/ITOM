@@ -15,6 +15,7 @@ import { useEnums } from '../../i18n/enums';
 import type { Member, ProblemRow, ServiceItem, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS, PROBLEM_STATUS_LABELS } from '../../api/types';
 import DocumentTypeHint from '../../components/DocumentTypeHint';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 
 export function problemStatusBadge(
   status: string,
@@ -45,6 +46,7 @@ export default function Problems() {
   const canCreate = user?.permissions ? hasPermission(user, 'problems', 'create') : true;
   const createRequested = searchParams.get('create') === '1';
   const [items, setItems] = useState<ProblemRow[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -186,7 +188,7 @@ export default function Problems() {
       ),
     },
     // M21：删除（delete 权限，默认仅 admin），示例数据只读
-    ...(canDelete
+    ...(canDelete || items.some((item) => item.can_delete)
       ? ([
           {
             title: t('common.actions'),
@@ -195,6 +197,7 @@ export default function Problems() {
             fixed: 'right' as const,
             render: (_: unknown, r: ProblemRow) =>
               r.is_example && !isAdmin ? null : (
+                (r.can_delete ?? canDelete) ? (
                 <Popconfirm
                   title={t('common.deleteConfirm')}
                   onConfirm={async () => {
@@ -207,6 +210,7 @@ export default function Problems() {
                     {t('common.delete')}
                   </Button>
                 </Popconfirm>
+                ) : null
               ),
           },
         ] as ColumnsType<ProblemRow>)
@@ -258,6 +262,17 @@ export default function Problems() {
         <Button icon={<ReloadOutlined />} onClick={() => void load()}>
           {t('common.refresh')}
         </Button>
+        {(canDelete || items.some((item) => item.can_delete)) && (
+          <BatchDeleteToolbar
+            endpoint="/problems/batch-delete"
+            entityName="问题单"
+            selectedIds={selectedIds}
+            onCompleted={() => {
+              setSelectedIds([]);
+              void load();
+            }}
+          />
+        )}
       </Space>
 
       <Table<ProblemRow>
@@ -265,6 +280,17 @@ export default function Problems() {
         loading={loading}
         columns={columns}
         dataSource={items}
+        rowSelection={
+          canDelete || items.some((item) => item.can_delete)
+            ? {
+                selectedRowKeys: selectedIds,
+                onChange: (keys) => setSelectedIds(keys.map(String)),
+                getCheckboxProps: (row) => ({
+                  disabled: !(row.can_delete ?? canDelete) || (!!row.is_example && !isAdmin),
+                }),
+              }
+            : undefined
+        }
         standardToolbar={{ exportFileName: '问题清单', showSearch: false, showFilter: false }}
         sticky
         scroll={{ x: 1100 }}

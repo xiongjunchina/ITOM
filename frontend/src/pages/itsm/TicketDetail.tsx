@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -9,6 +11,7 @@ import {
   Input,
   Modal,
   Rate,
+  Radio,
   Select,
   Space,
   Spin,
@@ -17,7 +20,7 @@ import {
   Typography,
   message,
 } from 'antd';
-import { ArrowLeftOutlined, EditOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EditOutlined, PaperClipOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { api } from '../../api/client';
 import { ExampleAlert } from '../../components/ExampleTag';
@@ -25,14 +28,17 @@ import DocumentTypeHint from '../../components/DocumentTypeHint';
 import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
+import InvestmentPanel from '../../components/investment/InvestmentPanel';
 import { canHandleTask, hasPermission, useAuthStore } from '../../stores/auth';
 import { useRoleOptions } from '../../utils/roleOptions';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
 import type {
   AllowedTransition,
+  AttachmentItem,
   MasterDataItem,
   Member,
   ProcessStep,
@@ -77,7 +83,9 @@ export default function TicketDetail() {
   const { roleLabel } = useRoleOptions();
 
   const [detail, setDetail] = useState<TicketDetailData | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // 状态流转 Modal
   const [transition, setTransition] = useState<AllowedTransition | null>(null);
@@ -99,6 +107,8 @@ export default function TicketDetail() {
   const [completingTask, setCompletingTask] = useState<ProcessStep | null>(null);
   const [taskComment, setTaskComment] = useState('');
   const [taskSaving, setTaskSaving] = useState(false);
+  const [implementationMode, setImplementationMode] = useState<'auto' | 'self' | 'member'>('self');
+  const [implementationAssignee, setImplementationAssignee] = useState<string | undefined>();
 
   // 满意度
   const [rating, setRating] = useState(0);
@@ -112,11 +122,23 @@ export default function TicketDetail() {
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await api.get<TicketDetailData>(`/tickets/${id}`);
       setDetail(data);
-    } catch {
-      // 已统一提示
+      const attachmentResult = await api
+        .getList<AttachmentItem>('/attachments', { entity_type: 'ticket', entity_id: id })
+        .catch(() => ({ items: [], total: 0 }));
+      setAttachments(attachmentResult.items);
+    } catch (error) {
+      // 客户端已弹出统一提示；详情卡片仍保留后端的业务错误，避免将已撤回
+      // 单据误显示为从未存在或无权查看。
+      if (isAxiosError(error)) {
+        const body = error.response?.data as { error?: { message?: string } } | undefined;
+        setLoadError(body?.error?.message || t('itsm.ticket.notFound'));
+      } else {
+        setLoadError(t('itsm.ticket.notFound'));
+      }
     } finally {
       setLoading(false);
     }
@@ -125,6 +147,7 @@ export default function TicketDetail() {
   useEffect(() => {
     void load();
   }, [load]);
+  useProcessTaskView(detail?.process, user, load);
 
   const loadMembers = () => {
     if (members.length === 0) {
@@ -207,18 +230,45 @@ export default function TicketDetail() {
 
   const submitTaskComplete = async () => {
     if (!completingTask?.task_id) return;
+    const payload: Record<string, string> = { comment: taskComment };
+    if (isImplementationHandoff) {
+      if (implementationMode === 'member' && !implementationAssignee) {
+        message.warning(t('itsm.ticket.implementationAssigneeRequired'));
+        return;
+      }
+      payload.implementation_mode = implementationMode;
+      if (implementationMode === 'member' && implementationAssignee) {
+        payload.implementation_assignee = implementationAssignee;
+      }
+    }
     setTaskSaving(true);
     try {
-      await api.post(`/process-tasks/${completingTask.task_id}/complete`, { comment: taskComment });
+      await api.post(`/process-tasks/${completingTask.task_id}/complete`, payload);
       message.success(t('itsm.stepDone'));
       setCompletingTask(null);
       setTaskComment('');
+      setImplementationAssignee(undefined);
       void load();
     } catch {
       // 已统一提示
     } finally {
       setTaskSaving(false);
     }
+  };
+
+  const isImplementationHandoff = Boolean(
+    detail?.ticket_type === 'service_request'
+      && completingTask?.task_id
+      && detail.process?.steps?.[0]?.task_id === completingTask.task_id
+      && detail.process.steps.length > 1
+      && detail.process.steps[1]?.default_role !== 'requester',
+  );
+
+  const implementationSourceLabel = (source?: string | null) => {
+    if (!source) return '-';
+    const key = `itsm.ticket.implementationSource.${source}`;
+    const translated = t(key);
+    return translated === key ? source : translated;
   };
 
   const toKnowledge = async () => {
@@ -267,7 +317,7 @@ export default function TicketDetail() {
   if (!detail) {
     return (
       <Card>
-        <Typography.Text type="secondary">{t('itsm.ticket.notFound')}</Typography.Text>
+        <Alert type="warning" showIcon message={loadError || t('itsm.ticket.notFound')} />
       </Card>
     );
   }
@@ -417,6 +467,18 @@ export default function TicketDetail() {
                       style={{ padding: 0 }}
                       onClick={() => {
                         setTaskComment('');
+                        const firstStep = detail.process?.steps?.[0];
+                        const nextStep = detail.process?.steps?.[1];
+                        if (
+                          detail.ticket_type === 'service_request'
+                          && firstStep?.task_id === s.task_id
+                          && nextStep
+                          && nextStep.default_role !== 'requester'
+                        ) {
+                          loadMembers();
+                          setImplementationMode(user?.person_id ? 'self' : 'auto');
+                          setImplementationAssignee(undefined);
+                        }
                         setCompletingTask(s);
                       }}
                     >
@@ -429,8 +491,6 @@ export default function TicketDetail() {
           />
         </Card>
       )}
-
-      <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
 
       <Card title={t('itsm.basicInfo')} size="small">
         <Descriptions column={2} size="small" bordered>
@@ -459,6 +519,23 @@ export default function TicketDetail() {
               )}
             </Space>
           </Descriptions.Item>
+          {detail.ticket_type === 'service_request' && (
+            <Descriptions.Item label={t('itsm.ticket.implementationAssignee')}>
+              {detail.implementation_assignee_name ?? (
+                detail.implementation_source === 'manual_queue'
+                  ? t('itsm.ticket.implementationSource.manual_queue')
+                  : detail.implementation_source === 'step_default'
+                    ? t('itsm.ticket.implementationSource.step_default')
+                    : '-'
+              )}
+              {detail.implementation_source && (
+                <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+                  （{implementationSourceLabel(detail.implementation_source)}
+                  {detail.implementation_rule_name ? ` · ${detail.implementation_rule_name}` : ''}）
+                </Typography.Text>
+              )}
+            </Descriptions.Item>
+          )}
           <Descriptions.Item label={t('itsm.f.submittedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.submitted_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.firstResponse')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.first_response_at)}</Descriptions.Item>
           <Descriptions.Item label={t('itsm.ticket.acceptedAt')} contentStyle={{ whiteSpace: 'nowrap' }}>{fmt(detail.accepted_at)}</Descriptions.Item>
@@ -523,6 +600,13 @@ export default function TicketDetail() {
               {detail.description || '-'}
             </Typography.Paragraph>
           </Descriptions.Item>
+          {detail.other_info && (
+            <Descriptions.Item label={t('itsm.ticket.otherInfo')} span={2}>
+              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
+                {detail.other_info}
+              </Typography.Paragraph>
+            </Descriptions.Item>
+          )}
           {detail.remarks && (
             <Descriptions.Item label={t('common.remark')} span={2}>
               {detail.remarks}
@@ -535,6 +619,26 @@ export default function TicketDetail() {
           )}
         </Descriptions>
       </Card>
+
+      {detail.ticket_type === 'service_request' && (
+        <Card title={t('itsm.ticket.attachments')} size="small">
+          {attachments.length === 0 ? (
+            <Typography.Text type="secondary">{t('itsm.ticket.noAttachments')}</Typography.Text>
+          ) : (
+            <Space wrap size={[8, 8]}>
+              {attachments.map((attachment) => (
+                <Button
+                  key={attachment.id}
+                  icon={<PaperClipOutlined />}
+                  onClick={() => void api.download(`/attachments/${attachment.id}/download`)}
+                >
+                  {attachment.filename} ({Math.max(1, Math.ceil(attachment.size / 1024))} KB)
+                </Button>
+              ))}
+            </Space>
+          )}
+        </Card>
+      )}
 
       {isChange && (
         <Card title={t('itsm.ticket.changeInfo')} size="small">
@@ -578,6 +682,15 @@ export default function TicketDetail() {
           </Descriptions>
         </Card>
       )}
+
+      <RecordRelationsPanel entityType="ticket" entityId={detail.id} />
+
+      <InvestmentPanel
+        subjectType="ticket"
+        subjectId={detail.id}
+        lifecycleStage="run"
+        readOnly={isExample}
+      />
 
       {/* 状态流转 Modal */}
       <Modal
@@ -652,9 +765,54 @@ export default function TicketDetail() {
         open={!!completingTask}
         onOk={() => void submitTaskComplete()}
         confirmLoading={taskSaving}
-        onCancel={() => setCompletingTask(null)}
+        onCancel={() => {
+          setCompletingTask(null);
+          setImplementationAssignee(undefined);
+        }}
         destroyOnClose
       >
+        {isImplementationHandoff && (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              message={t('itsm.ticket.implementationHandoffHint')}
+              style={{ marginBottom: 16 }}
+            />
+            <Form layout="vertical">
+              <Form.Item label={t('itsm.ticket.implementationArrangement')}>
+                <Radio.Group
+                  value={implementationMode}
+                  onChange={(event) => {
+                    setImplementationMode(event.target.value);
+                    if (event.target.value !== 'member') setImplementationAssignee(undefined);
+                  }}
+                >
+                  <Space direction="vertical">
+                    <Radio value="self">{t('itsm.ticket.implementationSelf')}</Radio>
+                    <Radio value="member">{t('itsm.ticket.implementationMember')}</Radio>
+                    <Radio value="auto">{t('itsm.ticket.implementationAuto')}</Radio>
+                  </Space>
+                </Radio.Group>
+              </Form.Item>
+              {implementationMode === 'member' && (
+                <Form.Item label={t('itsm.ticket.implementationAssignee')} required>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    value={implementationAssignee}
+                    onChange={setImplementationAssignee}
+                    placeholder={t('itsm.ticket.implementationAssigneePlaceholder')}
+                    options={members.map((member) => ({
+                      value: member.id,
+                      label: member.department_name ? `${member.name}（${member.department_name}）` : member.name,
+                    }))}
+                  />
+                </Form.Item>
+              )}
+            </Form>
+          </>
+        )}
         <Input.TextArea
           rows={3}
           maxLength={500}

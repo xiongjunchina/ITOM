@@ -23,6 +23,7 @@ import {
   Tag,
   Tooltip,
   Typography,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
@@ -33,11 +34,13 @@ import {
   DeleteOutlined,
   EditOutlined,
   ExportOutlined,
+  PaperClipOutlined,
   PlusOutlined,
 } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
 import { useGoBack } from '../../utils/nav';
+import { useProcessTaskView } from '../../utils/processTaskView';
 import { isRequesterOnly } from '../../components/menu';
 import { useT } from '../../i18n';
 import { useEnums } from '../../i18n/enums';
@@ -46,6 +49,7 @@ import DocumentTypeHint from '../../components/DocumentTypeHint';
 import RecordRelationCreateButton from '../../components/RecordRelationCreateButton';
 import RecordRelationsPanel from '../../components/RecordRelationsPanel';
 import { useAuthStore } from '../../stores/auth';
+import InvestmentPanel from '../../components/investment/InvestmentPanel';
 import { useRoleOptions } from '../../utils/roleOptions';
 import FlowDiagram from '../../components/FlowDiagram';
 import type { FlowDiagramStep } from '../../components/FlowDiagram';
@@ -53,6 +57,7 @@ import CompleteStepModal from '../../components/CompleteStepModal';
 import ProcessActionButtons from '../../components/ProcessActionButtons';
 import type {
   AcceptanceCriterion,
+  AttachmentItem,
   AllowedTransition,
   BusinessDomain,
   MasterDataItem,
@@ -74,6 +79,7 @@ import {
   SOLUTION_TYPES,
 } from '../../api/types';
 import { DecisionTag, MoscowTag, QuadrantTag, ReqStatusBadge, RouteTag, fmtDt } from './shared';
+import { shouldLoadRequirementTaskMembers } from './developmentTaskOptions';
 import { DIMENSIONS, computeRoute, computeScore, type DimScores } from './dimensions';
 
 // ---------- 评估评分面板 ----------
@@ -94,33 +100,54 @@ function EvaluationPanel({
   const { roleLabel } = useRoleOptions();
   const [config, setConfig] = useState<ScoringConfig | null>(null);
 
-  // 单人评分场景：用共识分或首条评分回填
-  const seed = useMemo(() => {
+  // 当前评分只认有效共识行。退回评审或登记人时，旧行保留为历史，
+  // 不得再回填为当前评分。导入数据若只有主表分数，仍由 persistedScores 兼容。
+  const scoreRecord = useMemo(() => {
     const list = detail.scores ?? [];
-    return list.find((s) => s.is_consensus) ?? list[0] ?? null;
+    return list.find((s) => s.is_consensus) ?? null;
   }, [detail.scores]);
+
+  const persistedScores = useMemo<DimScores>(() => {
+    if (scoreRecord) {
+      return {
+        d1_strategy: scoreRecord.d1_strategy,
+        d2_value: scoreRecord.d2_value,
+        d3_tech: scoreRecord.d3_tech,
+        d4_org: scoreRecord.d4_org,
+        d5_risk: scoreRecord.d5_risk,
+        d6_speed: scoreRecord.d6_speed,
+      };
+    }
+    return {
+      d1_strategy: detail.d1_strategy ?? undefined,
+      d2_value: detail.d2_value ?? undefined,
+      d3_tech: detail.d3_tech ?? undefined,
+      d4_org: detail.d4_org ?? undefined,
+      d5_risk: detail.d5_risk ?? undefined,
+      d6_speed: detail.d6_speed ?? undefined,
+    };
+  }, [
+    detail.d1_strategy,
+    detail.d2_value,
+    detail.d3_tech,
+    detail.d4_org,
+    detail.d5_risk,
+    detail.d6_speed,
+    scoreRecord,
+  ]);
 
   const [scores, setScores] = useState<DimScores>({});
   const [decision, setDecision] = useState<string | undefined>(detail.decision ?? undefined);
   const [comment, setComment] = useState<string>('');
+  const [returnToSeq, setReturnToSeq] = useState<number | undefined>(detail.process?.return_targets?.[0]?.seq);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setScores(
-      seed
-        ? {
-            d1_strategy: seed.d1_strategy,
-            d2_value: seed.d2_value,
-            d3_tech: seed.d3_tech,
-            d4_org: seed.d4_org,
-            d5_risk: seed.d5_risk,
-            d6_speed: seed.d6_speed,
-          }
-        : {},
-    );
-    setComment(seed?.comment ?? '');
+    setScores(persistedScores);
+    setComment(scoreRecord?.comment ?? '');
     setDecision(detail.decision ?? undefined);
-  }, [seed, detail.decision]);
+    setReturnToSeq(detail.process?.return_targets?.[0]?.seq);
+  }, [persistedScores, scoreRecord, detail.decision, detail.process?.return_targets]);
 
   useEffect(() => {
     api
@@ -135,22 +162,29 @@ function EvaluationPanel({
     [scores, config],
   );
 
-  // M16 决议按本地实时象限约束：重新评估象限仅可 搁置/驳回；其余象限（评满）可 通过/搁置；驳回仅重评象限可选
-  const isReeval = preview?.quadrant === '重新评估';
+  // 评分配置仍在加载或历史主表评分无法由前端立即重算时，优先展示后端已计算的权威结果。
+  const displayPreview = preview ?? (
+    detail.weighted_total != null && detail.quadrant
+      ? { total: detail.weighted_total, quadrant: detail.quadrant }
+      : null
+  );
+
+  // 与后端契约保持一致：通过需完成六维评分且不得落入重新评估；搁置和驳回均可用，驳回必须填写理由。
+  const isReeval = displayPreview?.quadrant === '重新评估';
   const decisionDisabled = (d: string): boolean =>
-    d === '通过' ? !preview || isReeval : d === '驳回' ? !isReeval : false;
+    d === '通过' ? !displayPreview || isReeval : false;
   const decisionDisabledTip = (d: string): string =>
     d === '通过'
       ? isReeval
         ? t('req.eval.quadrantBlocked')
         : t('req.eval.needFullScores')
-      : t('req.eval.rejectOnlyReeval');
+      : '';
 
   // 打分变化导致象限变化时，已选决议若被禁用则自动清空，避免提交无效决议
   useEffect(() => {
     if (editable && decision && decisionDisabled(decision)) setDecision(undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable, decision, preview?.quadrant]);
+  }, [editable, decision, displayPreview?.quadrant]);
 
   /** 驳回必填理由（≥5 字，前端校验 + 后端 REASON_REQUIRED 兜底） */
   const rejectCommentInvalid = decision === '驳回' && comment.trim().length < 5;
@@ -167,6 +201,7 @@ function EvaluationPanel({
         if (scores[d.key] != null) body[d.key] = scores[d.key];
       });
       if (decision) body.decision = decision;
+      if (decision === '驳回' && returnToSeq != null) body.return_to_seq = returnToSeq;
       // 决议保存即自动流转（M16）：按返回 flowed_to 提示去向
       const res = await api.post<{ status: string; flowed_to: string | null }>(
         `/requirements/${id}/score`,
@@ -177,8 +212,10 @@ function EvaluationPanel({
           ? t('req.eval.flowedAnalyzing')
           : res.flowed_to === 'on_hold'
             ? t('req.eval.flowedOnHold')
-            : res.flowed_to === 'cancelled'
-              ? t('req.eval.flowedCancelled')
+            : res.flowed_to === 'supplementing'
+              ? t('req.eval.flowedSupplementing')
+              : res.flowed_to === 'evaluating'
+                ? t('req.eval.flowedEvaluating')
               : t('req.scoreSaved'),
       );
       onSaved();
@@ -193,7 +230,17 @@ function EvaluationPanel({
 
   return (
     <Card title={t('req.evaluation')} size="small">
-      <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.evalGateHint')} />
+      <Alert
+        type={editable ? 'info' : 'success'}
+        showIcon
+        style={{ marginBottom: 16 }}
+        message={editable ? t('req.evalGateHint') : t('req.evalHistoricalHint')}
+        description={(
+          <span>
+            {t('req.evalScoringRulesHint')} <Link to="/requirements/scoring">{t('req.tab.scoring')}</Link>
+          </span>
+        )}
+      />
 
       <Typography.Text strong>{t('req.evalScore')}</Typography.Text>
       <div style={{ marginTop: 12 }}>
@@ -235,21 +282,21 @@ function EvaluationPanel({
 
       {/* 实时预览：加权总分 + 象限 */}
       <div style={{ margin: '16px 0', display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
-        {preview ? (
+        {displayPreview ? (
           <>
             <Space direction="vertical" size={0}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {t('req.weightedTotal')}
               </Typography.Text>
               <Typography.Title level={3} style={{ margin: 0 }}>
-                {preview.total.toFixed(1)}
+                {displayPreview.total.toFixed(1)}
               </Typography.Title>
             </Space>
             <Space direction="vertical" size={4}>
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                 {t('req.quadrant')}
               </Typography.Text>
-              <QuadrantTag value={preview.quadrant} />
+              <QuadrantTag value={displayPreview.quadrant} />
             </Space>
           </>
         ) : (
@@ -294,6 +341,20 @@ function EvaluationPanel({
             {t('req.eval.quadrantBlocked')}
           </Typography.Text>
         )}
+        {editable && decision === '驳回' && (detail.process?.return_targets?.length ?? 0) > 0 && (
+          <Space wrap align="center">
+            <Typography.Text strong>{t('req.eval.returnTarget')}</Typography.Text>
+            <Select
+              style={{ minWidth: 240 }}
+              value={returnToSeq}
+              onChange={setReturnToSeq}
+              options={detail.process!.return_targets!.map((target) => ({
+                value: target.seq,
+                label: target.name,
+              }))}
+            />
+          </Space>
+        )}
         {editable ? (
           <>
             <Input.TextArea
@@ -317,9 +378,9 @@ function EvaluationPanel({
             )}
           </>
         ) : (
-          seed?.comment && (
+          scoreRecord?.comment && (
             <Typography.Paragraph type="secondary" style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
-              {seed.comment}
+              {scoreRecord.comment}
             </Typography.Paragraph>
           )
         )}
@@ -427,16 +488,15 @@ function SolutionEvalSection({
     }
   };
 
-  // 转开发实现（M16.2，对称转项目）：选开发负责人 → POST to-dev → 通知其去任务跟踪登记清单
+  // 转开发实现：开发负责人由评分规则统一配置，避免每条需求临时选人偏离组织分工。
   const [devOpen, setDevOpen] = useState(false);
   const [devSaving, setDevSaving] = useState(false);
-  const [devForm] = Form.useForm();
+  const configuredDevLeader = memberOptions.find((member) => member.value === config?.review_assignees?.dev_leader);
 
   const submitToDev = async () => {
-    const v = await devForm.validateFields();
     setDevSaving(true);
     try {
-      await api.post(`/requirements/${id}/to-dev`, { owner_id: v.owner_id });
+      await api.post(`/requirements/${id}/to-dev`, {});
       message.success(t('req.solution.toDevDone'));
       setDevOpen(false);
       onSaved();
@@ -504,7 +564,6 @@ function SolutionEvalSection({
                 <Button
                   type="primary"
                   onClick={() => {
-                    devForm.resetFields();
                     setDevOpen(true);
                   }}
                 >
@@ -540,7 +599,7 @@ function SolutionEvalSection({
         </Form>
       </Modal>
 
-      {/* 转开发实现：选开发负责人 */}
+      {/* 转开发实现：展示评分规则中的固定开发负责人 */}
       <Modal
         title={t('req.solution.toDev')}
         open={devOpen}
@@ -550,15 +609,11 @@ function SolutionEvalSection({
         destroyOnClose
       >
         <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.solution.toDevHint')} />
-        <Form form={devForm} layout="vertical" preserve={false}>
-          <Form.Item
-            name="owner_id"
-            label={t('req.solution.devOwner')}
-            rules={[{ required: true, message: t('req.solution.devOwnerRequired') }]}
-          >
-            <Select showSearch optionFilterProp="label" placeholder={t('req.selectMember')} options={memberOptions} />
-          </Form.Item>
-        </Form>
+        <Descriptions column={1} size="small" bordered>
+          <Descriptions.Item label={t('req.solution.devOwner')}>
+            {configuredDevLeader?.label || t('req.solution.devOwnerNotConfigured')}
+          </Descriptions.Item>
+        </Descriptions>
       </Modal>
     </>
   );
@@ -605,6 +660,9 @@ export default function RequirementDetail() {
   const MOSCOW_OPTIONS = MOSCOW_KEYS.map((k) => ({ value: k, label: et.moscow(k) }));
 
   const [detail, setDetail] = useState<RequirementDetailData | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [attachmentUploading, setAttachmentUploading] = useState(false);
+  const [resubmitting, setResubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [members, setMembers] = useState<Member[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
@@ -614,6 +672,10 @@ export default function RequirementDetail() {
     if (!id) return;
     try {
       setDetail(await api.get<RequirementDetailData>(`/requirements/${id}`));
+      const attachmentResult = await api
+        .getList<AttachmentItem>('/attachments', { entity_type: 'requirement', entity_id: id })
+        .catch(() => ({ items: [], total: 0 }));
+      setAttachments(attachmentResult.items);
     } catch {
       // 已统一提示
     }
@@ -623,11 +685,12 @@ export default function RequirementDetail() {
     setLoading(true);
     void load().finally(() => setLoading(false));
   }, [load]);
+  useProcessTaskView(detail?.process, user, load);
 
-  // 编辑者才需要人员/项目下拉（提出人只读视角不请求）
+  // 单据编辑与开发任务维护是两套权限：流程当前节点只读时，任务维护人仍需加载负责人候选。
   const canEdit = detail?.can_edit ?? false;
   const canManageTasks = detail?.can_manage_tasks ?? canEdit;
-  const canDeleteTasks = detail?.can_delete_tasks ?? canEdit;
+  const canLoadTaskMembers = shouldLoadRequirementTaskMembers(canEdit, canManageTasks);
   const [completingStep, setCompletingStep] = useState<FlowDiagramStep | null>(null);
   // M28 主动关闭（登记人/admin）
   const [closeOpen, setCloseOpen] = useState(false);
@@ -636,11 +699,21 @@ export default function RequirementDetail() {
   /** 示例数据只读：兜底隐藏 can_edit 覆盖不到的写入口（任务负责人路径/转出按钮） */
   const isExample = detail?.is_example === true;
   useEffect(() => {
-    if (!canEdit) return;
+    if (!canLoadTaskMembers) {
+      setMembers([]);
+      return;
+    }
     api
       .getList<Member>('/members', { page: 1, page_size: 2000, scope: 'it' })
       .then((res) => setMembers(res.items))
       .catch(() => undefined);
+  }, [canLoadTaskMembers]);
+
+  useEffect(() => {
+    if (!canEdit) {
+      setProjects([]);
+      return;
+    }
     api
       .getList<ProjectRow>('/projects', { page: 1, page_size: 200 })
       .then((res) => setProjects(res.items))
@@ -669,6 +742,33 @@ export default function RequirementDetail() {
       void load();
     } catch {
       // 已统一提示
+    }
+  };
+
+  const uploadSupplementAttachment = async (file: File) => {
+    if (!id) return;
+    setAttachmentUploading(true);
+    try {
+      await api.upload<AttachmentItem>(`/attachments?entity_type=requirement&entity_id=${id}`, file);
+      message.success(t('req.attachmentUploaded'));
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setAttachmentUploading(false);
+    }
+  };
+
+  const resubmitRequirement = async () => {
+    setResubmitting(true);
+    try {
+      await api.post(`/requirements/${id}/resubmit`, {});
+      message.success(t('req.resubmitDone'));
+      void load();
+    } catch {
+      // 已统一提示
+    } finally {
+      setResubmitting(false);
     }
   };
 
@@ -732,7 +832,6 @@ export default function RequirementDetail() {
       source: detail.source ?? undefined,
       description: detail.description,
       remarks: detail.remarks ?? undefined,
-      department: detail.department ?? undefined,
       expected_date: detail.expected_date ? dayjs(detail.expected_date) : undefined,
       expected_effect: detail.expected_effect ?? undefined,
       business_value_note: detail.business_value_note ?? undefined,
@@ -760,21 +859,23 @@ export default function RequirementDetail() {
 
   const submitEdit = async () => {
     const v = await editForm.validateFields();
+    const isUpstreamCorrection = detail?.workflow_edit_mode?.startsWith('upstream_') === true
+      || detail?.workflow_edit_mode === 'returned_requester';
     setEditSaving(true);
     try {
       await api.patch(`/requirements/${id}`, {
         title: v.title,
         req_type: v.req_type,
-        business_domain_id: v.business_domain_id,
         source: v.source ?? null,
         description: v.description,
         remarks: v.remarks || null,
-        department: v.department || null,
         expected_date: v.expected_date ? (v.expected_date as Dayjs).format('YYYY-MM-DD') : null,
         expected_effect: v.expected_effect || null,
         business_value_note: v.business_value_note || null,
         prd_effort: v.prd_effort ?? null,
         dev_effort: v.dev_effort ?? null,
+        // 上游回改不可更改业务域，避免改变下一节点的责任归属与流程路由。
+        ...(isUpstreamCorrection ? {} : { business_domain_id: v.business_domain_id }),
       });
       message.success(t('req.basicUpdated'));
       setEditOpen(false);
@@ -921,12 +1022,31 @@ export default function RequirementDetail() {
   const canCreateLinkedProject = !isExample && !isFinal && !!user && !isRequesterOnly(user);
   /** PATCH 类编辑：终态（closed/cancelled）后端拒绝，一律只读 */
   const canEditNow = canEdit && !isFinal;
-  const currentProcessStep = detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq);
-  const reachedEvaluating =
-    !!detail.evaluating_at || ['evaluating', 'analyzing', 'implementing', 'closed'].includes(st);
-  const reachedAnalyzing = !!detail.analyzing_at || ['analyzing', 'implementing', 'closed'].includes(st);
-  const reachedImplementing = !!detail.implementing_at || ['implementing', 'closed'].includes(st);
-  const showClosure = st === 'implementing' || st === 'closed';
+  const processRunning = detail.process?.status === 'running';
+  const currentProcessStep = processRunning
+    ? detail.process?.steps?.find((s) => s.seq === detail.process?.current_step_seq)
+    : undefined;
+  // 流程实例的当前待处理节点优先于历史阶段时间戳。旧单据可能存在
+  // Requirement.status 落后于流程任务的情况，不能再用它决定页面当前阶段。
+  const processSeq = detail.process?.current_step_seq ?? null;
+  const processCompleted = detail.process?.status === 'completed';
+  const processDriven = processRunning && processSeq != null;
+  const evaluationIsCurrent = processDriven
+    ? !processCompleted && processSeq === 1
+    : st === 'registered' || st === 'evaluating';
+  const reachedEvaluating = processDriven
+    ? processSeq >= 1
+    : !!detail.evaluating_at || ['evaluating', 'analyzing', 'implementing', 'closed'].includes(st);
+  const reachedAnalyzing = processDriven
+    ? processSeq >= 2
+    : !!detail.analyzing_at || ['analyzing', 'implementing', 'closed'].includes(st);
+  const reachedImplementing = processDriven
+    ? processSeq >= 3
+    : !!detail.implementing_at || ['implementing', 'closed'].includes(st);
+  const showClosure = processDriven
+    ? processSeq >= 3
+    : st === 'implementing' || st === 'closed';
+  const analysisIsCurrent = processDriven ? !processCompleted && processSeq === 2 : st === 'analyzing';
 
   const criteria = detail.acceptance_criteria ?? [];
   const checkedCount = criteria.filter((c) => c.checked).length;
@@ -936,8 +1056,12 @@ export default function RequirementDetail() {
     !isExample && !isFinal && (canManageTasks || (!!user?.person_id && user.person_id === t.assignee));
 
   // ----- 阶段进度条 -----
-  const currentStep = st === 'closed'
+  const currentStep = processCompleted || st === 'closed'
     ? 4
+    : st === 'supplementing'
+      ? 0
+    : processDriven
+      ? Math.min(4, Math.max(1, processSeq ?? 1))
     : reachedImplementing
       ? 3
       : reachedAnalyzing
@@ -1020,19 +1144,19 @@ export default function RequirementDetail() {
         ),
     },
     { title: t('req.task.col.doneAt'), dataIndex: 'done_at', width: 150, onCell: () => ({ className: 'cell-nowrap' }), render: (v) => fmtDt(v) ?? '-' },
-    ...(canDeleteTasks
+    ...(detail.tasks.some((task) => task.can_delete)
       ? [
           {
             title: t('common.actions'),
             key: 'action',
             width: 80,
-            render: (_: unknown, r: RequirementTask) => (
+            render: (_: unknown, r: RequirementTask) => r.can_delete ? (
               <Popconfirm title={t('req.confirmDeleteTask')} onConfirm={() => void deleteTask(r)}>
                 <Button type="link" size="small" danger>
                   {t('common.delete')}
                 </Button>
               </Popconfirm>
-            ),
+            ) : '-',
           } as ColumnsType<RequirementTask>[number],
         ]
       : []),
@@ -1103,6 +1227,7 @@ export default function RequirementDetail() {
           )}
           <ProcessActionButtons
             step={currentProcessStep}
+            returnTargets={detail.process?.return_targets}
             disabled={isExample}
             onDone={() => void load()}
           />
@@ -1121,6 +1246,30 @@ export default function RequirementDetail() {
       {st === 'cancelled' && (
         <Alert type="info" showIcon message={t('req.cancelledTitle')} description={t('req.cancelledDesc')} />
       )}
+      {st === 'supplementing' && (
+        <Alert
+          type="warning"
+          showIcon
+          message={t('req.returnedTitle')}
+          description={(
+            <Space direction="vertical" size={4}>
+              <Typography.Text>
+                {detail.process?.return_info?.reason || t('req.returnedReasonUnknown')}
+              </Typography.Text>
+              {detail.process?.return_info?.returned_by_name && (
+                <Typography.Text type="secondary">
+                  {t('req.returnedBy', { name: detail.process.return_info.returned_by_name })}
+                </Typography.Text>
+              )}
+              {detail.can_resubmit && (
+                <Button type="primary" loading={resubmitting} onClick={() => void resubmitRequirement()}>
+                  {t('req.resubmit')}
+                </Button>
+              )}
+            </Space>
+          )}
+        />
+      )}
 
       {/* 阶段进度条 */}
       <Card size="small">
@@ -1138,7 +1287,7 @@ export default function RequirementDetail() {
           <FlowDiagram
             steps={detail.process.steps}
             roleLabel={roleLabel}
-            currentSeq={detail.process.current_step_seq}
+            currentSeq={processRunning ? detail.process.current_step_seq : null}
             // M18：能否完成由 FlowDiagram 按任务处理人判定（PM 无需求编辑权也要能完成「实现交付」）
             onCompleteStep={!detail.is_example ? setCompletingStep : undefined}
           />
@@ -1199,7 +1348,7 @@ export default function RequirementDetail() {
             </Typography.Paragraph>
           </Descriptions.Item>
           {detail.remarks && (
-            <Descriptions.Item label={t('common.remark')} span={2}>
+            <Descriptions.Item label={t('req.otherInfo')} span={2}>
               <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>
                 {detail.remarks}
               </Typography.Paragraph>
@@ -1208,19 +1357,49 @@ export default function RequirementDetail() {
         </Descriptions>
       </Card>
 
-      <RecordRelationsPanel
-        entityType="requirement"
-        entityId={detail.id}
-        excludeRelationTypes={['converted_to_project']}
-        hideWhenEmpty
-      />
+      <Card title={t('req.attachments')} size="small">
+        {detail.can_resubmit && (
+          <Upload
+            multiple
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void uploadSupplementAttachment(file);
+              return Upload.LIST_IGNORE;
+            }}
+            accept=".png,.jpg,.jpeg,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+          >
+            <Button
+              icon={<PaperClipOutlined />}
+              loading={attachmentUploading}
+              style={{ marginBottom: attachments.length > 0 ? 12 : 0 }}
+            >
+              {t('req.uploadSupplementAttachment')}
+            </Button>
+          </Upload>
+        )}
+        {attachments.length === 0 ? (
+          <Typography.Text type="secondary">{t('req.noAttachments')}</Typography.Text>
+        ) : (
+          <Space wrap size={[8, 8]}>
+            {attachments.map((attachment) => (
+              <Button
+                key={attachment.id}
+                icon={<PaperClipOutlined />}
+                onClick={() => void api.download(`/attachments/${attachment.id}/download`)}
+              >
+                {attachment.filename} ({Math.max(1, Math.ceil(attachment.size / 1024))} KB)
+              </Button>
+            ))}
+          </Space>
+        )}
+      </Card>
 
       {/* 评估评分（登记/评估阶段或已有评分时显示） */}
-      {id && (st === 'registered' || st === 'evaluating' || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
+      {id && (evaluationIsCurrent || (detail.scores?.length ?? 0) > 0 || detail.weighted_total != null) && (
         <EvaluationPanel
           id={id}
           detail={detail}
-          editable={canEditNow && (st === 'registered' || st === 'evaluating')}
+          editable={canEditNow && evaluationIsCurrent}
           onSaved={() => void load()}
         />
       )}
@@ -1232,8 +1411,8 @@ export default function RequirementDetail() {
             <SolutionEvalSection
               id={id}
               detail={detail}
-              editable={canEditNow}
-              isAnalyzing={st === 'analyzing'}
+              editable={canEditNow && analysisIsCurrent}
+              isAnalyzing={analysisIsCurrent}
               canOperate={canEdit && !isExample}
               memberOptions={memberOptions}
               onPatch={patchField}
@@ -1517,6 +1696,20 @@ export default function RequirementDetail() {
         </Card>
       )}
 
+      <RecordRelationsPanel
+        entityType="requirement"
+        entityId={detail.id}
+        excludeRelationTypes={['converted_to_project']}
+        hideWhenEmpty
+      />
+
+      <InvestmentPanel
+        subjectType="requirement"
+        subjectId={detail.id}
+        lifecycleStage="demand"
+        readOnly={isExample}
+      />
+
       {/* 编辑基本信息 Modal */}
       <Modal
         title={t('req.editBasic')}
@@ -1541,13 +1734,15 @@ export default function RequirementDetail() {
           <Form.Item name="req_type" label={t('req.reqType')} rules={[{ required: true, message: t('req.reqTypeRequired') }]}>
             <Select options={REQ_TYPES.map((v) => ({ value: v, label: et.reqType(v) }))} />
           </Form.Item>
-          <Form.Item
-            name="business_domain_id"
-            label={t('req.belongDomain')}
-            rules={[{ required: true, message: t('req.domainRequired') }]}
-          >
-            <Select showSearch optionFilterProp="label" options={domains.map((d) => ({ value: d.id, label: d.name }))} />
-          </Form.Item>
+          {!detail?.workflow_edit_mode?.startsWith('upstream_') && detail?.workflow_edit_mode !== 'returned_requester' && (
+            <Form.Item
+              name="business_domain_id"
+              label={t('req.belongDomain')}
+              rules={[{ required: true, message: t('req.domainRequired') }]}
+            >
+              <Select showSearch optionFilterProp="label" options={domains.map((d) => ({ value: d.id, label: d.name }))} />
+            </Form.Item>
+          )}
           <Form.Item name="source" label={t('req.source')}>
             <Select allowClear options={sources.map((s) => ({ value: s.name, label: s.name }))} />
           </Form.Item>
@@ -1555,9 +1750,6 @@ export default function RequirementDetail() {
             <Input.TextArea rows={4} maxLength={2000} />
           </Form.Item>
           <Space size={16} wrap style={{ width: '100%' }} align="start">
-            <Form.Item name="department" label={t('req.department')} style={{ width: 200 }}>
-              <Input maxLength={100} />
-            </Form.Item>
             <Form.Item name="expected_date" label={t('req.expectedDate')}>
               <DatePicker style={{ width: '100%' }} />
             </Form.Item>

@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 import {
   ApartmentOutlined,
+  BarChartOutlined,
   CustomerServiceOutlined,
   DashboardOutlined,
   FileTextOutlined,
   ProjectOutlined,
+  RobotOutlined,
   ScheduleOutlined,
   SettingOutlined,
   TeamOutlined,
@@ -69,7 +71,7 @@ export const MENU_TREE: MenuNode[] = [
     icon: <FileTextOutlined />,
     children: [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
-      { key: '/requirements/scoring', path: '/requirements/scoring', label: '评分规则', module: 'req_scoring' },
+      { key: '/requirements/scoring', path: '/requirements/scoring', label: '需求评分规则', module: 'req_scoring' },
     ],
   },
   {
@@ -135,9 +137,18 @@ export const MENU_TREE: MenuNode[] = [
       { key: '/admin/master-data', path: '/admin/master-data', label: '数据字典', module: 'admin_master_data', roles: ['admin'] },
       { key: '/admin/workflow-config', path: '/admin/workflow-config', label: '状态机配置', module: 'admin_workflow', roles: ['admin'] },
       { key: '/admin/integrations', path: '/admin/integrations', label: '系统集成', module: 'admin_feishu', roles: ['admin'] },
+      { key: '/admin/ai-assistant', path: '/admin/ai-assistant', label: 'AI 智能体', icon: <RobotOutlined />, module: 'admin_ai', roles: ['admin'] },
       { key: '/admin/ui-branding', path: '/admin/ui-branding', label: '界面与品牌', module: 'admin_ui_branding', roles: ['admin'] },
       { key: '/admin/audit-logs', path: '/admin/audit-logs', label: '审计日志', module: 'admin_audit', roles: ['admin', 'is_mgr'] },
     ],
+  },
+  {
+    key: '/reports',
+    path: '/reports',
+    label: '报表中心',
+    icon: <BarChartOutlined />,
+    module: 'reports',
+    roles: STAFF,
   },
 ];
 

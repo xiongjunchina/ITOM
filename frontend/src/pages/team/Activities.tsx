@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs, { Dayjs } from 'dayjs';
 import { api } from '../../api/client';
@@ -60,6 +61,7 @@ export default function Activities() {
   const [loading, setLoading] = useState(false);
   const [tablePage, setTablePage] = useState(1);
   const [tablePageSize, setTablePageSize] = useState(20);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<TrainingRow | null>(null);
@@ -303,11 +305,25 @@ export default function Activities() {
         style={{ marginBottom: 16 }}
         message={t('team.activities.pointsHint')}
       />
+      <BatchDeleteToolbar
+        endpoint="/trainings/batch-delete"
+        selectedIds={selectedIds}
+        entityName="培训活动"
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
       <Table<TrainingRow>
         rowKey="id"
         loading={loading}
         columns={columns}
         dataSource={items}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({ disabled: !row.can_manage }),
+        }}
         standardToolbar={{ exportFileName: '培训提升记录', searchPlaceholder: '搜索主题、类型、主持人或参与人' }}
         sticky
         scroll={{ x: 1320 }}

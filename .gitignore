@@ -12,3 +12,5 @@ deploy/backups/
 *.log
 .DS_Store
 .pytest_cache/
+.itom-task/
+.itom-task/

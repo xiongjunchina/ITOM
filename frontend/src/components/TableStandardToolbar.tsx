@@ -11,8 +11,14 @@ export interface TableStandardOptions<T extends object> {
   searchFields?: Array<keyof T | string>;
   /** 允许页面补充业务筛选（状态、类型、负责人等）。 */
   filters?: ReactNode;
-  /** 导出文件名；传入后显示“导出当前数据”。 */
+  /** 导出文件名；未提供服务端导出回调时导出当前已加载数据。 */
   exportFileName?: string;
+  /** 服务端分页的真实匹配总数；未传时回退为当前本地筛选结果。 */
+  total?: number;
+  /** 可选的服务端导出动作。传入后不再把当前页误当作完整清单。 */
+  onExport?: () => void | Promise<void>;
+  /** 导出按钮文案；服务端全量导出建议显式标为“导出全部数据”。 */
+  exportLabel?: string;
   /** 已有页面自带搜索/筛选时，可只复用统一导出按钮。 */
   showSearch?: boolean;
   showFilter?: boolean;
@@ -157,13 +163,13 @@ export default function TableStandardToolbar<T extends object>({
         {options.exportFileName && (
           <Button
             icon={<DownloadOutlined />}
-            onClick={() => downloadCsv(filteredRows, columns, options.exportFileName as string)}
+            onClick={() => options.onExport ? void options.onExport() : downloadCsv(filteredRows, columns, options.exportFileName as string)}
           >
-            导出当前数据
+            {options.exportLabel ?? (options.onExport ? '导出全部数据' : '导出当前数据')}
           </Button>
         )}
         {options.showCount !== false && <Typography.Text type="secondary" className="table-standard-toolbar__count">
-          共 {filteredRows.length} 条
+          共 {options.total ?? filteredRows.length} 条
         </Typography.Text>}
       </Space>
     </div>

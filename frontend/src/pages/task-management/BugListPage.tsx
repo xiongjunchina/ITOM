@@ -14,18 +14,24 @@ import {
   Select,
   Space,
   Switch,
-  Table as AntTable,
   Tag,
+  Typography,
+  Upload,
   message,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { type Dayjs } from 'dayjs';
+import type { UploadFile } from 'antd/es/upload/interface';
+import { DownloadOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import dayjs, { type Dayjs } from 'dayjs';
 import Table from '../../components/SortableTable';
+import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import { api } from '../../api/client';
-import type { BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
+import type { AttachmentItem, BugFixTaskRow, BugRow, CiRow, Member, TicketPriority } from '../../api/types';
 import { PRIORITY_COLORS } from '../../api/types';
 import { useT } from '../../i18n';
+import { useAuthStore } from '../../stores/auth';
+import { useProcessTaskView } from '../../utils/processTaskView';
+import ProcessReassignButton from '../../components/ProcessReassignButton';
 
 const BUG_STATUS: Record<string, { label: string; color: string }> = {
   registered: { label: '待确认', color: 'gold' },
@@ -70,11 +76,13 @@ interface FixTaskFormValues {
 
 export default function BugListPage() {
   const t = useT();
+  const user = useAuthStore((state) => state.user);
   const [rows, setRows] = useState<BugRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<string>();
   const [mineOnly, setMineOnly] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingBug, setEditingBug] = useState<BugRow | null>(null);
   const [detail, setDetail] = useState<BugRow | null>(null);
   const [action, setAction] = useState<'reject' | 'verify-fail' | 'verify-close' | 'reopen' | null>(null);
   const [actionSaving, setActionSaving] = useState(false);
@@ -85,6 +93,9 @@ export default function BugListPage() {
   const [fixForm] = Form.useForm<FixTaskFormValues>();
   const [cis, setCis] = useState<CiRow[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<UploadFile[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -114,15 +125,48 @@ export default function BugListPage() {
     }
   };
 
+  const loadAttachments = async (bugId: string) => {
+    const result = await api.getList<AttachmentItem>('/attachments', {
+      entity_type: 'bug', entity_id: bugId,
+    });
+    setAttachments(result.items);
+    return result.items;
+  };
+
   const refreshDetail = async (bugId: string) => {
-    const next = await api.get<BugRow>(`/task-management/bugs/${bugId}`);
+    const [next] = await Promise.all([
+      api.get<BugRow>(`/task-management/bugs/${bugId}`),
+      loadAttachments(bugId),
+    ]);
     setDetail(next);
     void load();
   };
 
+  const uploadEvidenceFiles = async (bugId: string, files: UploadFile[]) => {
+    let uploaded = 0;
+    for (const item of files) {
+      const file = item.originFileObj ?? item;
+      if (!(file instanceof File)) continue;
+      try {
+        await api.upload<AttachmentItem>(`/attachments?entity_type=bug&entity_id=${bugId}`, file);
+        uploaded += 1;
+      } catch {
+        // 单个文件失败不回滚已登记的 Bug；用户可在详情中补传。
+      }
+    }
+    await loadAttachments(bugId);
+    return uploaded;
+  };
+
+  useProcessTaskView(detail?.process, user, detail ? () => { void refreshDetail(detail.id); } : undefined);
+  const currentProcessStep = detail?.process?.steps?.find(
+    (step) => step.seq === detail.process?.current_step_seq,
+  );
+
   const openCreate = () => {
     bugForm.resetFields();
     bugForm.setFieldValue('priority', 'P2');
+    setPendingFiles([]);
     setCreateOpen(true);
     void loadReferences();
   };
@@ -132,10 +176,59 @@ export default function BugListPage() {
     setSaving(true);
     try {
       const created = await api.post<BugRow>('/task-management/bugs', values);
-      message.success(t('task.bug.created'));
+      const uploaded = created?.id && pendingFiles.length
+        ? await uploadEvidenceFiles(created.id, pendingFiles)
+        : 0;
+      if (pendingFiles.length && uploaded < pendingFiles.length) {
+        message.warning(t('task.bug.attachmentPartial', { uploaded, total: pendingFiles.length }));
+      } else {
+        message.success(t('task.bug.created'));
+      }
       setCreateOpen(false);
       await load();
-      if (created?.id) setDetail(created);
+      if (created?.id) await refreshDetail(created.id);
+    } catch {
+      // API client 已统一提示错误
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (bug: BugRow) => {
+    void loadReferences();
+    bugForm.setFieldsValue({
+      title: bug.title,
+      ci_id: bug.ci_id,
+      description: bug.description,
+      priority: bug.priority,
+      reproduction: bug.reproduction ?? undefined,
+      expected_result: bug.expected_result ?? undefined,
+      actual_result: bug.actual_result ?? undefined,
+      environment: bug.environment ?? undefined,
+      evidence: bug.evidence ?? undefined,
+    });
+    setEditingBug(bug);
+  };
+
+  const submitEdit = async () => {
+    if (!editingBug) return;
+    const values = await bugForm.validateFields();
+    setSaving(true);
+    try {
+      await api.patch(`/task-management/bugs/${editingBug.id}`, {
+        title: values.title,
+        ci_id: values.ci_id,
+        description: values.description,
+        priority: values.priority,
+        reproduction: values.reproduction || null,
+        expected_result: values.expected_result || null,
+        actual_result: values.actual_result || null,
+        environment: values.environment || null,
+        evidence: values.evidence || null,
+      });
+      message.success(t('common.saved'));
+      setEditingBug(null);
+      await refreshDetail(editingBug.id);
     } catch {
       // API client 已统一提示错误
     } finally {
@@ -211,9 +304,25 @@ export default function BugListPage() {
     }
   };
 
+  const removeBug = (row: BugRow) => {
+    Modal.confirm({
+      title: t('common.confirmDelete'),
+      content: t('common.confirmDelete'),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        await api.delete(`/task-management/bugs/${row.id}`);
+        message.success(t('common.deleted'));
+        if (detail?.id === row.id) setDetail(null);
+        await load();
+      },
+    });
+  };
+
   const columns: ColumnsType<BugRow> = useMemo(() => [
-    { title: t('task.bug.code'), dataIndex: 'bug_code', width: 140, fixed: 'left' },
+    { title: t('task.bug.code'), dataIndex: 'bug_code', width: 150, fixed: 'left', sorter: (a, b) => a.bug_code.localeCompare(b.bug_code), render: (value, row) => <Button type="link" size="small" style={{ padding: 0 }} onClick={() => void refreshDetail(row.id)}>{value}</Button> },
     { title: t('task.title'), dataIndex: 'title', width: 260, ellipsis: true },
+    { title: t('task.registrar'), dataIndex: 'reporter_name', width: 110, render: (v) => v || '-' },
+    { title: t('task.registeredAt'), dataIndex: 'created_at', width: 155, sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(), render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
     { title: t('task.bug.system'), dataIndex: 'ci_name', width: 170, render: (v) => v || '-' },
     {
       title: t('task.priority'), dataIndex: 'priority', width: 90,
@@ -226,8 +335,12 @@ export default function BugListPage() {
     { title: t('task.bug.productManager'), dataIndex: 'product_manager_name', width: 110, render: (v) => v || '-' },
     { title: t('task.bug.devLeader'), dataIndex: 'dev_leader_name', width: 110, render: (v) => v || '-' },
     {
-      title: t('common.actions'), key: 'actions', width: 100, fixed: 'right',
-      render: (_: unknown, row: BugRow) => <Button type="link" size="small" onClick={() => setDetail(row)}>{t('common.detail')}</Button>,
+      title: t('common.actions'), key: 'actions', width: 180, fixed: 'right',
+      render: (_: unknown, row: BugRow) => <Space size={0}>
+        <Button type="link" size="small" onClick={() => void refreshDetail(row.id)}>{t('common.detail')}</Button>
+        {row.capabilities.edit && <Button type="link" size="small" onClick={() => openEdit(row)}>{t('common.edit')}</Button>}
+        {row.capabilities.delete && <Button type="link" size="small" danger onClick={() => removeBug(row)}>{t('common.delete')}</Button>}
+      </Space>,
     },
   ], [t]);
 
@@ -244,8 +357,23 @@ export default function BugListPage() {
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('task.bug.register')}</Button>
       </Space>
 
+      <BatchDeleteToolbar
+        endpoint="/task-management/bugs/batch-delete"
+        selectedIds={selectedIds}
+        entityName="Bug"
+        onCompleted={() => {
+          setSelectedIds([]);
+          void load();
+        }}
+      />
+
       <Table<BugRow>
         rowKey="id" loading={loading} columns={columns} dataSource={rows}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (keys) => setSelectedIds(keys.map(String)),
+          getCheckboxProps: (row) => ({ disabled: !row.capabilities.delete }),
+        }}
         standardToolbar={{ exportFileName: 'Bug修复任务', searchPlaceholder: t('task.bug.search') }}
         sticky scroll={{ x: 1180 }} pagination={false}
         locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.bug.empty')} /> }}
@@ -266,6 +394,16 @@ export default function BugListPage() {
           <Form.Item name="expected_result" label={t('task.bug.expected')}><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="actual_result" label={t('task.bug.actual')}><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="evidence" label={t('task.bug.evidence')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item label={t('task.bug.attachments')} extra={t('task.bug.attachmentHint')}>
+            <Upload
+              multiple
+              beforeUpload={() => false}
+              fileList={pendingFiles}
+              onChange={({ fileList }) => setPendingFiles(fileList)}
+            >
+              <Button icon={<UploadOutlined />}>{t('task.bug.uploadAttachments')}</Button>
+            </Upload>
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -274,8 +412,14 @@ export default function BugListPage() {
           <Space wrap style={{ marginBottom: 12 }}>
             <Tag color={BUG_STATUS[detail.status]?.color}>{BUG_STATUS[detail.status]?.label}</Tag>
             <Tag color={PRIORITY_COLORS[detail.priority]}>{detail.priority}</Tag>
+            <ProcessReassignButton
+              step={currentProcessStep}
+              onDone={() => void refreshDetail(detail.id)}
+            />
             {detail.status === 'registered' && detail.capabilities.confirm && <Button type="primary" onClick={() => void (async () => { await api.post(`/task-management/bugs/${detail.id}/confirm`, { comment: '' }); message.success(t('task.bug.actionDone')); await refreshDetail(detail.id); })()}>{t('task.bug.confirm')}</Button>}
             {detail.status === 'registered' && detail.capabilities.confirm && <Button danger onClick={() => openAction('reject')}>{t('task.bug.reject')}</Button>}
+            {detail.capabilities.edit && <Button onClick={() => openEdit(detail)}>{t('common.edit')}</Button>}
+            {detail.capabilities.delete && <Button danger onClick={() => removeBug(detail)}>{t('common.delete')}</Button>}
             {detail.status === 'confirmed' && detail.capabilities.generate_fix_tasks && <Button type="primary" onClick={openGenerate}>{t('task.bug.generate')}</Button>}
             {detail.status === 'resolved' && detail.capabilities.verify && <><Button type="primary" onClick={() => openAction('verify-close')}>{t('task.bug.verifyClose')}</Button><Button onClick={() => openAction('verify-fail')}>{t('task.bug.verifyFail')}</Button></>}
             {['rejected', 'resolved', 'closed'].includes(detail.status) && detail.capabilities.reopen && <Button onClick={() => openAction('reopen')}>{t('task.bug.reopen')}</Button>}
@@ -287,22 +431,80 @@ export default function BugListPage() {
             <Descriptions.Item label={t('task.bug.devLeader')}>{detail.dev_leader_name || '-'}</Descriptions.Item>
             <Descriptions.Item label={t('task.description')} span={2}>{detail.description}</Descriptions.Item>
             <Descriptions.Item label={t('task.bug.actual')} span={2}>{detail.actual_result || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('task.bug.evidence')} span={2}>{detail.evidence || '-'}</Descriptions.Item>
             <Descriptions.Item label={t('task.bug.rejectionReason')} span={2}>{detail.rejection_reason || '-'}</Descriptions.Item>
           </Descriptions>
+          <Divider orientation="left">{t('task.bug.attachments')}</Divider>
+          <Space wrap>
+            {attachments.length > 0 ? attachments.map((attachment) => (
+              <Button
+                key={attachment.id}
+                size="small"
+                icon={<DownloadOutlined />}
+                onClick={() => void api.download(`/attachments/${attachment.id}/download`)}
+              >
+                {attachment.filename}
+              </Button>
+            )) : <Typography.Text type="secondary">{t('task.bug.noAttachments')}</Typography.Text>}
+            {detail.capabilities.edit && (
+              <Upload
+                showUploadList={false}
+                customRequest={({ file, onSuccess, onError }) => {
+                  api.upload<AttachmentItem>(`/attachments?entity_type=bug&entity_id=${detail.id}`, file as File)
+                    .then((result) => {
+                      onSuccess?.(result);
+                      message.success(t('task.bug.attachmentUploaded', { count: 1 }));
+                      void loadAttachments(detail.id);
+                    })
+                    .catch((error) => onError?.(error as Error));
+                }}
+              >
+                <Button size="small" type="dashed" icon={<UploadOutlined />}>{t('task.bug.uploadAttachments')}</Button>
+              </Upload>
+            )}
+          </Space>
           <Divider orientation="left">{t('task.bug.fixTasks')}</Divider>
-          <AntTable<BugFixTaskRow>
+          <Table<BugFixTaskRow>
             rowKey="id" size="small" pagination={false} dataSource={detail.fix_tasks}
             columns={[
+              { title: t('task.code'), dataIndex: 'task_code', width: 150, sorter: (a, b) => a.task_code.localeCompare(b.task_code) },
               { title: t('task.title'), dataIndex: 'name' },
               { title: t('task.bug.taskType'), dataIndex: 'task_type', width: 100 },
               { title: t('task.assignee'), dataIndex: 'assignee_name', width: 110, render: (v) => v || '-' },
               { title: t('common.status'), dataIndex: 'status', width: 90, render: (v) => <Tag>{v}</Tag> },
+              { title: t('task.registeredAt'), dataIndex: 'created_at', width: 155, sorter: (a, b) => dayjs(a.created_at).valueOf() - dayjs(b.created_at).valueOf(), render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm') },
               { title: t('common.actions'), key: 'actions', width: 150, render: (_: unknown, row) => FIX_NEXT[row.status].length > 0 ? <Space size={0}>{FIX_NEXT[row.status].map((next) => <Button key={next} type="link" size="small" onClick={() => void updateFixTask(row, next)}>{next}</Button>)}</Space> : '-' },
             ]}
             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t('task.bug.noFixTasks')} /> }}
           />
           {detail.resolution_note && <Alert style={{ marginTop: 12 }} type="info" message={detail.resolution_note} />}
         </>}
+      </Modal>
+
+      <Modal
+        title={editingBug ? `${t('common.edit')} · ${editingBug.bug_code}` : t('common.edit')}
+        open={!!editingBug}
+        onOk={() => void submitEdit()}
+        confirmLoading={saving}
+        onCancel={() => setEditingBug(null)}
+        destroyOnClose
+        width={680}
+      >
+        <Form form={bugForm} layout="vertical" preserve={false}>
+          <Form.Item name="title" label={t('task.title')} rules={[{ required: true, message: t('task.titleRequired') }]}><Input maxLength={200} /></Form.Item>
+          <Form.Item name="ci_id" label={t('task.bug.system')} extra={t('task.bug.systemHint')} rules={[{ required: true, message: t('task.bug.systemRequired') }]}>
+            <Select showSearch optionFilterProp="label" options={cis.map((ci) => ({ value: ci.id, label: `${ci.name}${ci.product_manager_name ? `（PM：${ci.product_manager_name}）` : ''}` }))} />
+          </Form.Item>
+          <Space wrap size={16}>
+            <Form.Item name="priority" label={t('task.priority')} rules={[{ required: true }]}><Select style={{ width: 120 }} options={['P1', 'P2', 'P3', 'P4'].map((v) => ({ value: v, label: v }))} /></Form.Item>
+            <Form.Item name="environment" label={t('task.bug.environment')}><Input style={{ width: 220 }} /></Form.Item>
+          </Space>
+          <Form.Item name="description" label={t('task.description')} rules={[{ required: true, message: t('task.descriptionRequired') }]}><Input.TextArea rows={3} maxLength={2000} /></Form.Item>
+          <Form.Item name="reproduction" label={t('task.bug.reproduction')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="expected_result" label={t('task.bug.expected')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="actual_result" label={t('task.bug.actual')}><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="evidence" label={t('task.bug.evidence')}><Input.TextArea rows={2} /></Form.Item>
+        </Form>
       </Modal>
 
       <Modal title={action === 'reject' ? t('task.bug.reject') : action === 'reopen' ? t('task.bug.reopen') : action === 'verify-close' ? t('task.bug.verifyClose') : t('task.bug.verifyFail')} open={!!action} onOk={() => void submitAction()} confirmLoading={actionSaving} onCancel={() => setAction(null)} destroyOnClose>

@@ -33,6 +33,13 @@ MODULES = [
     ("contracts", "合同管理", "ITSM"),
     ("knowledge", "知识库", "ITSM"),
     ("projects", "项目管理（项目列表/项目组合）", "项目管理"),
+    ("reports", "统一报表中心", "报表中心"),
+    ("reports_publish", "报表发布与版本锁定", "报表中心"),
+    ("reports_finance", "财务与成本指标", "报表中心"),
+    ("reports_people", "人员投入明细", "报表中心"),
+    ("reports_platform", "平台运行敏感指标", "报表中心"),
+    ("investment_costs", "投入预算、费用与分摊", "报表中心"),
+    ("investment_worklogs", "投入工时登记", "报表中心"),
     # 需求域按菜单页独立授权；只有 BDO/授权 IT 角色可登记需求，不能查看任务跟踪/评分规则。
     ("requirements", "需求总览（登记/评审/方案）", "需求管理"),
     ("req_tasks", "任务跟踪", "需求管理"),
@@ -65,6 +72,7 @@ MODULES = [
     ("admin_master_data", "数据字典", "系统管理"),
     ("admin_workflow", "状态机配置", "系统管理"),
     ("admin_feishu", "系统集成", "系统管理"),
+    ("admin_ai", "AI 智能体", "系统管理"),
     ("admin_audit", "审计日志", "系统管理"),
     ("admin_ui_branding", "界面与品牌", "系统管理"),
 ]
@@ -93,9 +101,9 @@ MODULE_PAGES = {
 # 动作缩写：v=view c=create e=edit d=delete
 _BUSINESS_VIEW = [
     "dashboard", "ticket_sr", "ticket_incident", "ticket_change", "catalog", "cmdb", "sla",
-    "problems", "vendors", "contracts", "knowledge", "projects", "requirements",
+    "problems", "vendors", "contracts", "knowledge", "projects", "reports", "requirements",
     "req_tasks", "req_scoring", "team_overview", "activities", "ideas", "charter",
-    "task_development", "task_bug", "task_delegated",
+    "task_development", "task_bug", "task_delegated", "investment_worklogs",
 ]
 
 def _staff_base() -> dict[str, str]:
@@ -103,8 +111,10 @@ def _staff_base() -> dict[str, str]:
     matrix.update({"ticket_sr": "vce", "ticket_incident": "vce", "ticket_change": "vce",
                    "knowledge": "vce", "requirements": "vc", "performance_result": "v",
     "activities": "vc", "learning_growth": "vced", "ideas": "vc",
-    # IT 团队成员均可登记 Bug/委派任务；具体编辑、分派和删除仍由业务服务按数据范围控制。
-    "task_bug": "vce", "task_delegated": "vce"})
+    # IT 团队成员均可维护开发/Bug/委派任务；具体编辑、分派和删除仍由业务服务按数据范围控制。
+    "task_development": "vce", "task_bug": "vce", "task_delegated": "vce",
+    # 普通 IT 员工只能登记/删除本人实际工时；跨人员维护由 edit 权限控制。
+    "investment_worklogs": "vcd"})
     return matrix
 
 
@@ -132,11 +142,16 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
     "it_dev_leader": _merge(_staff_base(), {"requirements": "e", "req_tasks": "e", "task_development": "vce",
                                              "task_bug": "vce", "task_delegated": "vce",
                                              "process_monitor": "v", "performance_review": "vce"}),
-    "it_pm": _merge(_staff_base(), {"projects": "ce"}),
-    "it_pmo": _merge(_staff_base(), {"projects": "ce", "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
+    "it_pm": _merge(_staff_base(), {"projects": "ce", "reports": "ce", "reports_finance": "v", "reports_people": "v",
+                                          "investment_costs": "vced", "investment_worklogs": "e"}),
+    "it_pmo": _merge(_staff_base(), {"projects": "ce", "reports": "ce", "reports_finance": "v", "reports_people": "v",
+                                        "investment_costs": "vced", "investment_worklogs": "e",
+                                        "process_monitor": "v", "performance": "v", "performance_review": "vce"}),
     "it_ops": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce", "contracts": "ce"}),
     "it_op_leader": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "vendors": "ce",
-                                           "contracts": "ce", "sla": "e", "process_monitor": "v", "performance_review": "vce"}),
+                                           "contracts": "ce", "sla": "e", "process_monitor": "v", "performance_review": "vce",
+                                           "reports_finance": "v", "reports_people": "v",
+                                           "investment_costs": "vced", "investment_worklogs": "e"}),
     "is_mgr": _merge(_staff_base(), {"problems": "ce", "cmdb": "ce", "admin_audit": "v"}),
     # 矩阵式组织三角色（docs/06 §七）——默认值是起点，全部可在权限配置页调整
     "cio": _merge(_staff_base(), {
@@ -145,15 +160,21 @@ DEFAULT_MATRIX: dict[str, dict[str, str]] = {
         "ideas": "e", "charter": "e", "sla": "e",
         "performance": "vce", "performance_review": "vce", "performance_external": "vced",
         "performance_admin": "vce", "process_definitions": "v", "process_monitor": "v",
+        "reports": "vce", "reports_publish": "vce", "reports_finance": "v",
+        "reports_people": "v", "reports_platform": "v",
+        "investment_costs": "vced", "investment_worklogs": "e",
         "admin_business_domains": "vce", "admin_members": "vced", "admin_audit": "v",
     }),
     "it_bm": _merge(_staff_base(), {
         "requirements": "e", "projects": "ce", "admin_business_domains": "v",
         "performance": "vce", "performance_review": "vce", "process_monitor": "v",
+        "reports": "vce", "reports_finance": "v", "reports_people": "v",
+        "investment_costs": "vce", "investment_worklogs": "e",
     }),
     "it_tm": _merge(_staff_base(), {
         "activities": "e", "charter": "e", "performance": "vce", "performance_review": "vce",
         "learning_growth": "vced", "ideas": "e", "process_monitor": "v", "admin_members": "vce",
+        "reports": "vce", "reports_people": "v", "investment_worklogs": "e",
     }),
 }
 
@@ -167,9 +188,10 @@ def flags_to_actions(flags: str) -> list[str]:
 def seed_permissions(db: Session):
     """按角色写入默认矩阵并收敛受限内置角色的历史越权。
 
-    一般情况下仅补种缺失模块，管理员已调整的矩阵不受影响。唯一例外是
-    ``requester → requirements``：这是已废止的业务用户需求登记入口，必须在
-    启动时幂等移除，避免历史权限行绕过 BDO 边界；不会影响任何既有需求数据。
+    一般情况下仅补种缺失模块，管理员已调整的矩阵不受影响。例外包括：
+    ``requester → requirements`` 是已废止的业务用户需求登记入口，必须在启动时
+    幂等移除；以及历史内置 IT 角色的 ``task_development`` 只有查看权限，需
+    补齐为登记/修改所需的 ``view/create/edit``。两者均不修改业务数据。
     """
     removed = (
         db.query(RolePermission)
@@ -187,6 +209,24 @@ def seed_permissions(db: Session):
         for module, flags in modules.items():
             if module not in existing:
                 db.add(RolePermission(role_code=role_code, module=module, actions=flags_to_actions(flags)))
+    # M104：已发布环境中的内置 IT 角色早已存在，单纯补种无法提升其已有
+    # task_development 行。仅收敛这些内置 IT 角色的该模块，管理员角色仍为
+    # 隐式全权，业务角色与自定义角色不受影响。
+    it_role_codes = [
+        role_code
+        for role_code in DEFAULT_MATRIX
+        if role_code == "cio" or role_code == "is_mgr" or role_code.startswith("it_")
+    ]
+    for permission in (
+        db.query(RolePermission)
+        .filter(
+            RolePermission.role_code.in_(it_role_codes),
+            RolePermission.module == "task_development",
+            RolePermission.is_deleted.is_(False),
+        )
+        .all()
+    ):
+        permission.actions = flags_to_actions("vce")
     db.commit()
 
 
