@@ -1066,3 +1066,15 @@ html[data-theme='dark'] .app-content .ant-card { border-color: #2b3038; box-shad
 .task-register-hitbox > * {
   pointer-events: none !important;
 }
+
+/* 软件版本中心：与业务模块保持同一壳层，但以更明确的版本身份层级呈现。 */
+.about-release-hero { overflow: hidden; color: #fff; background: linear-gradient(120deg, #172554 0%, #2447a8 58%, #16a3d6 100%); border: 0 !important; }
+.about-release-hero .ant-card-body { padding: clamp(28px, 4vw, 52px); }
+.about-release-hero h1.ant-typography { margin: 0; color: #fff; font-size: clamp(30px, 4vw, 48px); letter-spacing: -.04em; }
+.about-release-hero .ant-typography { color: rgba(255,255,255,.84); }
+.about-release-kicker { color: rgba(255,255,255,.66) !important; font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+.about-release-version { padding: 7px 12px; color: #fff; background: rgba(6,17,55,.28); border: 1px solid rgba(255,255,255,.25); border-radius: 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; }
+.about-release-mark { width: 148px; height: 148px; display: grid; place-items: center; color: #fff; background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.22); border-radius: 36px; box-shadow: inset 0 1px 0 rgba(255,255,255,.18); font-size: 38px; font-weight: 800; letter-spacing: -.08em; }
+.about-release-mark span { color: #78e1ff; }
+.about-release-hero .ant-tag { color: #eaf8ff; background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.24); }
+@media (max-width: 760px) { .about-release-mark { display: none; } }

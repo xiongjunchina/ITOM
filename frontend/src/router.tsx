@@ -46,6 +46,7 @@ import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
 import UserManual from './pages/UserManual';
 import ReportCenter from './pages/reports/ReportCenter';
+import About from './pages/About';
 
 /** M19 首页落点：菜单序第一个有权限的页面（业务用户关掉总览后落到服务请求） */
 function HomeRedirect() {
@@ -115,6 +116,7 @@ export const router = createBrowserRouter([
       { path: 'user-manual', element: <UserManualGate /> },
       { path: 'dashboard', element: <DashboardGate /> },
       { path: 'profile', element: <Profile /> },
+      { path: 'about', element: <About /> },
 
       // ITSM（M2 交付；M6.1 工单按类型拆分三入口，key 隔离筛选/分页状态）
       { path: 'itsm/tickets', element: <Tickets key="service_request" fixedType="service_request" /> },

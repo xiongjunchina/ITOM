@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "product": {
+    "code": "itom",
+    "name_zh": "IT运营管理平台",
+    "name_en": "IT Operations Management Platform",
+    "edition_zh": "统一运营版",
+    "edition_en": "Unified Operations Edition"
+  },
+  "release": {
+    "version": "1.2.0-rc.1",
+    "channel": "candidate",
+    "status": "candidate",
+    "release_date": "2026-08-27"
+  },
+  "compatibility": {
+    "minimum_rollback_version": "1.1.0",
+    "database_change": "none"
+  },
+  "notes": {
+    "zh": {
+      "title": "版本中心首个候选版本",
+      "summary": "建立统一的软件版本、更新日志与开发者信息展示能力。",
+      "highlights": [
+        "新增“关于系统”页面，集中展示软件版本、版本状态和发布日期",
+        "新增中英文版本更新日志，并支持查看历史版本",
+        "开发者、厂商、版权、支持与许可信息纳入品牌配置"
+      ],
+      "fixes": [
+        "统一后端、前端构建和健康检查使用的产品版本来源",
+        "明确区分软件版本与品牌配置版本、流程版本和报表版本"
+      ],
+      "known_limits": [
+        "本候选版本暂不记录用户更新日志阅读状态",
+        "IDC 部署历史和镜像摘要仍由现有发布流程管理"
+      ]
+    },
+    "en": {
+      "title": "First release-center candidate",
+      "summary": "Introduces a unified software version, release notes, and developer information experience.",
+      "highlights": [
+        "Adds an About page for the product version, release status, and release date",
+        "Adds bilingual release notes with release history",
+        "Moves developer, vendor, copyright, support, and license information into branding configuration"
+      ],
+      "fixes": [
+        "Uses one product-version source for the backend, frontend build, and health endpoint",
+        "Separates the software version from branding, workflow, and report versions"
+      ],
+      "known_limits": [
+        "This candidate does not yet store per-user release-note acknowledgements",
+        "IDC deployment history and image digests remain governed by the existing release workflow"
+      ]
+    }
+  }
+}

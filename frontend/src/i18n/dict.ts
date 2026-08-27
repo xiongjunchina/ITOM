@@ -22,6 +22,9 @@ const zh: Dict = {
   'header.clearRead': '清除已读',
   'header.user': '用户',
   'header.manual': '操作手册',
+  'about.menu': '关于系统',
+  'about.title': '关于系统',
+  'about.version': '软件版本',
 
   'common.create': '新建',
   'common.edit': '编辑',
@@ -234,6 +237,9 @@ const en: Dict = {
   'header.clearRead': 'Clear read',
   'header.user': 'User',
   'header.manual': 'User Manual',
+  'about.menu': 'About',
+  'about.title': 'About',
+  'about.version': 'Software version',
 
   'common.create': 'New',
   'common.edit': 'Edit',

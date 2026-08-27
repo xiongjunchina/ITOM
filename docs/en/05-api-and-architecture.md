@@ -683,3 +683,15 @@ Person selectors use two scopes. IT operational owner/assignee/reviewer/project-
 M44: approval generates a 12-character password and stores encrypted ciphertext without sending. `GET /api/admin/users/{id}/initial-password` reveals it under authorization; `POST .../initial-password/email` sends it explicitly. Global SMTP/LDAP settings use `GET/PUT /api/admin/integrations/email|ldap`, with connection-test endpoints and masked secrets.
 
 Task 8C Round 2: after explicit-`Z` and RFC 3339 shape checks, the shared action-SSE expiry parser validates calendar semantics. It rejects JavaScript-normalized values such as `2030-02-30T00:10:00Z` and `2030-01-01T24:00:00Z`, while preserving valid leap days and fractional seconds. No backend, route, database, deployment, or Aily/MCP semantics change.
+
+## 10. Software release API and build contract (B1)
+
+```text
+GET /api/public/releases/current   # current product version and bilingual highlights
+GET /api/public/releases           # release history bundled into the current build
+GET /api/health                    # status plus manifest-consistent version
+```
+
+All three endpoints are read-only. Release endpoints return only `schema_version/product/release/notes`; they exclude internal compatibility declarations, Git SHA, image tag/digest, registry, database, and environment details. FastAPI/OpenAPI loads its version from the same manifest at startup. Vite embeds that manifest as the frontend build identity, and About compares it with the runtime response to warn about a partial deployment.
+
+Docker now builds from the repository-root context so both images copy `release/`. Release scripts write `APP_VERSION/VCS_REF/RELEASE_DATE` OCI labels and verify the product version. In addition to existing health, proxy, and MCP probes, IDC deployment requires `/api/health.data.version` to match the approved manifest. MCP tools, authentication, and the `serverInfo` protocol implementation are unchanged.

@@ -147,7 +147,15 @@ Cost maintenance requires `investment_costs`; users maintain their own worklogs 
 
 Profile provides basic information, security, notification preferences, activity records, Feishu binding, theme, and content density. Password changes clear the administrator-held initial-password ciphertext. Activity records are limited to the current user.
 
-## 11. Troubleshooting
+## 11. About and release updates
+
+The login footer shows the current software version and opens a pre-login release summary. After sign-in, choose **About** from the user menu to view the current version, channel, release date, highlights, history, and developer/legal information. Product information and release notes follow the current Chinese/English language.
+
+Administrators maintain developer, vendor, copyright, website, support, license, and third-party notices under **System → Interface & Branding → Developer & Legal**. The page's “current online version vN” is the branding-configuration revision. The software version, such as `v1.2.0-rc.1`, is generated read-only from the release manifest and cannot be edited in the UI.
+
+If About warns that frontend and backend versions differ, hard-refresh the browser. If the warning remains, stop critical operations and ask an administrator to verify deployment completeness. Ordinary users never receive Git SHA, image, or database deployment details.
+
+## 12. Troubleshooting
 
 - Missing menu or people: check role/module permission and digital-team scope, then sign in again.
 - Disabled workflow action: check current assignee, claim state, terminal state, and active process version.

@@ -98,7 +98,8 @@ jobs:
       - name: Validate deployment files
         run: |
           bash -n scripts/change-scope.sh scripts/fast-check.sh deploy/k8s/push-images.sh deploy/k8s/k8s-deploy.sh
-          python -m unittest scripts/tests/test_task_lifecycle.py
+          python -m unittest scripts/tests/test_task_lifecycle.py scripts/tests/test_release_manifest.py
+          python scripts/validate-release.py
           ruby -e 'require "yaml"; %w[deploy/k8s/00-namespace.yaml deploy/k8s/10-postgres.yaml deploy/k8s/20-backend.yaml deploy/k8s/30-frontend.yaml deploy/k8s/40-ingress.yaml].each { |path| YAML.load_stream(File.read(path)) }'
 
       - name: Enforce Chinese and English documentation delivery

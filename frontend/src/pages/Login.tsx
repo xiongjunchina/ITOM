@@ -11,6 +11,7 @@ import { useT } from '../i18n';
 import LangSwitch from '../components/LangSwitch';
 import { localized, useBrandingStore } from '../stores/branding';
 import { useLangStore } from '../i18n/store';
+import { buildRelease } from '../release';
 
 interface LoginForm {
   username: string;
@@ -72,6 +73,7 @@ export default function Login() {
   const [feishuOpen, setFeishuOpen] = useState(false);
   const [feishuLoading, setFeishuLoading] = useState(false);
   const [feishuStarting, setFeishuStarting] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [feishuForm] = Form.useForm<FeishuForm>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -79,6 +81,8 @@ export default function Login() {
   const t = useT();
   const lang = useLangStore((s) => s.lang);
   const branding = useBrandingStore((s) => s.current?.config);
+  const releaseNotes = buildRelease.notes[lang];
+  const developerName = localized(branding, 'legal', 'developer_name', lang, lang === 'en' ? 'ITOM Development Team' : 'ITOM 开发团队');
   const [appLoginTrying, setAppLoginTrying] = useState(/Lark|Feishu/i.test(navigator.userAgent));
   const nextPath = (() => {
     const next = searchParams.get('next');
@@ -259,8 +263,18 @@ export default function Login() {
           {branding?.login.terms_url && <a href={String(branding.login.terms_url)}>使用条款</a>}
         </Space>
         {branding?.login.support_text && <Typography.Paragraph type="secondary" style={{textAlign:'center',marginTop:12,marginBottom:0}}>{String(branding.login.support_text)}</Typography.Paragraph>}
+        <Button type="link" size="small" onClick={() => setAboutOpen(true)} style={{display:'block',margin:'8px auto 0',paddingInline:4}}>{t('about.version')} v{buildRelease.release.version}</Button>
         {branding?.login.copyright && <Typography.Paragraph type="secondary" style={{textAlign:'center',fontSize:12,marginTop:8,marginBottom:0}}>{String(branding.login.copyright)}</Typography.Paragraph>}
       </Card>
+
+      <Modal title={lang === 'en' ? 'About this software' : '关于本软件'} open={aboutOpen} footer={null} onCancel={() => setAboutOpen(false)}>
+        <Space direction="vertical" size={12} style={{width:'100%'}}>
+          <Space wrap><Typography.Title level={4} style={{margin:0}}>v{buildRelease.release.version}</Typography.Title><Typography.Text type="secondary">{buildRelease.release.release_date}</Typography.Text></Space>
+          <Typography.Text>{releaseNotes.summary}</Typography.Text>
+          <ul style={{margin:0,paddingInlineStart:20}}>{releaseNotes.highlights.map((item) => <li key={item}>{item}</li>)}</ul>
+          <Typography.Text type="secondary">{lang === 'en' ? 'Developer' : '开发者'}：{developerName}</Typography.Text>
+        </Space>
+      </Modal>
 
       <Modal
         title={t('login.feishuScanTitle')}

@@ -686,3 +686,15 @@ POST /api/admin/ui-branding/reset                    # 草稿恢复内置默认
 M44：审批接口生成 12 位密码并保存加密密文，不发信。`GET /api/admin/users/{id}/initial-password` 鉴权解密查看；`POST .../initial-password/email` 手工发送。`GET/PUT /api/admin/integrations/email|ldap` 管理全局配置，`POST .../test` 执行连接测试。敏感配置只返回 `has_secret`，不回显密钥。
 
 Task 8C Round 2：action SSE 的共享前端 expiry parser 在显式 `Z` 和 RFC 3339 形状校验之后执行日历有效性校验，拒绝 `2030-02-30T00:10:00Z`、`2030-01-01T24:00:00Z` 等 JavaScript 规范化输入；有效闰日与小数秒仍可通过。该轮不改变后端语义、路由、数据库或 Aily/MCP。
+
+## 10. 软件版本 API 与构建契约（B1）
+
+```text
+GET /api/public/releases/current   # 当前软件版本与中英文更新摘要
+GET /api/public/releases           # 已纳入当前构建的版本历史
+GET /api/health                    # status + 与发布清单一致的 version
+```
+
+三个端点均为只读；版本接口只返回 `schema_version/product/release/notes`，不返回兼容性内部声明、Git SHA、镜像标签/摘要、仓库、数据库或环境信息。FastAPI/OpenAPI 版本在启动时从同一发布清单加载；Vite 构建也读取该清单并嵌入前端构建身份，页面对比运行时版本后提示不一致。
+
+Docker 构建上下文为仓库根目录，两个镜像共同复制 `release/`，发布脚本以 `APP_VERSION/VCS_REF/RELEASE_DATE` 写入 OCI 标签并校验版本。IDC 部署在既有健康、代理和 MCP 探针之外，额外要求 `/api/health.data.version` 与批准清单一致。该变化不调整 MCP 工具、鉴权或 `serverInfo` 协议实现。

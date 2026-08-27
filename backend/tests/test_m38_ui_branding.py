@@ -11,6 +11,7 @@ def test_public_default_needs_no_login(client):
     data = response.json()["data"]
     assert data["status"] == "default"
     assert data["config"]["brand"]["system_name_zh"] == "IT运营管理平台"
+    assert data["config"]["legal"]["developer_name_zh"] == "ITOM 开发团队"
 
 
 def test_draft_publish_and_rollback(client, admin_headers):

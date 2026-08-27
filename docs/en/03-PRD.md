@@ -655,3 +655,12 @@ Task 8C Round 1 makes a valid raw confirmation token and a non-null, parseable e
 **System-level overall acceptance**: all creation forms require ≤ 5 items; no page manually maintains statistics; all six point-event categories trigger automatically; real acceptance covers “Aily request → MCP create → ITOM dispatch/accept/resolve → Aily proactive notification → requester confirm/reopen → close → rate” and “BDO requirement registration through Aily → ITOM evaluation → delivery/project → acceptance and closure.”
 
 **Task 8C Round 2**: the shared browser expiry parser requires an explicit `Z`, RFC 3339-shaped, calendar-valid timestamp. JavaScript-normalized invalid day/month/hour values fail closed before an action can become `prepared`; valid leap days and fractional-second UTC values remain accepted.
+
+## 9B. Software Release Center (B1)
+
+1. The current product version comes from a Git-controlled SemVer release manifest; backend, frontend build, and health endpoints never maintain independent values.
+2. Login exposes a compact version entry. Every signed-in role reaches About from the user menu without adding a first-level sidebar item.
+3. About shows product name, version, channel, release date, bilingual highlights, history, developer, vendor, copyright, support, and license information.
+4. Software identity is read-only. Interface & Branding controls developer/legal presentation only, and its configuration revision is never presented as the software version.
+5. Public release endpoints expose no Git SHA, image/registry, database revision, or infrastructure details. The page warns when frontend and backend versions differ.
+6. B1 stores no acknowledgement, adds no database structure, and changes no Aily/MCP, identity, RBAC, or domain-service boundary.
