@@ -15,6 +15,8 @@
 
 This system, the "IT Operations Platform" (project code ITOM), is a **lightweight operations management platform** for IT teams covering Overview, ITSM Service Management, Project Management, Requirement Management, Process Engine, and Team Management, with a Unified Report Center for cross-domain analysis and formal reporting.
 
+For the platform-team transformation, approved Option B further positions ITOM as the **operations-management console for the Platform Product and Enablement team**. P0 now has a locally verified candidate. Professional process, data, AI, integration, and architecture systems remain the systems of record for execution facts, while ITOM collects management summaries, commitments, evidence, and synchronization state.
+
 ### 1.2 Design Principles (mandatory constraints across the whole system)
 
 1. **Minimal entry**: any creation form has ≤ 8 required fields (in practice all achieve ≤ 5); advanced fields are collapsed by default; fields relevant to later lifecycle stages appear only at those stages.
@@ -570,6 +572,25 @@ Acceptance: Demand, Project, and Operations investments reconcile by exact CNY, 
 
 ---
 
+## 9B. Platform Product Operations Hub (Option B; P0 local candidate)
+
+**Position:** ITOM is the operations-management console for the Platform Product and Enablement team. It manages platform services, demand, capacity, commitments, investment, adoption, reliability, and management decisions. Professional process, data, AI, integration, and architecture systems remain the systems of record for execution facts; ITOM stores only management summaries, commitments, evidence, external references, sync state, and metric observations.
+
+- **Platform services:** explicitly enable an optional platform profile on an existing service item with product owner, value proposition, management scope, and `candidate → pilot → active → retiring → retired` lifecycle. No service-item master record is duplicated.
+- **Platform demand pool:** add an optional profile to an existing requirement with target service, business domain, demand class, expected outcome, target quarter, and capacity class. The existing requirement workflow remains the only demand lifecycle.
+- **Capacity and commitments:** create versioned plans by service/team/quarter through `draft → review → approved → superseded`. Net capacity deducts planned unavailability, BAU reserve, and risk buffer. Commitments cannot exceed net capacity by default; a CIO exception requires reason, approval, and audit. An approved baseline is immutable.
+- **Enablement and objectives (P1/P2):** later phases may register templates, scripts, guides, sandboxes, training, self-service assets, and service objectives; P0 does not implement them.
+- **Professional-system integration (P1/P2):** every external source remains authoritative for its professional facts. Later intake is read-only and approved one system at a time; generic arbitrary HTTP/SQL/shell/database-write connectors remain prohibited. P0 exposes no external connector, sync-run, or observation-write API.
+- **Platform analysis (P0):** the existing Report Center now registers seven metrics: active services, owner coverage, demand backlog, demand commitment, net capacity, committed capacity, and capacity utilization. It also includes a quarterly Platform Operations system template and reuses existing query/drill-down authorization. Adoption, enablement, external observation, and reliability-objective metrics remain P1/P2.
+- **Permissions (P0):** `platform_portfolio` and `platform_capacity` are active and `reports_platform` continues to protect platform analysis. `platform_enablement` and `platform_integrations` are reserved module codes with no UI/API. FDSEs register/read demands only in authorized domains; a platform lead or CIO approves capacity; only CIO approves over-capacity; a pure administrator cannot replace a business approver.
+- **Agent boundary:** this phase adds no Aily/MCP/Web Agent capability. Any future capability remains code-registered, invokes a domain service, and enforces current-user authorization, data scope, audit, idempotency, and risk confirmation.
+
+P0-1 platform-service profiles, P0-2 the platform demand pool, P0-3 quarterly capacity and commitments, and P0-4 basic platform analysis in the existing Report Center now form a locally verified candidate. External connectors, enablement assets, observations, and agent capabilities are deferred. The complete target models, APIs, metrics, migration, and acceptance baseline are in the [specialized design](superpowers/specs/2026-08-31-platform-product-operations-hub-design.md) and [ADR-0001](adr/0001-platform-product-operations-overlay.md).
+
+Acceptance: no duplicate service-item or requirement master entity; approved capacity versions are immutable; a platform service drills into demand, investment, commitments, adoption, and reliability; external facts trace to source and sync run; stale, conflicting, erroneous, and missing data never appears normal; role boundaries and existing Aily/MCP, ITSM, project, requirement, investment, and reporting security do not regress.
+
+---
+
 ## 10. Supporting: System Management (admin)
 
 Menu structure (8 entry points):
@@ -642,6 +663,7 @@ Task 8C Round 1 makes a valid raw confirmation token and a non-null, parseable e
 | M5 Requirement | 7 | Four-stage closed loop, hand-off to problem/knowledge |
 | M6 Team + Dashboard + Process | 4, 8, 9 | Automatic point scoring and ranking, performance framework, Overview page, process monitoring |
 | B2 + B-OPS Unified Report Center | 6, 7, 9A | Seven-domain live metrics, unified Demand/Project/Operations investment, people allocation, requirement timeliness, drill-down, formal-report review/publication, immutable versions, and Excel export |
+| Platform Product Operations Hub P0 (local candidate; P1/P2 pending) | 5, 7, 9A, 9B, 10 | Reuse service and requirement master records; control capacity versions and commitments; trace seven platform metrics; keep professional execution facts authoritative in their source systems |
 | M34–35 Notifications and Org Sync | 2, 3, 10 | Provisioning alerts reach admins; whole-company sync runs in background with queryable status and completion/failure notifications |
 | M36–37 Accounts and Personal Settings | 2.4, 3 | Safe account deletion, Feishu workplace login, profile center, self-service password, binding management, notification/theme/density preferences, personal activity |
 | M38 Interface & Branding | 10, 11 | Branding and login configuration, safe image assets, global appearance, role landing pages, banners/environment labels, publish history and rollback, built-in fallback |

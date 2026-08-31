@@ -46,6 +46,7 @@ import Requirements from './pages/requirements/Requirements';
 import RequirementDetail from './pages/requirements/RequirementDetail';
 import UserManual from './pages/UserManual';
 import ReportCenter from './pages/reports/ReportCenter';
+import PlatformOperations from './pages/platform/PlatformOperations';
 import About from './pages/About';
 
 /** M19 首页落点：菜单序第一个有权限的页面（业务用户关掉总览后落到服务请求） */
@@ -87,6 +88,15 @@ function ReportGate() {
   const allowed = user.permissions ? hasPermission(user, 'reports', 'view') : !user.roles.every((role) => role === 'requester' || role === 'bdo');
   if (!allowed) return <Navigate to={firstAccessiblePath(user)} replace />;
   return <ReportCenter />;
+}
+
+function PlatformGate({ pane }: { pane: 'services' | 'demands' | 'capacity' }) {
+  const user = useAuthStore((s) => s.user);
+  if (!user) return null;
+  const module = pane === 'capacity' ? 'platform_capacity' : 'platform_portfolio';
+  const allowed = user.permissions ? hasPermission(user, module, 'view') : !user.roles.every((role) => role === 'requester' || role === 'bdo');
+  if (!allowed) return <Navigate to={firstAccessiblePath(user)} replace />;
+  return <PlatformOperations pane={pane} />;
 }
 
 /** M17 旧地址兼容：/projects?tab=portfolios、/requirements?tab=tasks|scoring → 新二级菜单路径 */
@@ -150,6 +160,11 @@ export const router = createBrowserRouter([
       { path: 'requirements/tasks', element: <Navigate to="/task-management/development?tab=requirement" replace /> },
       { path: 'requirements/scoring', element: <RequirementScoring /> },
       { path: 'requirements/:id', element: <RequirementDetail /> },
+
+      // 平台产品运营 P0：复用服务项和需求主记录，管理季度容量与承诺。
+      { path: 'platform/services', element: <PlatformGate pane="services" /> },
+      { path: 'platform/demands', element: <PlatformGate pane="demands" /> },
+      { path: 'platform/capacity', element: <PlatformGate pane="capacity" /> },
 
       // 任务管理（M82）：开发任务分为需求开发/Bug 修复/项目开发，委派任务覆盖轻量化 IT 工作。
       { path: 'task-management/development', element: <DevelopmentTasksPage /> },

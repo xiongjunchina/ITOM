@@ -35,11 +35,11 @@ import { useT } from '../../i18n';
 import { useLangStore } from '../../i18n/store';
 import { ALL_ROLES, ROLE_LABELS, type Role } from '../../api/types';
 
-type ReportTab = 'overview' | 'project' | 'requirement' | 'operations' | 'people' | 'library' | 'catalog';
+type ReportTab = 'overview' | 'project' | 'requirement' | 'operations' | 'people' | 'platform' | 'library' | 'catalog';
 
 interface MetricDefinition {
   code: string;
-  domain: 'itsm' | 'project' | 'requirement' | 'operations' | 'people' | 'task' | 'process';
+  domain: 'itsm' | 'project' | 'requirement' | 'operations' | 'people' | 'task' | 'process' | 'platform';
   name_zh: string;
   name_en: string;
   unit: string;
@@ -113,6 +113,7 @@ const TAB_DOMAINS: Record<Exclude<ReportTab, 'library' | 'catalog'>, MetricDefin
   requirement: ['requirement'],
   operations: ['operations'],
   people: ['people'],
+  platform: ['platform'],
 };
 
 const OVERVIEW_CODES = [
@@ -366,6 +367,7 @@ export default function ReportCenter() {
     { key: 'requirement', label: t('report.tab.requirement') },
     { key: 'operations', label: t('report.tab.operations') },
     { key: 'people', label: t('report.tab.people') },
+    { key: 'platform', label: t('report.tab.platform') },
     { key: 'library', label: t('report.tab.library') },
     { key: 'catalog', label: t('report.tab.catalog') },
   ];

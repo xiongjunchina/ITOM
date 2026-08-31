@@ -126,6 +126,10 @@ const zh: Dict = {
   'module.contracts': '合同管理',
   'module.knowledge': '知识库',
   'module.projects': '项目管理（项目列表/项目组合）',
+  'module.platform_portfolio': '平台服务与需求池',
+  'module.platform_capacity': '平台容量与承诺',
+  'module.platform_enablement': '平台赋能资产与目标',
+  'module.platform_integrations': '平台外部系统与观测',
   'module.reports': '统一报表中心',
   'module.reports_publish': '报表发布与版本锁定',
   'module.reports_finance': '财务与成本指标',
@@ -167,6 +171,7 @@ const zh: Dict = {
   'group.总览': '总览',
   'group.ITSM': 'ITSM',
   'group.项目管理': '项目管理',
+  'group.平台运营': '平台运营',
   'group.报表中心': '报表中心',
   'group.需求管理': '需求管理',
   'group.流程中心': '流程中心',
@@ -191,6 +196,10 @@ const zh: Dict = {
   'menu./projects/list': '项目列表',
   'menu./projects/portfolios': '项目组合',
   'menu./reports': '报表中心',
+  'menu.platform': '平台运营',
+  'menu./platform/services': '平台服务',
+  'menu./platform/demands': '平台需求池',
+  'menu./platform/capacity': '容量与承诺',
   'menu./requirements': '需求管理',
   'menu.requirements': '需求管理',
   'menu./requirements/overview': '需求总览',
@@ -339,6 +348,10 @@ const en: Dict = {
   'module.contracts': 'Contract Management',
   'module.knowledge': 'Knowledge Base',
   'module.projects': 'Project Management',
+  'module.platform_portfolio': 'Platform Services and Demand Pool',
+  'module.platform_capacity': 'Platform Capacity and Commitments',
+  'module.platform_enablement': 'Platform Enablement Assets and Objectives',
+  'module.platform_integrations': 'Platform External Systems and Observations',
   'module.reports': 'Unified Report Center',
   'module.reports_publish': 'Report Publishing and Version Lock',
   'module.reports_finance': 'Finance and Cost Metrics',
@@ -376,6 +389,7 @@ const en: Dict = {
   'group.总览': 'Dashboard',
   'group.ITSM': 'ITSM',
   'group.项目管理': 'Projects',
+  'group.平台运营': 'Platform Operations',
   'group.报表中心': 'Reports',
   'group.需求管理': 'Requirements',
   'group.流程中心': 'Process',
@@ -399,6 +413,10 @@ const en: Dict = {
   'menu./projects/list': 'Project List',
   'menu./projects/portfolios': 'Portfolios',
   'menu./reports': 'Report Center',
+  'menu.platform': 'Platform Operations',
+  'menu./platform/services': 'Platform Services',
+  'menu./platform/demands': 'Platform Demand Pool',
+  'menu./platform/capacity': 'Capacity & Commitments',
   'menu./requirements': 'Requirements',
   'menu.requirements': 'Requirements',
   'menu./requirements/overview': 'Overview',
@@ -442,8 +460,9 @@ import * as profile from './locales/profile';
 import * as taskManagement from './locales/taskManagement';
 import * as assistant from './locales/assistant';
 import * as reports from './locales/reports';
+import * as platform from './locales/platform';
 
-const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement, assistant, reports];
+const domains = [itsm, projects, requirements, team, admin, process, dashboard, components, profile, taskManagement, assistant, reports, platform];
 
 export const DICT: Record<'zh' | 'en', Dict> = {
   zh: Object.assign({}, zh, ...domains.map((d) => d.zh)),

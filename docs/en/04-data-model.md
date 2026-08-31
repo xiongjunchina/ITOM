@@ -460,6 +460,42 @@ template_id FK, name, period_type, enabled, next_run_at, audience JSONB, and cre
 
 `org_settings` adds `reporting_timezone` (Asia/Shanghai), `reporting_week_start` (1=Monday), `fiscal_year_start_month` (1), `workday_hours` (8), `report_min_group_size` (3), and `report_role_rates` JSONB. Rates are management conventions rather than personal salary. The grouping threshold is reserved for future person-group aggregates; current person detail remains explicitly protected by `reports_people`.
 
+## 6B. Platform Product Operations Hub (P0 implemented; P1/P2 target model)
+
+P0 adds the first four tables below. `service_item`, `requirement`, unified investment, and formal reports remain the unique internal sources of their facts, and platform semantics are never inferred or backfilled. The P1/P2 enablement, external-reference, and observation tables remain target models and do not exist in the current database.
+
+### 6B.1 platform_service_profile
+
+Unique `service_item_id` FK, `owner_id` FK, `lifecycle` (candidate/pilot/active/retiring/retired), `value_proposition`, `management_scope` JSONB, `enabled_at`, `created_by/updated_by`, timestamps, and soft deletion. This is an optional 1:1 platform-product profile for an existing service item and does not duplicate its name, catalog, SLA, or form.
+
+### 6B.2 platform_demand_profile
+
+Unique `requirement_id` FK, `service_item_id` FK, `business_domain_id` FK, `demand_class`, `expected_outcome`, `target_quarter`, `capacity_class`, audit fields, and soft deletion. Requirement status, owner, and workflow remain on `requirement`; the profile adds platform-coordination semantics only.
+
+### 6B.3 platform_capacity_plan / platform_capacity_commitment
+
+An implemented plan stores service, quarter, version, status (draft/review/approved/superseded), gross person-days, planned unavailability, BAU reserve, risk buffer, net person-days, approval actor/reason/time, previous version, and `created_by + idempotency_key + request_digest`; service + quarter + version is unique. A commitment stores `plan_id`, subject type/ID, commitment type (demand/roadmap/reliability/enablement), person-days, `lifecycle_stage`, `investment_intent`, owner, status, over-capacity approval facts, and actor-scoped idempotency fields. Approved/superseded versions are immutable. A revision adds a monotonically increasing version, copies commitments, and retains the old row. Commitments reject over-capacity by default; only CIO may record the exception reason and approval fact.
+
+### 6B.4 platform_enablement_asset / platform_service_objective (P1/P2 target; not implemented)
+
+An enablement asset stores type, name, description, related service, owner, version, status, target audience, internal attachment or external reference, and audit fields. A service objective stores service, period, metric key, target value, unit, formula version, status, and audit fields; service + period + metric key + formula version is unique.
+
+### 6B.5 external_system / external_work_reference (P1/P2 target; not implemented)
+
+An external system stores a stable source code, name, type, owner, sync mode, expected freshness, enabled state, and non-sensitive connection metadata. Credentials use the existing governed-secret mechanism and are neither plaintext nor returned. An external reference stores internal subject type/ID, external system, external record type, stable external ID, controlled URL, status summary, source update time, and audit fields; internal subject + source + external ID is unique. It does not replace internal ITOM record relations or declare an external record to be an ITOM master record.
+
+### 6B.6 external_sync_run / platform_metric_observation (P1/P2 target; not implemented)
+
+A sync run stores source, start/end times, watermark, read/success/failure counts, outcome, error code/summary, and executor. An observation stores metric key, service, period, value, unit, source time, received time, formula version, quality (ok/stale/error/conflict/no_data), external reference/sync run, and a provenance summary. Observations are append-only or receive controlled correction versions. A formal report records the observation IDs it used; later correction never rewrites a published version.
+
+### 6B.7 Relationship and deletion constraints
+
+- Service-item/requirement deletion or disablement never physically cascades into platform profiles or historical plans, commitments, or observations.
+- Retiring a platform service retains demand, investment, commitments, objectives, and report references.
+- An observation with no valid denominator stores `value=null, quality=no_data`, never a fabricated `0%`.
+- External sync error, conflict, and staleness states are retained and never overwritten by a last-known-good value as though they were current source facts.
+- The existing startup table-creation path adds the four P0 tables without backfilling existing Service Items/Requirements or altering legacy tables. Rolling back to an older application image leaves these tables and data dormant and performs no destructive schema downgrade. P1/P2 fields, indexes, migrations, and rollback remain gated by their implementation routes and the [specialized design](superpowers/specs/2026-08-31-platform-product-operations-hub-design.md) plus [ADR-0001](adr/0001-platform-product-operations-overlay.md).
+
 ## 7. Core Relationship Diagram
 
 ```mermaid

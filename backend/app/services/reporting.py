@@ -9,7 +9,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from statistics import mean
 from typing import Any
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.errors import AppError
@@ -23,6 +23,10 @@ from app.models import (
     ProcessTask,
     ProcessDefinition,
     ProcessStep,
+    PlatformCapacityCommitment,
+    PlatformCapacityPlan,
+    PlatformDemandProfile,
+    PlatformServiceProfile,
     Project,
     ProjectDevelopmentTask,
     ReportAudience,
@@ -34,6 +38,7 @@ from app.models import (
     RequirementTask,
     Role,
     Ticket,
+    ServiceItem,
     UserGroup,
     UserGroupMember,
     WorkTask,
@@ -109,6 +114,13 @@ METRICS = [
     MetricDefinition("process.completed_count", "process", "已完成流程", "Completed processes", "count", source_module="process_monitor"),
     MetricDefinition("process.avg_cycle_hours", "process", "流程平均周期", "Average process cycle", "hours", source_module="process_monitor"),
     MetricDefinition("process.overdue_rate", "process", "流程超时率", "Process overdue rate", "percent", source_module="process_monitor"),
+    MetricDefinition("platform.active_service_count", "platform", "活跃平台服务", "Active platform services", "count", sensitivity="platform", source_module="platform_portfolio"),
+    MetricDefinition("platform.owner_coverage_rate", "platform", "平台服务负责人覆盖率", "Platform service owner coverage", "percent", sensitivity="platform", source_module="platform_portfolio"),
+    MetricDefinition("platform.demand_backlog_count", "platform", "平台需求待办量", "Platform demand backlog", "count", sensitivity="platform", source_module="platform_portfolio"),
+    MetricDefinition("platform.demand_commitment_rate", "platform", "平台需求承诺率", "Platform demand commitment rate", "percent", sensitivity="platform", source_module="platform_portfolio"),
+    MetricDefinition("platform.net_capacity_days", "platform", "平台净容量", "Platform net capacity", "days", sensitivity="platform", source_module="platform_capacity"),
+    MetricDefinition("platform.committed_capacity_days", "platform", "平台承诺容量", "Platform committed capacity", "days", sensitivity="platform", source_module="platform_capacity"),
+    MetricDefinition("platform.capacity_utilization_rate", "platform", "平台容量利用率", "Platform capacity utilization", "percent", sensitivity="platform", source_module="platform_capacity"),
 ]
 METRIC_MAP = {item.code: item for item in METRICS}
 
@@ -120,6 +132,7 @@ SYSTEM_TEMPLATES = [
     ("requirement_timeliness", "需求处理时效", "Requirement Timeliness", ["requirement"], "month"),
     ("operations_investment", "运维投入分析", "Operations Investment", ["operations"], "month"),
     ("it_capacity", "IT 人力容量与投向", "IT Capacity and Allocation", ["people"], "month"),
+    ("platform_operations", "平台产品运营季报", "Platform Product Operations", ["platform"], "quarter"),
 ]
 
 
@@ -433,6 +446,91 @@ def _task_metrics(db: Session, actor: AuthUser, start: date, end: date) -> dict[
     }
 
 
+def _quarter_keys(start: date, end: date) -> set[str]:
+    result: set[str] = set()
+    cursor = date(start.year, ((start.month - 1) // 3) * 3 + 1, 1)
+    while cursor <= end:
+        result.add(f"{cursor.year}-Q{((cursor.month - 1) // 3) + 1}")
+        month = cursor.month + 3
+        cursor = date(cursor.year + (month - 1) // 12, ((month - 1) % 12) + 1, 1)
+    return result
+
+
+def _platform_metrics(db: Session, start: date, end: date, filters: dict | None = None) -> dict[str, Any]:
+    filters = filters or {}
+    service_query = db.query(PlatformServiceProfile).filter(PlatformServiceProfile.is_deleted.is_(False))
+    if filters.get("service_item_id"):
+        service_query = service_query.filter(PlatformServiceProfile.service_item_id == filters["service_item_id"])
+    services = service_query.all()
+
+    begin_dt = datetime.combine(start, time.min)
+    end_dt = datetime.combine(end + timedelta(days=1), time.min)
+    demand_query = db.query(PlatformDemandProfile).join(
+        Requirement, Requirement.id == PlatformDemandProfile.requirement_id
+    ).filter(
+        PlatformDemandProfile.is_deleted.is_(False),
+        Requirement.is_deleted.is_(False),
+        func.coalesce(Requirement.registered_at, Requirement.created_at) >= begin_dt,
+        func.coalesce(Requirement.registered_at, Requirement.created_at) < end_dt,
+    )
+    if filters.get("service_item_id"):
+        demand_query = demand_query.filter(PlatformDemandProfile.service_item_id == filters["service_item_id"])
+    if filters.get("business_domain_id"):
+        demand_query = demand_query.filter(PlatformDemandProfile.business_domain_id == filters["business_domain_id"])
+    if filters.get("requirement_id"):
+        demand_query = demand_query.filter(PlatformDemandProfile.requirement_id == filters["requirement_id"])
+    demands = demand_query.all()
+    demand_ids = [row.requirement_id for row in demands]
+    committed_ids = set()
+    if demand_ids:
+        committed_ids = {
+            subject_id
+            for (subject_id,) in db.query(PlatformCapacityCommitment.subject_id).filter(
+                PlatformCapacityCommitment.subject_type == "requirement",
+                PlatformCapacityCommitment.subject_id.in_(demand_ids),
+                PlatformCapacityCommitment.status != "cancelled",
+                PlatformCapacityCommitment.is_deleted.is_(False),
+            ).distinct().all()
+        }
+
+    periods = _quarter_keys(start, end)
+    plan_query = db.query(PlatformCapacityPlan).filter(
+        PlatformCapacityPlan.period.in_(periods),
+        PlatformCapacityPlan.status.in_(["approved", "superseded"]),
+        PlatformCapacityPlan.is_deleted.is_(False),
+    )
+    if filters.get("service_item_id"):
+        plan_query = plan_query.filter(PlatformCapacityPlan.service_item_id == filters["service_item_id"])
+    latest: dict[tuple[str, str], PlatformCapacityPlan] = {}
+    for row in plan_query.all():
+        key = (row.service_item_id, row.period)
+        if key not in latest or row.version > latest[key].version:
+            latest[key] = row
+    plans = list(latest.values())
+    plan_ids = [row.id for row in plans]
+    capacity = sum((Decimal(str(row.net_days)) for row in plans), Decimal("0"))
+    committed = Decimal("0")
+    if plan_ids:
+        committed = Decimal(str(db.query(func.coalesce(func.sum(PlatformCapacityCommitment.capacity_days), 0)).filter(
+            PlatformCapacityCommitment.plan_id.in_(plan_ids),
+            PlatformCapacityCommitment.status != "cancelled",
+            PlatformCapacityCommitment.is_deleted.is_(False),
+        ).scalar() or 0))
+    req_rows = {row.id: row for row in db.query(Requirement).filter(Requirement.id.in_(demand_ids or ["-"])).all()}
+    backlog = sum(1 for row in demands if req_rows.get(row.requirement_id) and req_rows[row.requirement_id].status not in {
+        "closed", "rejected", "cancelled", "已关闭", "已驳回", "已取消",
+    })
+    return {
+        "platform.active_service_count": sum(1 for row in services if row.lifecycle == "active"),
+        "platform.owner_coverage_rate": _percent(sum(1 for row in services if row.owner_id), len(services)),
+        "platform.demand_backlog_count": backlog,
+        "platform.demand_commitment_rate": _percent(len(committed_ids), len(demands)),
+        "platform.net_capacity_days": capacity,
+        "platform.committed_capacity_days": committed,
+        "platform.capacity_utilization_rate": _percent(committed, capacity),
+    }
+
+
 def _raw_metrics(db: Session, actor: AuthUser, start: date, end: date, filters: dict | None = None) -> dict[str, Any]:
     tickets = _ticket_rows(db, actor, start, end, filters) if _allowed_ticket_types(db, actor) else []
     resolved = [row for row in tickets if row.resolved_at]
@@ -493,6 +591,8 @@ def _raw_metrics(db: Session, actor: AuthUser, start: date, end: date, filters: 
     raw.update(_task_metrics(db, actor, start, end))
     raw.update(_operations_metrics(db, start, end, tickets, resolved, filters))
     raw.update(_people_metrics(db, start, end, filters))
+    if has_perm(db, actor, "reports_platform", "view"):
+        raw.update(_platform_metrics(db, start, end, filters))
     return raw
 
 
@@ -552,6 +652,69 @@ def drilldown_metric(db: Session, actor: AuthUser, code: str, start: date, end: 
             "registered_at": _json_value(row.registered_at), "closed_at": _json_value(row.closed_at),
             "lead_days": round((row.closed_at - row.registered_at).total_seconds() / 86400, 2) if row.closed_at and row.registered_at else None,
         } for row in rows[:limit]]
+    if definition.domain == "platform" and code in {
+        "platform.active_service_count", "platform.owner_coverage_rate",
+    }:
+        query = db.query(PlatformServiceProfile).join(
+            ServiceItem, ServiceItem.id == PlatformServiceProfile.service_item_id
+        ).filter(
+            PlatformServiceProfile.is_deleted.is_(False), ServiceItem.is_deleted.is_(False),
+        )
+        if filters.get("service_item_id"):
+            query = query.filter(PlatformServiceProfile.service_item_id == filters["service_item_id"])
+        rows = query.order_by(ServiceItem.item_code).limit(limit).all()
+        return [{
+            "id": row.id, "service_item_id": row.service_item_id,
+            "code": db.get(ServiceItem, row.service_item_id).item_code,
+            "name": db.get(ServiceItem, row.service_item_id).name,
+            "lifecycle": row.lifecycle, "owner_id": row.owner_id,
+        } for row in rows]
+    if definition.domain == "platform" and code in {
+        "platform.demand_backlog_count", "platform.demand_commitment_rate",
+    }:
+        begin_dt = datetime.combine(start, time.min)
+        end_dt = datetime.combine(end + timedelta(days=1), time.min)
+        query = db.query(PlatformDemandProfile).join(
+            Requirement, Requirement.id == PlatformDemandProfile.requirement_id
+        ).filter(
+            PlatformDemandProfile.is_deleted.is_(False), Requirement.is_deleted.is_(False),
+            func.coalesce(Requirement.registered_at, Requirement.created_at) >= begin_dt,
+            func.coalesce(Requirement.registered_at, Requirement.created_at) < end_dt,
+        )
+        if filters.get("service_item_id"):
+            query = query.filter(PlatformDemandProfile.service_item_id == filters["service_item_id"])
+        if filters.get("business_domain_id"):
+            query = query.filter(PlatformDemandProfile.business_domain_id == filters["business_domain_id"])
+        if filters.get("requirement_id"):
+            query = query.filter(PlatformDemandProfile.requirement_id == filters["requirement_id"])
+        rows = query.order_by(Requirement.requirement_code).limit(limit).all()
+        return [{
+            "id": row.id, "requirement_id": row.requirement_id,
+            "code": db.get(Requirement, row.requirement_id).requirement_code,
+            "title": db.get(Requirement, row.requirement_id).title,
+            "status": db.get(Requirement, row.requirement_id).status,
+            "service_item_id": row.service_item_id, "business_domain_id": row.business_domain_id,
+            "demand_class": row.demand_class, "target_quarter": row.target_quarter,
+        } for row in rows]
+    if definition.domain == "platform":
+        query = db.query(PlatformCapacityPlan).filter(
+            PlatformCapacityPlan.period.in_(_quarter_keys(start, end)),
+            PlatformCapacityPlan.status.in_(["approved", "superseded"]),
+            PlatformCapacityPlan.is_deleted.is_(False),
+        )
+        if filters.get("service_item_id"):
+            query = query.filter(PlatformCapacityPlan.service_item_id == filters["service_item_id"])
+        rows = query.order_by(PlatformCapacityPlan.period.desc(), PlatformCapacityPlan.version.desc()).limit(limit).all()
+        return [{
+            "id": row.id, "service_item_id": row.service_item_id,
+            "period": row.period, "version": row.version, "status": row.status,
+            "net_days": _json_value(row.net_days),
+            "committed_days": _json_value(db.query(func.coalesce(func.sum(PlatformCapacityCommitment.capacity_days), 0)).filter(
+                PlatformCapacityCommitment.plan_id == row.id,
+                PlatformCapacityCommitment.status != "cancelled",
+                PlatformCapacityCommitment.is_deleted.is_(False),
+            ).scalar()),
+        } for row in rows]
     if definition.domain == "project" and code == "project.effort_days":
         if not has_perm(db, actor, "reports_people", "view"):
             raise AppError("REPORT_METRIC_FORBIDDEN", "无权查看人员投入明细", 403)

@@ -52,6 +52,12 @@ from app.models.report import (
     ReportTemplate,
     ReportVersion,
 )
+from app.models.platform import (
+    PlatformCapacityCommitment,
+    PlatformCapacityPlan,
+    PlatformDemandProfile,
+    PlatformServiceProfile,
+)
 from app.models.requirement import (
     Requirement,
     RequirementScore,
@@ -183,6 +189,10 @@ __all__ = [
     "PointEntry",
     "PointRule",
     "Portfolio",
+    "PlatformCapacityCommitment",
+    "PlatformCapacityPlan",
+    "PlatformDemandProfile",
+    "PlatformServiceProfile",
     "Position",
     "Project",
     "ReportAudience",

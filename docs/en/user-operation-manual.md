@@ -128,6 +128,17 @@ Process Definitions configure versions, processing/approval node types, handlers
 - **Interface & Branding**: configure names, descriptions, logos, favicon, theme, density, sidebar, landing pages, announcements, and environment markers. Images are cropped before saving.
 - **Audit Log**: search changes by entity, action, actor, and time.
 
+## 8A. Platform Operations (P0)
+
+Platform Operations appears after Requirement Management and before Task Management, with Platform Services, Demand Pool, and Capacity & Commitments. The unified Report Center remains the final sidebar item. P0 reuses existing Service Items and Requirements and creates no second master record.
+
+1. **Platform Services:** choose an existing Service Item and maintain its platform product owner, lifecycle, value proposition, and management scope. Normal lifecycle is `Candidate → Pilot → Active → Retiring → Retired`; a skipped or backward transition requires a clear audited reason.
+2. **Demand Pool:** choose an existing Requirement and target platform service, then maintain business domain, demand class, expected outcome, target quarter, and capacity class. An FDSE may read and maintain demands only in domains they belong to or own and cannot maintain Platform Service profiles.
+3. **Capacity & Commitments:** create a plan per platform service and quarter. Net capacity is calculated as gross minus planned unavailability, BAU reserve, and risk buffer. A draft may receive Demand, Roadmap, Reliability, or Enablement commitments and rejects over-capacity by default. Submission moves it to Review and locks editing. A platform lead or CIO approval forms an immutable baseline; later changes require a revision. Only CIO may approve an over-capacity exception with a reason, and a system administrator cannot replace business approval.
+4. **Platform analysis:** use Report Center → Platform Operations for active services, owner coverage, demand backlog, demand commitment, net capacity, committed capacity, and capacity utilization, with the existing authorized drill-down behavior.
+
+Enablement assets, professional-system references, sync runs, and external metric observations remain P1/P2 and have no current UI.
+
 ## 9. Report Center and unified investment ledger
 
 Report Center is the last item in the left navigation. It analyzes demand, project, operations, and people capacity under one measurement contract and produces weekly, monthly, quarterly, half-year, and annual reports. Record demand-stage investment in Requirement Detail, build-stage investment in the Project Cost tab, and run-stage investment in ITSM Ticket Detail. The Requirement and Ticket investment ledgers are both at the bottom of their detail pages after the original business content. Record operations investment that cannot be attributed to one object under **Report Center → Operations Investment → Shared Operations**.

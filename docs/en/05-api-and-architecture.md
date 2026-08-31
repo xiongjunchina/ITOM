@@ -541,6 +541,38 @@ Periods support week/month/quarter/half_year/year/custom. Defaults are Asia/Shan
 
 Formal generation has a unique actor + Idempotency-Key and canonical request digest. Same key/request returns its first version, while a different request returns 409. Each version stores metric snapshot, formula versions, quality, narrative, generation fact, and checksum. System templates cover Operations Weekly, Management Monthly, Project Investment, Requirement Timeliness, Operations Investment, and IT Capacity/Allocation; startup updates system templates only and never overwrites custom templates. Draft narrative may change and recomputes the checksum; review prevents regeneration. The `report_flow` approval callback marks the instance/current version approved, while rejection returns to draft. Publication requires `reports_publish`, stores user/role/group audiences, and locks the current version/instance. Detail, version list, and Excel export require creator/publication-management authority or a matching published audience, and recheck any finance/people/platform sensitive permissions found in the version. `report_schedule` is a disabled reserved model in this release and has no automatic-run API.
 
+### 4.9 Platform Product Operations Hub (P0 implemented; P1/P2 target contract)
+
+```text
+# Current P0 APIs
+GET/POST   /api/platform/services
+GET/PATCH  /api/platform/services/{service_item_id}
+GET/POST   /api/platform/demands
+GET/PATCH  /api/platform/demands/{requirement_id}
+GET/POST   /api/platform/capacity-plans
+GET/PATCH  /api/platform/capacity-plans/{plan_id}
+POST       /api/platform/capacity-plans/{plan_id}/submit
+POST       /api/platform/capacity-plans/{plan_id}/approve
+POST       /api/platform/capacity-plans/{plan_id}/revisions
+POST       /api/platform/capacity-plans/{plan_id}/commitments
+
+# P1/P2 target APIs (not implemented)
+GET/POST   /api/platform/enablement-assets
+GET/POST   /api/platform/service-objectives
+GET/POST   /api/platform/external-systems
+GET/POST   /api/platform/external-references
+GET        /api/platform/external-systems/{id}/sync-runs
+GET/POST   /api/platform/metric-observations
+```
+
+The P0 APIs are implemented. Platform Service and Demand endpoints project existing `ServiceItem` and `Requirement` records plus optional profiles and never create a second master record; list endpoints support `page/page_size` and controlled filters. Capacity-plan, commitment, and revision creation requires an 8–128 character `Idempotency-Key`: the same actor/key/digest returns the original result and a changed digest returns 409. Approved plans are immutable, revisions increment the version and copy commitments, and commitment writes validate demand ownership and net capacity. A platform lead or CIO may approve normal capacity; only CIO may record an over-capacity exception with a reason. A pure administrator may configure and maintain drafts through function permissions but is not a business approver.
+
+The P1/P2 target external-system endpoints accept only predefined source types and controlled configuration, never arbitrary SQL, shell, database connection strings, request headers, or user-defined write URLs; P0 exposes none of these routes. Later sync remains read-only and records watermark, counts, outcome, and error. A future metric observation declares source time, received time, formula version, quality, and source reference; `no_data` uses null rather than zero.
+
+Existing `/api/reports/metrics|query|drilldown|templates|reports` endpoints now register `platform.active_service_count`, `platform.owner_coverage_rate`, `platform.demand_backlog_count`, `platform.demand_commitment_rate`, `platform.net_capacity_days`, `platform.committed_capacity_days`, and `platform.capacity_utilization_rate`, plus the quarterly `platform_operations` system template; there is no separate reporting API. P0 reads platform profiles and the latest approved/superseded capacity version directly. External observation references and correction quality remain P1/P2. Every P0 endpoint continues through domain services with current-user identity, functional/sensitive permission, FDSE domain scope, state, audit, idempotency, and example-read-only enforcement.
+
+Professional systems remain the systems of record for their execution facts; ITOM manages references, commitments, evidence, and observations only. This design does not alter Aily/MCP/Web Agent authentication, tool registration, or the direct-database-write prohibition. See the [specialized design](superpowers/specs/2026-08-31-platform-product-operations-hub-design.md) and [ADR-0001](adr/0001-platform-product-operations-overlay.md).
+
 ## 5. Domain Event List
 
 Events are published by the service layer within the transaction; `→points` means it triggers point_engine scoring (the point value is looked up in point_rule), and `→notify` means it writes to the outbox.

@@ -179,7 +179,7 @@ test('every page that requests table scroll X enters the shared browser-native s
   })));
   const matches = wideTablePages.filter(({ source }) => /scroll=\{\{[\s\S]{0,240}\bx\s*:/.test(source));
 
-  assert.equal(matches.length, 30, 'the production inventory must retain all 30 current wide-table pages');
+  assert.equal(matches.length, 31, 'the production inventory must retain all 31 current wide-table pages');
   for (const { file, source } of matches) {
     assert.match(
       source,
