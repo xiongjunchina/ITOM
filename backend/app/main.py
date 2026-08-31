@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.errors import AppError
+from app.core.release_info import current_release
 from app.db import Base, SessionLocal, engine
 from app.routers import (
     aily,
@@ -28,6 +29,7 @@ from app.routers import (
     members,
     notifications,
     problems,
+    platform,
     process,
     projects,
     perf,
@@ -44,6 +46,7 @@ from app.routers import (
     ui_branding,
     integrations,
     investments,
+    releases,
 )
 from app.mcp.server import mcp_runtime
 from app.services import scheduler
@@ -93,7 +96,7 @@ async def lifespan(app: FastAPI):
         )
 
 
-app = FastAPI(title="IT运营管理平台 API", version="0.9.0-m9", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+app = FastAPI(title="IT运营管理平台 API", version=current_release().release.version, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
 
 
 @app.exception_handler(AppError)
@@ -165,7 +168,7 @@ async def auditor_readonly_guard(request: Request, call_next):
 
 
 for r in (auth, admin_users, admin_rbac, admin_org, members, admin_misc, admin_ai, assistant, notifications, attachments, dashboard,
-          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, reports, investments, record_relations, staff_intake, task_management, team_activities, team_learning, team_mgmt, ui_branding, integrations, aily):
+          itsm_catalog, itsm_import, tickets, process, problems, cmdb, vendors_contracts, knowledge, perf, projects, requirements, platform, reports, investments, record_relations, staff_intake, task_management, team_activities, team_learning, team_mgmt, ui_branding, integrations, releases, aily):
     app.include_router(r.router)
 
 app.include_router(feishu_card_callbacks.router)

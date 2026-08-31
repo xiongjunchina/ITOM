@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://itom.local/schemas/software-release.json",
+  "title": "ITOM software release manifest",
+  "type": "object",
+  "required": ["schema_version", "product", "release", "compatibility", "notes"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "product": {
+      "type": "object",
+      "required": ["code", "name_zh", "name_en", "edition_zh", "edition_en"]
+    },
+    "release": {
+      "type": "object",
+      "required": ["version", "channel", "status", "release_date"],
+      "properties": {
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+        "channel": { "enum": ["stable", "candidate", "development"] },
+        "status": { "enum": ["released", "candidate", "development", "retired"] },
+        "release_date": { "type": "string", "format": "date" }
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["minimum_rollback_version", "database_change"]
+    },
+    "notes": {
+      "type": "object",
+      "required": ["zh", "en"]
+    }
+  },
+  "additionalProperties": false
+}

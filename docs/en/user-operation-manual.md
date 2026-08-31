@@ -128,6 +128,17 @@ Process Definitions configure versions, processing/approval node types, handlers
 - **Interface & Branding**: configure names, descriptions, logos, favicon, theme, density, sidebar, landing pages, announcements, and environment markers. Images are cropped before saving.
 - **Audit Log**: search changes by entity, action, actor, and time.
 
+## 8A. Platform Operations (P0)
+
+Platform Operations appears after Requirement Management and before Task Management, with Platform Services, Demand Pool, and Capacity & Commitments. The unified Report Center remains the final sidebar item. P0 reuses existing Service Items and Requirements and creates no second master record.
+
+1. **Platform Services:** choose an existing Service Item and maintain its platform product owner, lifecycle, value proposition, and management scope. Normal lifecycle is `Candidate → Pilot → Active → Retiring → Retired`; a skipped or backward transition requires a clear audited reason.
+2. **Demand Pool:** choose an existing Requirement and target platform service, then maintain business domain, demand class, expected outcome, target quarter, and capacity class. An FDSE may read and maintain demands only in domains they belong to or own and cannot maintain Platform Service profiles.
+3. **Capacity & Commitments:** create a plan per platform service and quarter. Net capacity is calculated as gross minus planned unavailability, BAU reserve, and risk buffer. A draft may receive Demand, Roadmap, Reliability, or Enablement commitments and rejects over-capacity by default. Submission moves it to Review and locks editing. A platform lead or CIO approval forms an immutable baseline; later changes require a revision. Only CIO may approve an over-capacity exception with a reason, and a system administrator cannot replace business approval.
+4. **Platform analysis:** use Report Center → Platform Operations for active services, owner coverage, demand backlog, demand commitment, net capacity, committed capacity, and capacity utilization, with the existing authorized drill-down behavior.
+
+Enablement assets, professional-system references, sync runs, and external metric observations remain P1/P2 and have no current UI.
+
 ## 9. Report Center and unified investment ledger
 
 Report Center is the last item in the left navigation. It analyzes demand, project, operations, and people capacity under one measurement contract and produces weekly, monthly, quarterly, half-year, and annual reports. Record demand-stage investment in Requirement Detail, build-stage investment in the Project Cost tab, and run-stage investment in ITSM Ticket Detail. The Requirement and Ticket investment ledgers are both at the bottom of their detail pages after the original business content. Record operations investment that cannot be attributed to one object under **Report Center → Operations Investment → Shared Operations**.
@@ -147,7 +158,15 @@ Cost maintenance requires `investment_costs`; users maintain their own worklogs 
 
 Profile provides basic information, security, notification preferences, activity records, Feishu binding, theme, and content density. Password changes clear the administrator-held initial-password ciphertext. Activity records are limited to the current user.
 
-## 11. Troubleshooting
+## 11. About and release updates
+
+The login footer shows the current software version and opens a pre-login release summary. After sign-in, choose **About** from the user menu to view the current version, channel, release date, highlights, history, and developer/legal information. Product information and release notes follow the current Chinese/English language.
+
+Administrators maintain developer, vendor, copyright, website, support, license, and third-party notices under **System → Interface & Branding → Developer & Legal**. The page's “current online version vN” is the branding-configuration revision. The software version, such as `v1.2.0-rc.1`, is generated read-only from the release manifest and cannot be edited in the UI.
+
+If About warns that frontend and backend versions differ, hard-refresh the browser. If the warning remains, stop critical operations and ask an administrator to verify deployment completeness. Ordinary users never receive Git SHA, image, or database deployment details.
+
+## 12. Troubleshooting
 
 - Missing menu or people: check role/module permission and digital-team scope, then sign in again.
 - Disabled workflow action: check current assignee, claim state, terminal state, and active process version.

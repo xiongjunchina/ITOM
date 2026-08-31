@@ -17,6 +17,13 @@ DEFAULT_UI_BRANDING = {
         "notice_zh": "", "notice_en": "", "help_url": "", "support_text": "",
         "privacy_url": "", "terms_url": "", "copyright": "",
     },
+    "legal": {
+        "developer_name_zh": "ITOM 开发团队", "developer_name_en": "ITOM Development Team",
+        "vendor_name_zh": "", "vendor_name_en": "", "website_url": "", "support_url": "",
+        "copyright_holder_zh": "ITOM", "copyright_holder_en": "ITOM",
+        "copyright_year": "2026", "license_name_zh": "专有软件", "license_name_en": "Proprietary Software",
+        "license_url": "", "third_party_notices_url": "",
+    },
     "appearance": {
         "primary_color": "#2457D6", "default_theme": "light", "default_density": "default",
         "sidebar_theme": "dark", "show_system_name_in_header": False,

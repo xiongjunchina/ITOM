@@ -3,9 +3,11 @@
 > 项目代号 `ITOM`（曾用名 New_AOM，2026-07-14 更名；基于 SN-AOM 简化重构）。内部技术标识（数据库名 new_aom、日志前缀 aom.*、前端存储键 aom-*）沿用不变。中英双语文档；中文为准，English section below.
 
 面向 IT 团队的轻量运营管理平台，覆盖**总览 / ITSM 服务 / 项目管理 / 需求管理 / 流程引擎 / 团队管理**，并提供跨域的**统一报表中心**。
+平台产品运营中枢方案 B 的 P0 已形成经本地验证的候选版本：ITOM 作为平台产品与赋能组的运营管理控制台，保持流程、数据、AI、集成和架构专业系统的权威边界。
 核心设计原则：创建表单必填 ≤5、派生数据零录入（实时指标不手工维护）、事件驱动（积分 + 通知同一出口）。
 
 A lightweight operations-management platform for IT teams covering **Dashboard / ITSM / Projects / Requirements / Process engine / Team management**, with a cross-domain **Report Center**.
+P0 of Option B for the Platform Product Operations Hub is now a locally verified candidate. ITOM acts as the operations-management console for the Platform Product and Enablement team while professional process, data, AI, integration, and architecture systems remain authoritative.
 Design principles: ≤5 required fields per create form, zero manual entry for live derived metrics, and event-driven processing (points + notifications share one outbox).
 
 ---
@@ -49,7 +51,11 @@ cd deploy && WEB_PORT=18180 docker compose up -d --build
 
 # 仅 feature-local 宽表 UAT：创建幂等、可编辑、纯虚构的本地业务数据
 docker compose exec -T backend python -m app.scripts.seed_table_uat seed --confirm-local
+# 平台运营 P0：创建合成服务/需求/容量数据，并验证成功、幂等、越权和锁定路径
+docker compose exec -T backend python -m app.scripts.seed_platform_uat seed --confirm-local
+docker compose exec -T backend python -m app.scripts.verify_platform_uat --confirm-local
 # 验收结束后只软删除上述专用 UAT 数据
+docker compose exec -T backend python -m app.scripts.seed_platform_uat cleanup --confirm-local
 docker compose exec -T backend python -m app.scripts.seed_table_uat cleanup --confirm-local
 ```
 
@@ -122,7 +128,7 @@ frontend/src/
   i18n/          自研轻量双语（store 语言状态 / dict 字典 / index useT / AppRoot locale）
   stores/        Zustand（auth）
   api/           axios 客户端（统一 envelope 解包）+ types
-docs/            中文设计文档（01-10）；docs/en/ 为英文译本
+docs/            中文权威设计文档、专项规格与 ADR；docs/en/ 为英文镜像
 deploy/          docker-compose、Nginx、备份
 ```
 
@@ -130,6 +136,8 @@ deploy/          docker-compose、Nginx、备份
 - **统一响应包**：`{success, data, total?, page?, error?}`；错误经 `AppError(code, message, status)` 返回中文提示。
 - **权限三层**：① 功能矩阵（`role_permission` 表，模块 × 动作 view/create/edit/delete，`require_perm` 守卫，admin 隐式全权）；② 数据范围（业务代码内置，如 requester 仅见自己的服务请求；BDO 在网页需求模块可见本人需求及其被配置为业务 BDO 的服务域需求，Aily/MCP 仍仅见本人需求）；③ 流程权限（状态机 `allowed_roles` + 流程步骤 `default_role`）。
 - **统一报表中心（B2 + B-OPS）**：项目、需求、ITSM、任务、流程、运维投入和 IT 人力投向均从领域事实与统一投入台账实时计算；支持周/月/季/半年/年及自定义周期、受控筛选与逐指标穿透。统一台账以 `demand/build/run` 和 `run/grow/transform` 区分需求、建设、运维及投入目的，精确登记预算、已承诺/已发生/已支付费用、实际人天、角色标准费率快照与跨对象分摊。合同金额不自动成为实际费用，工单处理时长不自动成为人天；存在未分类人力费用时暂停“管理总投入”出数，防止与工时估值重复计算。需求、项目、工单详情以及共享运维成本池提供同口径登记入口；项目旧接口继续兼容但新写入只落统一台账。只有用户生成的正式报告保存不可变指标快照、公式版本、数据质量、说明和校验和，经过 `草稿 → 审核 → 发布 → 锁定` 后按受众开放；财务、人员、平台和明细穿透继续独立授权。当前版本支持 Excel 导出；自动调度模型已预留但未开放执行入口。
+- **平台产品运营中枢（方案 B，P0 本地候选）**：复用现有服务项和需求主记录，已提供可选平台服务档案、平台需求池、版本化季度容量与承诺，以及统一报表中心的 7 项平台基础指标。容量计划执行 `draft → review → approved → superseded`，已批准版本只读；承诺默认不得超过净容量，只有 CIO 可记录超容量例外，纯管理员不替代平台负责人/CIO 业务审批。侧边栏新增“平台运营”分组，报表中心仍固定在最底部。赋能资产、专业系统只读引用和外部指标观测属于 P1/P2，尚未实现；Aily/MCP/Web Agent 及各专业系统权威边界不变。见[专项设计](docs/superpowers/specs/2026-08-31-platform-product-operations-hub-design.md)和 [ADR-0001](docs/adr/0001-platform-product-operations-overlay.md)。
+- **软件版本与关于系统（B1）**：`release/current.json` 指向 Git 管理的不可变 SemVer 清单，FastAPI/OpenAPI、健康接口、前端构建和发布镜像从同一事实源取值。头像菜单进入“关于系统”，登录页可查看紧凑版本摘要；页面展示中英文更新日志、历史版本及品牌配置中的开发者/厂商/版权/支持/许可信息。软件版本只读，不能被品牌配置修改；公开接口不暴露 Git SHA、镜像摘要或数据库信息。
 - **流程驱动状态**：现有 ITOM 仍按 M23–M31 自动同步；P2 已将服务请求的“IT 人员标记已解决”和“提交人确认关闭”拆开，未解决时重回处理中。重开后再次解决会采用本轮最新有效处理说明，避免向用户展示上一轮未生效的旧方案。只有提交人本人可通过网页或 Aily 确认，管理员不能代确认。事件仍为 IT 内部/监控来源，普通用户不能创建。
 - **流程节点语义**：每个节点可配置为处理节点或审批节点，并分别配置处理人与知会人。审批节点支持详情右上角“同意/驳回”或流程图“完成此步骤”同意；同意理由可选，驳回理由必填并留痕。需求审批的驳回是可审计退回：默认最近已到达前序节点，也可选择任一已到达前序节点或“登记人补充”；不复活旧实例、不覆盖历史，关闭/取消/搁置仍是独立动作。其他单据保留各自状态机语义。任一当前待办的处理人或管理员可把该待办转派给另一名在岗且具有有效系统账号的人员；转派只更新当前任务处理人，不改变流程节点、单据状态或历史 RACI 快照，并记录原处理人、目标处理人、理由、审计和通知。流程已有实例后，节点顺序/类型、处理人、自治级别和 SLA 仍须另存新版本；仅知会人可直接维护，且只影响保存后首次激活的节点，既有任务继续使用创建时的 RACI 快照，已发通知不补发、不回写。WBS 任务完成度支持管理员/负责人直接录入 0–100% 整数；显式将父项设为 100% 会向下级联，子项修改后父项按直接子项平均值递归回算，项目进度仅按末级任务工期加权汇总。
 - **流程单据回改窗口**：服务请求、事件、变更、问题、需求、项目和 Bug 均使用同一规则。当前节点处理人首次实际打开详情或执行处理时，系统写入“已查阅”事实；在此之前，首节点仅创建人可更正内容并删除，后续节点仅上一节点的实际处理人可更正内容。回改不能改派处理人或改动会改变流程路由的字段；管理员保留系统级编辑/删除权。清单浏览、通知、管理员仅查看详情以及管理员在未处理前的改派均不算下游查阅。历史待办默认不追溯获得该窗口。
@@ -184,6 +192,7 @@ deploy/          docker-compose、Nginx、备份
 ### 里程碑
 M1 骨架+RBAC → M2 工单+SLA+流程引擎 → M2.5 自配置 → M3 CMDB/问题/供应商/合同/知识 → M3.5–3.10 身份治理/权限矩阵/组织树/飞书 SoT/批量导入 → M4 项目 → M5 需求 → M6 团队（活动积分/人效/培训/文化/流程监控/Dashboard）→ M7 双语 i18n + 飞书扫码登录开通审批 → M9 甘特图 → M10 需求六维评分+四象限 → M11 飞书组织同步+真实扫码 OAuth → M12–15 项目管理实战打磨（行内操作/章程结构化/级联删除/流程版本管理）→ M16 需求路由闭环（评审→方案评估→转开发/转项目→验收自动闭环）→ M17 导航二级菜单+权限模块按页拆分 → M18–25 流程权限体系（任务处理人守卫/待办通知/流程完成自动闭环/状态-流程双向同步/操作权跟随节点处理人/未指派认领）→ M26–28 交互与关闭策略定稿（原路返回/登记人关单+理由审计/强关仅 admin）→ M29 SLA 优先级定义（ITIL 初稿可编辑）+ 问题管理专业线流程 → M30–31 状态按钮白名单+列表「待我处理」列 → M32 飞书同步范围可配置（多部门/全公司）→ M33 用户调试版流程与权限固化为出厂默认 → M34–35 通知直达+异步全员组织同步 → M36–36.2 账号治理、飞书免登与个人中心 → **M37 个人设置（通知偏好、个人操作记录、飞书绑定管理、明暗主题与内容密度）**。
 M45–M46 是冻结版 Helpdesk 历史里程碑，仅保留在 `v1.0.0-feishu-helpdesk`。Aily-MCP 新开发线已完成 P0（移除 Helpdesk、协议/身份/消息）、P1（真实服务目录、动态表单、服务请求/BDO 需求登记、派单）和 P2（解决通知、确认/重开、评价闭环），P3 飞书审批按用户决定暂缓；IDC 发布加固继续执行。后续网页智能体独立使用 WA0–WA4 编号，避免与 Aily 阶段混淆；WA0 Task 1–8 的持久化、策略/脱敏、安全模型网关、模型/档案管理 API、本人网页会话生命周期、通用 L3 确认边界和受控 POST-SSE 编排已实现，Task 9 验收与 WA1+ 具体领域能力仍待实施。
+平台产品运营中枢方案 B 的 P0 已完成平台服务档案、平台需求池、季度容量与承诺及现有报表中心基础分析的本地候选实现；P1/P2 外部连接器、赋能资产和观测能力仍待后续路线确认。
 
 验收基准为 `docs/03-PRD.md` 对应章节 + 各里程碑提交说明；实现细节以代码与测试为准。
 
@@ -229,7 +238,11 @@ cd deploy && WEB_PORT=18180 docker compose up -d --build
 
 # feature-local wide-table UAT only: create idempotent, editable, wholly fictitious records
 docker compose exec -T backend python -m app.scripts.seed_table_uat seed --confirm-local
+# Platform Operations P0: seed synthetic service/demand/capacity data and verify success, replay, authorization, and lock paths
+docker compose exec -T backend python -m app.scripts.seed_platform_uat seed --confirm-local
+docker compose exec -T backend python -m app.scripts.verify_platform_uat --confirm-local
 # Soft-delete only those dedicated UAT records when acceptance finishes
+docker compose exec -T backend python -m app.scripts.seed_platform_uat cleanup --confirm-local
 docker compose exec -T backend python -m app.scripts.seed_table_uat cleanup --confirm-local
 ```
 
@@ -305,7 +318,7 @@ frontend/src/
   i18n/          In-house lightweight bilingual (store = language state / dict / index useT / AppRoot locale)
   stores/        Zustand (auth)
   api/           axios client (unwraps the response envelope) + types
-docs/            Chinese design docs (01-10); docs/en/ holds the English translations
+docs/            Authoritative Chinese designs, specialized specs, and ADRs; docs/en/ holds English mirrors
 deploy/          docker-compose, Nginx, backups
 ```
 
@@ -313,6 +326,7 @@ deploy/          docker-compose, Nginx, backups
 - **Response envelope**: `{success, data, total?, page?, error?}`; errors are raised as `AppError(code, message, status)`.
 - **Three permission layers**: (1) functional matrix (`role_permission` table, module × action view/create/edit/delete, guarded by `require_perm`; `admin` is implicitly all-powerful); (2) data scope (baked into business code: a `requester` sees only own service requests; the web Requirement module gives a BDO own requirements plus every requirement in domains where that person is the configured business BDO, while Aily/MCP remains owner-only); (3) process permissions (state-machine `allowed_roles` + process-step `default_role`).
 - **Unified Report Center (B2 + B-OPS)**: project, requirement, ITSM, task, process, operations-investment, and IT-capacity metrics are computed live from domain facts and the unified investment ledger. The ledger classifies `demand/build/run` lifecycle and `run/grow/transform` intent and records exact-CNY budget, committed/incurred/paid cost, actual person-days, role-standard rate snapshots, and cross-subject allocation. A contract amount never becomes actual cost automatically, ticket elapsed time never becomes effort, and management total is suppressed when unclassified labor cost could overlap worklog valuation. Demand, project, ticket, and shared-operations views use the same ledger; legacy project endpoints remain compatible while new writes use the unified tables only. Formal versions retain immutable snapshots, formula versions, data quality, narrative, and checksum through `Draft → Review → Publish → Locked`; finance, people, platform, and drill-down access remain independently authorized. Excel export is available; automatic scheduling remains reserved.
+- **Platform Product Operations Hub (Option B; P0 local candidate)**: P0 reuses existing Service Item and Requirement masters and provides optional platform-service profiles, a platform demand pool, versioned quarterly capacity and commitments, and seven platform metrics in the unified Report Center. Capacity follows `draft → review → approved → superseded`; approved versions are immutable. Commitments reject over-capacity by default, only CIO may record an exception, and a pure administrator is not a platform-lead/CIO business approver. The new Platform Operations sidebar group does not displace the bottom Report Center. Enablement assets, read-only professional-system references, and external observations remain P1/P2 work; Aily/MCP/Web Agent and source-of-truth boundaries are unchanged. See the [specialized design](docs/en/superpowers/specs/2026-08-31-platform-product-operations-hub-design.md) and [ADR-0001](docs/en/adr/0001-platform-product-operations-overlay.md).
 - **Process-driven status**: current ITOM still follows M23–M31 automation. P2 now separates “resolved by IT” from “closed after requester confirmation” for service requests; rejection returns the request to processing. A resolution after reopen adopts the latest active handling note, rather than exposing the failed prior attempt as the current solution. Only the submitter can confirm through web or Aily; administrators cannot confirm on the submitter's behalf. Incidents remain IT/monitoring-originated and cannot be created by normal users.
 - **Process-node semantics**: each node can be configured as processing or approval with separate handler and CC parties. Approval nodes support approve/reject from the detail-page actions or approve through the flow diagram; approval comments are optional, rejection reasons are mandatory and retained. The current pending handler or an administrator may reassign that task to another active, in-position person with an active ITOM account; reassignment changes neither node nor business state/RACI snapshot, and is audited and notified. Requirement rejection is an auditable return: it defaults to the nearest reached prior node, may select any reached prior node or Requester supplement, never resurrects an obsolete instance, and keeps Close/Cancel/On Hold separate. Other record types retain their own state-machine semantics. WBS task completion accepts an integer percentage from 0–100; explicitly setting a parent to 100% cascades to all descendants, child changes roll up as direct-child averages, and project progress is duration-weighted over leaf tasks only.
 - **Workflow-record correction window**: service requests, incidents, changes, problems, requirements, projects, and Bugs share one rule. The first real detail open or handling action by the current handler writes a view fact; before that, the creator at the first node may correct content and delete, while at later nodes only the actual previous handler may correct content. A correction cannot reassign a handler or change a routing field; administrators retain system-level edit/delete authority. List/notification reads, an administrator's passive detail inspection, and a pre-handling administrator reassignment are not downstream views. Historical pending tasks do not gain the window retrospectively.
@@ -343,6 +357,7 @@ deploy/          docker-compose, Nginx, backups
 - **Point-rule configuration**: Team Management → Activity Points → Point Rules controls team-contribution event values, activation, dimension weights, targets, and satisfaction mix; only admin/CIO can edit. Automatic activity events in the current assessment period are resolved against the current rule in leaderboards, personal points, Team Overview, and Dashboard (the pages refresh every 30 seconds and can be refreshed manually); disabling a rule displays zero. The award-time ledger, historical periods, and published/locked performance remain unchanged. Team Management → Performance → Scoring Rules owns role profiles, role dimensions, source mappings, and weights, with no team-activity rules mixed in.
 - **Team Overview workload**: the endpoint returns every active IT-team member's open ticket, project-task, and requirement-task workload; project tasks combine incomplete WBS work packages and open Project Development tasks. The page keeps total-descending order and applies local 20-row pagination with paging, search, sorting, and export; the toolbar count follows the same active IT-member scope as the onboard metric.
 - **Help-center user manual**: during the current rewrite, the signed-in header exposes “User Manual” and `/user-manual` only to `admin`; other roles are redirected to their first authorized page. The scope will be reassessed after the formal rewrite. The authoritative Chinese version is `docs/用户操作手册.md` and the English mirror is `docs/en/user-operation-manual.md`.
+- **Software version and About (B1)**: `release/current.json` points to an immutable Git-controlled SemVer manifest consumed by FastAPI/OpenAPI, health checks, the frontend build, and release images. About is available from the user menu, while the login footer exposes a compact version summary. The page shows bilingual release notes, history, and branding-controlled developer/vendor/copyright/support/license information. Software identity is read-only, and public APIs expose no Git SHA, image digest, or database information.
 - **In-app notifications**: the top-bar bell lists notifications visible to the current account; **Mark all as read** writes read receipts in bulk and **Clear read** soft-deletes that account's already-read notifications. Neither action changes source business records.
 - **Bilingual**: language is stored in `auth_user.preferences.language` (zh/en); applied on login and switchable by the user; the admin sets the default during Feishu provisioning.
 - **Feishu QR sign-in + provisioning approval**: approval generates a 12-character strong initial password and stores only encrypted recoverable ciphertext without sending it. An administrator may reveal it with the eye control or manually email it from user details; both actions are audited and the ciphertext is cleared after a change/reset.
@@ -367,6 +382,7 @@ deploy/          docker-compose, Nginx, backups
 
 ### Milestones
 M1–M37 remain the existing platform history. M45–M46 are frozen Helpdesk history only. The Aily-MCP line has completed P0 (remove Helpdesk; protocol, identity, messaging), P1 (live catalog, dynamic forms, requester service-request and BDO requirement intake, dispatch), and P2 (resolution notification, confirmation/reopen, rating loop); P3 Feishu Approval is deferred while IDC hardening continues. The later web-agent program uses independent WA0–WA4 identifiers to avoid confusion with Aily phases; WA0 Tasks 1–8 persistence, policy/redaction, secure model gateway, provider/profile administration APIs, owner-scoped web conversations, the generic confirmed L3 action boundary, and guarded POST-SSE orchestration are implemented, while Task 9 acceptance and WA1+ concrete domain capabilities remain pending.
+Platform Product Operations Hub Option B P0 now has a local candidate for service profiles, demand pool, quarterly capacity/commitments, and basic analysis in the existing Report Center. P1/P2 connectors, enablement assets, and observations remain subject to a later route confirmation.
 Acceptance baseline: the matching section of `docs/03-PRD.md` plus each milestone's commit message; real code and the currently executed test evidence are the implementation source of truth.
 
 Task 8C Round 2 补充 expiry contract：the shared browser parser accepts only explicit-`Z` timestamps that are both RFC 3339-shaped and calendar-valid; JavaScript-normalized invalid dates/times such as `2030-02-30T00:10:00Z` and `2030-01-01T24:00:00Z` fail closed, while valid leap days and fractional seconds remain accepted.

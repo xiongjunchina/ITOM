@@ -543,6 +543,38 @@ GET/PATCH /api/admin/org-settings             # 统一时区/周起始/月历/�
 
 正式报告生成采用“操作者 + Idempotency-Key”唯一约束和规范请求摘要。同键同参返回首次版本，同键异参返回 409；每版保存指标快照、公式版本、质量、管理说明、生成事实和校验和。系统模板包括运营周报、管理月报、项目投入、需求时效、运维投入和 IT 人力容量与投向；启动时只更新系统模板，不覆盖自定义模板。草稿说明可编辑并重算校验和；提交审核后不可重新生成。`report_flow` 批准回调把实例/当前版本置为 approved，驳回回到 draft；发布要求 `reports_publish`，写入 user/role/group 受众并把当前版本/实例锁定。查看、版本列表和 Excel 导出按创建人/发布管理权限或已发布受众判定，同时重新检查版本中涉及的 finance/people/platform 敏感权限。`report_schedule` 本轮仅为禁用预留模型，不存在自动运行 API。
 
+### 4.9 平台产品运营中枢（P0 已实现；P1/P2 为目标契约）
+
+```text
+# P0 当前 API
+GET/POST   /api/platform/services
+GET/PATCH  /api/platform/services/{service_item_id}
+GET/POST   /api/platform/demands
+GET/PATCH  /api/platform/demands/{requirement_id}
+GET/POST   /api/platform/capacity-plans
+GET/PATCH  /api/platform/capacity-plans/{plan_id}
+POST       /api/platform/capacity-plans/{plan_id}/submit
+POST       /api/platform/capacity-plans/{plan_id}/approve
+POST       /api/platform/capacity-plans/{plan_id}/revisions
+POST       /api/platform/capacity-plans/{plan_id}/commitments
+
+# P1/P2 目标 API（尚未实现）
+GET/POST   /api/platform/enablement-assets
+GET/POST   /api/platform/service-objectives
+GET/POST   /api/platform/external-systems
+GET/POST   /api/platform/external-references
+GET        /api/platform/external-systems/{id}/sync-runs
+GET/POST   /api/platform/metric-observations
+```
+
+P0 接口已实现。平台服务和需求端点分别投影现有 `ServiceItem`、`Requirement` 及其可选扩展档案，不创建第二个主记录；列表支持 `page/page_size` 及受控筛选。容量计划、承诺和修订创建要求 8–128 字符的 `Idempotency-Key`，同操作者同键同摘要返回原结果，同键异摘要返回 409。容量计划批准后只读，调整必须调用 revisions 创建递增版本并复制承诺；承诺写入验证需求归属和净容量。平台负责人或 CIO 可批准常规容量，超容量只有 CIO 可记录例外且必须提交理由；纯管理员通过功能权限可以配置和维护草稿，但不能替代上述业务审批人。
+
+P1/P2 外部系统目标端点只接受预定义来源类型和受控配置，不接受任意 SQL、Shell、数据库连接字符串、请求头或用户自定义写入 URL；当前 P0 路由不暴露这些端点。后续同步只读；同步运行记录水位、计数、结果和错误。指标观测必须声明来源时间、接收时间、公式版本、质量和来源引用，`no_data` 使用 null 而不是 0。
+
+现有 `/api/reports/metrics|query|drilldown|templates|reports` 已增加 `platform.active_service_count`、`platform.owner_coverage_rate`、`platform.demand_backlog_count`、`platform.demand_commitment_rate`、`platform.net_capacity_days`、`platform.committed_capacity_days`、`platform.capacity_utilization_rate` 和季度 `platform_operations` 系统模板，不另建报表 API。P0 指标直接读取平台档案及最新已批准/已替代容量版本；外部观测引用与质量更正属于 P1/P2。所有 P0 接口继续通过领域服务执行当前用户身份、功能/敏感权限、FDSE 业务域数据范围、状态、审计、幂等和示例只读校验。
+
+专业系统仍是其执行事实的 System of Record，ITOM 只管理引用、承诺、证据与观测。本设计不改变 Aily/MCP/Web Agent 认证、工具注册或直接数据库写入禁令。完整架构见[专项设计](superpowers/specs/2026-08-31-platform-product-operations-hub-design.md)与 [ADR-0001](adr/0001-platform-product-operations-overlay.md)。
+
 ## 5. 领域事件清单
 
 事件由 service 层在事务内发布；`→积分` 表示触发 point_engine 计分（分值查 point_rule），`→通知` 表示写发件箱。
@@ -686,3 +718,15 @@ POST /api/admin/ui-branding/reset                    # 草稿恢复内置默认
 M44：审批接口生成 12 位密码并保存加密密文，不发信。`GET /api/admin/users/{id}/initial-password` 鉴权解密查看；`POST .../initial-password/email` 手工发送。`GET/PUT /api/admin/integrations/email|ldap` 管理全局配置，`POST .../test` 执行连接测试。敏感配置只返回 `has_secret`，不回显密钥。
 
 Task 8C Round 2：action SSE 的共享前端 expiry parser 在显式 `Z` 和 RFC 3339 形状校验之后执行日历有效性校验，拒绝 `2030-02-30T00:10:00Z`、`2030-01-01T24:00:00Z` 等 JavaScript 规范化输入；有效闰日与小数秒仍可通过。该轮不改变后端语义、路由、数据库或 Aily/MCP。
+
+## 10. 软件版本 API 与构建契约（B1）
+
+```text
+GET /api/public/releases/current   # 当前软件版本与中英文更新摘要
+GET /api/public/releases           # 已纳入当前构建的版本历史
+GET /api/health                    # status + 与发布清单一致的 version
+```
+
+三个端点均为只读；版本接口只返回 `schema_version/product/release/notes`，不返回兼容性内部声明、Git SHA、镜像标签/摘要、仓库、数据库或环境信息。FastAPI/OpenAPI 版本在启动时从同一发布清单加载；Vite 构建也读取该清单并嵌入前端构建身份，页面对比运行时版本后提示不一致。
+
+Docker 构建上下文为仓库根目录，两个镜像共同复制 `release/`，发布脚本以 `APP_VERSION/VCS_REF/RELEASE_DATE` 写入 OCI 标签并校验版本。IDC 部署在既有健康、代理和 MCP 探针之外，额外要求 `/api/health.data.version` 与批准清单一致。该变化不调整 MCP 工具、鉴权或 `serverInfo` 协议实现。

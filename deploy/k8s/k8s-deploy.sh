@@ -15,6 +15,9 @@ cd "$(dirname "$0")"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+python3 "$REPO_ROOT/scripts/validate-release.py"
+RELEASE_FILE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["current"])' "$REPO_ROOT/release/current.json")"
+RELEASE_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["version"])' "$REPO_ROOT/release/releases/$RELEASE_FILE")"
 TAG="${TAG:-git-${COMMIT_SHA:0:12}-linux-amd64}"
 REG=core.harbor.domain
 NS=itom
@@ -55,6 +58,7 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]; then
 fi
 
 echo "==> Release commit: $COMMIT_SHA"
+echo "==> Product version: v$RELEASE_VERSION"
 echo "==> Deploy image tag: $TAG"
 echo "==> Deploy scope: $DEPLOY_SCOPE"
 if [ "$SKIP_DATABASE" = "1" ]; then
@@ -213,11 +217,15 @@ if [ "${ALLOW_UNTRUSTED_TLS:-0}" = "1" ]; then
   echo "!! ALLOW_UNTRUSTED_TLS is not permitted for IDC release verification"
   exit 1
 fi
-curl "${curl_args[@]}" \
-  "$PUBLIC_BASE_URL/api/health" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' || {
+health_response="$(curl "${curl_args[@]}" "$PUBLIC_BASE_URL/api/health")"
+printf '%s' "$health_response" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' || {
     echo "   !! external /api/health failed: $PUBLIC_BASE_URL/api/health"
     exit 1
   }
+python3 -c 'import json,sys; data=json.loads(sys.argv[1])["data"]; actual=data.get("version"); expected=sys.argv[2]; assert actual == expected, f"{actual} != {expected}"' "$health_response" "$RELEASE_VERSION" || {
+  echo "   !! external product version does not match v$RELEASE_VERSION"
+  exit 1
+}
 mcp_response="$(
   curl "${curl_args[@]}" \
     -H 'Origin: https://aily.feishu.cn' \

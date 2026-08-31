@@ -1,0 +1,16 @@
+.git
+.github
+.itom-task
+.playwright-mcp
+.venv
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+frontend/dist
+backend/uploads
+deploy/backups
+outputs
+uploads
+*.log
+.DS_Store

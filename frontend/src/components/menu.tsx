@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   ApartmentOutlined,
+  AppstoreOutlined,
   BarChartOutlined,
   CustomerServiceOutlined,
   DashboardOutlined,
@@ -72,6 +73,17 @@ export const MENU_TREE: MenuNode[] = [
     children: [
       { key: '/requirements/overview', path: '/requirements/overview', label: '需求总览', module: 'requirements' },
       { key: '/requirements/scoring', path: '/requirements/scoring', label: '需求评分规则', module: 'req_scoring' },
+    ],
+  },
+  {
+    key: 'platform',
+    label: '平台运营',
+    icon: <AppstoreOutlined />,
+    roles: STAFF,
+    children: [
+      { key: '/platform/services', path: '/platform/services', label: '平台服务', module: 'platform_portfolio', roles: STAFF },
+      { key: '/platform/demands', path: '/platform/demands', label: '平台需求池', module: 'platform_portfolio', roles: STAFF },
+      { key: '/platform/capacity', path: '/platform/capacity', label: '容量与承诺', module: 'platform_capacity', roles: STAFF },
     ],
   },
   {

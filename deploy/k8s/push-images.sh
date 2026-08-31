@@ -20,6 +20,10 @@ cd "$(dirname "$0")"
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 COMMIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+python3 "$REPO_ROOT/scripts/validate-release.py"
+RELEASE_FILE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["current"])' "$REPO_ROOT/release/current.json")"
+RELEASE_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["version"])' "$REPO_ROOT/release/releases/$RELEASE_FILE")"
+RELEASE_DATE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["release"]["release_date"] + "T00:00:00Z")' "$REPO_ROOT/release/releases/$RELEASE_FILE")"
 TAG="${TAG:-git-${COMMIT_SHA:0:12}-linux-amd64}"
 REG=core.harbor.domain
 PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-mirror.gcr.io/library/python:3.12-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de}"
@@ -62,18 +66,27 @@ DOCKER_DAEMON_HOST="${DOCKER_DAEMON_HOST:-$(docker context inspect --format '{{.
 [ -n "$DOCKER_DAEMON_HOST" ] || { echo "!! Could not resolve the active Docker daemon host"; exit 1; }
 
 echo "==> Release commit: $COMMIT_SHA"
+echo "==> Product version: v$RELEASE_VERSION"
 echo "==> Immutable image tag: $TAG"
 echo "==> Build scope: $BUILD_SCOPE"
 if [ "$BUILD_SCOPE" = all ] || [ "$BUILD_SCOPE" = backend ]; then
   docker build --platform linux/amd64 --pull --no-cache \
     --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
-    -t "$REG/sn/itom-backend:$TAG" "$REPO_ROOT/backend"
+    --build-arg "APP_VERSION=$RELEASE_VERSION" \
+    --build-arg "VCS_REF=$COMMIT_SHA" \
+    --build-arg "RELEASE_DATE=$RELEASE_DATE" \
+    -f "$REPO_ROOT/backend/Dockerfile" \
+    -t "$REG/sn/itom-backend:$TAG" "$REPO_ROOT"
 fi
 if [ "$BUILD_SCOPE" = all ] || [ "$BUILD_SCOPE" = frontend ]; then
   docker build --platform linux/amd64 --pull --no-cache \
     --build-arg "NODE_BASE_IMAGE=$NODE_BASE_IMAGE" \
     --build-arg "NGINX_BASE_IMAGE=$NGINX_BASE_IMAGE" \
-    -t "$REG/sn/itom-frontend:$TAG" "$REPO_ROOT/frontend"
+    --build-arg "APP_VERSION=$RELEASE_VERSION" \
+    --build-arg "VCS_REF=$COMMIT_SHA" \
+    --build-arg "RELEASE_DATE=$RELEASE_DATE" \
+    -f "$REPO_ROOT/frontend/Dockerfile" \
+    -t "$REG/sn/itom-frontend:$TAG" "$REPO_ROOT"
 fi
 
 images=()
@@ -85,7 +98,13 @@ for image in "${images[@]}"; do
     echo "!! $image:$TAG architecture is $arch, expected amd64"
     exit 1
   }
+  version="$(docker image inspect "$REG/sn/$image:$TAG" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
+  [ "$version" = "$RELEASE_VERSION" ] || {
+    echo "!! $image:$TAG product version is $version, expected $RELEASE_VERSION"
+    exit 1
+  }
   echo "   $image:$TAG architecture: $arch"
+  echo "   $image:$TAG product version: $version"
 done
 
 # ---- cluster auth (freshest Rancher token + IP endpoint) to read the secret ----

@@ -16,5 +16,12 @@ The Chinese files are authoritative; the English translations under `en/` are fo
 | 09 | [用户操作手册](用户操作手册.md) | [User Operation Manual](en/user-operation-manual.md) | 帮助中心式搜索、模块说明与操作步骤 / Search-first help center, module guides, and procedures |
 | 10 | [Aily + MCP 正式设计基线](10-Aily-MCP版本交接与决策上下文.md) | [Aily + MCP Final Design Baseline](en/10-aily-mcp-handoff-and-decision-context.md) | 已确认基线；P0 代码、身份与机器人真实收件完成，P2 最终同单闭环待验收 / Approved baseline; P0 code, identity, and live bot receipt complete; final same-ticket P2 loop pending |
 
+## 专项设计与架构决策 / Specialized Designs and ADRs
+
+| 中文 | English | 状态 / Status |
+|---|---|---|
+| [平台产品运营中枢设计（方案 B）](superpowers/specs/2026-08-31-platform-product-operations-hub-design.md) | [Platform Product Operations Hub Design (Option B)](en/superpowers/specs/2026-08-31-platform-product-operations-hub-design.md) | P0 本地候选；P1/P2 未实施 / P0 local candidate; P1/P2 not implemented |
+| [ADR-0001：可选扩展档案与受控观测台账](adr/0001-platform-product-operations-overlay.md) | [ADR-0001: Optional Extension Profiles and Controlled Observation Ledger](en/adr/0001-platform-product-operations-overlay.md) | 已接受 / Accepted |
+
 > 中文文档是产品与技术契约的权威版本，代码和测试是实现证据，三者必须保持一致；英文译本须在同一次交付中同步更新。任何影响功能、接口、数据模型、配置、部署、权限或用户流程的代码变更，如未同步受影响文档，不算完整交付。仓库总览见 [../README.md](../README.md)，执行规则见 [../AGENTS.md](../AGENTS.md)。
 > Chinese docs are the authoritative product and technical contract; code and tests are implementation evidence, and all three must remain aligned. English mirrors must be updated in the same delivery. A code change affecting behavior, APIs, data models, configuration, deployment, permissions, or workflows is incomplete until the affected docs are synchronized. See [../README.md](../README.md) and [../AGENTS.md](../AGENTS.md).

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Avatar, Button, Breadcrumb, Dropdown, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
-import { DownOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, BookOutlined, FormOutlined } from '@ant-design/icons';
+import { DownOutlined, InfoCircleOutlined, LogoutOutlined, UserOutlined, SafetyOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SearchOutlined, BookOutlined, FormOutlined } from '@ant-design/icons';
 import { api } from '../api/client';
 import type { AuthUser } from '../api/types';
 import { useAuthStore } from '../stores/auth';
@@ -93,7 +93,7 @@ export default function MainLayout() {
   const shellDark = themePreference === 'dark'
     || (themePreference === 'system' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
   const currentTitleKey = crumbs[crumbs.length - 1];
-  const currentTitle = currentTitleKey ? t('menu.' + currentTitleKey) : brandName;
+  const currentTitle = location.pathname === '/about' ? t('about.title') : currentTitleKey ? t('menu.' + currentTitleKey) : brandName;
   const siderTheme = branding?.appearance.sidebar_theme === 'light' ? 'light' : 'dark';
 
   const userMenu: MenuProps = {
@@ -109,6 +109,12 @@ export default function MainLayout() {
         icon: <SafetyOutlined />,
         label: t('profile.securityMenu'),
         onClick: () => navigate('/profile?tab=security'),
+      },
+      {
+        key: 'about',
+        icon: <InfoCircleOutlined />,
+        label: t('about.menu'),
+        onClick: () => navigate('/about'),
       },
       { type: 'divider' },
       {
