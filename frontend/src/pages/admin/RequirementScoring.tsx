@@ -38,7 +38,7 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
   const [saving, setSaving] = useState(false);
   const [defaults, setDefaults] = useState<ScoringConfig['defaults'] | null>(null);
 
-  const [weights, setWeights] = useState<Weights>({ d1: 0, d2: 0, d3: 0, d4: 0, d5: 0, d6: 0 });
+  const [weights, setWeights] = useState<Weights>({ d1: 0, d2: 0, d3: 0, d4: 0, d5: 0 });
   const [thresholds, setThresholds] = useState<Thresholds>({ total: 0, strategic: 0, viable: 0 });
   const [rubric, setRubric] = useState<Rubric>({});
   const [roleWeights, setRoleWeights] = useState<Record<string, number>>({});
@@ -162,7 +162,7 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
     <>
       {!isAdmin && <Alert type="info" showIcon style={{ marginBottom: 16 }} message={t('req.cfg.readonly')} />}
 
-      {/* 六维权重 */}
+      {/* 五维权重 */}
       <Typography.Title level={5}>{t('req.cfg.weights')}</Typography.Title>
       <Space wrap size={16}>
         {DIMENSIONS.map((d) => (
@@ -296,7 +296,7 @@ export default function RequirementScoring({ embedded }: { embedded?: boolean })
 
       <Divider />
 
-      {/* 六维 1-5 分档说明 */}
+      {/* 五维 1-5 分档说明 */}
       <Typography.Title level={5}>{t('req.cfg.rubric')}</Typography.Title>
       <Collapse
         items={DIMENSIONS.map((d) => {

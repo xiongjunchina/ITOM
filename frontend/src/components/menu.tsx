@@ -76,17 +76,6 @@ export const MENU_TREE: MenuNode[] = [
     ],
   },
   {
-    key: 'platform',
-    label: '平台运营',
-    icon: <AppstoreOutlined />,
-    roles: STAFF,
-    children: [
-      { key: '/platform/services', path: '/platform/services', label: '平台服务', module: 'platform_portfolio', roles: STAFF },
-      { key: '/platform/demands', path: '/platform/demands', label: '平台需求池', module: 'platform_portfolio', roles: STAFF },
-      { key: '/platform/capacity', path: '/platform/capacity', label: '容量与承诺', module: 'platform_capacity', roles: STAFF },
-    ],
-  },
-  {
     key: 'task-management',
     label: '任务管理',
     icon: <ScheduleOutlined />,
@@ -116,6 +105,17 @@ export const MENU_TREE: MenuNode[] = [
       },
       { key: '/team/ideas', path: '/team/ideas', label: '活动积分', module: 'ideas' },
       { key: '/team/charter', path: '/team/charter', label: '团队文化', module: 'charter' },
+    ],
+  },
+  {
+    key: 'platform',
+    label: '平台运营',
+    icon: <AppstoreOutlined />,
+    roles: STAFF,
+    children: [
+      { key: '/platform/services', path: '/platform/services', label: '平台服务', module: 'platform_portfolio', roles: STAFF },
+      { key: '/platform/demands', path: '/platform/demands', label: '平台需求池', module: 'platform_portfolio', roles: STAFF },
+      { key: '/platform/capacity', path: '/platform/capacity', label: '容量与承诺', module: 'platform_capacity', roles: STAFF },
     ],
   },
   {

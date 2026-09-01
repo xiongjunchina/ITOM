@@ -165,6 +165,10 @@ Aligned with RACI: each process node has two kinds of participants, which the co
 
 ## 11. Aily + MCP identity and normal-user permissions (P0/P1 implemented)
 
+### 11-A. M117 governance-record permissions
+
+Five-dimension scoring continues to use `requirements.edit` plus the active workflow-node authorization; D1/D2 are recorded by the business-domain owner after offline clarification, with no new business-user review privilege. `DmcDecisionRecord` requires `requirements.edit` for requirement records and `projects.edit` for project records; reads use the corresponding `view` permission, while admin remains implicitly full-authority. Evidence references contain only attachment/link identifiers and never secrets. CMDB and Dashboard permission matrices are unchanged.
+
 ### 11.1 From Aily JWT to ITOM user
 
 1. Nginx forwards `x-aily-jwt` to embedded MCP without logging the full value.

@@ -48,6 +48,24 @@ class Project(GlidBase):
     stakeholders: Mapped[list | None] = mapped_column(JsonCol, comment="关键干系人 [{name,role,duty}]（章程§2）")
     description: Mapped[str | None] = mapped_column(Text, comment="[兼容] 其他说明/历史描述")
     latest_update: Mapped[str | None] = mapped_column(Text, comment="最新动态一句话")
+    # 项目治理双轨与决策记录（P0）：仅记录治理口径，不改变现有流程状态机。
+    project_source: Mapped[str | None] = mapped_column(
+        String(16), comment="项目来源：annual_plan/out_of_plan"
+    )
+    plan_year: Mapped[str | None] = mapped_column(String(8), comment="年度计划年份")
+    decision_level: Mapped[str | None] = mapped_column(
+        String(16), comment="建议决策层级：digital_leader/eason/dmc"
+    )
+    decision_status: Mapped[str | None] = mapped_column(
+        String(16), comment="决策状态：pending/approved/conditional/hold"
+    )
+    budget_status: Mapped[str | None] = mapped_column(
+        String(16), comment="预算状态：pending/secured/not_required"
+    )
+    external_authorization_amount_cny: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 2), comment="需纳入授权金额的外部投入（人民币元）"
+    )
+    decision_reference: Mapped[str | None] = mapped_column(String(200), comment="线下决议/会议引用")
 
     portfolio: Mapped[Portfolio | None] = relationship()
 

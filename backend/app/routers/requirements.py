@@ -99,7 +99,7 @@ class RequirementUpdate(BaseModel):
 
 
 class ScoreIn(BaseModel):
-    """评估阶段单人共识评分（六维 1-5）+ 决议。"""
+    """评估阶段单人共识评分（五维 1-5；d6_speed 仅兼容历史）+ 决议。"""
     d1_strategy: int | None = None
     d2_value: int | None = None
     d3_tech: int | None = None
@@ -192,7 +192,7 @@ def _row(r: Requirement, db: Session, names: dict, domains: dict, status_map: di
     if r.closed_at and r.registered_at:
         lead_days = round((r.closed_at - r.registered_at).total_seconds() / 86400, 1)
     scores = requirement_scoring.requirement_scores(r)
-    weights = cfg.weights if cfg else None
+    weights = requirement_scoring.weights_for_requirement(r, cfg) if cfg else None
     thresholds = cfg.thresholds if cfg else None
     return {
         "id": r.id, "requirement_code": r.requirement_code, "title": r.title, "is_example": r.is_example,
@@ -401,7 +401,7 @@ def _assign_review_to_domain_owner(db: Session, r: Requirement):
         task.assignee = owner
     notifier.notify(db, "requirement.review_assigned", "requirement", r.id, [owner],
                     f"需求评审指派：{r.requirement_code} {r.title}",
-                    f"业务域「{domain.name}」新需求待评审（六维评分）。",
+                    f"业务域「{domain.name}」新需求待评审（五维评分）。",
                     link=f"/requirements/{r.id}")
 
 
@@ -423,7 +423,7 @@ def _current_requirement_step_name(db: Session, task) -> str:
 def _complete_initial_requirement_review(db: Session, r: Requirement, user: AuthUser, comment: str):
     """评分通过仅可完成第 1 步「需求评审」，绝不越过方案评估或实现步骤。
 
-    业务域负责人可能已先在流程页完成第 1 步，再由产品负责人回填六维评分。
+    业务域负责人可能已先在流程页完成第 1 步，再由产品负责人回填五维评分。
     此时当前任务已是「方案评估与路径判定」，评分保存只应补齐数据和指派，不能再推进流程。
     """
     task = _current_process_task(db, r.id)
@@ -644,6 +644,7 @@ def get_scoring_config(db: Session = Depends(get_db), _: AuthUser = Depends(get_
     db.commit()
     return ok({
         "id": cfg.id, "weights": cfg.weights, "thresholds": cfg.thresholds,
+        "legacy_weights": cfg.legacy_weights,
         "rubric": cfg.rubric, "role_weights": cfg.role_weights,
         "effort_threshold": cfg.effort_threshold if cfg.effort_threshold is not None
         else requirement_scoring.DEFAULT_EFFORT_THRESHOLD,
@@ -666,9 +667,14 @@ def update_scoring_config(body: ScoringConfigIn, db: Session = Depends(get_db), 
     data = body.model_dump(exclude_unset=True)
     if "weights" in data and data["weights"]:
         w = data["weights"]
-        if abs(sum(w.get(k, 0) for k in ("d1", "d2", "d3", "d4", "d5", "d6")) - 1.0) > 0.001:
-            raise AppError("INVALID_WEIGHTS", "六维权重之和须为 1.0")
-        cfg.weights = w
+        is_legacy = "d6" in w
+        keys = ("d1", "d2", "d3", "d4", "d5", "d6") if is_legacy else ("d1", "d2", "d3", "d4", "d5")
+        if abs(sum(w.get(k, 0) for k in keys) - 1.0) > 0.001:
+            raise AppError("INVALID_WEIGHTS", f"{'六维' if is_legacy else '五维'}权重之和须为 1.0")
+        if is_legacy:
+            cfg.legacy_weights = w
+        else:
+            cfg.weights = w
     if data.get("effort_threshold") is not None and data["effort_threshold"] <= 0:
         raise AppError("INVALID_THRESHOLD", "转项目人天阈值必须大于 0")
     for f in ("thresholds", "rubric", "role_weights", "effort_threshold", "review_assignees"):
@@ -1188,9 +1194,9 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
         raise AppError("USE_PROCESS_STEP", "请使用评审决议、转开发/转项目或完成流程步骤推进，需求状态将自动同步", 403)
     # 阶段门校验
     if body.to == "analyzing" and r.status == "evaluating":
-        # 评估门：从评估进入分析，必须已完成六维评分且决议为「通过」
-        if requirement_scoring.compute_weighted_total(requirement_scoring.requirement_scores(r)) is None:
-            raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
+        # 评估门：从评估进入分析，必须已完成五维评分（历史六维记录仍兼容）。
+        if requirement_scoring.requirement_weighted_total(r, requirement_scoring.get_config(db)) is None:
+            raise AppError("EVAL_INCOMPLETE", "进入分析前需完成五维评分")
         if r.decision != "通过":
             raise AppError("EVAL_NOT_APPROVED", "评估决议须为「通过」才能进入分析（搁置/驳回请转搁置或取消）")
     if body.to == "implementing":
@@ -1229,22 +1235,22 @@ def transition_requirement(requirement_id: str, body: TransitionIn, db: Session 
     return ok({"id": r.id, "status": r.status})
 
 
-# ---------- 评估阶段：六维评分与决议 ----------
+# ---------- 评估阶段：五维评分与决议（兼容历史六维） ----------
 
 @router.post("/{requirement_id}/score")
 def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(get_db), user: AuthUser = Depends(require_perm("requirements", "edit"))):
-    """单人共识评分：写入/更新共识评分行并回填需求六维分，返回实时总分与象限。"""
+    """单人共识评分：写入/更新共识评分行并回填需求五维分，返回实时总分与象限。"""
     r = _get_requirement(db, requirement_id, user)
     ensure_not_example(r)
     if r.status in ("closed", "cancelled"):
         raise AppError("REQ_FINAL", "终态需求不可评分")
-    # 有流程实例时，六维评分/评估决议只允许发生在需求评审或方案评估节点。
+    # 有流程实例时，五维评分/评估决议只允许发生在需求评审或方案评估节点。
     # 即使历史 status 仍为 evaluating，也不能借此绕过流程进入实现/验收后的
     # 前置阶段操作。
     process_task = _current_process_task(db, r.id)
     process_step_name = _current_requirement_step_name(db, process_task)
     if process_task and not any(x in process_step_name for x in ("需求评审", "方案评估")):
-        raise AppError("EVAL_STAGE_CLOSED", f"当前流程节点为「{process_step_name or '未知'}」，评估阶段已结束，不能修改六维评分或评估决议", 409)
+        raise AppError("EVAL_STAGE_CLOSED", f"当前流程节点为「{process_step_name or '未知'}」，评估阶段已结束，不能修改五维评分或评估决议", 409)
     if process_task:
         # 评分和决议是当前流程节点的实际处理动作，不能只凭模块 edit
         # 权限绕过任务指派。同时记录首次查阅，关闭上游回改窗口。
@@ -1254,7 +1260,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     if data.get("decision") and data["decision"] not in DECISIONS:
         raise AppError("INVALID_DECISION", f"决议必须为 {'/'.join(DECISIONS)}")
     dims = {k: data[k] for k in ("d1_strategy", "d2_value", "d3_tech", "d4_org", "d5_risk", "d6_speed") if k in data}
-    # 回填需求六维分
+    # 回填需求五维分；d6_speed 仅在明确传入时保留历史兼容值。
     field_map = {"d1_strategy": "score_d1_strategy", "d2_value": "score_d2_value", "d3_tech": "score_d3_tech",
                  "d4_org": "score_d4_org", "d5_risk": "score_d5_risk", "d6_speed": "score_d6_speed"}
     for k, v in dims.items():
@@ -1265,10 +1271,11 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     # 驳回=退回已到达的历史节点（默认上一节点），必填理由（≥5 字）。
     cfg = requirement_scoring.get_config(db)
     scores_now = requirement_scoring.requirement_scores(r)
-    quadrant = requirement_scoring.compute_quadrant(scores_now, cfg.thresholds, cfg.weights)
+    score_weights = requirement_scoring.weights_for_requirement(r, cfg)
+    quadrant = requirement_scoring.compute_quadrant(scores_now, cfg.thresholds, score_weights)
     if r.decision == "通过":
         if quadrant is None:
-            raise AppError("EVAL_INCOMPLETE", "进入分析前需完成六维评分")
+            raise AppError("EVAL_INCOMPLETE", "进入分析前需完成五维评分")
         if quadrant == requirement_scoring.QUADRANT_REEVALUATE:
             raise AppError("QUADRANT_REJECTED", "评分落入「重新评估」象限，仅可选择搁置或退回已到达的前序位置")
     if r.decision == "驳回" and len((data.get("comment") or "").strip()) < 5:
@@ -1295,7 +1302,7 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     # M16：保存决议即自动流转（评审动作一步到位）。
     # 当前阶段以流程待办为准：业务域负责人可能已经完成“需求评审”，
     # 此时 Requirement.status 已投影为 analyzing，但产品负责人仍可能需要
-    # 补齐六维评分。补评分不得再次推进流程，却必须重新套用评分配置的
+    # 补齐五维评分。补评分不得再次推进流程，却必须重新套用评分配置的
     # 产品负责人，避免“节点已到方案评估、处理人却为空”的历史数据问题。
     flowed_to = None
     current_is_review = "需求评审" in process_step_name
@@ -1355,8 +1362,8 @@ def score_requirement(requirement_id: str, body: ScoreIn, db: Session = Depends(
     scores = requirement_scoring.requirement_scores(r)
     return ok({
         "id": r.id, "decision": r.decision, "status": r.status, "flowed_to": flowed_to,
-        "weighted_total": requirement_scoring.compute_weighted_total(scores, cfg.weights),
-        "quadrant": requirement_scoring.compute_quadrant(scores, cfg.thresholds, cfg.weights),
+        "weighted_total": requirement_scoring.compute_weighted_total(scores, score_weights),
+        "quadrant": requirement_scoring.compute_quadrant(scores, cfg.thresholds, score_weights),
         **scores,
     })
 
@@ -1500,11 +1507,10 @@ def active_tasks(
     status_map = status_names(db, "requirement")
     cfg = requirement_scoring.get_config(db)
 
-    # M16：排期优先级 = 六维加权总分（高分需求的任务在前），同分按计划日期
+    # M16：排期优先级 = 五维加权总分（高分需求的任务在前），同分按计划日期
     def _prio(pair):
         t, r = pair
-        total = requirement_scoring.compute_weighted_total(
-            requirement_scoring.requirement_scores(r), cfg.weights) if r else None
+        total = requirement_scoring.requirement_weighted_total(r, cfg) if r else None
         return (-(total if total is not None else -1), t.plan_date is None, t.plan_date or _date.max, t.status)
 
     rows = sorted(rows, key=_prio)
@@ -1523,10 +1529,10 @@ def active_tasks(
             "requirement_owner_name": names.get(r.owner) if r else None,
             "business_domain_name": domains.get(r.business_domain_id) if r else None,
             "moscow": r.moscow if r else None,
-            "weighted_total": requirement_scoring.compute_weighted_total(
-                requirement_scoring.requirement_scores(r), cfg.weights) if r else None,
+            "weighted_total": requirement_scoring.requirement_weighted_total(r, cfg) if r else None,
             "quadrant": requirement_scoring.compute_quadrant(
-                requirement_scoring.requirement_scores(r), cfg.thresholds, cfg.weights) if r else None,
+                requirement_scoring.requirement_scores(r), cfg.thresholds,
+                requirement_scoring.weights_for_requirement(r, cfg)) if r else None,
             "can_manage_tasks": _can_manage_requirement_tasks(db, user, r) if r else _has_development_task_edit(db, user),
             "can_edit": _can_manage_requirement_tasks(db, user, r) if r else _has_development_task_edit(db, user),
             "can_delete": _can_delete_requirement_task(db, user, t),

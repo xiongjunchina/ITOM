@@ -33,6 +33,7 @@ from app.models.investment import (
     InvestmentCostEntry,
     InvestmentWorklog,
 )
+from app.models.governance import DmcDecisionRecord
 from app.models.process import ProcessDefinition, ProcessInstance, ProcessStep, ProcessTask
 from app.models.project import (
     CostEntry,
@@ -163,6 +164,7 @@ __all__ = [
     "InvestmentBudgetItem",
     "InvestmentCostEntry",
     "InvestmentWorklog",
+    "DmcDecisionRecord",
     "LearningGrowthGoal",
     "InAppNotification",
     "FeishuConfig",

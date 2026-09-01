@@ -728,4 +728,13 @@ GET /api/health                    # status plus manifest-consistent version
 
 All three endpoints are read-only. Release endpoints return only `schema_version/product/release/notes`; they exclude internal compatibility declarations, Git SHA, image tag/digest, registry, database, and environment details. FastAPI/OpenAPI loads its version from the same manifest at startup. Vite embeds that manifest as the frontend build identity, and About compares it with the runtime response to warn about a partial deployment.
 
+### 10.1 M117 requirement/project governance API increment
+
+- `GET /api/requirements/scoring-config` returns current five-dimension `weights`/`rubric` plus read-only `legacy_weights`; `PUT` accepts five-dimension weights and still accepts a legacy six-dimension snapshot.
+- `POST /api/requirements/{id}/score` requires only D1–D5 for new evaluations. An old client may send `d6_speed`, in which case the frozen historical rule is used. Totals and quadrants are always calculated server-side.
+- `POST /api/governance/dmc-decisions` records an offline authorization/DMC decision for a requirement or project. `GET /api/governance/dmc-decisions?entity_type=requirement|project&entity_id=...` lists records. The related module's edit/view permission, entity, owner, amount, and audit are rechecked; online voting is out of scope.
+- Project create/update accepts `project_source`, `plan_year`, `decision_level`, `decision_status`, `budget_status`, `external_authorization_amount_cny`, and `decision_reference`. The suggested level is calculated at ≤300,000 / 300,000–1,000,000 / >1,000,000 CNY.
+
+The increment does not modify CMDB category APIs, Dashboard aggregation APIs, or the Aily/MCP boundary; those remain authoritative in their existing domain services.
+
 Docker now builds from the repository-root context so both images copy `release/`. Release scripts write `APP_VERSION/VCS_REF/RELEASE_DATE` OCI labels and verify the product version. In addition to existing health, proxy, and MCP probes, IDC deployment requires `/api/health.data.version` to match the approved manifest. MCP tools, authentication, and the `serverInfo` protocol implementation are unchanged.

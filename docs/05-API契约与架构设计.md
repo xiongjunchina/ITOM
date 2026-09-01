@@ -732,3 +732,12 @@ GET /api/health                    # status + 与发布清单一致的 version
 三个端点均为只读；版本接口只返回 `schema_version/product/release/notes`，不返回兼容性内部声明、Git SHA、镜像标签/摘要、仓库、数据库或环境信息。FastAPI/OpenAPI 版本在启动时从同一发布清单加载；Vite 构建也读取该清单并嵌入前端构建身份，页面对比运行时版本后提示不一致。
 
 Docker 构建上下文为仓库根目录，两个镜像共同复制 `release/`，发布脚本以 `APP_VERSION/VCS_REF/RELEASE_DATE` 写入 OCI 标签并校验版本。IDC 部署在既有健康、代理和 MCP 探针之外，额外要求 `/api/health.data.version` 与批准清单一致。该变化不调整 MCP 工具、鉴权或 `serverInfo` 协议实现。
+
+### 10.1 M117 需求/项目治理 API 增量
+
+- `GET /api/requirements/scoring-config` 返回当前五维 `weights`/`rubric`，并以只读 `legacy_weights` 标识历史六维计算快照；`PUT` 接受五维权重，仍兼容管理员提交的历史六维权重快照。
+- `POST /api/requirements/{id}/score` 新评估只需 D1-D5；`d6_speed` 仍可由旧客户端传入并按历史快照计算。`weighted_total`、`quadrant` 由领域服务计算，服务端不接受客户端总分。
+- `POST /api/governance/dmc-decisions` 记录需求或项目的线下授权/DMC 决议，`GET /api/governance/dmc-decisions?entity_type=requirement|project&entity_id=...` 查询记录。接口按关联域的 `requirements`/`projects` 权限复核对象、责任人、金额和审计；不提供在线投票。
+- 项目创建/更新支持 `project_source`、`plan_year`、`decision_level`、`decision_status`、`budget_status`、`external_authorization_amount_cny` 和 `decision_reference`。金额层级建议由领域服务计算：≤300,000 为 `digital_leader`，300,000—1,000,000 为 `eason`，＞1,000,000 为 `dmc`。
+
+该增量不改动 CMDB 分类接口、Dashboard 聚合接口或 Aily/MCP 工具边界；两者继续以原领域服务为唯一事实源。
