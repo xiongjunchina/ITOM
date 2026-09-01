@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.errors import AppError, ensure_example_delete_allowed, ensure_not_example
 from app.db import get_db
 from app.deps import get_current_user, require_perm
-from app.models import AuthUser, Ci, CiRelationship, OrgMember, Ticket, Vendor
+from app.models import AuthUser, Ci, CiRelationship, MasterData, OrgMember, Ticket, Vendor
 from app.schemas.common import BatchDeleteIn, ok, paginate
 from app.services.audit import audit
 from app.services.batch_delete import execute_batch_delete
@@ -79,6 +79,32 @@ def _validate_application_product_manager(category: str, product_manager_id: str
         raise AppError("PRODUCT_MANAGER_REQUIRED", "应用配置项必须配置产品经理，供 Bug 确认与验证关闭使用", 422)
 
 
+def _equivalent_ci_categories(db: Session, category: str) -> set[str]:
+    """Return every persisted CI category spelling represented by one CMDB tab.
+
+    Master-data tabs use a stable code (for example ``app``), while imported
+    legacy CIs can retain the displayed Chinese name (``应用``).  Filtering by
+    only one spelling makes the tab disagree with the unfiltered list.  Match
+    both sides of the configured code/name pair and keep the documented
+    ``application`` legacy spelling compatible as well.
+    """
+    values = {category}
+    configured_categories = (
+        db.query(MasterData)
+        .filter(
+            MasterData.category == "ci_category",
+            MasterData.is_deleted.is_(False),
+            or_(MasterData.code == category, MasterData.name == category),
+        )
+        .all()
+    )
+    for configured in configured_categories:
+        values.update((configured.code, configured.name))
+    if values & APPLICATION_CATEGORIES:
+        values.update(APPLICATION_CATEGORIES)
+    return values
+
+
 @router.get("/api/cis")
 def list_cis(
     page: int = 1, page_size: int = 20, q: str = "", category: str = "", status: str = "", environment: str = "",
@@ -88,7 +114,7 @@ def list_cis(
     if q:
         query = query.filter(or_(Ci.name.ilike(f"%{q}%"), Ci.ci_code.ilike(f"%{q}%")))
     if category:
-        query = query.filter(Ci.category == category)
+        query = query.filter(Ci.category.in_(_equivalent_ci_categories(db, category)))
     if status:
         query = query.filter(Ci.status == status)
     if environment:

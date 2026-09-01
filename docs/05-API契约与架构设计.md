@@ -233,6 +233,8 @@ Bug 创建成功后，网页可用通用附件接口依次上传零个或多个�
 
 `GET /api/itsm-import/ci/template` 返回 CMDB Excel 模板，`POST /api/itsm-import/ci` 按行追加导入。模板以“技术负责人姓名”映射 `owner`，以“应用产品经理姓名”映射 `product_manager_id`；后者仅“应用”类别可填写且必填。两列均按系统中在岗人员姓名精确匹配，缺失或无法匹配的应用产品经理、以及非应用填写产品经理，均返回该行错误；导入不更新既有配置项，也不迁移历史数据。
 
+`GET /api/cis` 的可选 `category` 查询参数按当前 `ci_category` 主数据的 `code` 与 `name` 等价匹配，以确保类别标签和未筛选清单一致；应用类别还兼容历史 `app`、`application` 与“应用”值。该读取兼容不修改任何 CI、主数据或导入语义。
+
 绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
 
 #### 清单受控批量删除
