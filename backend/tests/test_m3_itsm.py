@@ -144,6 +144,54 @@ def test_ci_crud_and_impact(client, ctx, admin_headers):
     assert r.status_code == 403
 
 
+def test_ci_category_filter_matches_master_data_code_display_name_and_application_alias(client, ctx):
+    """CMDB tabs use master-data codes but must include imported display-name CIs."""
+    def create_ci(name, category, **extra):
+        payload = {"name": name, "category": category, "owner": ctx["ops_person"]}
+        if category in {"应用", "app", "application"}:
+            payload["product_manager_id"] = ctx["ops_person"]
+        payload.update(extra)
+        response = client.post("/api/cis", json=payload, headers=ctx["ops"])
+        assert response.json()["success"], response.text
+        return response.json()["data"]["id"]
+
+    app_code_id = create_ci(
+        "应用类别代码", "app", status="维护中", environment="生产"
+    )
+    app_ids = {
+        app_code_id,
+        create_ci("应用类别显示名", "应用", environment="开发"),
+        create_ci("应用类别历史别名", "application", environment="测试"),
+    }
+    server_ids = {
+        create_ci("服务器类别代码", "server"),
+        create_ci("服务器类别显示名", "服务器"),
+    }
+
+    for category in ("app", "应用", "application"):
+        response = client.get("/api/cis", params={"category": category, "page_size": 200}, headers=ctx["ops"])
+        assert response.json()["success"], response.text
+        rows = response.json()["data"]
+        assert app_ids.issubset({row["id"] for row in rows})
+        assert {row["category"] for row in rows}.issubset({"app", "应用", "application"})
+
+    response = client.get(
+        "/api/cis",
+        params={"category": "app", "status": "维护中", "environment": "生产", "page_size": 200},
+        headers=ctx["ops"],
+    )
+    assert response.json()["success"], response.text
+    rows = response.json()["data"]
+    assert {row["id"] for row in rows} == {app_code_id}
+    assert all(row["status"] == "维护中" and row["environment"] == "生产" for row in rows)
+
+    response = client.get("/api/cis", params={"category": "server", "page_size": 200}, headers=ctx["ops"])
+    assert response.json()["success"], response.text
+    rows = response.json()["data"]
+    assert server_ids.issubset({row["id"] for row in rows})
+    assert {row["category"] for row in rows}.issubset({"server", "服务器"})
+
+
 # ---------- 供应商与合同 ----------
 
 def test_vendor_contract_and_expiry(client, ctx, admin_headers):

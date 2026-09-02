@@ -235,6 +235,8 @@ Task notification events use `notifier.notify()`: initial assignment or reassign
 
 `GET /api/itsm-import/ci/template` returns the CMDB Excel template and `POST /api/itsm-import/ci` appends rows independently. **Technical owner name** maps to `owner`, while **Application product manager name** maps to `product_manager_id`; the latter may be filled only for, and is required by, an Application. Both names exactly match active system members. A missing or unknown Application product manager, or a product-manager value on a non-Application row, is returned as a row error; import never updates existing CIs or migrates historical data.
 
+The optional `category` query parameter of `GET /api/cis` matches the current `ci_category` master-data `code` and `name` equivalently so that category tabs agree with the unfiltered list. Application additionally accepts historical `app`, `application`, and `应用` values. This read compatibility does not modify any CI, master data, or import behavior.
+
 `DELETE /api/tickets/{id}` first finalizes and soft-deletes every active process instance and unfinished task for the ticket after the existing record-level delete authorization, then soft-deletes the ticket and writes its audit record. A later `GET /api/tickets/{id}` for a previously existing, soft-deleted ticket returns HTTP 404 with `TICKET_DELETED` and “The ticket was withdrawn or deleted and its detail is unavailable”; a never-existing ID still returns `NOT_FOUND`. No deleted fields are returned. This gives in-app and Feishu/Aily historical links an accurate outcome; already-delivered external messages cannot be recalled.
 
 Performance and point events: closing a Bug fix child task publishes `bug_fix_task.completed`; closing a delegated task publishes `work_task.closed`. Point subscribers write idempotently by source record and rule. Bug-fix and ordinary delegated work use job-result rules by default. A delegated task may write to `learning_growth`, `cross_team_support`, or `training_knowledge` only when the server accepts its team-contribution type and `performance_bucket=team_contribution`. Delivery metrics use the assignee, planned date, and actual close date; an open task is not failed before its due date.
@@ -725,5 +727,14 @@ GET /api/health                    # status plus manifest-consistent version
 ```
 
 All three endpoints are read-only. Release endpoints return only `schema_version/product/release/notes`; they exclude internal compatibility declarations, Git SHA, image tag/digest, registry, database, and environment details. FastAPI/OpenAPI loads its version from the same manifest at startup. Vite embeds that manifest as the frontend build identity, and About compares it with the runtime response to warn about a partial deployment.
+
+### 10.1 M117 requirement/project governance API increment
+
+- `GET /api/requirements/scoring-config` returns current five-dimension `weights`/`rubric` plus read-only `legacy_weights`; `PUT` accepts five-dimension weights and still accepts a legacy six-dimension snapshot.
+- `POST /api/requirements/{id}/score` requires only D1–D5 for new evaluations. An old client may send `d6_speed`, in which case the frozen historical rule is used. Totals and quadrants are always calculated server-side.
+- `POST /api/governance/dmc-decisions` records an offline authorization/DMC decision for a requirement or project. `GET /api/governance/dmc-decisions?entity_type=requirement|project&entity_id=...` lists records. The related module's edit/view permission, entity, owner, amount, and audit are rechecked; online voting is out of scope.
+- Project create/update accepts `project_source`, `plan_year`, `decision_level`, `decision_status`, `budget_status`, `external_authorization_amount_cny`, and `decision_reference`. The suggested level is calculated at ≤300,000 / 300,000–1,000,000 / >1,000,000 CNY.
+
+The increment does not modify CMDB category APIs, Dashboard aggregation APIs, or the Aily/MCP boundary; those remain authoritative in their existing domain services.
 
 Docker now builds from the repository-root context so both images copy `release/`. Release scripts write `APP_VERSION/VCS_REF/RELEASE_DATE` OCI labels and verify the product version. In addition to existing health, proxy, and MCP probes, IDC deployment requires `/api/health.data.version` to match the approved manifest. MCP tools, authentication, and the `serverInfo` protocol implementation are unchanged.

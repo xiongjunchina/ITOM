@@ -13,7 +13,8 @@ const [page, menu, router, reports, zhEn, locale] = await Promise.all([
 
 test('platform operations routes stay permission-gated and report center remains the last sidebar item', () => {
   assert.match(menu, /key: 'platform'[\s\S]*?module: 'platform_portfolio'[\s\S]*?module: 'platform_capacity'/);
-  assert.ok(menu.indexOf("key: 'platform'") < menu.indexOf("key: 'task-management'"));
+  assert.ok(menu.indexOf("key: 'team'") < menu.indexOf("key: 'platform'"));
+  assert.ok(menu.indexOf("key: 'platform'") < menu.indexOf("key: 'process'"));
   assert.ok(menu.lastIndexOf("key: '/reports'") > menu.indexOf("key: 'admin'"));
   assert.match(router, /function PlatformGate/);
   assert.match(router, /path: 'platform\/services'/);

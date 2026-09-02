@@ -1,15 +1,15 @@
 import { ROUTE_DEV, ROUTE_PROJECT } from '../../api/types';
 
 /**
- * 六维评分维度元数据（M10）。
- * key 与后端评分字段一致（d1_strategy..d6_speed）；short 与 scoring-config 的 weights/rubric 短键一致（d1..d6）。
+ * 五维评分维度元数据（M10/M117）。
+ * d6_speed 仅作为历史兼容字段，不在新评分界面展示。
  * 维度名走 i18n（req.dim.*，zh/en 成对）；reverse=true 表示反向维度（分越高越差，如风险）。
  */
 export interface DimensionMeta {
   /** 后端评分字段名 */
-  key: 'd1_strategy' | 'd2_value' | 'd3_tech' | 'd4_org' | 'd5_risk' | 'd6_speed';
+  key: 'd1_strategy' | 'd2_value' | 'd3_tech' | 'd4_org' | 'd5_risk';
   /** 权重/档位配置短键 */
-  short: 'd1' | 'd2' | 'd3' | 'd4' | 'd5' | 'd6';
+  short: 'd1' | 'd2' | 'd3' | 'd4' | 'd5';
   /** 展示编号 */
   code: string;
   /** 维度名 i18n key */
@@ -22,9 +22,8 @@ export const DIMENSIONS: DimensionMeta[] = [
   { key: 'd1_strategy', short: 'd1', code: 'D1', nameKey: 'req.dim.d1_strategy' },
   { key: 'd2_value', short: 'd2', code: 'D2', nameKey: 'req.dim.d2_value' },
   { key: 'd3_tech', short: 'd3', code: 'D3', nameKey: 'req.dim.d3_tech' },
-  { key: 'd4_org', short: 'd4', code: 'D4', nameKey: 'req.dim.d4_org' },
+  { key: 'd4_org', short: 'd4', code: 'D4', nameKey: 'req.dim.d4_maturity' },
   { key: 'd5_risk', short: 'd5', code: 'D5', nameKey: 'req.dim.d5_risk', reverse: true },
-  { key: 'd6_speed', short: 'd6', code: 'D6', nameKey: 'req.dim.d6_speed' },
 ];
 
 export type DimScores = Partial<Record<DimensionMeta['key'], number>>;
@@ -34,7 +33,7 @@ export type DimScores = Partial<Record<DimensionMeta['key'], number>>;
  * total = Σ weight[short] * (reverse ? 6-score : score)；
  * 象限：total≥thr.total 且 (d1+d2)/2≥thr.strategic→战略下注；total≥thr.total→速赢项目；
  *       (d1+d2)/2≥thr.viable→低优先级；否则重新评估。
- * 六维未全部填写时返回 null。
+ * 五维未全部填写时返回 null。
  */
 export function computeScore(
   scores: DimScores,

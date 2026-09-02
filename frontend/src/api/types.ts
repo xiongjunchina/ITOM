@@ -1330,6 +1330,14 @@ export interface ProjectRow {
   portfolio_id: string | null;
   portfolio_name: string | null;
   budget_10k: number | null;
+  /** P0 治理双轨记录：年度计划/计划外及授权决策信息 */
+  project_source?: 'annual_plan' | 'out_of_plan' | null;
+  plan_year?: string | null;
+  decision_level?: 'digital_leader' | 'eason' | 'dmc' | null;
+  decision_status?: 'pending' | 'approved' | 'conditional' | 'hold' | null;
+  budget_status?: 'pending' | 'secured' | 'not_required' | null;
+  external_authorization_amount_cny?: string | number | null;
+  decision_reference?: string | null;
   latest_update: string | null;
   /** 进度 0-100；无 WBS 任务时为 null */
   progress: number | null;
@@ -1792,16 +1800,16 @@ export interface RequirementRow {
   task_done: number;
   /** 任务完成比 0-100；无任务时 null */
   progress: number | null;
-  // ---- M10 六维评分 / 四象限漏斗 ----
+  // ---- M10/M117 五维评分 / 四象限漏斗 ----
   /** 渠道部门 */
   department?: string | null;
   /** 期望完成时间 */
   expected_date?: string | null;
-  /** 加权总分（六维评分后有值） */
+  /** 加权总分（五维评分后有值；历史六维记录仍兼容） */
   weighted_total?: number | null;
   /** 四象限（中文权威值：战略下注/速赢项目/低优先级/重新评估） */
   quadrant?: string | null;
-  /** 已持久化的六维评分。导入或历史数据可能没有评分历史行，详情页仍须以此回填。 */
+  /** 已持久化的五维评分。导入或历史数据可能没有评分历史行，详情页仍须以此回填。 */
   d1_strategy?: number | null;
   d2_value?: number | null;
   d3_tech?: number | null;
@@ -1831,22 +1839,22 @@ export interface RequirementRow {
   workflow_edit_locked_reason?: string | null;
 }
 
-/** 六维评分记录（多评审人；单人场景通常一条） */
+/** 五维评分记录（多评审人；历史记录可能带 d6_speed） */
 export interface RequirementScore {
   reviewer_name: string | null;
   reviewer_role: string | null;
-  d1_strategy: number;
-  d2_value: number;
-  d3_tech: number;
-  d4_org: number;
-  d5_risk: number;
-  d6_speed: number;
+  d1_strategy: number | null;
+  d2_value: number | null;
+  d3_tech: number | null;
+  d4_org: number | null;
+  d5_risk: number | null;
+  d6_speed?: number | null;
   is_consensus: boolean;
   comment: string | null;
   created_at: string;
 }
 
-/** 六维评分档位说明（rubric 单维度） */
+/** 五维评分档位说明（rubric 单维度） */
 export interface ScoringRubricEntry {
   name: string;
   '5': string;
@@ -1856,8 +1864,8 @@ export interface ScoringRubricEntry {
   '1': string;
 }
 
-/** 六维权重键（后端 rubric/weights 用短键 d1..d6） */
-export type ScoringDimKey = 'd1' | 'd2' | 'd3' | 'd4' | 'd5' | 'd6';
+/** 当前五维权重键（历史六维权重由后端单独保留） */
+export type ScoringDimKey = 'd1' | 'd2' | 'd3' | 'd4' | 'd5';
 
 /** 方案评估指派（M16）：通过后 产品 leader 主责 / 开发 leader 知会（人员主数据 id） */
 export interface ReviewAssignees {
@@ -1868,6 +1876,7 @@ export interface ReviewAssignees {
 /** 评分规则配置（GET/PUT /requirements/scoring-config） */
 export interface ScoringConfig {
   weights: Record<ScoringDimKey, number>;
+  legacy_weights?: Record<ScoringDimKey | 'd6', number> | null;
   thresholds: { total: number; strategic: number; viable: number };
   rubric: Record<string, ScoringRubricEntry>;
   role_weights?: Record<string, number>;

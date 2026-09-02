@@ -233,6 +233,8 @@ Bug 创建成功后，网页可用通用附件接口依次上传零个或多个�
 
 `GET /api/itsm-import/ci/template` 返回 CMDB Excel 模板，`POST /api/itsm-import/ci` 按行追加导入。模板以“技术负责人姓名”映射 `owner`，以“应用产品经理姓名”映射 `product_manager_id`；后者仅“应用”类别可填写且必填。两列均按系统中在岗人员姓名精确匹配，缺失或无法匹配的应用产品经理、以及非应用填写产品经理，均返回该行错误；导入不更新既有配置项，也不迁移历史数据。
 
+`GET /api/cis` 的可选 `category` 查询参数按当前 `ci_category` 主数据的 `code` 与 `name` 等价匹配，以确保类别标签和未筛选清单一致；应用类别还兼容历史 `app`、`application` 与“应用”值。该读取兼容不修改任何 CI、主数据或导入语义。
+
 绩效与积分事件：Bug 修复子任务关闭发布 `bug_fix_task.completed`，委派任务关闭发布 `work_task.closed`。积分订阅按来源单据和规则幂等写入；Bug 修复与普通委派任务默认使用岗位结果规则，委派任务只有在服务端校验通过的团队贡献类型和 `performance_bucket=team_contribution` 下，才写入 `learning_growth`、`cross_team_support` 或 `training_knowledge`。交付指标按负责人、计划完成日期和实际关闭日期计算，未到期未关闭不提前计为失败。
 
 #### 清单受控批量删除
@@ -730,3 +732,12 @@ GET /api/health                    # status + 与发布清单一致的 version
 三个端点均为只读；版本接口只返回 `schema_version/product/release/notes`，不返回兼容性内部声明、Git SHA、镜像标签/摘要、仓库、数据库或环境信息。FastAPI/OpenAPI 版本在启动时从同一发布清单加载；Vite 构建也读取该清单并嵌入前端构建身份，页面对比运行时版本后提示不一致。
 
 Docker 构建上下文为仓库根目录，两个镜像共同复制 `release/`，发布脚本以 `APP_VERSION/VCS_REF/RELEASE_DATE` 写入 OCI 标签并校验版本。IDC 部署在既有健康、代理和 MCP 探针之外，额外要求 `/api/health.data.version` 与批准清单一致。该变化不调整 MCP 工具、鉴权或 `serverInfo` 协议实现。
+
+### 10.1 M117 需求/项目治理 API 增量
+
+- `GET /api/requirements/scoring-config` 返回当前五维 `weights`/`rubric`，并以只读 `legacy_weights` 标识历史六维计算快照；`PUT` 接受五维权重，仍兼容管理员提交的历史六维权重快照。
+- `POST /api/requirements/{id}/score` 新评估只需 D1-D5；`d6_speed` 仍可由旧客户端传入并按历史快照计算。`weighted_total`、`quadrant` 由领域服务计算，服务端不接受客户端总分。
+- `POST /api/governance/dmc-decisions` 记录需求或项目的线下授权/DMC 决议，`GET /api/governance/dmc-decisions?entity_type=requirement|project&entity_id=...` 查询记录。接口按关联域的 `requirements`/`projects` 权限复核对象、责任人、金额和审计；不提供在线投票。
+- 项目创建/更新支持 `project_source`、`plan_year`、`decision_level`、`decision_status`、`budget_status`、`external_authorization_amount_cny` 和 `decision_reference`。金额层级建议由领域服务计算：≤300,000 为 `digital_leader`，300,000—1,000,000 为 `eason`，＞1,000,000 为 `dmc`。
+
+该增量不改动 CMDB 分类接口、Dashboard 聚合接口或 Aily/MCP 工具边界；两者继续以原领域服务为唯一事实源。

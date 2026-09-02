@@ -87,6 +87,7 @@ ENSURE_COLUMNS = {
         ("sort", "INTEGER NOT NULL DEFAULT 0"),
     ],
     "requirement_scoring_config": [
+        ("legacy_weights", "JSONB"),
         ("effort_threshold", "DOUBLE PRECISION"),
         ("review_assignees", "JSONB"),
     ],
@@ -118,6 +119,13 @@ ENSURE_COLUMNS = {
         ("resource_note", "TEXT"),
         ("org_members", "JSONB"),
         ("stakeholders", "JSONB"),
+        ("project_source", "VARCHAR(16)"),
+        ("plan_year", "VARCHAR(8)"),
+        ("decision_level", "VARCHAR(16)"),
+        ("decision_status", "VARCHAR(16)"),
+        ("budget_status", "VARCHAR(16)"),
+        ("external_authorization_amount_cny", "NUMERIC(18,2)"),
+        ("decision_reference", "VARCHAR(200)"),
     ],
     "requirement_task": [
         ("task_code", "VARCHAR(32)"),

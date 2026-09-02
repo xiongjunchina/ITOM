@@ -36,6 +36,7 @@ from app.services.permissions import has_perm
 from app.services.investment import money, summary as investment_domain_summary
 from app.services.projects import apply_wbs_progress, compute_metrics, recalculate_wbs_hierarchy, rebuild_wbs_codes
 from app.services.team_scope import digital_team_scope_configured, is_it_member, require_it_member_if_configured
+from app.services.requirement_scoring import decision_level_for_amount
 from app.services.workflow import allowed_targets, status_names
 from app.services.workflow import transition as wf_transition
 
@@ -62,6 +63,13 @@ class ProjectCreate(BaseModel):
     budget_10k: float | None = None
     description: str | None = None
     requirement_id: str | None = None  # M16：由需求转入时关联，项目关闭自动闭环需求
+    project_source: str | None = Field(default=None, pattern="^(annual_plan|out_of_plan)$")
+    plan_year: str | None = Field(default=None, max_length=8)
+    decision_level: str | None = Field(default=None, pattern="^(digital_leader|eason|dmc)$")
+    decision_status: str | None = Field(default=None, pattern="^(pending|approved|conditional|hold)$")
+    budget_status: str | None = Field(default=None, pattern="^(pending|secured|not_required)$")
+    external_authorization_amount_cny: Decimal | None = Field(default=None, ge=0)
+    decision_reference: str | None = Field(default=None, max_length=200)
 
 
 class ProjectUpdate(BaseModel):
@@ -83,6 +91,13 @@ class ProjectUpdate(BaseModel):
     latest_update: str | None = None
     actual_start: date | None = None
     actual_end: date | None = None
+    project_source: str | None = Field(default=None, pattern="^(annual_plan|out_of_plan)$")
+    plan_year: str | None = Field(default=None, max_length=8)
+    decision_level: str | None = Field(default=None, pattern="^(digital_leader|eason|dmc)$")
+    decision_status: str | None = Field(default=None, pattern="^(pending|approved|conditional|hold)$")
+    budget_status: str | None = Field(default=None, pattern="^(pending|secured|not_required)$")
+    external_authorization_amount_cny: Decimal | None = Field(default=None, ge=0)
+    decision_reference: str | None = Field(default=None, max_length=200)
 
 
 class TransitionIn(BaseModel):
@@ -282,6 +297,11 @@ def _project_row(p: Project, db: Session, names: dict, status_map: dict, with_me
         "actual_start": p.actual_start, "actual_end": p.actual_end,
         "portfolio_id": p.portfolio_id, "portfolio_name": p.portfolio.name if p.portfolio else None,
         "budget_10k": p.budget_10k, "latest_update": p.latest_update, "is_example": p.is_example,
+        "project_source": p.project_source, "plan_year": p.plan_year,
+        "decision_level": p.decision_level, "decision_status": p.decision_status,
+        "budget_status": p.budget_status,
+        "external_authorization_amount_cny": p.external_authorization_amount_cny,
+        "decision_reference": p.decision_reference,
     }
     if with_metrics:
         row.update(compute_metrics(db, p))
@@ -378,6 +398,10 @@ def _create_project(db: Session, data: dict, actor: AuthUser) -> Project:
     require_it_member_if_configured(db, data["pm"], "项目经理")
     if data.get("service_item_id") and not db.get(ServiceItem, data["service_item_id"]):
         raise AppError("NOT_FOUND", "关联服务项不存在", 404)
+    if data.get("external_authorization_amount_cny") is not None and not data.get("decision_level"):
+        data["decision_level"] = decision_level_for_amount(data["external_authorization_amount_cny"])
+    if data.get("project_source") == "annual_plan" and not data.get("plan_year"):
+        raise AppError("PLAN_YEAR_REQUIRED", "年度计划项目必须填写计划年份")
     project = Project(
         **data,
         project_code=gen_code(db, Project, "project_code", "PJ"),
@@ -437,6 +461,13 @@ def get_project(project_id: str, db: Session = Depends(get_db), user: AuthUser =
         "can_delete": (not p.is_example) and delete_access.allowed,
         "workflow_edit_mode": edit_access.mode,
         "workflow_edit_locked_reason": edit_access.reason,
+        "project_source": p.project_source,
+        "plan_year": p.plan_year,
+        "decision_level": p.decision_level,
+        "decision_status": p.decision_status,
+        "budget_status": p.budget_status,
+        "external_authorization_amount_cny": p.external_authorization_amount_cny,
+        "decision_reference": p.decision_reference,
     })
     # 关联需求（PRD §6.2 概述页）：M5 需求经 project_id 挂接
     from app.models import Requirement
@@ -484,6 +515,10 @@ def update_project(project_id: str, body: ProjectUpdate, db: Session = Depends(g
     data = body.model_dump(exclude_unset=True)
     access = process_engine.require_workflow_edit(db, actor, "project", p.id, "projects")
     process_engine.require_safe_correction_fields(access, data, {"pm"})
+    if data.get("external_authorization_amount_cny") is not None and not data.get("decision_level"):
+        data["decision_level"] = decision_level_for_amount(data["external_authorization_amount_cny"])
+    if data.get("project_source") == "annual_plan" and not data.get("plan_year", p.plan_year):
+        raise AppError("PLAN_YEAR_REQUIRED", "年度计划项目必须填写计划年份")
     if data.get("pm"):
         require_it_member_if_configured(db, data["pm"], "项目经理")
     for k, v in data.items():

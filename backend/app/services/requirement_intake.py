@@ -185,7 +185,7 @@ def create_requirement(db: Session, data: dict, user: AuthUser, commit: bool = T
             requirement.id,
             [domain.owner_id],
             f"需求评审指派：{requirement.requirement_code} {requirement.title}",
-            f"业务域「{domain.name}」新需求待评审（六维评分）。",
+            f"业务域「{domain.name}」新需求待评审（五维评分）。",
             link=f"/requirements/{requirement.id}",
         )
     audit(

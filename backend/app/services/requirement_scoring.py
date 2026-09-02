@@ -1,17 +1,22 @@
-"""需求六维加权评分与四象限判定（M10）。
+"""需求五维加权评分与四象限判定（M10/M117）。
 
-六维加权评分与四象限漏斗（评分规则页可视化配置权重/阈值/评分标尺）：
-- 六维：D1 战略对齐 / D2 业务价值 / D3 技术可行性 / D4 组织就绪 / D5 风险(反向) / D6 价值速度
+五维加权评分与四象限漏斗（评分规则页可视化配置权重/阈值/评分标尺）：
+- 五维：D1 战略对齐 / D2 业务价值 / D3 技术可行性 / D4 业务成熟度 / D5 风险(反向)
+- 历史六维记录仍可读取和计算，但新评分不再要求 D6 价值速度。
 - 加权总分 = Σ w·D，其中风险取 (6−D5) 反向计入
 - 四象限：按 加权总分 与 战略价值均值 (D1+D2)/2 两轴判定
 权重/阈值/分档由 RequirementScoringConfig 单行配置（系统管理可调，年度复审）。
 """
+from decimal import Decimal
+
 from app.models import RequirementScoringConfig
 
-DIMENSIONS = ["d1_strategy", "d2_value", "d3_tech", "d4_org", "d5_risk", "d6_speed"]
+DIMENSIONS = ["d1_strategy", "d2_value", "d3_tech", "d4_org", "d5_risk"]
+LEGACY_DIMENSIONS = [*DIMENSIONS, "d6_speed"]
 
-# 权重表为准（文档正文"风险与速度各10%"为笔误，见评分标准 §1.1 权重表）
-DEFAULT_WEIGHTS = {"d1": 0.2, "d2": 0.2, "d3": 0.2, "d4": 0.1, "d5": 0.1, "d6": 0.2}
+# 新口径把组织与流程准备度合并为业务成熟度，D4 权重相应提高。
+DEFAULT_WEIGHTS = {"d1": 0.2, "d2": 0.2, "d3": 0.2, "d4": 0.3, "d5": 0.1}
+LEGACY_DEFAULT_WEIGHTS = {"d1": 0.2, "d2": 0.2, "d3": 0.2, "d4": 0.1, "d5": 0.1, "d6": 0.2}
 DEFAULT_THRESHOLDS = {"total": 3.5, "strategic": 4.0, "viable": 3.0}
 DEFAULT_ROLE_WEIGHTS = {"业务": 0.4, "技术": 0.3, "PMO": 0.2, "财务": 0.1}
 DEFAULT_EFFORT_THRESHOLD = 20.0  # 二开人天≥阈值 或 新购系统 → 转项目管理
@@ -34,12 +39,13 @@ DEFAULT_RUBRIC = {
            "3": "ROI 80~150%，量化有假设", "2": "软性价值难量化", "1": "无法量化商业价值"},
     "d3": {"name": "技术可行性", "5": "成熟SaaS，接口≤3标准协议", "4": "PoC验证过，接口4-6",
            "3": "理论可行未本地验证，接口7-10", "2": "核心技术探索阶段，接口>10", "1": "存在根本性技术障碍"},
-    "d4": {"name": "组织就绪度", "5": "业务主动提出，Sponsor承诺配合", "4": "支持但积极性待提升",
-           "3": "态度中立需PMO推动", "2": "明确抵触/缺Sponsor", "1": "无Sponsor，纯IT主导"},
+    "d4": {"name": "业务成熟度", "5": "组织职责清晰、流程已定义并可直接落地，Sponsor承诺配合",
+           "4": "组织和流程基本明确，仅需少量补充或协调",
+           "3": "已有初步组织/流程，需要业务域负责人和PMO共同完善",
+           "2": "职责或流程存在明显缺口，落地前需先补齐",
+           "1": "组织职责和业务流程均未形成，暂不宜用系统固化"},
     "d5": {"name": "风险等级(反向)", "1": "各风险类别均低，无重大风险", "2": "1-2中等风险有缓解计划",
            "3": "2-3高风险，缓解在制定", "4": "多个高风险，缓解不确定", "5": "根本性风险无缓解路径"},
-    "d6": {"name": "价值速度", "5": "上线后≤半月见KPI改善", "4": "1-3个月出首批价值",
-           "3": "3-6个月交付核心功能", "2": "6-12个月见价值", "1": ">12个月，播种型投资"},
 }
 
 
@@ -52,18 +58,30 @@ def get_config(db) -> RequirementScoringConfig:
         cfg = RequirementScoringConfig(
             weights=dict(DEFAULT_WEIGHTS), thresholds=dict(DEFAULT_THRESHOLDS),
             rubric=dict(DEFAULT_RUBRIC), role_weights=dict(DEFAULT_ROLE_WEIGHTS),
-            effort_threshold=DEFAULT_EFFORT_THRESHOLD,
+            legacy_weights=dict(LEGACY_DEFAULT_WEIGHTS), effort_threshold=DEFAULT_EFFORT_THRESHOLD,
         )
         db.add(cfg)
         db.flush()
+    else:
+        # 首次读取旧版单行配置时，将旧六维权重冻结为历史口径，当前配置切换为五维。
+        # 不改写需求历史分值；历史记录通过 d6_speed 是否存在选择 legacy_weights。
+        if not getattr(cfg, "legacy_weights", None):
+            old_weights = cfg.weights if cfg.weights and "d6" in cfg.weights else LEGACY_DEFAULT_WEIGHTS
+            cfg.legacy_weights = dict(old_weights)
+        if not cfg.weights or "d6" in cfg.weights:
+            cfg.weights = dict(DEFAULT_WEIGHTS)
+        if not cfg.rubric or "d6" in cfg.rubric:
+            cfg.rubric = dict(DEFAULT_RUBRIC)
     return cfg
 
 
 def compute_weighted_total(scores: dict, weights: dict | None = None) -> float | None:
-    """scores: {d1_strategy..d6_speed} 值 1-5；任一维度缺失 → None（未评完）。"""
+    """计算五维新口径或带 d6_speed 的历史六维口径。"""
     w = weights or DEFAULT_WEIGHTS
+    legacy = "d6_speed" in scores and scores.get("d6_speed") is not None and "d6" in w
+    dimensions = LEGACY_DIMENSIONS if legacy else DIMENSIONS
     vals = {}
-    for d in DIMENSIONS:
+    for d in dimensions:
         v = scores.get(d)
         if v is None:
             return None
@@ -74,8 +92,9 @@ def compute_weighted_total(scores: dict, weights: dict | None = None) -> float |
         + w["d3"] * vals["d3_tech"]
         + w["d4"] * vals["d4_org"]
         + w["d5"] * (6 - vals["d5_risk"])  # 风险反向
-        + w["d6"] * vals["d6_speed"]
     )
+    if legacy:
+        total += w["d6"] * vals["d6_speed"]
     return round(total, 2)
 
 
@@ -107,9 +126,63 @@ def compute_route(solution_type: str | None, dev_effort: float | None,
 
 
 def requirement_scores(r) -> dict:
-    """从 Requirement 抽取六维分为计算用 dict。"""
+    """从 Requirement 抽取五维分和可选历史 d6 分。"""
     return {
         "d1_strategy": r.score_d1_strategy, "d2_value": r.score_d2_value,
         "d3_tech": r.score_d3_tech, "d4_org": r.score_d4_org,
         "d5_risk": r.score_d5_risk, "d6_speed": r.score_d6_speed,
+    }
+
+
+def weights_for_requirement(r, cfg: RequirementScoringConfig | None = None) -> dict:
+    """按记录是否含历史 D6 选择计算口径；新记录默认使用五维。"""
+    if r.score_d6_speed is not None:
+        return dict(getattr(cfg, "legacy_weights", None) or LEGACY_DEFAULT_WEIGHTS)
+    return dict((cfg.weights if cfg and cfg.weights else DEFAULT_WEIGHTS))
+
+
+def requirement_weighted_total(r, cfg: RequirementScoringConfig | None = None) -> float | None:
+    return compute_weighted_total(requirement_scores(r), weights_for_requirement(r, cfg))
+
+
+def decision_level_for_amount(amount_cny: float | Decimal | None) -> str | None:
+    """按制度金额阈值返回建议决策层级；金额为空时不作判断。"""
+    if amount_cny is None:
+        return None
+    amount = Decimal(str(amount_cny))
+    if amount > Decimal("1000000"):
+        return "dmc"
+    if amount >= Decimal("300000"):
+        return "eason"
+    return "digital_leader"
+
+
+def classify_project_scope(
+    *,
+    solution_type: str | None = None,
+    dev_effort: float | None = None,
+    external_service_required: bool = False,
+    independent_budget: bool = False,
+    detailed_plan: bool = False,
+    owner_assigned: bool = False,
+    threshold: float | None = None,
+) -> dict:
+    """判断是否应按项目管理，并返回可供治理记录使用的原因。"""
+    reasons: list[str] = []
+    if solution_type == SOLUTION_NEW_SYSTEM:
+        reasons.append("新购系统")
+    if dev_effort is not None and dev_effort >= (threshold or DEFAULT_EFFORT_THRESHOLD):
+        reasons.append("开发人天达到项目阈值")
+    if external_service_required:
+        reasons.append("需要外部服务或采购")
+    if independent_budget:
+        reasons.append("需要独立预算")
+    if detailed_plan:
+        reasons.append("需要跨阶段计划与验收")
+    is_project = bool(reasons)
+    return {
+        "is_project": is_project,
+        "route": ROUTE_PROJECT if is_project else ROUTE_DEV,
+        "reasons": reasons,
+        "owner_ready": owner_assigned,
     }

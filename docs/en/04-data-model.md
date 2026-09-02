@@ -242,7 +242,7 @@ article_id + person, UNIQUE composite. Triggers the "marked helpful" points.
 
 ---
 
-## 3. Project Domain (8 tables)
+## 3. Project Domain (8 tables) and governance records
 
 ### 3.1 portfolio — portfolio
 
@@ -253,7 +253,7 @@ code [C], name, owner FK, year, description, status.
 | Group | Fields |
 | --- | --- |
 | Required on creation | name, pm FK, planned_start, planned_end; created_by FK (creator account, used for first-node correction/delete authorization) |
-| Optional on creation | portfolio_id FK, description, budget_10k, service_item_id FK |
+| Optional on creation | portfolio_id FK, description, budget_10k, service_item_id FK; project_source, plan_year, decision_level, decision_status, budget_status, external_authorization_amount_cny, decision_reference |
 | Staged | latest_update (one-line update) |
 | Derived [C] | project_code, status, actual_start, actual_end, progress_pct (WBS-weighted), health_status (green/yellow/red, per PRD 6.1 rules), actual_cost_10k (rolled up from cost_entry) |
 
@@ -295,9 +295,17 @@ project_id FK, nullable wbs_task_id FK, person_id FK, work_date, `effort_days NU
 
 Supported subjects are project/requirement/service_item/ci/ticket/problem/contract/business_domain/work_task/shared_operations. New Project, Requirement, Ticket, and Shared Operations writes use the unified tables only; legacy `project_budget_item/cost_entry/project_effort_entry` remain for one rollback cycle and receive no new writes. Historical facts are copied idempotently by unique source key without deleting legacy data. Financial actual equals incurred including paid; standard labor valuation equals person-days times entry-time rate; management total equals financial actual plus standard labor valuation, but is unavailable when incurred `category=labor AND labor_nature=unclassified` could be double-counted.
 
+### 3.10 dmc_decision_record — DMC/authorization decision record
+
+A cross-requirement/project record of an offline governance decision. It stores `entity_type/entity_id`, `decision_level` (`digital_leader`/`eason`/`dmc`), `decision`, amount, budget source, conditions, decision date, meeting reference, follow-up owner, deadline/review date, recorder, evidence references, and note. This table records an authorization or DMC decision already made offline; it does not implement online voting. Writes re-check the related requirement/project permission and create an audit entry.
+
 ---
 
 ## 4. Requirement and task domain (5 tables)
+
+### 4.0 M117 scoring compatibility
+
+`Requirement.score_d1_strategy`, `score_d2_value`, `score_d3_tech`, `score_d4_org`, and `score_d5_risk` are the current five consensus scores. `score_d4_org` remains the compatibility column name but means Business Maturity (organization and process maturity combined). `score_d6_speed` and `RequirementScore.d6_speed` are retained only for historical six-dimension records. `RequirementScoringConfig.weights` stores current five-dimension weights and `legacy_weights` stores the historical snapshot; reads choose the rule by D6 presence without rewriting scores or showing version labels.
 
 ### 4.1 requirement — requirement
 
@@ -305,7 +313,7 @@ Supported subjects are project/requirement/service_item/ci/ticket/problem/contra
 | --- | --- |
 | Required at registration | title, req_type (business/functional/data/integration/compliance), business_domain_id FK, description |
 | Optional at registration | source, parent_requirement_id FK, department, expected_date, expected_effect, business_value_note |
-| Evaluation stage | six D1–D6 scores, decision, solution_type, PRD/dev effort |
+| Evaluation stage | current five D1–D5 scores; legacy d6_speed compatibility; decision, solution_type, PRD/dev effort |
 | Analysis stage | moscow, owner FK, target_date, solution, acceptance_criteria JSONB |
 | Implementation stage | project_id FK (optional attachment), implementation_route (nullable route snapshot: In-house Dev / To Project; written when routing is executed and never backfilled into history) |
 | Derived [C] | requirement_code, status (`registered` / **`supplementing`** / `evaluating` / `analyzing` / `implementing` / `closed`, etc.), requester/name, stage timestamps, closure_note; `supplementing` means explicitly returned to the original requester and is neither closed nor cancelled |

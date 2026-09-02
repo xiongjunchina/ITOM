@@ -1,7 +1,7 @@
 """需求域模型（docs/04 §4，PRD §7）：五阶段协同漏斗。
 
-M10：MoSCoW 单字段升级为麦肯锡六维加权评分 + 四象限决策。
-- Requirement：登记字段 + 评估结果（六维共识分/决议）+ 实现字段
+M10/M117：MoSCoW 单字段升级为当前五维加权评分 + 四象限决策，历史六维记录兼容读取。
+- Requirement：登记字段 + 评估结果（五维共识分/决议）+ 实现字段
 - RequirementScore：评审官评分行（单人评分起步，多方共识留作增强）
 - RequirementScoringConfig：权重/阈值/分档单行配置（系统管理可调，年度复审）
 """
@@ -29,13 +29,13 @@ class Requirement(GlidBase):
     expected_date: Mapped[date | None] = mapped_column(Date, comment="期望完成时间(业务侧)")
     expected_effect: Mapped[str | None] = mapped_column(Text, comment="期望效果")
     business_value_note: Mapped[str | None] = mapped_column(Text, comment="运营价值(定性)")
-    # 评估阶段：六维评分（共识终值，1-5；空=未评）+ 决议
+    # 评估阶段：五维评分（共识终值，1-5；空=未评）；d6_speed 仅兼容历史记录
     score_d1_strategy: Mapped[int | None] = mapped_column(Integer, comment="D1 战略对齐 1-5")
     score_d2_value: Mapped[int | None] = mapped_column(Integer, comment="D2 业务价值 1-5")
     score_d3_tech: Mapped[int | None] = mapped_column(Integer, comment="D3 技术可行性 1-5")
-    score_d4_org: Mapped[int | None] = mapped_column(Integer, comment="D4 组织就绪度 1-5")
+    score_d4_org: Mapped[int | None] = mapped_column(Integer, comment="D4 业务成熟度（兼容列名 d4_org）1-5")
     score_d5_risk: Mapped[int | None] = mapped_column(Integer, comment="D5 风险等级 1-5(反向)")
-    score_d6_speed: Mapped[int | None] = mapped_column(Integer, comment="D6 价值速度 1-5")
+    score_d6_speed: Mapped[int | None] = mapped_column(Integer, comment="历史 D6 价值速度 1-5；新评分不再要求")
     decision: Mapped[str | None] = mapped_column(String(16), comment="最终决议：立项/搁置/驳回")
     solution_type: Mapped[str | None] = mapped_column(String(16), comment="方案类型（M16）：二次开发/新购系统")
     prd_effort: Mapped[float | None] = mapped_column(Float, comment="PRD 人天")
@@ -64,7 +64,7 @@ class Requirement(GlidBase):
 
 class RequirementScore(GlidBase):
     """评审官评分行。单人评分起步：一条 is_consensus=True 即为终值；
-    多方评审时可存多条个人初评，共识行回填到 Requirement.score_d1-d6。"""
+    多方评审时可存多条个人初评，共识行回填到 Requirement.score_d1-d5；d6_speed 仅兼容历史评审。"""
     __tablename__ = "requirement_score"
 
     requirement_id: Mapped[str] = mapped_column(ForeignKey("requirement.id"), index=True)
@@ -75,9 +75,9 @@ class RequirementScore(GlidBase):
     d1_strategy: Mapped[int | None] = mapped_column(Integer)
     d2_value: Mapped[int | None] = mapped_column(Integer)
     d3_tech: Mapped[int | None] = mapped_column(Integer)
-    d4_org: Mapped[int | None] = mapped_column(Integer)
+    d4_org: Mapped[int | None] = mapped_column(Integer, comment="业务成熟度（兼容列名）")
     d5_risk: Mapped[int | None] = mapped_column(Integer)
-    d6_speed: Mapped[int | None] = mapped_column(Integer)
+    d6_speed: Mapped[int | None] = mapped_column(Integer, comment="历史 D6；新评分不再要求")
     is_consensus: Mapped[bool] = mapped_column(default=False, comment="是否为最终共识值")
     comment: Mapped[str | None] = mapped_column(Text)
 
@@ -87,13 +87,16 @@ class RequirementScoringConfig(GlidBase):
     __tablename__ = "requirement_scoring_config"
 
     weights: Mapped[dict | None] = mapped_column(
-        JsonCol, comment="六维权重 {d1..d6}，风险按 (6-D5) 反向计入"
+        JsonCol, comment="当前五维权重 {d1..d5}，风险按 (6-D5) 反向计入"
+    )
+    legacy_weights: Mapped[dict | None] = mapped_column(
+        JsonCol, comment="历史六维权重快照 {d1..d6}；仅用于已有 D6 的记录"
     )
     thresholds: Mapped[dict | None] = mapped_column(
         JsonCol, comment="四象限阈值 {total, strategic, viable}"
     )
     rubric: Mapped[dict | None] = mapped_column(
-        JsonCol, comment="六维 1-5 分档说明 {d1:{5:..,4:..}, ...}"
+        JsonCol, comment="五维 1-5 分档说明 {d1:{5:..,4:..}, ...}"
     )
     role_weights: Mapped[dict | None] = mapped_column(
         JsonCol, comment="评审角色权重 {业务:0.4, 技术:0.3, PMO:0.2, 财务:0.1}"

@@ -110,12 +110,11 @@ function EvaluationPanel({
   const persistedScores = useMemo<DimScores>(() => {
     if (scoreRecord) {
       return {
-        d1_strategy: scoreRecord.d1_strategy,
-        d2_value: scoreRecord.d2_value,
-        d3_tech: scoreRecord.d3_tech,
-        d4_org: scoreRecord.d4_org,
-        d5_risk: scoreRecord.d5_risk,
-        d6_speed: scoreRecord.d6_speed,
+        d1_strategy: scoreRecord.d1_strategy ?? undefined,
+        d2_value: scoreRecord.d2_value ?? undefined,
+        d3_tech: scoreRecord.d3_tech ?? undefined,
+        d4_org: scoreRecord.d4_org ?? undefined,
+        d5_risk: scoreRecord.d5_risk ?? undefined,
       };
     }
     return {
@@ -124,7 +123,6 @@ function EvaluationPanel({
       d3_tech: detail.d3_tech ?? undefined,
       d4_org: detail.d4_org ?? undefined,
       d5_risk: detail.d5_risk ?? undefined,
-      d6_speed: detail.d6_speed ?? undefined,
     };
   }, [
     detail.d1_strategy,
@@ -132,7 +130,6 @@ function EvaluationPanel({
     detail.d3_tech,
     detail.d4_org,
     detail.d5_risk,
-    detail.d6_speed,
     scoreRecord,
   ]);
 
@@ -169,7 +166,7 @@ function EvaluationPanel({
       : null
   );
 
-  // 与后端契约保持一致：通过需完成六维评分且不得落入重新评估；搁置和驳回均可用，驳回必须填写理由。
+  // 与后端契约保持一致：通过需完成五维评分且不得落入重新评估；搁置和驳回均可用，驳回必须填写理由。
   const isReeval = displayPreview?.quadrant === '重新评估';
   const decisionDisabled = (d: string): boolean =>
     d === '通过' ? !displayPreview || isReeval : false;
