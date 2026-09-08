@@ -72,6 +72,20 @@ test('project cost tab captures precise budget, categorized cost, and effort ent
   assert.match(detail, /standard_rate_cny_per_day/);
   assert.match(detail, /<Table<ProjectBudgetItem>/);
   assert.match(detail, /<Table<ProjectEffortEntry>/);
+  assert.match(detail, /api\.patch\(`\/projects\/\$\{id\}\/costs\/\$\{costModal\.cost\.id\}`/);
+  assert.match(detail, /api\.patch\(`\/projects\/\$\{id\}\/budget-items\/\$\{budgetModal\.item\.id\}`/);
+  assert.match(detail, /api\.patch\(`\/projects\/\$\{id\}\/effort-entries\/\$\{effortModal\.entry\.id\}`/);
+  assert.match(detail, /openCostModal\('edit', r\)/);
+  assert.match(detail, /openBudgetModal\('edit', row\)/);
+  assert.match(detail, /openEffortModal\('edit', row\)/);
+});
+
+test('project detail keeps edit behavior aligned across persisted tabs', () => {
+  const detail = read('../src/pages/projects/ProjectDetail.tsx');
+  assert.match(detail, /openTaskModal\('edit', r\)/, 'WBS rows remain editable');
+  assert.match(detail, /openRiskModal\('edit', r\)/, 'risk rows remain editable');
+  assert.match(detail, /milestone-tracking/, 'milestone tracking remains a derived read-only view');
+  assert.match(detail, /api\.download\(`\/attachments\/\$\{r\.id\}\/download`\)/, 'documents remain downloadable');
 });
 
 test('report navigation, permissions and bilingual copy stay synchronized', () => {

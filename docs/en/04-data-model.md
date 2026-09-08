@@ -273,15 +273,15 @@ project_id FK, title, probability (High/Medium/Low), impact (High/Medium/Low), r
 
 ### 3.6 cost_entry — cost detail
 
-project_id FK, nullable wbs_task_id FK, entry_date, authoritative `amount_cny NUMERIC(18,2)`, legacy compatibility projection `amount_10k`, category (software/hardware/service/labour/other/legacy), cost_type (incurred/committed), supplier, note, and created_by [C]. Upgrade backfills only missing `amount_cny` as exact `amount_10k × 10000` and never overwrites an existing exact amount.
+project_id FK, nullable wbs_task_id FK, entry_date, authoritative `amount_cny NUMERIC(18,2)`, legacy compatibility projection `amount_10k`, category (software/hardware/cloud/network/security/service/outsourcing/telecom/facility/labour/other/legacy), cost_type (incurred/committed/paid), supplier, note, and created_by [C]. The Project Detail compatibility API lets authorized editors update an existing unified cost fact in place, recording an audit entry without copying or recreating history. Upgrade backfills only missing `amount_cny` as exact `amount_10k × 10000` and never overwrites an existing exact amount.
 
 ### 3.7 project_budget_item — project budget line
 
-project_id FK, category (software/hardware/service/labour/other), name, `amount_cny NUMERIC(18,2)`, note, and created_by [C]. When active lines exist their sum is the budget total; otherwise reads remain compatible with `project.budget_10k`.
+project_id FK, category (software/hardware/cloud/network/security/service/outsourcing/telecom/facility/labour/other/legacy), name, `amount_cny NUMERIC(18,2)`, note, and created_by [C]. Project Detail supports authorized in-place edits with field-level audit. When active lines exist their sum is the budget total; otherwise reads remain compatible with `project.budget_10k`.
 
 ### 3.8 project_effort_entry — project effort fact
 
-project_id FK, nullable wbs_task_id FK, person_id FK, work_date, `effort_days NUMERIC(8,2)`, role_type (design/development/testing/implementation/pm/operations/other), nullable `standard_rate_cny_per_day NUMERIC(12,2)`, note, and created_by [C]. Registration snapshots the explicit rate or configured role-standard daily rate. It is a management-cost convention and never stores or derives personal salary. Upgrade never fabricates effort or role rates from historical tasks, hours, or people.
+project_id FK, nullable wbs_task_id FK, person_id FK, work_date, `effort_days NUMERIC(8,2)`, role_type (design/development/testing/implementation/pm/operations/other), nullable `standard_rate_cny_per_day NUMERIC(12,2)`, note, and created_by [C]. Project Detail supports authorized edits; changing person, date, or effort days reruns member, future-date, and two-person-day daily-limit checks and records a field-level audit. Registration snapshots the explicit rate or configured role-standard daily rate. It is a management-cost convention and never stores or derives personal salary. Upgrade never fabricates effort or role rates from historical tasks, hours, or people.
 
 ### 3.9 B-OPS unified investment ledger (4 tables)
 

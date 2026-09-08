@@ -400,11 +400,13 @@ POST /api/projects/import-charter        # .docx 解析 → 草稿预览 → 确
 GET/POST /api/projects/{id}/wbs
 PATCH/DELETE /api/wbs/{task_id}
 DELETE /api/projects/{id}/wbs/batch-delete
-GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
-GET/POST /api/projects/{id}/budget-items
+GET/POST/DELETE /api/projects/{id}/milestones | GET/POST/PATCH/DELETE /api/projects/{id}/risks | /costs
+GET/POST/PATCH /api/projects/{id}/budget-items
 DELETE /api/project-budget-items/{item_id}
-GET/POST /api/projects/{id}/effort-entries
+PATCH /api/projects/{id}/budget-items/{item_id}
+GET/POST/PATCH /api/projects/{id}/effort-entries
 DELETE /api/project-effort-entries/{entry_id}
+PATCH /api/projects/{id}/effort-entries/{entry_id}
 GET /api/projects/{id}/investment-summary
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}；仅未启动子树可调整层级和同级顺序
 POST /api/projects/{id}/wbs/batch-move   # {task_ids:[1..500], parent_task_id?, before_task_id?}；原子移动多个根及完整子树
@@ -416,6 +418,8 @@ GET /api/projects/{id}/gantt             # 甘特数据(任务+依赖+里程碑)
 `POST /api/projects/{id}/wbs/batch-move` 需要 `projects.edit`，接收 1–500 个 `task_ids`；重复 ID 去重，父子同时提交时只保留最高层移动根，根的全部后代随树移动。`parent_task_id=null` 表示一级，`before_task_id=null` 表示目标层级末尾。服务端锁定并校验项目全部有效 WBS 行，拒绝缺失/跨项目任务、无效参照、循环关系、已完成移动根/后代/目标父项以及会扰动已完成同级编码的请求；任一校验失败不提交任何排序变化。成功后重算受影响层级 `sort` 与全树 `wbs_code`，逐根写 `move` 审计并返回 `requested_task_ids`、归一后的 `moved_root_ids`、目标父项/参照和总行数。原单行 `/api/wbs/{task_id}/move` 复用相同验证。读取接口继续返回完整 WBS 与真实 `total`；50/100/200/全部、页码 51–75 等目标切片和祖先补齐均为浏览器显示策略，不改变接口分页或树关系。
 
 项目投入接口统一以十进制字符串返回人民币元和人天，避免 JSON 浮点误差。成本写入优先接受 `amount_cny`，旧客户端仍可传 `amount_10k`；两者同时出现时精确人民币元为权威。预算分项与人天记录支持软删除；人天未显式传费率时读取 `org_settings.report_role_rates[role_type]` 并在记录中形成快照。`investment-summary` 返回预算、已发生、已承诺、投入人天、标准费率成本、预算执行率及分类结构；标准费率成本不会写回成本明细或个人薪酬。
+
+项目详情兼容投入接口的 `PATCH /api/projects/{id}/costs/{cost_id}`、`PATCH /api/projects/{id}/budget-items/{item_id}` 与 `PATCH /api/projects/{id}/effort-entries/{entry_id}` 只更新现有统一台账事实，不创建重复行；均要求 `projects.edit`，重用示例数据、WBS、人员、未来日期及人天上限校验，并写入字段级审计。人天变更人员/日期/人天时按“排除当前行后重新计算”的方式校验同一人员同日合计。
 
 ### 4.4 需求
 

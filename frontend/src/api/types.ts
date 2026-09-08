@@ -1511,8 +1511,8 @@ export interface CostEntry {
   entry_date: string;
   amount_10k: number;
   amount_cny: string;
-  category: 'software' | 'hardware' | 'service' | 'labor' | 'other' | 'legacy';
-  cost_type: 'incurred' | 'committed';
+  category: 'software' | 'hardware' | 'cloud' | 'network' | 'security' | 'service' | 'outsourcing' | 'telecom' | 'facility' | 'labor' | 'other' | 'legacy';
+  cost_type: 'incurred' | 'committed' | 'paid';
   supplier: string | null;
   wbs_task_id: string | null;
   note: string | null;
@@ -1520,7 +1520,7 @@ export interface CostEntry {
 
 export interface ProjectBudgetItem {
   id: string;
-  category: 'software' | 'hardware' | 'service' | 'labor' | 'other';
+  category: 'software' | 'hardware' | 'cloud' | 'network' | 'security' | 'service' | 'outsourcing' | 'telecom' | 'facility' | 'labor' | 'other';
   name: string;
   amount_cny: string;
   note: string | null;

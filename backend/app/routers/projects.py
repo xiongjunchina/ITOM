@@ -215,6 +215,34 @@ class EffortEntryIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class CostUpdate(BaseModel):
+    entry_date: date | None = None
+    amount_cny: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
+    amount_10k: float | None = Field(default=None, gt=0)
+    category: str | None = Field(default=None, pattern="^(software|hardware|cloud|network|security|service|outsourcing|telecom|facility|labor|other|legacy)$")
+    cost_type: str | None = Field(default=None, pattern="^(incurred|committed|paid)$")
+    supplier: str | None = Field(default=None, max_length=128)
+    wbs_task_id: str | None = None
+    note: str | None = None
+
+
+class BudgetItemUpdate(BaseModel):
+    category: str | None = Field(default=None, pattern="^(software|hardware|cloud|network|security|service|outsourcing|telecom|facility|labor|other|legacy)$")
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    amount_cny: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class EffortEntryUpdate(BaseModel):
+    person_id: str | None = None
+    work_date: date | None = None
+    effort_days: Decimal | None = Field(default=None, gt=0, le=2, max_digits=8, decimal_places=2)
+    role_type: str | None = Field(default=None, pattern="^(design|development|testing|implementation|pm|operations|other)$")
+    standard_rate_cny_per_day: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    wbs_task_id: str | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
 class CharterCreateIn(BaseModel):
     fields: dict
     wbs: list[dict] = []
@@ -1416,6 +1444,41 @@ def create_cost(project_id: str, body: CostIn, db: Session = Depends(get_db), ac
     return ok({"id": c.id})
 
 
+@router.patch("/api/projects/{project_id}/costs/{cost_id}")
+def update_cost(project_id: str, cost_id: str, body: CostUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    c = db.get(InvestmentCostEntry, cost_id)
+    if not c or c.is_deleted or c.project_id != project_id:
+        raise AppError("NOT_FOUND", "成本记录不存在", 404)
+    ensure_not_example(project)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("entry_date", "category", "cost_type"):
+        if field in data and data[field] is None:
+            raise AppError("INVALID_COST", f"{field} 不能为空", 400)
+    if "amount_cny" in data or "amount_10k" in data:
+        amount_cny = data.get("amount_cny")
+        if amount_cny is None and data.get("amount_10k") is not None:
+            amount_cny = (Decimal(str(data["amount_10k"])) * Decimal("10000")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        if amount_cny is None:
+            raise AppError("INVALID_AMOUNT", "amount_cny 或 amount_10k 至少填写一个", 400)
+        data["amount_cny"] = amount_cny
+        data.pop("amount_10k", None)
+    if "wbs_task_id" in data:
+        wbs = db.get(WbsTask, data["wbs_task_id"]) if data["wbs_task_id"] else None
+        if data["wbs_task_id"] and (not wbs or wbs.is_deleted or wbs.project_id != project_id):
+            raise AppError("INVALID_WBS", "关联 WBS 任务不存在或不属于当前项目")
+    field_map = {"entry_date": "recognition_date", "cost_type": "cost_status", "supplier": "supplier_snapshot"}
+    for key, value in data.items():
+        setattr(c, field_map.get(key, key), value)
+    audit(db, "investment_cost_entry", c.id, "update", actor, {"fields": list(data.keys())})
+    db.commit()
+    return ok({"id": c.id})
+
+
 @router.get("/api/projects/{project_id}/budget-items")
 def list_budget_items(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = db.query(InvestmentBudgetItem).filter(
@@ -1448,6 +1511,26 @@ def create_budget_item(project_id: str, body: BudgetItemIn, db: Session = Depend
     db.add(row)
     db.flush()
     audit(db, "investment_budget_item", row.id, "create", actor, {"amount_cny": money(row.amount_cny), "category": row.category})
+    db.commit()
+    return ok({"id": row.id})
+
+
+@router.patch("/api/projects/{project_id}/budget-items/{item_id}")
+def update_budget_item(project_id: str, item_id: str, body: BudgetItemUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    row = db.get(InvestmentBudgetItem, item_id)
+    if not row or row.is_deleted or row.subject_type != "project" or row.subject_id != project_id:
+        raise AppError("NOT_FOUND", "预算分项不存在", 404)
+    ensure_not_example(project)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("category", "name", "amount_cny"):
+        if field in data and data[field] is None:
+            raise AppError("INVALID_BUDGET_ITEM", f"{field} 不能为空", 400)
+    for key, value in data.items():
+        setattr(row, key, value)
+    audit(db, "investment_budget_item", row.id, "update", actor, {"fields": list(data.keys())})
     db.commit()
     return ok({"id": row.id})
 
@@ -1520,6 +1603,48 @@ def create_effort_entry(project_id: str, body: EffortEntryIn, db: Session = Depe
         "effort_days": str(row.effort_days), "role_type": row.role_type,
         "standard_rate_used": rate is not None,
     })
+    db.commit()
+    return ok({"id": row.id})
+
+
+@router.patch("/api/projects/{project_id}/effort-entries/{entry_id}")
+def update_effort_entry(project_id: str, entry_id: str, body: EffortEntryUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    row = db.get(InvestmentWorklog, entry_id)
+    if not row or row.is_deleted or row.project_id != project_id:
+        raise AppError("NOT_FOUND", "人天投入记录不存在", 404)
+    ensure_not_example(project)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("person_id", "work_date", "effort_days", "role_type"):
+        if field in data and data[field] is None:
+            raise AppError("INVALID_WORKLOG", f"{field} 不能为空", 400)
+    person_id = data.get("person_id", row.person_id)
+    work_date = data.get("work_date", row.work_date)
+    effort_days = data.get("effort_days", row.effort_days)
+    if work_date > date.today():
+        raise AppError("INVESTMENT_WORKLOG_FUTURE_DATE", "实际工时不能登记未来日期", 400)
+    require_it_member_if_configured(db, person_id, "投入人员")
+    existing_days = sum((
+        item.effort_days for item in db.query(InvestmentWorklog).filter(
+            InvestmentWorklog.person_id == person_id,
+            InvestmentWorklog.work_date == work_date,
+            InvestmentWorklog.is_deleted.is_(False),
+            InvestmentWorklog.id != row.id,
+        )
+    ), Decimal("0"))
+    if existing_days + effort_days > Decimal("2"):
+        raise AppError("INVESTMENT_WORKLOG_DAILY_LIMIT", "同一人员单日累计投入不能超过 2 人天", 409)
+    if "wbs_task_id" in data:
+        wbs = db.get(WbsTask, data["wbs_task_id"]) if data["wbs_task_id"] else None
+        if data["wbs_task_id"] and (not wbs or wbs.is_deleted or wbs.project_id != project_id):
+            raise AppError("INVALID_WBS", "关联 WBS 任务不存在或不属于当前项目")
+    if "role_type" in data:
+        row.activity_type = data["role_type"] if data["role_type"] in {"design", "development", "testing", "implementation", "pm"} else "other"
+    for key, value in data.items():
+        setattr(row, key, value)
+    audit(db, "investment_worklog", row.id, "update", actor, {"fields": list(data.keys())})
     db.commit()
     return ok({"id": row.id})
 

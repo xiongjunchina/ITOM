@@ -145,6 +145,69 @@ def test_cost_and_budget_usage(client, ctx):
     assert detail["actual_cost_10k"] == 25 and detail["budget_usage"] == 50.0
 
 
+def test_project_investment_rows_can_be_updated(client, ctx):
+    p = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="投入编辑项目")
+    pid = p["id"]
+
+    budget = client.post(f"/api/projects/{pid}/budget-items", json={
+        "category": "software", "name": "初始预算", "amount_cny": "1000.00", "note": "初始说明",
+    }, headers=ctx["pm"])
+    assert budget.status_code == 200, budget.text
+    budget_id = budget.json()["data"]["id"]
+    updated_budget = client.patch(f"/api/projects/{pid}/budget-items/{budget_id}", json={
+        "name": "调整后预算", "amount_cny": "1200.00", "note": "调整说明",
+    }, headers=ctx["pm"])
+    assert updated_budget.status_code == 200, updated_budget.text
+    budget_rows = client.get(f"/api/projects/{pid}/budget-items", headers=ctx["pm"]).json()["data"]
+    assert budget_rows[0]["name"] == "调整后预算" and budget_rows[0]["amount_cny"] == "1200.00"
+
+    cost = client.post(f"/api/projects/{pid}/costs", json={
+        "entry_date": str(TODAY), "amount_cny": "2000.00", "category": "software", "cost_type": "incurred",
+    }, headers=ctx["pm"])
+    assert cost.status_code == 200, cost.text
+    cost_id = cost.json()["data"]["id"]
+    updated_cost = client.patch(f"/api/projects/{pid}/costs/{cost_id}", json={
+        "amount_cny": "2500.00", "supplier": "调整后供应商", "note": "调整说明",
+    }, headers=ctx["pm"])
+    assert updated_cost.status_code == 200, updated_cost.text
+    cost_rows = client.get(f"/api/projects/{pid}/costs", headers=ctx["pm"]).json()["data"]
+    assert cost_rows[0]["amount_cny"] == "2500.00" and cost_rows[0]["supplier"] == "调整后供应商"
+
+    effort = client.post(f"/api/projects/{pid}/effort-entries", json={
+        "person_id": ctx["dev_person"], "work_date": str(TODAY), "effort_days": "0.50",
+        "role_type": "development", "standard_rate_cny_per_day": "1000.00", "note": "初始记录",
+    }, headers=ctx["pm"])
+    assert effort.status_code == 200, effort.text
+    effort_id = effort.json()["data"]["id"]
+    updated_effort = client.patch(f"/api/projects/{pid}/effort-entries/{effort_id}", json={
+        "effort_days": "1.00", "role_type": "testing", "note": "调整记录",
+    }, headers=ctx["pm"])
+    assert updated_effort.status_code == 200, updated_effort.text
+    effort_rows = client.get(f"/api/projects/{pid}/effort-entries", headers=ctx["pm"]).json()["data"]
+    assert effort_rows[0]["effort_days"] == "1.00" and effort_rows[0]["role_type"] == "testing"
+
+    second_effort = client.post(f"/api/projects/{pid}/effort-entries", json={
+        "person_id": ctx["dev_person"], "work_date": str(TODAY), "effort_days": "1.00",
+        "role_type": "development", "standard_rate_cny_per_day": "1000.00",
+    }, headers=ctx["pm"])
+    assert second_effort.status_code == 200, second_effort.text
+    over_limit = client.patch(f"/api/projects/{pid}/effort-entries/{effort_id}", json={
+        "effort_days": "1.01",
+    }, headers=ctx["pm"])
+    assert over_limit.status_code == 409
+    assert over_limit.json()["error"]["code"] == "INVESTMENT_WORKLOG_DAILY_LIMIT"
+
+    future = client.patch(f"/api/projects/{pid}/effort-entries/{effort_id}", json={
+        "work_date": str(TODAY + timedelta(days=1)),
+    }, headers=ctx["pm"])
+    assert future.status_code == 400
+    assert future.json()["error"]["code"] == "INVESTMENT_WORKLOG_FUTURE_DATE"
+
+    other = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="投入编辑隔离项目")
+    cross_project = client.patch(f"/api/projects/{other['id']}/costs/{cost_id}", json={"note": "越界"}, headers=ctx["pm"])
+    assert cross_project.status_code == 404
+
+
 def test_portfolio(client, ctx):
     r = client.post("/api/portfolios", json={"name": "数字化转型", "owner_id": ctx["cio_person"], "year": "2026"}, headers=ctx["cio"])
     assert r.json()["success"], r.text

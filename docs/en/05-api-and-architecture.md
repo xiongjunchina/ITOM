@@ -402,11 +402,13 @@ POST /api/projects/import-charter        # .docx parse → draft preview → con
 GET/POST /api/projects/{id}/wbs
 PATCH/DELETE /api/wbs/{task_id}
 DELETE /api/projects/{id}/wbs/batch-delete
-GET/POST/PATCH/DELETE /api/projects/{id}/milestones | /risks | /costs
-GET/POST /api/projects/{id}/budget-items
+GET/POST/DELETE /api/projects/{id}/milestones | GET/POST/PATCH/DELETE /api/projects/{id}/risks | /costs
+GET/POST/PATCH /api/projects/{id}/budget-items
 DELETE /api/project-budget-items/{item_id}
-GET/POST /api/projects/{id}/effort-entries
+PATCH /api/projects/{id}/budget-items/{item_id}
+GET/POST/PATCH /api/projects/{id}/effort-entries
 DELETE /api/project-effort-entries/{entry_id}
+PATCH /api/projects/{id}/effort-entries/{entry_id}
 GET /api/projects/{id}/investment-summary
 POST /api/wbs/{task_id}/move             # {parent_task_id?, before_task_id?}; only an unstarted subtree may change hierarchy or sibling order
 POST /api/projects/{id}/wbs/batch-move   # {task_ids:[1..500], parent_task_id?, before_task_id?}; atomically move multiple roots and complete subtrees
@@ -418,6 +420,8 @@ GET /api/projects/{id}/gantt             # Gantt data (tasks + dependencies + mi
 `POST /api/projects/{id}/wbs/batch-move` requires `projects.edit` and accepts 1–500 `task_ids`. Duplicate IDs are removed; when a parent and descendant are both submitted only the highest root remains, and every descendant follows that root. `parent_task_id=null` means top level and `before_task_id=null` means the end of the target layer. The server locks and validates every active WBS row in the project, rejecting missing/cross-project rows, invalid anchors, cycles, completed moved roots/descendants/target parent, and requests that would destabilize completed sibling codes. Any failure commits no order change. Success recalculates affected sibling `sort` and whole-tree `wbs_code`, writes one `move` audit per root, and returns `requested_task_ids`, normalized `moved_root_ids`, target parent/anchor, and total rows. The single-row `/api/wbs/{task_id}/move` reuses the same validation. The list endpoint still returns the complete WBS and real `total`; 50/100/200/All, page targets such as rows 51–75, and ancestor completion remain browser display behavior and do not change API pagination or tree relationships.
 
 Project-investment endpoints return CNY and person-days as decimal strings to avoid JSON floating-point loss. A cost write prefers `amount_cny` while old clients may still send `amount_10k`; exact CNY is authoritative if both appear. Budget and effort facts are soft-deletable. If an effort request omits the rate, the service reads `org_settings.report_role_rates[role_type]` and snapshots it on that fact. `investment-summary` returns budget, incurred/committed cost, person-days, standard-rate effort cost, budget execution, and category mix. Standard-rate cost never writes into cost detail or personal salary.
+
+The Project Detail compatibility APIs `PATCH /api/projects/{id}/costs/{cost_id}`, `PATCH /api/projects/{id}/budget-items/{item_id}`, and `PATCH /api/projects/{id}/effort-entries/{entry_id}` update the existing unified-ledger fact in place rather than creating duplicates. All require `projects.edit`, reuse example-data, WBS, member, future-date, and effort-limit guards, and write field-level audit entries. When a worklog person/date/effort changes, the daily total is rechecked after excluding the current row.
 
 ### 4.4 Requirement
 

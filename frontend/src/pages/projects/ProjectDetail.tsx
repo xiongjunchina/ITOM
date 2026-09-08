@@ -774,29 +774,51 @@ export default function ProjectDetail() {
     !isExample && (canEdit || (!!user?.person_id && user.person_id === task.assignee));
 
   // ---------- 成本 ----------
-  const [costModalOpen, setCostModalOpen] = useState(false);
+  const [costModal, setCostModal] = useState<{ mode: 'create' | 'edit'; cost?: CostEntry } | null>(null);
   const [costSaving, setCostSaving] = useState(false);
   const [costForm] = Form.useForm();
-  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
+  const [budgetModal, setBudgetModal] = useState<{ mode: 'create' | 'edit'; item?: ProjectBudgetItem } | null>(null);
   const [budgetForm] = Form.useForm();
-  const [effortModalOpen, setEffortModalOpen] = useState(false);
+  const [effortModal, setEffortModal] = useState<{ mode: 'create' | 'edit'; entry?: ProjectEffortEntry } | null>(null);
   const [effortForm] = Form.useForm();
   const [investmentSaving, setInvestmentSaving] = useState(false);
 
+  const openCostModal = (mode: 'create' | 'edit', cost?: CostEntry) => {
+    costForm.resetFields();
+    if (mode === 'edit' && cost) {
+      costForm.setFieldsValue({
+        entry_date: dayjs(cost.entry_date),
+        amount_cny: Number(cost.amount_cny),
+        category: cost.category,
+        cost_type: cost.cost_type,
+        supplier: cost.supplier ?? undefined,
+        note: cost.note ?? undefined,
+      });
+    }
+    setCostModal({ mode, cost });
+  };
+
   const submitCost = async () => {
+    if (!costModal) return;
     const v = await costForm.validateFields();
     setCostSaving(true);
     try {
-      await api.post(`/projects/${id}/costs`, {
+      const payload = {
         entry_date: (v.entry_date as Dayjs).format('YYYY-MM-DD'),
         amount_cny: v.amount_cny,
         category: v.category,
         cost_type: v.cost_type,
         supplier: v.supplier || null,
         note: v.note || null,
-      });
-      message.success(t('proj.costAdded'));
-      setCostModalOpen(false);
+      };
+      if (costModal.mode === 'edit' && costModal.cost) {
+        await api.patch(`/projects/${id}/costs/${costModal.cost.id}`, payload);
+        message.success(t('proj.costUpdated'));
+      } else {
+        await api.post(`/projects/${id}/costs`, payload);
+        message.success(t('proj.costAdded'));
+      }
+      setCostModal(null);
       void loadCosts();
       void loadDetail();
       void loadInvestment();
@@ -819,30 +841,69 @@ export default function ProjectDetail() {
     }
   };
 
+  const openBudgetModal = (mode: 'create' | 'edit', item?: ProjectBudgetItem) => {
+    budgetForm.resetFields();
+    if (mode === 'edit' && item) {
+      budgetForm.setFieldsValue({
+        category: item.category,
+        name: item.name,
+        amount_cny: Number(item.amount_cny),
+        note: item.note ?? undefined,
+      });
+    }
+    setBudgetModal({ mode, item });
+  };
+
   const submitBudgetItem = async () => {
+    if (!budgetModal) return;
     const values = await budgetForm.validateFields();
     setInvestmentSaving(true);
     try {
-      await api.post(`/projects/${id}/budget-items`, values);
+      if (budgetModal.mode === 'edit' && budgetModal.item) {
+        await api.patch(`/projects/${id}/budget-items/${budgetModal.item.id}`, values);
+      } else {
+        await api.post(`/projects/${id}/budget-items`, values);
+      }
       message.success(t('proj.investment.saved'));
-      setBudgetModalOpen(false);
+      setBudgetModal(null);
       void loadInvestment();
     } finally {
       setInvestmentSaving(false);
     }
   };
 
+  const openEffortModal = (mode: 'create' | 'edit', entry?: ProjectEffortEntry) => {
+    effortForm.resetFields();
+    if (mode === 'edit' && entry) {
+      effortForm.setFieldsValue({
+        person_id: entry.person_id,
+        work_date: dayjs(entry.work_date),
+        role_type: entry.role_type,
+        effort_days: Number(entry.effort_days),
+        standard_rate_cny_per_day: entry.standard_rate_cny_per_day == null ? undefined : Number(entry.standard_rate_cny_per_day),
+        note: entry.note ?? undefined,
+      });
+    }
+    setEffortModal({ mode, entry });
+  };
+
   const submitEffortEntry = async () => {
+    if (!effortModal) return;
     const values = await effortForm.validateFields();
     setInvestmentSaving(true);
     try {
-      await api.post(`/projects/${id}/effort-entries`, {
+      const payload = {
         ...values,
         work_date: (values.work_date as Dayjs).format('YYYY-MM-DD'),
         standard_rate_cny_per_day: values.standard_rate_cny_per_day ?? null,
-      });
+      };
+      if (effortModal.mode === 'edit' && effortModal.entry) {
+        await api.patch(`/projects/${id}/effort-entries/${effortModal.entry.id}`, payload);
+      } else {
+        await api.post(`/projects/${id}/effort-entries`, payload);
+      }
       message.success(t('proj.investment.saved'));
-      setEffortModalOpen(false);
+      setEffortModal(null);
       void loadInvestment();
     } finally {
       setInvestmentSaving(false);
@@ -1577,14 +1638,23 @@ export default function ProjectDetail() {
           {
             title: t('common.actions'),
             key: 'action',
-            width: 80,
+            width: 112,
             render: (_: unknown, r: CostEntry) =>
-              (!isExample && canEdit) || canDeleteExamples ? (
-                <Popconfirm title={t('proj.confirmDeleteCost')} onConfirm={() => void deleteCost(r)}>
-                  <Button type="link" size="small" danger>
-                    {t('common.delete')}
-                  </Button>
-                </Popconfirm>
+              ((!isExample && canEdit) || canDeleteExamples) ? (
+                <Space size={0}>
+                  {!isExample && canEdit && (
+                    <Tooltip title={t('common.edit')}>
+                      <Button type="text" size="small" icon={<EditOutlined />} aria-label={t('common.edit')} onClick={() => openCostModal('edit', r)} />
+                    </Tooltip>
+                  )}
+                  {((!isExample && canEdit) || canDeleteExamples) && (
+                    <Popconfirm title={t('proj.confirmDeleteCost')} onConfirm={() => void deleteCost(r)}>
+                      <Tooltip title={t('common.delete')}>
+                        <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
+                      </Tooltip>
+                    </Popconfirm>
+                  )}
+                </Space>
               ) : null,
           } as ColumnsType<CostEntry>[number],
         ]
@@ -1596,10 +1666,19 @@ export default function ProjectDetail() {
     { title: t('proj.investment.name'), dataIndex: 'name', width: 240 },
     { title: t('proj.investment.amountCny'), dataIndex: 'amount_cny', width: 180, render: fmtCny },
     { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (value) => value || '-' },
-    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 80, render: (_: unknown, row: ProjectBudgetItem) => (
-      <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteBudgetItem(row)}>
-        <Button type="link" size="small" danger>{t('common.delete')}</Button>
-      </Popconfirm>
+    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 112, render: (_: unknown, row: ProjectBudgetItem) => (
+      <Space size={0}>
+        {!isExample && (
+          <Tooltip title={t('common.edit')}>
+            <Button type="text" size="small" icon={<EditOutlined />} aria-label={t('common.edit')} onClick={() => openBudgetModal('edit', row)} />
+          </Tooltip>
+        )}
+        <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteBudgetItem(row)}>
+          <Tooltip title={t('common.delete')}>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
+          </Tooltip>
+        </Popconfirm>
+      </Space>
     ) } as ColumnsType<ProjectBudgetItem>[number]] : []),
   ];
 
@@ -1610,10 +1689,19 @@ export default function ProjectDetail() {
     { title: t('proj.investment.effort'), dataIndex: 'effort_days', width: 100 },
     { title: t('proj.investment.rate'), dataIndex: 'standard_rate_cny_per_day', width: 170, render: fmtCny },
     { title: t('proj.cost.col.note'), dataIndex: 'note', ellipsis: true, render: (value) => value || '-' },
-    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 80, render: (_: unknown, row: ProjectEffortEntry) => (
-      <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteEffortEntry(row)}>
-        <Button type="link" size="small" danger>{t('common.delete')}</Button>
-      </Popconfirm>
+    ...(canEdit ? [{ title: t('common.actions'), key: 'action', width: 112, render: (_: unknown, row: ProjectEffortEntry) => (
+      <Space size={0}>
+        {!isExample && (
+          <Tooltip title={t('common.edit')}>
+            <Button type="text" size="small" icon={<EditOutlined />} aria-label={t('common.edit')} onClick={() => openEffortModal('edit', row)} />
+          </Tooltip>
+        )}
+        <Popconfirm title={t('common.deleteConfirm')} onConfirm={() => void deleteEffortEntry(row)}>
+          <Tooltip title={t('common.delete')}>
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} aria-label={t('common.delete')} />
+          </Tooltip>
+        </Popconfirm>
+      </Space>
     ) } as ColumnsType<ProjectEffortEntry>[number]] : []),
   ];
 
@@ -1653,7 +1741,7 @@ export default function ProjectDetail() {
       </Row>
 
       <Card title={t('proj.investment.budgetItems')} size="small" extra={canEdit && (
-        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => { budgetForm.resetFields(); setBudgetModalOpen(true); }}>
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openBudgetModal('create')}>
           {t('proj.investment.addBudget')}
         </Button>
       )}>
@@ -1669,10 +1757,7 @@ export default function ProjectDetail() {
               size="small"
               type="primary"
               icon={<PlusOutlined />}
-              onClick={() => {
-                costForm.resetFields();
-                setCostModalOpen(true);
-              }}
+              onClick={() => openCostModal('create')}
             >
               {t('proj.addEntry')}
             </Button>
@@ -1691,7 +1776,7 @@ export default function ProjectDetail() {
       </Card>
 
       <Card title={t('proj.investment.effortEntries')} size="small" extra={canEdit && (
-        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => { effortForm.resetFields(); setEffortModalOpen(true); }}>
+        <Button size="small" type="primary" icon={<PlusOutlined />} onClick={() => openEffortModal('create')}>
           {t('proj.investment.addEffort')}
         </Button>
       )}>
@@ -2172,13 +2257,13 @@ export default function ProjectDetail() {
         </Form>
       </Modal>
 
-      {/* 新增成本明细 Modal */}
+      {/* 新增/编辑成本明细 Modal */}
       <Modal
-        title={t('proj.addCostTitle')}
-        open={costModalOpen}
+        title={costModal?.mode === 'edit' ? t('proj.editCostTitle') : t('proj.addCostTitle')}
+        open={!!costModal}
         onOk={() => void submitCost()}
         confirmLoading={costSaving}
-        onCancel={() => setCostModalOpen(false)}
+        onCancel={() => setCostModal(null)}
         destroyOnClose
       >
         <Form form={costForm} layout="vertical" preserve={false}>
@@ -2193,10 +2278,10 @@ export default function ProjectDetail() {
             <InputNumber min={0.01} precision={2} style={{ width: '100%' }} placeholder={t('proj.cost.amountPlaceholder')} />
           </Form.Item>
           <Form.Item name="category" label={t('proj.investment.category')} initialValue="other" rules={[{ required: true }]}>
-            <Select options={['software', 'hardware', 'service', 'labor', 'other'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
+            <Select options={['software', 'hardware', 'cloud', 'network', 'security', 'service', 'outsourcing', 'telecom', 'facility', 'labor', 'other', 'legacy'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
           </Form.Item>
           <Form.Item name="cost_type" label={t('proj.investment.costType')} initialValue="incurred" rules={[{ required: true }]}>
-            <Select options={['incurred', 'committed'].map((value) => ({ value, label: t(`proj.investment.costType.${value}`) }))} />
+            <Select options={['incurred', 'committed', 'paid'].map((value) => ({ value, label: t(`proj.investment.costType.${value}`) }))} />
           </Form.Item>
           <Form.Item name="supplier" label={t('proj.investment.supplier')}>
             <Input maxLength={128} />
@@ -2208,16 +2293,16 @@ export default function ProjectDetail() {
       </Modal>
 
       <Modal
-        title={t('proj.investment.addBudget')}
-        open={budgetModalOpen}
+        title={budgetModal?.mode === 'edit' ? t('proj.investment.editBudget') : t('proj.investment.addBudget')}
+        open={!!budgetModal}
         onOk={() => void submitBudgetItem()}
         confirmLoading={investmentSaving}
-        onCancel={() => setBudgetModalOpen(false)}
+        onCancel={() => setBudgetModal(null)}
         destroyOnClose
       >
         <Form form={budgetForm} layout="vertical" preserve={false}>
           <Form.Item name="category" label={t('proj.investment.category')} initialValue="software" rules={[{ required: true }]}>
-            <Select options={['software', 'hardware', 'service', 'labor', 'other'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
+            <Select options={['software', 'hardware', 'cloud', 'network', 'security', 'service', 'outsourcing', 'telecom', 'facility', 'labor', 'other', 'legacy'].map((value) => ({ value, label: t(`proj.investment.category.${value}`) }))} />
           </Form.Item>
           <Form.Item name="name" label={t('proj.investment.name')} rules={[{ required: true }]}><Input maxLength={128} /></Form.Item>
           <Form.Item name="amount_cny" label={t('proj.investment.amountCny')} rules={[{ required: true }]}><InputNumber min={0.01} precision={2} style={{ width: '100%' }} /></Form.Item>
@@ -2226,11 +2311,11 @@ export default function ProjectDetail() {
       </Modal>
 
       <Modal
-        title={t('proj.investment.addEffort')}
-        open={effortModalOpen}
+        title={effortModal?.mode === 'edit' ? t('proj.investment.editEffort') : t('proj.investment.addEffort')}
+        open={!!effortModal}
         onOk={() => void submitEffortEntry()}
         confirmLoading={investmentSaving}
-        onCancel={() => setEffortModalOpen(false)}
+        onCancel={() => setEffortModal(null)}
         destroyOnClose
       >
         <Form form={effortForm} layout="vertical" preserve={false}>
