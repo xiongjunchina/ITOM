@@ -140,6 +140,19 @@ export const zh: Dict = {
   // 进度：导入 / 里程碑跟踪 / WBS
   'proj.importWbsMs': '导入 WBS 与里程碑',
   'proj.importHint': '模板含「WBS任务」单个工作表，里程碑由「里程碑=是」的行派生；上级/前置任务按 WBS 编号挂接，导入后自动生成层级与甘特图',
+  'proj.wbs.roundtrip.export': '导出当前 WBS',
+  'proj.wbs.roundtrip.import': '回导 WBS',
+  'proj.wbs.roundtrip.title': 'WBS 回导预览',
+  'proj.wbs.roundtrip.confirm': '确认合并导入',
+  'proj.wbs.roundtrip.result': '处理结果',
+  'proj.wbs.roundtrip.summary': '新增 {create} 条 · 更新 {update} 条 · 无变化 {unchanged} 条 · 阻断 {blocked} 条',
+  'proj.wbs.roundtrip.omitted': 'Excel 未包含的 {n} 条系统 WBS 将保留，不会删除。',
+  'proj.wbs.roundtrip.blocked': '发现 {n} 个阻断项；修正后请重新上传预览。',
+  'proj.wbs.roundtrip.committed': 'WBS 回导完成，已合并 {n} 条变更',
+  'proj.wbs.roundtrip.action.create': '新增',
+  'proj.wbs.roundtrip.action.update': '更新',
+  'proj.wbs.roundtrip.action.unchanged': '无变化',
+  'proj.wbs.roundtrip.action.blocked': '阻断',
 
   // 里程碑跟踪（派生只读）
   'proj.mtTitle': '里程碑跟踪',
@@ -531,6 +544,19 @@ export const en: Dict = {
   'proj.importWbsMs': 'Import WBS & Milestones',
   'proj.importHint':
     'The template has a single "WBS Tasks" sheet; milestones are derived from rows flagged "Milestone=Yes". Parent/predecessor tasks are matched by WBS code, and hierarchy and the Gantt chart are generated on import',
+  'proj.wbs.roundtrip.export': 'Export Current WBS',
+  'proj.wbs.roundtrip.import': 'Re-import WBS',
+  'proj.wbs.roundtrip.title': 'WBS Re-import Preview',
+  'proj.wbs.roundtrip.confirm': 'Confirm Merge Import',
+  'proj.wbs.roundtrip.result': 'Result',
+  'proj.wbs.roundtrip.summary': 'Create {create} · Update {update} · Unchanged {unchanged} · Blocked {blocked}',
+  'proj.wbs.roundtrip.omitted': '{n} system WBS task(s) are absent from the file and will be kept.',
+  'proj.wbs.roundtrip.blocked': '{n} blocking item(s) found. Correct the workbook and preview it again.',
+  'proj.wbs.roundtrip.committed': 'WBS re-import complete; {n} change(s) merged',
+  'proj.wbs.roundtrip.action.create': 'Create',
+  'proj.wbs.roundtrip.action.update': 'Update',
+  'proj.wbs.roundtrip.action.unchanged': 'Unchanged',
+  'proj.wbs.roundtrip.action.blocked': 'Blocked',
 
   // Milestone tracking (derived, read-only)
   'proj.mtTitle': 'Milestone Tracking',

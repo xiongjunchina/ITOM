@@ -59,6 +59,7 @@ import StickyTable from '../../components/StickyTable';
 import BatchDeleteToolbar from '../../components/BatchDeleteToolbar';
 import GanttChart from '../../components/GanttChart';
 import ImportButtons from '../../components/ImportButtons';
+import WbsRoundtripButtons from '../../components/WbsRoundtripButtons';
 import ReasonModal from './ReasonModal';
 import ProjectEditModal from './ProjectEditModal';
 import { selectHierarchySafeWbsPage, type WbsDisplayLimit } from './wbsDisplayLimit';
@@ -1451,6 +1452,17 @@ export default function ProjectDetail() {
                 void loadDetail();
               }}
               buttonText={t('proj.importWbsMs')}
+            />
+            <WbsRoundtripButtons
+              exportUrl={`/projects/${id}/wbs/export`}
+              previewUrl={`/projects/${id}/wbs/import/preview`}
+              commitUrl={`/projects/${id}/wbs/import/commit`}
+              onDone={() => {
+                void loadWbs();
+                void loadMilestones();
+                void loadMilestoneTracking();
+                void loadDetail();
+              }}
             />
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
               {t('proj.importHint')}

@@ -126,8 +126,16 @@ def build_template(sheets: list[Sheet]) -> bytes:
     return buf.getvalue()
 
 
-def build_export(spec: Sheet, rows: list[dict]) -> bytes:
-    """生成带有说明行的可回导 Excel，导出后可直接修改并再次导入。"""
+_META_SHEET = "_ITOM_META"
+
+
+def build_export(spec: Sheet, rows: list[dict], *, metadata: dict[str, str] | None = None) -> bytes:
+    """生成带有说明行的可回导 Excel，导出后可直接修改并再次导入。
+
+    ``metadata`` 用于保存系统生成的、不可由业务列替代的回导上下文（例如
+    项目 ID 与导出快照）。元数据工作表隐藏在 Excel 中，导入端仍必须校验，
+    不能把它当作安全边界。
+    """
     wb = Workbook()
     wb.remove(wb.active)
     ws = wb.create_sheet(spec.name)
@@ -151,9 +159,34 @@ def build_export(spec: Sheet, rows: list[dict]) -> bytes:
                 value = "；".join(str(v) for v in value)
             ws.cell(row=row_idx, column=col_idx, value=value)
     ws.freeze_panes = "A3"
+    if metadata:
+        meta = wb.create_sheet(_META_SHEET)
+        meta.sheet_state = "hidden"
+        meta.append(["key", "value"])
+        for key, value in metadata.items():
+            meta.append([key, value])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def read_export_metadata(file_bytes: bytes) -> dict[str, str]:
+    """读取 ``build_export(..., metadata=...)`` 写入的隐藏回导元数据。
+
+    损坏、缺失或被用户删除的元数据以空字典返回，由具体导入器决定是否拒绝。
+    """
+    try:
+        wb = _load_workbook_resilient(file_bytes)
+    except (BadZipFile, InvalidFileException, OSError, KeyError, ValueError):
+        return {}
+    if _META_SHEET not in wb.sheetnames:
+        return {}
+    meta: dict[str, str] = {}
+    for key, value in wb[_META_SHEET].iter_rows(min_row=2, max_col=2, values_only=True):
+        if key is None or value is None:
+            continue
+        meta[str(key).strip()] = str(value).strip()
+    return meta
 
 
 def _coerce(col: Col, value: Any) -> Any:
