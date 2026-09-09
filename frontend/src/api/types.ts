@@ -1273,6 +1273,38 @@ export interface ImportResult {
   failed: ImportFailedRow[];
 }
 
+/** 项目进度页 WBS 回导预览：先比对，再由用户确认整批提交。 */
+export type WbsRoundtripAction = 'create' | 'update' | 'unchanged' | 'blocked';
+
+export interface WbsRoundtripSummary {
+  create: number;
+  update: number;
+  unchanged: number;
+  blocked: number;
+  /** 系统中存在但 Excel 未包含的任务；默认保留。 */
+  omitted: number;
+}
+
+export interface WbsRoundtripPreviewRow {
+  row: number;
+  task_id: string | null;
+  wbs_code: string;
+  name: string;
+  action: WbsRoundtripAction;
+}
+
+export interface WbsRoundtripPreview {
+  can_commit: boolean;
+  stale: boolean;
+  summary: WbsRoundtripSummary;
+  rows: WbsRoundtripPreviewRow[];
+  errors: ImportFailedRow[];
+}
+
+export interface WbsRoundtripCommitResult {
+  applied: WbsRoundtripSummary;
+}
+
 // ============ M4 项目管理 ============
 
 /** 项目状态 */
@@ -1511,8 +1543,8 @@ export interface CostEntry {
   entry_date: string;
   amount_10k: number;
   amount_cny: string;
-  category: 'software' | 'hardware' | 'service' | 'labor' | 'other' | 'legacy';
-  cost_type: 'incurred' | 'committed';
+  category: 'software' | 'hardware' | 'cloud' | 'network' | 'security' | 'service' | 'outsourcing' | 'telecom' | 'facility' | 'labor' | 'other' | 'legacy';
+  cost_type: 'incurred' | 'committed' | 'paid';
   supplier: string | null;
   wbs_task_id: string | null;
   note: string | null;
@@ -1520,7 +1552,7 @@ export interface CostEntry {
 
 export interface ProjectBudgetItem {
   id: string;
-  category: 'software' | 'hardware' | 'service' | 'labor' | 'other';
+  category: 'software' | 'hardware' | 'cloud' | 'network' | 'security' | 'service' | 'outsourcing' | 'telecom' | 'facility' | 'labor' | 'other';
   name: string;
   amount_cny: string;
   note: string | null;

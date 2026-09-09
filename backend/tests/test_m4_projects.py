@@ -145,6 +145,69 @@ def test_cost_and_budget_usage(client, ctx):
     assert detail["actual_cost_10k"] == 25 and detail["budget_usage"] == 50.0
 
 
+def test_project_investment_rows_can_be_updated(client, ctx):
+    p = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="投入编辑项目")
+    pid = p["id"]
+
+    budget = client.post(f"/api/projects/{pid}/budget-items", json={
+        "category": "software", "name": "初始预算", "amount_cny": "1000.00", "note": "初始说明",
+    }, headers=ctx["pm"])
+    assert budget.status_code == 200, budget.text
+    budget_id = budget.json()["data"]["id"]
+    updated_budget = client.patch(f"/api/projects/{pid}/budget-items/{budget_id}", json={
+        "name": "调整后预算", "amount_cny": "1200.00", "note": "调整说明",
+    }, headers=ctx["pm"])
+    assert updated_budget.status_code == 200, updated_budget.text
+    budget_rows = client.get(f"/api/projects/{pid}/budget-items", headers=ctx["pm"]).json()["data"]
+    assert budget_rows[0]["name"] == "调整后预算" and budget_rows[0]["amount_cny"] == "1200.00"
+
+    cost = client.post(f"/api/projects/{pid}/costs", json={
+        "entry_date": str(TODAY), "amount_cny": "2000.00", "category": "software", "cost_type": "incurred",
+    }, headers=ctx["pm"])
+    assert cost.status_code == 200, cost.text
+    cost_id = cost.json()["data"]["id"]
+    updated_cost = client.patch(f"/api/projects/{pid}/costs/{cost_id}", json={
+        "amount_cny": "2500.00", "supplier": "调整后供应商", "note": "调整说明",
+    }, headers=ctx["pm"])
+    assert updated_cost.status_code == 200, updated_cost.text
+    cost_rows = client.get(f"/api/projects/{pid}/costs", headers=ctx["pm"]).json()["data"]
+    assert cost_rows[0]["amount_cny"] == "2500.00" and cost_rows[0]["supplier"] == "调整后供应商"
+
+    effort = client.post(f"/api/projects/{pid}/effort-entries", json={
+        "person_id": ctx["dev_person"], "work_date": str(TODAY), "effort_days": "0.50",
+        "role_type": "development", "standard_rate_cny_per_day": "1000.00", "note": "初始记录",
+    }, headers=ctx["pm"])
+    assert effort.status_code == 200, effort.text
+    effort_id = effort.json()["data"]["id"]
+    updated_effort = client.patch(f"/api/projects/{pid}/effort-entries/{effort_id}", json={
+        "effort_days": "1.00", "role_type": "testing", "note": "调整记录",
+    }, headers=ctx["pm"])
+    assert updated_effort.status_code == 200, updated_effort.text
+    effort_rows = client.get(f"/api/projects/{pid}/effort-entries", headers=ctx["pm"]).json()["data"]
+    assert effort_rows[0]["effort_days"] == "1.00" and effort_rows[0]["role_type"] == "testing"
+
+    second_effort = client.post(f"/api/projects/{pid}/effort-entries", json={
+        "person_id": ctx["dev_person"], "work_date": str(TODAY), "effort_days": "1.00",
+        "role_type": "development", "standard_rate_cny_per_day": "1000.00",
+    }, headers=ctx["pm"])
+    assert second_effort.status_code == 200, second_effort.text
+    over_limit = client.patch(f"/api/projects/{pid}/effort-entries/{effort_id}", json={
+        "effort_days": "1.01",
+    }, headers=ctx["pm"])
+    assert over_limit.status_code == 409
+    assert over_limit.json()["error"]["code"] == "INVESTMENT_WORKLOG_DAILY_LIMIT"
+
+    future = client.patch(f"/api/projects/{pid}/effort-entries/{effort_id}", json={
+        "work_date": str(TODAY + timedelta(days=1)),
+    }, headers=ctx["pm"])
+    assert future.status_code == 400
+    assert future.json()["error"]["code"] == "INVESTMENT_WORKLOG_FUTURE_DATE"
+
+    other = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="投入编辑隔离项目")
+    cross_project = client.patch(f"/api/projects/{other['id']}/costs/{cost_id}", json={"note": "越界"}, headers=ctx["pm"])
+    assert cross_project.status_code == 404
+
+
 def test_portfolio(client, ctx):
     r = client.post("/api/portfolios", json={"name": "数字化转型", "owner_id": ctx["cio_person"], "year": "2026"}, headers=ctx["cio"])
     assert r.json()["success"], r.text
@@ -297,3 +360,166 @@ def test_progress_template_and_import(client, ctx):
     r = client.post(f"/api/projects/{demo['id']}/import-progress",
                     files={"file": ("p.xlsx", buf.getvalue())}, headers=ctx["pm"])
     assert r.json()["error"]["code"] == "EXAMPLE_READONLY"
+
+
+def test_wbs_roundtrip_export_preview_and_atomic_merge(client, ctx):
+    """当前 WBS 导出后可差异回导：更新/新增不重复，错误文件不产生部分写入。"""
+    import io
+    from openpyxl import load_workbook
+
+    project = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="WBS 回导项目")
+    pid = project["id"]
+    root = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "原始任务", "assignee": ctx["pm_person"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=3)),
+    }, headers=ctx["pm"]).json()["data"]
+    child = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "子任务", "assignee": ctx["pm_person"], "parent_task_id": root["id"],
+        "start_date": str(TODAY), "end_date": str(TODAY + timedelta(days=4)),
+    }, headers=ctx["pm"]).json()["data"]
+
+    exported = client.get(f"/api/projects/{pid}/wbs/export", headers=ctx["pm"])
+    assert exported.status_code == 200
+    workbook = load_workbook(io.BytesIO(exported.content))
+    assert "WBS回导" in workbook.sheetnames
+    assert workbook["_ITOM_META"].sheet_state == "hidden"
+    sheet = workbook["WBS回导"]
+    headers = {cell.value.lstrip("*"): cell.column for cell in sheet[1]}
+    first_row = 3
+    assert sheet.cell(first_row, headers["任务ID（系统字段，请勿修改）"]).value == root["id"]
+    sheet.cell(first_row, headers["任务名称(交付物)"]).value = "已线下修订"
+    sheet.cell(first_row, headers["备注"]).value = "来自回导"
+    # 任务 ID 留空的新行按 WBS 编号创建；缺少的旧行不会被删除。
+    sheet.append([
+        "", "2", "2.上线", "新增上线任务", "上线范围", "验收报告", "项目张经理", "是", "1",
+        str(TODAY + timedelta(days=5)), str(TODAY + timedelta(days=7)), "", "", 0, "新增",
+    ])
+    changed = io.BytesIO(); workbook.save(changed)
+
+    preview = client.post(
+        f"/api/projects/{pid}/wbs/import/preview",
+        files={"file": ("wbs.xlsx", changed.getvalue())}, headers=ctx["pm"],
+    )
+    assert preview.status_code == 200, preview.text
+    preview_data = preview.json()["data"]
+    assert preview_data["can_commit"] is True
+    assert preview_data["summary"] == {"create": 1, "update": 1, "unchanged": 1, "blocked": 0, "omitted": 0}
+
+    committed = client.post(
+        f"/api/projects/{pid}/wbs/import/commit",
+        files={"file": ("wbs.xlsx", changed.getvalue())}, headers=ctx["pm"],
+    )
+    assert committed.status_code == 200, committed.text
+    tasks = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"]
+    by_name = {task["name"]: task for task in tasks}
+    assert by_name["已线下修订"]["id"] == root["id"]
+    assert by_name["已线下修订"]["remarks"] == "来自回导"
+    assert by_name["新增上线任务"]["predecessor_ids"] == [root["id"]]
+    assert child["id"] in {task["id"] for task in tasks}
+
+    # 原导出文件快照已过期，不能覆盖回导后的当前 WBS。
+    stale = client.post(
+        f"/api/projects/{pid}/wbs/import/preview",
+        files={"file": ("stale.xlsx", changed.getvalue())}, headers=ctx["pm"],
+    ).json()["data"]
+    assert stale["can_commit"] is False and stale["stale"] is True
+    assert any("重新导出" in error["error"] for error in stale["errors"])
+
+    fresh = client.get(f"/api/projects/{pid}/wbs/export", headers=ctx["pm"])
+    fresh_preview = client.post(
+        f"/api/projects/{pid}/wbs/import/preview",
+        files={"file": ("fresh.xlsx", fresh.content)}, headers=ctx["pm"],
+    ).json()["data"]
+    assert fresh_preview["can_commit"] is True
+    assert fresh_preview["summary"]["unchanged"] == 3
+
+    # 缺少某行只标记“保留”，不能按文件缺失删除系统原有 WBS。
+    keep_book = load_workbook(io.BytesIO(fresh.content))
+    keep_book["WBS回导"].delete_rows(4)  # 删除原子任务行，保留根与新增一级任务
+    keep_file = io.BytesIO(); keep_book.save(keep_file)
+    keep_preview = client.post(
+        f"/api/projects/{pid}/wbs/import/preview",
+        files={"file": ("keep.xlsx", keep_file.getvalue())}, headers=ctx["pm"],
+    ).json()["data"]
+    assert keep_preview["can_commit"] is True
+    assert keep_preview["summary"]["omitted"] == 1
+    assert client.post(
+        f"/api/projects/{pid}/wbs/import/commit",
+        files={"file": ("keep.xlsx", keep_file.getvalue())}, headers=ctx["pm"],
+    ).status_code == 200
+    retained = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"]
+    assert child["id"] in {task["id"] for task in retained}
+
+
+def test_wbs_roundtrip_rejects_completed_actual_date_conflict_without_write(client, ctx):
+    """已完成任务回导时不能同时重新打开并改实际日期，且预览不写入。"""
+    import io
+    from openpyxl import load_workbook
+
+    project = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="WBS 回导日期锁定")
+    pid = project["id"]
+    task = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "完成任务", "assignee": ctx["pm_person"],
+        "start_date": str(TODAY - timedelta(days=4)), "end_date": str(TODAY),
+    }, headers=ctx["pm"]).json()["data"]
+    client.patch(f"/api/wbs/{task['id']}", json={"actual_end": str(TODAY)}, headers=ctx["pm"])
+
+    exported = client.get(f"/api/projects/{pid}/wbs/export", headers=ctx["pm"])
+    workbook = load_workbook(io.BytesIO(exported.content))
+    sheet = workbook["WBS回导"]
+    headers = {cell.value.lstrip("*"): cell.column for cell in sheet[1]}
+    sheet.cell(3, headers["完成度%(0-100)"]).value = 50
+    sheet.cell(3, headers["实际开始"]).value = str(TODAY - timedelta(days=3))
+    invalid = io.BytesIO(); workbook.save(invalid)
+
+    preview = client.post(
+        f"/api/projects/{pid}/wbs/import/preview",
+        files={"file": ("invalid.xlsx", invalid.getvalue())}, headers=ctx["pm"],
+    ).json()["data"]
+    assert preview["can_commit"] is False
+    assert any("请先重新打开任务，再修改实际日期" in error["error"] for error in preview["errors"])
+    blocked_commit = client.post(
+        f"/api/projects/{pid}/wbs/import/commit",
+        files={"file": ("invalid.xlsx", invalid.getvalue())}, headers=ctx["pm"],
+    )
+    assert blocked_commit.status_code == 400
+    persisted = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"]
+    assert persisted[0]["progress"] == 100 and persisted[0]["actual_start"] is None
+
+
+def test_wbs_roundtrip_reopens_completed_task_and_keeps_first_completion_audit(client, ctx):
+    """仅调低完成度会重开任务、清空实际结束日期并保留首次完成审计。"""
+    import io
+    from openpyxl import load_workbook
+
+    project = _mkproject(client, ctx["pm"], pm=ctx["pm_person"], name="WBS 回导重新打开")
+    pid = project["id"]
+    task = client.post(f"/api/projects/{pid}/wbs", json={
+        "name": "可重新打开任务", "assignee": ctx["pm_person"],
+        "start_date": str(TODAY - timedelta(days=4)), "end_date": str(TODAY),
+    }, headers=ctx["pm"]).json()["data"]
+    client.patch(f"/api/wbs/{task['id']}", json={"actual_end": str(TODAY)}, headers=ctx["pm"])
+    completed = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"][0]
+    assert completed["completed_at"] is not None
+
+    exported = client.get(f"/api/projects/{pid}/wbs/export", headers=ctx["pm"])
+    workbook = load_workbook(io.BytesIO(exported.content))
+    sheet = workbook["WBS回导"]
+    headers = {cell.value.lstrip("*"): cell.column for cell in sheet[1]}
+    # 保留导出的实际日期不动，只调低完成度；服务端应采用页面同样的重开规则。
+    sheet.cell(3, headers["完成度%(0-100)"]).value = 50
+    reopened_file = io.BytesIO(); workbook.save(reopened_file)
+
+    preview = client.post(
+        f"/api/projects/{pid}/wbs/import/preview",
+        files={"file": ("reopen.xlsx", reopened_file.getvalue())}, headers=ctx["pm"],
+    ).json()["data"]
+    assert preview["can_commit"] is True and preview["summary"]["update"] == 1
+    assert client.post(
+        f"/api/projects/{pid}/wbs/import/commit",
+        files={"file": ("reopen.xlsx", reopened_file.getvalue())}, headers=ctx["pm"],
+    ).status_code == 200
+    reopened = client.get(f"/api/projects/{pid}/wbs", headers=ctx["pm"]).json()["data"][0]
+    assert reopened["progress"] == 50
+    assert reopened["actual_end"] is None
+    assert reopened["completed_at"] == completed["completed_at"]

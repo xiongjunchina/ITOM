@@ -1,4 +1,6 @@
 """项目管理路由（PRD §6）。派生指标全部实时计算；WBS 任务状态可由任务负责人更新（数据范围规则）。"""
+import hashlib
+import json
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -210,6 +212,34 @@ class EffortEntryIn(BaseModel):
     work_date: date
     effort_days: Decimal = Field(gt=0, le=2, max_digits=8, decimal_places=2)
     role_type: str = Field(pattern="^(design|development|testing|implementation|pm|operations|other)$")
+    standard_rate_cny_per_day: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    wbs_task_id: str | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
+class CostUpdate(BaseModel):
+    entry_date: date | None = None
+    amount_cny: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
+    amount_10k: float | None = Field(default=None, gt=0)
+    category: str | None = Field(default=None, pattern="^(software|hardware|cloud|network|security|service|outsourcing|telecom|facility|labor|other|legacy)$")
+    cost_type: str | None = Field(default=None, pattern="^(incurred|committed|paid)$")
+    supplier: str | None = Field(default=None, max_length=128)
+    wbs_task_id: str | None = None
+    note: str | None = None
+
+
+class BudgetItemUpdate(BaseModel):
+    category: str | None = Field(default=None, pattern="^(software|hardware|cloud|network|security|service|outsourcing|telecom|facility|labor|other|legacy)$")
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    amount_cny: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class EffortEntryUpdate(BaseModel):
+    person_id: str | None = None
+    work_date: date | None = None
+    effort_days: Decimal | None = Field(default=None, gt=0, le=2, max_digits=8, decimal_places=2)
+    role_type: str | None = Field(default=None, pattern="^(design|development|testing|implementation|pm|operations|other)$")
     standard_rate_cny_per_day: Decimal | None = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     wbs_task_id: str | None = None
     note: str | None = Field(default=None, max_length=500)
@@ -1416,6 +1446,41 @@ def create_cost(project_id: str, body: CostIn, db: Session = Depends(get_db), ac
     return ok({"id": c.id})
 
 
+@router.patch("/api/projects/{project_id}/costs/{cost_id}")
+def update_cost(project_id: str, cost_id: str, body: CostUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    c = db.get(InvestmentCostEntry, cost_id)
+    if not c or c.is_deleted or c.project_id != project_id:
+        raise AppError("NOT_FOUND", "成本记录不存在", 404)
+    ensure_not_example(project)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("entry_date", "category", "cost_type"):
+        if field in data and data[field] is None:
+            raise AppError("INVALID_COST", f"{field} 不能为空", 400)
+    if "amount_cny" in data or "amount_10k" in data:
+        amount_cny = data.get("amount_cny")
+        if amount_cny is None and data.get("amount_10k") is not None:
+            amount_cny = (Decimal(str(data["amount_10k"])) * Decimal("10000")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        if amount_cny is None:
+            raise AppError("INVALID_AMOUNT", "amount_cny 或 amount_10k 至少填写一个", 400)
+        data["amount_cny"] = amount_cny
+        data.pop("amount_10k", None)
+    if "wbs_task_id" in data:
+        wbs = db.get(WbsTask, data["wbs_task_id"]) if data["wbs_task_id"] else None
+        if data["wbs_task_id"] and (not wbs or wbs.is_deleted or wbs.project_id != project_id):
+            raise AppError("INVALID_WBS", "关联 WBS 任务不存在或不属于当前项目")
+    field_map = {"entry_date": "recognition_date", "cost_type": "cost_status", "supplier": "supplier_snapshot"}
+    for key, value in data.items():
+        setattr(c, field_map.get(key, key), value)
+    audit(db, "investment_cost_entry", c.id, "update", actor, {"fields": list(data.keys())})
+    db.commit()
+    return ok({"id": c.id})
+
+
 @router.get("/api/projects/{project_id}/budget-items")
 def list_budget_items(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
     rows = db.query(InvestmentBudgetItem).filter(
@@ -1448,6 +1513,26 @@ def create_budget_item(project_id: str, body: BudgetItemIn, db: Session = Depend
     db.add(row)
     db.flush()
     audit(db, "investment_budget_item", row.id, "create", actor, {"amount_cny": money(row.amount_cny), "category": row.category})
+    db.commit()
+    return ok({"id": row.id})
+
+
+@router.patch("/api/projects/{project_id}/budget-items/{item_id}")
+def update_budget_item(project_id: str, item_id: str, body: BudgetItemUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    row = db.get(InvestmentBudgetItem, item_id)
+    if not row or row.is_deleted or row.subject_type != "project" or row.subject_id != project_id:
+        raise AppError("NOT_FOUND", "预算分项不存在", 404)
+    ensure_not_example(project)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("category", "name", "amount_cny"):
+        if field in data and data[field] is None:
+            raise AppError("INVALID_BUDGET_ITEM", f"{field} 不能为空", 400)
+    for key, value in data.items():
+        setattr(row, key, value)
+    audit(db, "investment_budget_item", row.id, "update", actor, {"fields": list(data.keys())})
     db.commit()
     return ok({"id": row.id})
 
@@ -1524,6 +1609,48 @@ def create_effort_entry(project_id: str, body: EffortEntryIn, db: Session = Depe
     return ok({"id": row.id})
 
 
+@router.patch("/api/projects/{project_id}/effort-entries/{entry_id}")
+def update_effort_entry(project_id: str, entry_id: str, body: EffortEntryUpdate, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    row = db.get(InvestmentWorklog, entry_id)
+    if not row or row.is_deleted or row.project_id != project_id:
+        raise AppError("NOT_FOUND", "人天投入记录不存在", 404)
+    ensure_not_example(project)
+    data = body.model_dump(exclude_unset=True)
+    for field in ("person_id", "work_date", "effort_days", "role_type"):
+        if field in data and data[field] is None:
+            raise AppError("INVALID_WORKLOG", f"{field} 不能为空", 400)
+    person_id = data.get("person_id", row.person_id)
+    work_date = data.get("work_date", row.work_date)
+    effort_days = data.get("effort_days", row.effort_days)
+    if work_date > date.today():
+        raise AppError("INVESTMENT_WORKLOG_FUTURE_DATE", "实际工时不能登记未来日期", 400)
+    require_it_member_if_configured(db, person_id, "投入人员")
+    existing_days = sum((
+        item.effort_days for item in db.query(InvestmentWorklog).filter(
+            InvestmentWorklog.person_id == person_id,
+            InvestmentWorklog.work_date == work_date,
+            InvestmentWorklog.is_deleted.is_(False),
+            InvestmentWorklog.id != row.id,
+        )
+    ), Decimal("0"))
+    if existing_days + effort_days > Decimal("2"):
+        raise AppError("INVESTMENT_WORKLOG_DAILY_LIMIT", "同一人员单日累计投入不能超过 2 人天", 409)
+    if "wbs_task_id" in data:
+        wbs = db.get(WbsTask, data["wbs_task_id"]) if data["wbs_task_id"] else None
+        if data["wbs_task_id"] and (not wbs or wbs.is_deleted or wbs.project_id != project_id):
+            raise AppError("INVALID_WBS", "关联 WBS 任务不存在或不属于当前项目")
+    if "role_type" in data:
+        row.activity_type = data["role_type"] if data["role_type"] in {"design", "development", "testing", "implementation", "pm"} else "other"
+    for key, value in data.items():
+        setattr(row, key, value)
+    audit(db, "investment_worklog", row.id, "update", actor, {"fields": list(data.keys())})
+    db.commit()
+    return ok({"id": row.id})
+
+
 @router.delete("/api/project-effort-entries/{entry_id}")
 def delete_effort_entry(entry_id: str, db: Session = Depends(get_db), actor=Depends(require_perm("projects", "edit"))):
     row = db.get(InvestmentWorklog, entry_id)
@@ -1558,7 +1685,7 @@ def delete_cost(cost_id: str, db: Session = Depends(get_db), actor=Depends(requi
 
 # ---------- 进度批量导入（WBS + 里程碑，PRD §6.2 进度页） ----------
 
-from app.services.excel_io import Col, Sheet, build_template, parse_sheet
+from app.services.excel_io import Col, Sheet, build_export, build_template, parse_sheet, read_export_metadata
 
 # WBS 主表（与用户 Excel 设计一致）：层级由 WBS编号 建立，里程碑=WBS 勾选「是」派生，
 # 进度偏差/状态在系统内自动计算，故导入模板只收输入列（不含偏差/状态两个公式列）。
@@ -1581,6 +1708,342 @@ PROGRESS_SHEETS = [
     ]),
 ]
 
+# 回导表与既有「进度批量导入」模板刻意分开：旧接口始终保持追加创建，
+# 回导文件则携带稳定任务 ID 和隐藏快照，用于安全地识别更新与并发冲突。
+WBS_ROUNDTRIP_SHEET = Sheet("WBS回导", [
+    Col("task_id", "任务ID（系统字段，请勿修改）", hint="已有任务必须保留；留空表示新增任务"),
+    Col("wbs_code", "WBS编号", required=True, hint="已有任务不可在回导文件中改变层级；新增任务按 1/1.1/1.1.1 推导父级"),
+    Col("stage", "阶段", hint="如 1.立项/2.选型，便于按阶段筛选"),
+    Col("name", "任务名称(交付物)", required=True, hint="用名词性交付物命名（如“需求规格说明书”）"),
+    Col("wbs_dict", "WBS词典说明(含/不含)", hint="写清含什么/不含什么，厘清工作包边界"),
+    Col("deliverable", "交付物/验收标准(DoD)", hint="完成的定义（可检查的验收标准）"),
+    Col("assignee_name", "责任人姓名", required=True, hint="唯一；须为系统中已有在岗人员"),
+    Col("is_milestone", "里程碑(是/否)", hint="填『是』的行自动汇总到里程碑跟踪页"),
+    Col("predecessor_codes", "前置任务(WBS号)", hint="多个用逗号分隔，填被依赖任务的 WBS编号"),
+    Col("start_date", "计划开始", required=True, kind="date"),
+    Col("end_date", "计划结束", required=True, kind="date"),
+    Col("actual_start", "实际开始", kind="date", hint="执行阶段填写"),
+    Col("actual_end", "实际结束", kind="date", hint="执行阶段填写；不晚于今天时自动完成"),
+    Col("progress", "完成度%(0-100)", kind="int", hint="填写 0-100 的整数百分比；未填写按 0 处理"),
+    Col("remarks", "备注"),
+])
+WBS_ROUNDTRIP_META_KIND = "itom-wbs-roundtrip-v1"
+
+
+def _wbs_roundtrip_snapshot(tasks: list[WbsTask]) -> str:
+    """生成与业务字段、树形关系和版本时间绑定的 WBS 快照摘要。"""
+    payload = [
+        {
+            "id": task.id,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+            "parent_task_id": task.parent_task_id,
+            "wbs_code": task.wbs_code,
+            "stage": task.stage,
+            "name": task.name,
+            "wbs_dict": task.wbs_dict,
+            "deliverable": task.deliverable,
+            "assignee": task.assignee,
+            "is_milestone": task.is_milestone,
+            "start_date": task.start_date.isoformat() if task.start_date else None,
+            "end_date": task.end_date.isoformat() if task.end_date else None,
+            "actual_start": task.actual_start.isoformat() if task.actual_start else None,
+            "actual_end": task.actual_end.isoformat() if task.actual_end else None,
+            "progress": task.progress or 0,
+            "remarks": task.remarks,
+            "predecessor_ids": sorted(task.predecessor_ids or []),
+            "sort": task.sort,
+        }
+        for task in sorted(tasks, key=lambda item: (item.sort, item.created_at, item.id))
+    ]
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _wbs_roundtrip_bool(value) -> bool:
+    return value if isinstance(value, bool) else str(value or "").strip().lower() in {"是", "y", "yes", "true", "1"}
+
+
+def _wbs_roundtrip_predecessor_codes(value) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(code).strip() for code in value if str(code).strip()]
+    return [code.strip() for code in str(value).replace("，", ",").replace("；", ",").split(",") if code.strip()]
+
+
+def _wbs_roundtrip_error(row: int, message: str) -> dict:
+    return {"row": row, "error": message}
+
+
+def _prepare_wbs_roundtrip(db: Session, project: Project, content: bytes) -> dict:
+    """只读解析 WBS 回导文件，生成可展示的差异计划，绝不写库。"""
+    tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
+        .order_by(WbsTask.sort, WbsTask.created_at)
+        .all()
+    )
+    snapshot = _wbs_roundtrip_snapshot(tasks)
+    metadata = read_export_metadata(content)
+    source_rows, parse_errors = parse_sheet(content, WBS_ROUNDTRIP_SHEET)
+    errors = list(parse_errors)
+    if metadata.get("kind") != WBS_ROUNDTRIP_META_KIND:
+        errors.append(_wbs_roundtrip_error(0, "缺少有效的 WBS 回导标识，请使用“导出当前 WBS”生成的文件"))
+    if metadata.get("project_id") != project.id:
+        errors.append(_wbs_roundtrip_error(0, "回导文件不属于当前项目"))
+    stale = bool(metadata.get("snapshot") and metadata.get("snapshot") != snapshot)
+    if stale:
+        errors.append(_wbs_roundtrip_error(0, "WBS 已发生变化，请重新导出后再导入"))
+    if not metadata.get("snapshot"):
+        errors.append(_wbs_roundtrip_error(0, "回导文件缺少导出快照，请重新导出后再导入"))
+
+    by_id = {task.id: task for task in tasks}
+    current_codes = {task.wbs_code: task for task in tasks}
+    active_members = {
+        member.name: member.id
+        for member in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False), OrgMember.status == "在岗")
+    }
+    seen_ids: set[str] = set()
+    seen_codes: set[str] = set()
+    plan_rows: list[dict] = []
+
+    # 第一遍只校验每行自身和身份，建立文件内 WBS 编号索引。
+    for record in source_rows:
+        row_no = int(record["_row"])
+        task_id = (record.get("task_id") or "").strip()
+        code = (record.get("wbs_code") or "").strip()
+        row_errors: list[str] = []
+        existing = by_id.get(task_id) if task_id else None
+        if task_id and not existing:
+            row_errors.append("任务ID不存在或不属于当前项目")
+        if task_id in seen_ids and task_id:
+            row_errors.append("任务ID重复")
+        if task_id:
+            seen_ids.add(task_id)
+        if code in seen_codes:
+            row_errors.append(f"WBS编号「{code}」重复")
+        if code:
+            seen_codes.add(code)
+        if existing and existing.wbs_code != code:
+            row_errors.append("已有任务不能通过回导修改 WBS 编号或层级；请在页面中拖拽调整")
+        if not existing and code in current_codes:
+            row_errors.append(f"WBS编号「{code}」已存在；新增任务请使用新的编号")
+        assignee = active_members.get((record.get("assignee_name") or "").strip())
+        if not assignee:
+            row_errors.append(f"责任人「{record.get('assignee_name') or ''}」不是在岗人员")
+        elif digital_team_scope_configured(db) and not is_it_member(db, assignee):
+            row_errors.append("责任人不属于数字化团队")
+        start_date, end_date = record.get("start_date"), record.get("end_date")
+        if start_date and end_date and end_date < start_date:
+            row_errors.append("结束日期不能早于开始日期")
+        actual_start, actual_end = record.get("actual_start"), record.get("actual_end")
+        if actual_end and actual_end > date.today():
+            row_errors.append("实际结束日期不能晚于今天")
+        if actual_start and actual_end and actual_end < actual_start:
+            row_errors.append("实际结束日期不能早于实际开始日期")
+        submitted_progress = int(record.get("progress") or 0)
+        if not 0 <= submitted_progress <= 100:
+            row_errors.append("完成度必须为 0-100 的整数")
+        actual_changed = bool(existing and (existing.actual_start != actual_start or existing.actual_end != actual_end))
+        reopening = bool(existing and _wbs_is_completed(existing) and submitted_progress < 100)
+        if reopening:
+            # 导出文件会带出原实际结束日期。仅调低完成度时沿用页面编辑
+            # 语义自动清空它，用户不必手动先删单元格；若同时改日期则拒绝。
+            if actual_changed:
+                row_errors.append("请先重新打开任务，再修改实际日期")
+            actual_end = None
+        elif existing and _wbs_is_completed(existing) and actual_changed:
+            row_errors.append("已完成任务的实际开始和结束日期已锁定；如需修正，请先将完成度调整为低于 100%")
+        progress = 100 if actual_end else submitted_progress
+        entry = {
+            "row": row_no,
+            "task_id": task_id or None,
+            "key": task_id or f"new:{row_no}",
+            "existing": existing,
+            "record": record,
+            "code": code,
+            "assignee": assignee,
+            "progress": progress,
+            "actual_start": actual_start,
+            "actual_end": actual_end,
+            "actual_changed": actual_changed,
+            "errors": row_errors,
+        }
+        plan_rows.append(entry)
+
+    # 编号可同时指向当前任务或本次新建行；新建行允许挂到已有父项下。
+    code_to_key = {code: task.id for code, task in current_codes.items()}
+    for entry in plan_rows:
+        if not entry["errors"]:
+            code_to_key[entry["code"]] = entry["key"]
+
+    for entry in plan_rows:
+        if entry["errors"]:
+            continue
+        existing = entry["existing"]
+        code = entry["code"]
+        parent_key = None
+        if not existing and "." in code:
+            parent_key = code_to_key.get(code.rsplit(".", 1)[0])
+            if not parent_key:
+                entry["errors"].append("找不到由 WBS 编号推导的父任务")
+            elif parent_key == entry["key"]:
+                entry["errors"].append("任务不能成为自身父任务")
+            elif parent_key in by_id and _wbs_is_completed(by_id[parent_key]):
+                entry["errors"].append("当前完成度为 100% 的父任务不能新增子任务")
+        predecessor_keys: list[str] = []
+        for predecessor_code in _wbs_roundtrip_predecessor_codes(entry["record"].get("predecessor_codes")):
+            predecessor_key = code_to_key.get(predecessor_code)
+            if not predecessor_key:
+                entry["errors"].append(f"前置任务 WBS 编号「{predecessor_code}」不存在")
+                continue
+            if predecessor_key == entry["key"]:
+                entry["errors"].append("前置任务不能是自身")
+                continue
+            predecessor_keys.append(predecessor_key)
+        entry["parent_key"] = parent_key
+        entry["predecessor_keys"] = predecessor_keys
+
+        fields = {
+            "stage": entry["record"].get("stage"),
+            "name": entry["record"].get("name"),
+            "wbs_dict": entry["record"].get("wbs_dict"),
+            "deliverable": entry["record"].get("deliverable"),
+            "assignee": entry["assignee"],
+            "is_milestone": _wbs_roundtrip_bool(entry["record"].get("is_milestone")),
+            "start_date": entry["record"].get("start_date"),
+            "end_date": entry["record"].get("end_date"),
+            "actual_start": entry["actual_start"],
+            "actual_end": entry["actual_end"],
+            "progress": entry["progress"],
+            "remarks": entry["record"].get("remarks"),
+        }
+        entry["fields"] = fields
+        if existing:
+            existing_predecessors = existing.predecessor_ids or []
+            # 新建行也可作为已有任务的前置任务；提交阶段再把临时 key 换成 ID。
+            desired_predecessors = predecessor_keys
+            changed = any(getattr(existing, field) != value for field, value in fields.items())
+            changed = changed or existing_predecessors != desired_predecessors
+            entry["action"] = "update" if changed else "unchanged"
+        else:
+            entry["action"] = "create"
+
+    blocked_rows = [entry for entry in plan_rows if entry["errors"]]
+    errors += [
+        _wbs_roundtrip_error(entry["row"], "；".join(entry["errors"]))
+        for entry in blocked_rows
+    ]
+    summary = {
+        "create": sum(1 for entry in plan_rows if entry.get("action") == "create" and not entry["errors"]),
+        "update": sum(1 for entry in plan_rows if entry.get("action") == "update" and not entry["errors"]),
+        "unchanged": sum(1 for entry in plan_rows if entry.get("action") == "unchanged" and not entry["errors"]),
+        "blocked": len(errors),
+        "omitted": len(set(by_id) - seen_ids),
+    }
+    return {
+        "snapshot": snapshot,
+        "stale": stale,
+        "errors": errors,
+        "can_commit": not errors,
+        "summary": summary,
+        "rows": [
+            {
+                "row": entry["row"],
+                "task_id": entry["task_id"],
+                "wbs_code": entry["code"],
+                "name": entry["record"].get("name"),
+                "action": "blocked" if entry["errors"] else entry.get("action", "blocked"),
+            }
+            for entry in plan_rows
+        ],
+        "plan_rows": plan_rows,
+    }
+
+
+def _commit_wbs_roundtrip(db: Session, project: Project, plan: dict, actor) -> dict:
+    """在已完成预览校验的前提下原子应用差异；调用方负责提交或回滚。"""
+    if not plan["can_commit"]:
+        raise AppError("WBS_IMPORT_INVALID", "回导文件存在错误，请先修正后重新预览")
+
+    tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
+        .order_by(WbsTask.sort, WbsTask.created_at)
+        .with_for_update()
+        .all()
+    )
+    if _wbs_roundtrip_snapshot(tasks) != plan["snapshot"]:
+        raise AppError("WBS_IMPORT_STALE", "WBS 已发生变化，请重新导出后再导入", 409)
+    by_key = {task.id: task for task in tasks}
+    new_entries = [entry for entry in plan["plan_rows"] if entry.get("action") == "create"]
+    for index, entry in enumerate(new_entries, start=len(tasks)):
+        fields = entry["fields"]
+        task = WbsTask(
+            project_id=project.id,
+            wbs_code=entry["code"],
+            stage=fields["stage"],
+            name=fields["name"],
+            wbs_dict=fields["wbs_dict"],
+            deliverable=fields["deliverable"],
+            assignee=fields["assignee"],
+            is_milestone=fields["is_milestone"],
+            start_date=fields["start_date"],
+            end_date=fields["end_date"],
+            actual_start=fields["actual_start"],
+            actual_end=fields["actual_end"],
+            progress=0,
+            remarks=fields["remarks"],
+            sort=index,
+        )
+        db.add(task)
+        by_key[entry["key"]] = task
+    db.flush()
+
+    all_tasks = list(by_key.values())
+    completed_before = {task.id for task in all_tasks if _wbs_is_completed(task)}
+    progress_candidates: dict[str, WbsTask] = {}
+    for entry in plan["plan_rows"]:
+        if entry.get("action") not in {"create", "update"}:
+            continue
+        task = by_key[entry["key"]]
+        fields = entry["fields"]
+        # 已完成任务被单独重新打开时，沿用单条编辑的审计和清空 actual_end 语义。
+        for field, value in fields.items():
+            if field == "progress":
+                continue
+            if entry.get("existing") and getattr(task, field) == value:
+                continue
+            setattr(task, field, value)
+        if entry.get("action") == "create":
+            task.parent_task_id = by_key[entry["parent_key"]].id if entry.get("parent_key") else None
+        task.predecessor_ids = [by_key[key].id for key in entry.get("predecessor_keys", [])]
+        requested_progress = fields["progress"]
+        if fields["actual_end"]:
+            requested_progress = 100
+        if requested_progress != (task.progress or 0):
+            changed = apply_wbs_progress(all_tasks, task, requested_progress)
+            for changed_task in changed:
+                if changed_task.id in completed_before and not _wbs_is_completed(changed_task):
+                    changed_task.actual_end = None
+                progress_candidates[changed_task.id] = changed_task
+
+    # 父级完成度是子项派生值；新增任务或批量进度变更后统一回算。
+    for changed_task in recalculate_wbs_hierarchy(all_tasks):
+        progress_candidates[changed_task.id] = changed_task
+    for task in progress_candidates.values():
+        _record_wbs_completion(db, task, project)
+    rebuild_wbs_codes(db, project.id)
+    audit(
+        db,
+        "project",
+        project.id,
+        "sync_wbs",
+        actor,
+        {**plan["summary"], "snapshot": plan["snapshot"]},
+    )
+    return plan["summary"]
+
 
 @router.get("/api/project-progress/template")
 def progress_template(_=Depends(require_perm("projects", "edit"))):
@@ -1594,6 +2057,116 @@ def progress_template(_=Depends(require_perm("projects", "edit"))):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=template.xlsx; filename*=UTF-8''{quote('项目进度导入模板.xlsx')}"},
     )
+
+
+async def _read_wbs_roundtrip_file(file: UploadFile) -> bytes:
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise AppError("FILE_TOO_LARGE", "导入文件不能超过 5MB")
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise AppError("INVALID_FORMAT", "请上传 .xlsx 文件（使用系统导出的 WBS 回导文件）")
+    return content
+
+
+@router.get("/api/projects/{project_id}/wbs/export")
+def export_current_wbs(project_id: str, db: Session = Depends(get_db), _=Depends(require_perm("projects", "view"))):
+    """导出完整有效 WBS（不受页面显示行数限制），供后续差异回导。"""
+    from urllib.parse import quote
+
+    from fastapi.responses import Response
+
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    tasks = (
+        db.query(WbsTask)
+        .filter(WbsTask.project_id == project.id, WbsTask.is_deleted.is_(False))
+        .order_by(WbsTask.sort, WbsTask.created_at)
+        .all()
+    )
+    names = {member.id: member.name for member in db.query(OrgMember).filter(OrgMember.is_deleted.is_(False))}
+    codes = {task.id: task.wbs_code for task in tasks}
+    rows = [
+        {
+            "task_id": task.id,
+            "wbs_code": task.wbs_code,
+            "stage": task.stage,
+            "name": task.name,
+            "wbs_dict": task.wbs_dict,
+            "deliverable": task.deliverable,
+            "assignee_name": names.get(task.assignee),
+            "is_milestone": "是" if task.is_milestone else "否",
+            "predecessor_codes": "，".join(codes[pred] for pred in (task.predecessor_ids or []) if pred in codes),
+            "start_date": task.start_date,
+            "end_date": task.end_date,
+            "actual_start": task.actual_start,
+            "actual_end": task.actual_end,
+            "progress": task.progress or 0,
+            "remarks": task.remarks,
+        }
+        for task in tasks
+    ]
+    content = build_export(
+        WBS_ROUNDTRIP_SHEET,
+        rows,
+        metadata={
+            "kind": WBS_ROUNDTRIP_META_KIND,
+            "project_id": project.id,
+            "snapshot": _wbs_roundtrip_snapshot(tasks),
+        },
+    )
+    filename = f"{project.project_code}-WBS回导.xlsx"
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=wbs-roundtrip.xlsx; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.post("/api/projects/{project_id}/wbs/import/preview")
+async def preview_wbs_roundtrip(
+    project_id: str,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    _=Depends(require_perm("projects", "edit")),
+):
+    """只读预览 WBS 差异，提交前不写任何任务或审计记录。"""
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(project)
+    if project.status in ("closed", "cancelled"):
+        raise AppError("PROJECT_FINAL", "终态项目不可导入")
+    plan = _prepare_wbs_roundtrip(db, project, await _read_wbs_roundtrip_file(file))
+    return ok({key: plan[key] for key in ("can_commit", "stale", "summary", "rows", "errors")})
+
+
+@router.post("/api/projects/{project_id}/wbs/import/commit")
+async def commit_wbs_roundtrip(
+    project_id: str,
+    file: UploadFile,
+    db: Session = Depends(get_db),
+    actor=Depends(require_perm("projects", "edit")),
+):
+    """重新校验预览文件并整批提交；任一错误均不产生部分更新。"""
+    project = db.get(Project, project_id)
+    if not project or project.is_deleted:
+        raise AppError("NOT_FOUND", "项目不存在", 404)
+    ensure_not_example(project)
+    if project.status in ("closed", "cancelled"):
+        raise AppError("PROJECT_FINAL", "终态项目不可导入")
+    plan = _prepare_wbs_roundtrip(db, project, await _read_wbs_roundtrip_file(file))
+    if plan["stale"]:
+        raise AppError("WBS_IMPORT_STALE", "WBS 已发生变化，请重新导出后再导入", 409)
+    if not plan["can_commit"]:
+        raise AppError("WBS_IMPORT_INVALID", "回导文件存在错误，请先修正后重新预览")
+    try:
+        summary = _commit_wbs_roundtrip(db, project, plan, actor)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return ok({"applied": summary})
 
 
 @router.post("/api/projects/{project_id}/import-progress")
